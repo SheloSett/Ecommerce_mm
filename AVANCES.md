@@ -1,0 +1,39 @@
+##
+1- sumar al numero de pedido que se sume random entre 3 y 8  ✅
+
+2- cuando el cliente ponga repetir pedido, que lo lleve al checkout pero con el carrito abierto ✅
+
+3- que en la cotizacion tambien se pueda editar los precios PERO solo para el pedido, que no lo cambie en el producto general publicado ✅
+
+4- agregar que se le pueda poner las medidas y el peso del producto ✅
+
+5- que las cotizaciones pagadas se vallan de cotizaciones y que queden en todos los pedidos ✅
+
+6- agregar la propiedad "costo" en producto ✅
+
+7-  en cotizaciones quiero que aparezcan mas reducidas y que tengan un boton de ver detalles que permitan modificarlas ✅
+
+8- luego de que el pedido se haya abonado, se debe restar el stock de los productos en la base de datos ✅
+
+9- modificacion en la seccion de crear producto en la parte de precios, para que tenga precio minorista y mayorista aparte y sus precios de ofertas ✅
+
+
+10- agregar quiebre de stock, esto va a ser una propiedad del producto, cuando llegue a esa cantidad de stock, que se agregue a una pestaña de productos que se va a llamar tambien 'quiebre de stock'. ✅
+
+11- cuando un producto se queda sin stock que no se vea publicado, y que se agregue a otra pestaña de productos,  que se va a llamar productos sin stock ✅
+
+12- modificar el mail que le llega con el detalle del pedido al cliente ✅
+
+13- agregar los datos bamcarios que deberian llegar por mail en caso de que el cliente eliga transferencia bancaria ✅
+
+14- agregar al dashboard las ganancias ✅
+
+15- hacer que el atributo costo sea obligatorio en todos los productos ✅
+
+16- metricas que aprarezcan los 10 clientes que mas compraron, los 10 productos q mas se vendieron y los 10 productos que mas ganancias dejaron ✅
+
+17- cambio de esto: 
+que en la cotizacion tambien se pueda editar los precios PERO solo para el pedido, que no lo cambie en el producto general publicado <---->
+ahora:
+pregunta si queres actualizarl el precio si para mayorista, minorista o ambos. ✅
+##

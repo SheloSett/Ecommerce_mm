@@ -1,0 +1,45 @@
+const express = require("express");
+const {
+  getOrders, getOrder, createOrder, updateOrderStatus, getStats, getMetrics, deleteOrder,
+  getMyOrders, getMyCotizaciones, getMyQuoteById,
+  updateOrderItem, deleteOrderItem,
+  publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
+} = require("../controllers/order.controller");
+const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+
+const router = express.Router();
+
+// Pública: crear orden desde el checkout
+router.post("/", createOrder);
+
+// Cliente: ver su propio historial de pedidos aprobados
+// IMPORTANTE: debe ir ANTES de /:id para que /my no sea interpretado como un ID
+router.get("/my", authMiddleware, customerMiddleware, getMyOrders);
+
+// Cliente MAYORISTA: ver sus cotizaciones enviadas
+// IMPORTANTE: también debe ir ANTES de /:id
+router.get("/my-quotes", authMiddleware, customerMiddleware, getMyCotizaciones);
+// Cliente MAYORISTA: ver una cotización propia por ID (para la página de pago)
+// IMPORTANTE: también debe ir ANTES de /:id
+router.get("/my-quotes/:id", authMiddleware, customerMiddleware, getMyQuoteById);
+
+// Admin: ver y gestionar órdenes
+router.get("/stats", authMiddleware, adminMiddleware, getStats);
+router.get("/metrics", authMiddleware, adminMiddleware, getMetrics);
+router.get("/", authMiddleware, adminMiddleware, getOrders);
+router.get("/:id", authMiddleware, adminMiddleware, getOrder);
+router.patch("/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
+// Admin: editar/eliminar un item individual de una cotización
+router.patch("/:orderId/items/:itemId", authMiddleware, adminMiddleware, updateOrderItem);
+router.delete("/:orderId/items/:itemId", authMiddleware, adminMiddleware, deleteOrderItem);
+// Admin: publicar cambios al cliente (actualiza snapshot + notifica)
+router.post("/:id/publish", authMiddleware, adminMiddleware, publishCotizacion);
+// Admin: aprobar cotización
+router.post("/:id/approve", authMiddleware, adminMiddleware, approveCotizacion);
+// Cliente: cancelar su propia cotización con motivo
+router.post("/:id/cancel-by-customer", authMiddleware, customerMiddleware, cancelByCustomer);
+// Cliente MAYORISTA: confirmar pago manual de cotización (efectivo o transferencia)
+router.post("/:id/confirm-payment", authMiddleware, customerMiddleware, confirmCotizacionPayment);
+router.delete("/:id", authMiddleware, adminMiddleware, deleteOrder);
+
+module.exports = router;

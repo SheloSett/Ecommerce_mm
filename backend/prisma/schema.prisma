@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role     @default(ADMIN)
+  createdAt DateTime @default(now())
+
+  @@map("users")
+}
+
+model Category {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  slug      String     @unique
+  // Relación self-referencial para subcategorías: una categoría puede tener padre y/o hijos
+  parentId  Int?
+  parent    Category?  @relation("SubCategories", fields: [parentId], references: [id])
+  children  Category[] @relation("SubCategories")
+  products  Product[]
+  createdAt DateTime   @default(now())
+
+  @@map("categories")
+}
+
+model Product {
+  id              Int         @id @default(autoincrement())
+  name            String
+  description     String?
+  price           Float
+  cost                 Float?  // Precio de costo (interno, solo visible para el admin)
+  salePrice            Float?  // Precio oferta minorista (debe ser < price)
+  wholesalePrice       Float?  // Precio mayorista para clientes tipo MAYORISTA
+  wholesaleSalePrice   Float?  // Precio oferta mayorista (debe ser < wholesalePrice)
+  minQuantity     Int         @default(1) // Cantidad mínima para compra mayorista
+  stock           Int         @default(0)
+  stockUnlimited  Boolean     @default(false) // Si true, el stock es ilimitado (∞)
+  stockBreak      Int?        // Umbral de quiebre de stock: si stock <= stockBreak, aparece en la pestaña de alertas
+  sku             String?     // Código SKU del producto
+  youtubeUrl      String?     // URL de video de YouTube del producto
+  weight          Float?      // Peso en kg
+  length          Float?      // Largo en cm
+  width           Float?      // Ancho en cm
+  height          Float?      // Alto en cm
+  images          String[]
+  categoryId      Int?
+  category        Category?   @relation(fields: [categoryId], references: [id])
+  orderItems      OrderItem[]
+  cartItems       CartItem[]  // Items de carrito que referencian este producto
+  active          Boolean     @default(true)
+  featured        Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("products")
+}
+
+model Order {
+  id             Int           @id @default(autoincrement())
+  customerName   String
+  customerEmail  String        // Email de contacto (para enviar confirmaciones/facturas)
+  customerPhone  String?
+  // customerId vincula la orden a la cuenta del cliente registrado.
+  // Es opcional para soportar compras de invitados (sin cuenta).
+  customerId     Int?
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status         OrderStatus   @default(PENDING)
+  paymentMethod  PaymentMethod @default(MERCADOPAGO)
+  total          Float
+  mpPaymentId    String?
+  mpStatus       String?
+  mpPreferenceId String?
+  items          OrderItem[]
+  notifications  Notification[]
+  // Campos exclusivos para cotizaciones:
+  // clientSnapshot: copia de los items visible al cliente. Se actualiza solo cuando el admin presiona
+  //   "Actualizar cotización". Mientras no se actualice, el cliente sigue viendo la versión anterior.
+  clientSnapshot Json?
+  // adminNotes: mensaje del admin al cliente cuando publica cambios o aprueba la cotización.
+  adminNotes     String?
+  // cancelReason: motivo de cancelación ingresado por el cliente.
+  cancelReason   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@map("orders")
+}
+
+// Notificaciones push para clientes: se crean cuando el admin actualiza o aprueba una cotización.
+model Notification {
+  id         Int              @id @default(autoincrement())
+  customerId Int
+  customer   Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId    Int?
+  order      Order?           @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  type       NotificationType
+  message    String
+  read       Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+
+  @@map("notifications")
+}
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int
+  productId Int
+  quantity  Int
+  price     Float
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum OrderStatus {
+  PENDING        // Esperando revisión del admin
+  QUOTE_APPROVED // Admin aprobó la cotización — cliente debe pagar
+  APPROVED       // Pago confirmado
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  COTIZACION_ACTUALIZADA        // Admin publicó cambios en items
+  COTIZACION_APROBADA           // Admin aprobó la cotización
+  COTIZACION_RECHAZADA          // Admin rechazó la cotización
+  COTIZACION_CANCELADA_CLIENTE  // Cliente canceló (notifica al admin via email, no via este modelo)
+}
+
+enum PaymentMethod {
+  MERCADOPAGO
+  EFECTIVO
+  TRANSFERENCIA
+  COTIZACION
+}
+
+model Customer {
+  id                Int                @id @default(autoincrement())
+  name              String
+  email             String             @unique
+  password          String?            // Hasheada con bcrypt; opcional para no romper registros anteriores
+  phone             String?
+  company           String?            // Empresa u organización (útil para mayoristas)
+  avatar            String?            // URL de la foto de perfil (guardada en /uploads)
+  status            CustomerStatus     @default(PENDING)
+  type              CustomerType       @default(MINORISTA)
+  notes             String?            // Notas internas del admin
+  mayoristaRequests MayoristaRequest[] // Solicitudes para pasar a cuenta mayorista
+  cart              Cart?              // Carrito activo del cliente (uno por cliente)
+  orders            Order[]            // Órdenes vinculadas a esta cuenta
+  notifications     Notification[]     // Notificaciones de cotizaciones
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@map("customers")
+}
+
+// Carrito persistido en BD para que el admin pueda ver carritos activos
+model Cart {
+  id         Int        @id @default(autoincrement())
+  customerId Int        @unique
+  customer   Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items      CartItem[]
+  updatedAt  DateTime   @updatedAt
+  createdAt  DateTime   @default(now())
+
+  @@map("carts")
+}
+
+// Items del carrito: guarda nombre y precio al momento de agregar
+model CartItem {
+  id        Int      @id @default(autoincrement())
+  cartId    Int
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId Int      // Referencia al producto (con FK para poder hacer include de stock)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade) // onDelete: Cascade: si se elimina el producto, se elimina el item del carrito
+  name      String   // Nombre del producto al momento de agregar
+  price     Float    // Precio efectivo según tipo de cliente
+  quantity  Int
+  image     String?  // Primera imagen del producto
+
+  @@map("cart_items")
+}
+
+model MayoristaRequest {
+  id         Int                    @id @default(autoincrement())
+  customerId Int
+  customer   Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  message    String?                // Mensaje opcional del cliente explicando el motivo
+  status     MayoristaRequestStatus @default(PENDING)
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+
+  @@map("mayorista_requests")
+}
+
+enum CustomerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CustomerType {
+  MAYORISTA
+  MINORISTA
+}
+
+enum MayoristaRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
