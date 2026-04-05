@@ -25,6 +25,7 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
+  const [selectedTier, setSelectedTier] = useState(null); // tier de descuento seleccionado
   const [videoOpen, setVideoOpen] = useState(false);
   const [slideDir, setSlideDir] = useState("next"); // "next" | "prev"
   const { addItem, items } = useCart();
@@ -91,15 +92,37 @@ export default function ProductDetail() {
 
   // Cantidad ya en el carrito para este producto
   const cartQty = items.find((i) => i.id === product?.id)?.quantity || 0;
-  // Stock restante disponible para agregar (salvo stock ilimitado)
-  const availableStock = product?.stockUnlimited ? Infinity : Math.max(0, (product?.stock || 0) - cartQty);
-  const outOfStock = !product?.stockUnlimited && availableStock === 0;
+  // Los mayoristas no tienen límite de cantidad: pueden pedir más del stock disponible (cotización)
+  // Los minoristas están limitados al stock real restante
+  const isMayorista = customer?.type === "MAYORISTA";
+  const availableStock = product?.stockUnlimited || isMayorista ? Infinity : Math.max(0, (product?.stock || 0) - cartQty);
+  const outOfStock = !product?.stockUnlimited && !isMayorista && availableStock === 0;
+
+  // Devuelve el tier que corresponde a una cantidad dada (el de mayor minQty que no la supere)
+  // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
+  const getTierForQty = (qty) => {
+    const tiers = isMayorista
+      ? (product?.wholesalePriceTiers?.length > 0 ? product.wholesalePriceTiers : null)
+      : (product?.priceTiers?.length > 0 ? product.priceTiers : null);
+    if (!tiers) return null;
+    // parseInt/parseFloat para defender contra valores string guardados en DB antes del fix del backend
+    return [...tiers]
+      .sort((a, b) => parseInt(b.minQty) - parseInt(a.minQty))
+      .find((t) => parseInt(qty) >= parseInt(t.minQty)) || null;
+  };
+
+  // Cambia la cantidad y auto-selecciona el tier correspondiente
+  const changeQuantity = (newQty) => {
+    setQuantity(newQty);
+    setSelectedTier(getTierForQty(newQty));
+  };
 
   const handleAddToCart = async () => {
-    if (!product || outOfStock) return;
-    // Limitar cantidad seleccionada al stock disponible restante
-    const safeQty = Math.min(quantity, availableStock);
-    await addItem(product, safeQty);
+    if (!product) return;
+    if (outOfStock) return;
+    const safeQty = isMayorista ? quantity : Math.min(quantity, availableStock);
+    // Si hay un tier seleccionado, usar su precio como override
+    await addItem(product, safeQty, selectedTier ? selectedTier.price : null);
     toast.success(`${safeQty}x "${product.name}" agregado al carrito`);
   };
 
@@ -138,12 +161,18 @@ export default function ProductDetail() {
           <Link to="/" className="hover:text-blue-600">Inicio</Link>
           <span className="mx-2">/</span>
           <Link to="/catalogo" className="hover:text-blue-600">Catálogo</Link>
-          {product.category && (
+          {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
+          {product.categories && product.categories.length > 0 && (
             <>
               <span className="mx-2">/</span>
-              <Link to={`/catalogo?category=${product.category.slug}`} className="hover:text-blue-600">
-                {product.category.name}
-              </Link>
+              {product.categories.map((cat, i) => (
+                <span key={cat.id}>
+                  {i > 0 && <span className="mx-1">·</span>}
+                  <Link to={`/catalogo?category=${cat.slug}`} className="hover:text-blue-600">
+                    {cat.name}
+                  </Link>
+                </span>
+              ))}
             </>
           )}
           <span className="mx-2">/</span>
@@ -212,51 +241,139 @@ export default function ProductDetail() {
 
           {/* Info del producto */}
           <div>
-            {product.category && (
-              <Link
-                to={`/catalogo?category=${product.category.slug}`}
-                className="text-sm text-blue-600 font-semibold uppercase tracking-wide hover:underline"
-              >
-                {product.category.name}
-              </Link>
+            {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
+            {product.categories && product.categories.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {product.categories.map((cat) => (
+                  <Link
+                    key={cat.id}
+                    to={`/catalogo?category=${cat.slug}`}
+                    className="text-sm text-blue-600 font-semibold uppercase tracking-wide hover:underline"
+                  >
+                    {cat.name}
+                  </Link>
+                ))}
+              </div>
             )}
             <h1 className="text-3xl font-extrabold text-slate-900 mt-2 mb-4">{product.name}</h1>
 
-            {/* Precio según tipo de cliente:
-                - MAYORISTA: oferta mayorista si existe, sino precio mayorista
-                - MINORISTA: oferta minorista si existe y < price, sino precio normal */}
-            {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
-              product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
-                // Mayorista con oferta mayorista activa
+            {/* Precio según tipo de cliente.
+                Si hay un tier seleccionado, el precio principal muestra el precio del tier. */}
+            {(() => {
+              // Precio base sin tier
+              const isMayorista = customer?.type === "MAYORISTA";
+              const baseUnitPrice = isMayorista && product.wholesalePrice
+                ? (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? product.wholesaleSalePrice : product.wholesalePrice)
+                : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
+
+              // Si hay tier activo, ese es el precio por unidad
+              const displayPrice = selectedTier ? selectedTier.price : baseUnitPrice;
+              const hasTierDiscount = selectedTier && selectedTier.price < baseUnitPrice;
+
+              if (isMayorista && product.wholesalePrice) {
+                return (
+                  <div className="mb-6">
+                    {hasTierDiscount && (
+                      <p className="text-lg text-slate-400 line-through">{formatPrice(baseUnitPrice)}</p>
+                    )}
+                    <p className="text-4xl font-bold text-green-700">{formatPrice(displayPrice)}</p>
+                    <span className="inline-block mt-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-semibold rounded-full">
+                      {hasTierDiscount ? "Precio mayorista c/descuento" : "Precio mayorista"}
+                    </span>
+                  </div>
+                );
+              }
+
+              // Minorista
+              const originalPrice = product.price;
+              const showStrike = displayPrice < originalPrice;
+              return (
                 <div className="mb-6">
-                  <p className="text-lg text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</p>
-                  <p className="text-4xl font-bold text-green-700">{formatPrice(product.wholesaleSalePrice)}</p>
-                  <span className="inline-block mt-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-semibold rounded-full">
-                    Precio mayorista
-                  </span>
+                  {showStrike && (
+                    <p className="text-lg text-slate-400 line-through">{formatPrice(originalPrice)}</p>
+                  )}
+                  <p className={`text-4xl font-bold mb-1 ${displayPrice < originalPrice ? "text-red-600" : "text-blue-600"}`}>
+                    {formatPrice(displayPrice)}
+                  </p>
+                  {displayPrice < originalPrice && (
+                    <span className="inline-block px-3 py-1 bg-red-100 text-red-600 text-sm font-semibold rounded-full">
+                      {hasTierDiscount ? "Precio por cantidad" : "Precio oferta"}
+                    </span>
+                  )}
                 </div>
-              ) : (
-                // Mayorista sin oferta
-                <div className="mb-6">
-                  <p className="text-4xl font-bold text-green-700">{formatPrice(product.wholesalePrice)}</p>
-                  <span className="inline-block mt-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-semibold rounded-full">
-                    Precio mayorista
-                  </span>
+              );
+            })()}
+
+            {/* Tabla de descuentos por cantidad — clickeable para seleccionar */}
+            {/* Mayoristas ven wholesalePriceTiers; minoristas ven priceTiers */}
+            {(() => {
+              const isMayorista = customer?.type === "MAYORISTA";
+              const activeTiers = isMayorista
+                ? (product.wholesalePriceTiers && product.wholesalePriceTiers.length > 0 ? product.wholesalePriceTiers : null)
+                : (product.priceTiers && product.priceTiers.length > 0 ? product.priceTiers : null);
+              // El % OFF se calcula contra el precio base del tipo de cliente
+              const basePrice = isMayorista && product.wholesalePrice
+                ? (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? product.wholesaleSalePrice : product.wholesalePrice)
+                : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
+              if (!activeTiers) return null;
+              return (
+                <div className="mb-6 border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                    <span className="text-sm font-semibold text-slate-700">Descuentos por cantidad</span>
+                    {selectedTier && (
+                      <button
+                        onClick={() => changeQuantity(1)}
+                        className="ml-3 text-xs text-slate-400 hover:text-slate-600 underline"
+                      >
+                        quitar selección
+                      </button>
+                    )}
+                  </div>
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {activeTiers.map((tier, i) => {
+                        const discountPct = basePrice > tier.price
+                          ? Math.round(((basePrice - tier.price) / basePrice) * 100)
+                          : null;
+                        const isSelected = parseInt(selectedTier?.minQty) === parseInt(tier.minQty);
+                        return (
+                          <tr
+                            key={i}
+                            onClick={() => {
+                              // Al hacer click en un tier, poner la cantidad mínima de ese tier
+                              // y dejar que changeQuantity seleccione el tier correcto
+                              changeQuantity(tier.minQty);
+                            }}
+                            className={`cursor-pointer transition-colors ${
+                              isSelected
+                                ? "bg-blue-50 border-l-4 border-blue-500"
+                                : i % 2 === 0 ? "bg-white hover:bg-slate-50" : "bg-slate-50 hover:bg-slate-100"
+                            }`}
+                          >
+                            <td className={`px-4 py-3 font-medium ${isSelected ? "text-blue-700" : "text-slate-700"}`}>
+                              +{tier.minQty} unidades
+                            </td>
+                            <td className={`px-4 py-3 font-semibold ${isSelected ? "text-blue-700" : "text-slate-800"}`}>
+                              {formatPrice(tier.price)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {isSelected && (
+                                <span className="mr-2 text-blue-500 text-xs font-semibold">✓ seleccionado</span>
+                              )}
+                              {discountPct > 0 && (
+                                <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded-full">
+                                  {discountPct}% OFF
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              )
-            ) : product.salePrice && product.salePrice < product.price ? (
-              // Minorista con oferta activa
-              <div className="mb-6">
-                <p className="text-lg text-slate-400 line-through">{formatPrice(product.price)}</p>
-                <p className="text-4xl font-bold text-red-600">{formatPrice(product.salePrice)}</p>
-                <span className="inline-block mt-1 px-3 py-1 bg-red-100 text-red-600 text-sm font-semibold rounded-full">
-                  Precio oferta
-                </span>
-              </div>
-            ) : (
-              // Minorista sin oferta
-              <p className="text-4xl font-bold text-blue-600 mb-6">{formatPrice(product.price)}</p>
-            )}
+              );
+            })()}
 
             {product.description && (
               <p className="text-slate-600 leading-relaxed mb-6">{product.description}</p>
@@ -268,7 +385,8 @@ export default function ProductDetail() {
                 <>
                   <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
                   <span className="text-sm text-green-700 font-medium">
-                    En stock ({product.stock} disponibles)
+                    {/* Cantidad de stock oculta al cliente — solo se muestra disponibilidad */}
+                    En stock
                   </span>
                 </>
               ) : (
@@ -285,19 +403,37 @@ export default function ProductDetail() {
                 <span className="text-sm font-medium text-slate-700">Cantidad:</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                    className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-lg transition-colors"
+                    onClick={() => changeQuantity(Math.max(1, quantity - 1))}
+                    disabled={quantity <= 1}
+                    className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     −
                   </button>
-                  <span className="w-10 text-center font-semibold text-lg">{quantity}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={product.stockUnlimited ? undefined : availableStock}
+                    value={quantity}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (isNaN(val) || val < 1) return changeQuantity(1);
+                      if (!product.stockUnlimited && !isMayorista && val > availableStock) return changeQuantity(availableStock);
+                      changeQuantity(val);
+                    }}
+                    className="w-16 text-center font-semibold text-lg border border-slate-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                   <button
-                    onClick={() => setQuantity((q) => Math.min(availableStock, q + 1))}
+                    onClick={() => changeQuantity(isMayorista ? quantity + 1 : Math.min(availableStock, quantity + 1))}
                     className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-lg transition-colors"
                   >
                     +
                   </button>
                 </div>
+                {selectedTier && (
+                  <span className="text-xs text-blue-600 font-medium">
+                    mín. {selectedTier.minQty} u. · {formatPrice(selectedTier.price)} c/u
+                  </span>
+                )}
               </div>
             )}
 

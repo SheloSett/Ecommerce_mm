@@ -69,9 +69,10 @@ export default function ProductCard({ product }) {
 
       {/* Info */}
       <div className="p-4 flex flex-col flex-1">
-        {product.category && (
+        {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
+        {product.categories && product.categories.length > 0 && (
           <span className="text-xs text-blue-600 font-semibold uppercase tracking-wide mb-1">
-            {product.category.name}
+            {product.categories.map((c) => c.name).join(" · ")}
           </span>
         )}
         <h3 className="font-semibold text-slate-800 text-sm leading-tight mb-2 flex-1 line-clamp-2">

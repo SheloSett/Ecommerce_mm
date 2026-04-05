@@ -26,6 +26,7 @@ export default function AdminLayout({ children, title }) {
       subItems: [
         { label: "Todos los productos", tab: "" },
         { label: "Sin stock",           tab: "sinstock" },
+        { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
       ],
     },
     { path: "/admin/categorias", label: "Categorías", icon: "🏷️" },
@@ -39,6 +40,7 @@ export default function AdminLayout({ children, title }) {
         { label: "Cotizaciones",      tab: "cotizaciones" },
       ],
     },
+    { path: "/admin/caja",      label: "Caja",       icon: "💰" },
     {
       path: "/admin/clientes",
       label: "Clientes",
@@ -90,11 +92,16 @@ export default function AdminLayout({ children, title }) {
                 {active && item.subItems && (
                   <div className="mt-1 ml-4 pl-4 border-l border-slate-700 space-y-0.5">
                     {item.subItems.map((sub) => {
-                      const subActive = currentTab === sub.tab;
+                      // sub.href = ruta fija (ej: /admin/productos/nuevo)
+                      // sub.tab  = filtro por ?tab= en la ruta padre
+                      const to = sub.href
+                        ? sub.href
+                        : sub.tab ? `${item.path}?tab=${sub.tab}` : item.path;
+                      const subActive = !sub.href && currentTab === sub.tab;
                       return (
                         <Link
-                          key={sub.tab}
-                          to={sub.tab ? `${item.path}?tab=${sub.tab}` : item.path}
+                          key={sub.href || sub.tab}
+                          to={to}
                           className={`flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                             subActive
                               ? "bg-slate-700 text-white"

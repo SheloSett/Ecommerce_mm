@@ -57,6 +57,28 @@ services:
     networks:
       - ecommerce_net
 
+  # Backup automático de PostgreSQL: genera un .sql.gz diario en ./backups/
+  # Retención: 7 backups diarios, 4 semanales, 6 mensuales (auto-rotación)
+  pg-backup:
+    image: prodrigestivill/postgres-backup-local:15
+    container_name: ecommerce_backup
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "0 22 * * *"   # Todos los días a las 22:00
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+    volumes:
+      - ./backups:/backups
+    networks:
+      - ecommerce_net
+
 volumes:
   postgres_data:
 

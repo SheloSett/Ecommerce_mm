@@ -1,10 +1,13 @@
 import { useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
+import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { getImageUrl } from "../services/api";
 
 // Drawer lateral del carrito de compras
 export default function CartDrawer({ open, onClose }) {
   const { items, totalPrice, removeItem, updateQuantity } = useCart();
+  const { customer } = useCustomerAuth();
+  const isMayorista = customer?.type === "MAYORISTA";
   const navigate = useNavigate();
 
   const handleCheckout = () => {
@@ -93,11 +96,26 @@ export default function CartDrawer({ open, onClose }) {
                         >
                           −
                         </button>
-                        <span className="text-sm font-semibold w-6 text-center">{item.quantity}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={!isMayorista && item.stock !== -1 ? item.stock : undefined}
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            if (isNaN(val) || val < 1) return;
+                            // Minoristas no pueden superar el stock disponible
+                            const maxQty = !isMayorista && item.stock !== -1 ? item.stock : Infinity;
+                            updateQuantity(item.cartItemId, Math.min(val, maxQty));
+                          }}
+                          className="w-12 text-center text-sm font-semibold border border-slate-200 rounded-lg py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
                         <button
                           onClick={() => updateQuantity(item.cartItemId, item.quantity + 1)}
                           className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-sm font-bold transition-colors"
-                          disabled={item.stock !== -1 && item.quantity >= item.stock}
+                          // Mayoristas no tienen límite de stock — pueden pedir más del disponible (cotización)
+                          // disabled={item.stock !== -1 && item.quantity >= item.stock}  // BUGFIX: limitaba a mayoristas
+                          disabled={!isMayorista && item.stock !== -1 && item.quantity >= item.stock}
                         >
                           +
                         </button>

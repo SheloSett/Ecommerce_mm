@@ -25,6 +25,8 @@ import AdminOrders from "./pages/admin/AdminOrders";
 import AdminCategories from "./pages/admin/AdminCategories";
 import AdminCustomers from "./pages/admin/AdminCustomers";
 import AdminMetrics from "./pages/admin/AdminMetrics";
+import AdminProductCreate from "./pages/admin/AdminProductCreate";
+import AdminCaja from "./pages/admin/AdminCaja";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 export default function App() {
@@ -96,6 +98,23 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <AdminMetrics />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/productos/nuevo"
+            element={
+              <ProtectedRoute>
+                <AdminProductCreate />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/caja"
+            element={
+              <ProtectedRoute>
+                <AdminCaja />
               </ProtectedRoute>
             }
           />

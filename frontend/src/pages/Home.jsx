@@ -4,15 +4,18 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import { productsApi, categoriesApi } from "../services/api";
+import { useCustomerAuth } from "../context/CustomerAuthContext";
 
 export default function Home() {
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { customer } = useCustomerAuth();
 
   useEffect(() => {
+    const visibleFor = customer?.type || "MINORISTA";
     Promise.all([
-      productsApi.getAll({ featured: true, limit: 8 }),
+      productsApi.getAll({ featured: true, limit: 8, visibleFor }),
       categoriesApi.getAll(),
     ])
       .then(([productsRes, catsRes]) => {
@@ -21,7 +24,7 @@ export default function Home() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [customer?.type]);
 
   const categoryIcons = {
     cables: "🔌",

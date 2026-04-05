@@ -17,6 +17,9 @@ RUN mkdir -p uploads
 
 EXPOSE 4000
 
-# prisma db push: crea las tablas directamente desde el schema sin necesitar archivos de migración previos.
-# Es ideal para el primer arranque. En producción avanzada se usaría prisma migrate deploy.
-CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node src/index.js"]
+# Secuencia de arranque:
+# 1. pre-migrate: guarda asignaciones categoryId → _cat_backup ANTES de que db push las elimine
+# 2. prisma db push: aplica el schema nuevo (crea _CategoryToProduct, elimina categoryId)
+# 3. post-migrate: restaura las asignaciones desde _cat_backup a _CategoryToProduct
+# 4. Inicia el servidor Node
+CMD ["sh", "-c", "node scripts/pre-migrate.js && npx prisma db push --accept-data-loss && node scripts/post-migrate.js && node src/index.js"]

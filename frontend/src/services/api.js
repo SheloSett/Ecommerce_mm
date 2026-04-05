@@ -173,6 +173,13 @@ export const authApi = {
   changePassword: (data) => api.put("/auth/change-password", data),
 };
 
+// ─── Gastos / Caja ────────────────────────────────────────────────────────────
+export const gastosApi = {
+  getAll: (type) => api.get("/gastos", { params: type ? { type } : {} }),
+  create: (data) => api.post("/gastos", data),
+  remove: (id)  => api.delete(`/gastos/${id}`),
+};
+
 // ─── Notificaciones ───────────────────────────────────────────────────────────
 export const notificationsApi = {
   getMy:       () => customerAuthApi.get("/notifications/my"),

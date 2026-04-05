@@ -83,9 +83,10 @@ export function CartProvider({ children }) {
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Agrega un item al carrito — llama directo al backend sin localStorage
-  const addItem = async (product, quantity = 1) => {
+  // priceOverride: si se pasa, usa ese precio en vez del precio efectivo (para descuentos por cantidad)
+  const addItem = async (product, quantity = 1, priceOverride = null) => {
     if (!customer) return;
-    const effectivePrice = getEffectivePrice(product);
+    const effectivePrice = priceOverride !== null ? priceOverride : getEffectivePrice(product);
     setLoading(true);
     try {
       const res = await cartsApi.addItem({

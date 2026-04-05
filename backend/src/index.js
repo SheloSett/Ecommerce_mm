@@ -12,6 +12,7 @@ const customerRoutes = require("./routes/customer.routes");
 const mayoristaRequestRoutes = require("./routes/mayoristaRequest.routes");
 const cartRoutes = require("./routes/cart.routes");
 const notificationRoutes = require("./routes/notification.routes");
+const gastoRoutes = require("./routes/gasto.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -41,6 +42,7 @@ app.use("/api/customers", customerRoutes);
 app.use("/api/mayorista-requests", mayoristaRequestRoutes);
 app.use("/api/carts", cartRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/gastos", gastoRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

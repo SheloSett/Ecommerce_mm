@@ -4,6 +4,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import { productsApi, categoriesApi } from "../services/api";
+import { useCustomerAuth } from "../context/CustomerAuthContext";
 
 export default function Catalog() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -11,6 +12,7 @@ export default function Catalog() {
   const [categories, setCategories] = useState([]);
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { customer } = useCustomerAuth();
 
   const currentCategory = searchParams.get("category") || "";
   const currentSearch = searchParams.get("search") || "";
@@ -21,6 +23,8 @@ export default function Catalog() {
     const params = { page: currentPage, limit: 20 };
     if (currentCategory) params.category = currentCategory;
     if (currentSearch) params.search = currentSearch;
+    // Filtrar por visibilidad según el tipo de cliente logueado
+    params.visibleFor = customer?.type || "MINORISTA";
 
     productsApi
       .getAll(params)
@@ -30,7 +34,7 @@ export default function Catalog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentCategory, currentSearch, currentPage]);
+  }, [currentCategory, currentSearch, currentPage, customer?.type]);
 
   useEffect(() => {
     fetchProducts();

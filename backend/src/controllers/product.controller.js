@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor } = req.query;
 
     const where = {};
 
@@ -18,6 +18,14 @@ async function getProducts(req, res) {
       where.active = true; // Por defecto solo activos
     }
 
+    // Filtrar por visibilidad según el tipo de cliente:
+    // MAYORISTA → ve productos con visibility MAYORISTA o AMBOS
+    // MINORISTA (o sin sesión) → ve productos con visibility MINORISTA o AMBOS
+    if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
+      where.visibility = { in: ["AMBOS", visibleFor] };
+    }
+    // Si no se envía visibleFor, no se filtra (admin o legacy)
+
     if (category) {
       // Buscar la categoría por slug e incluir sus subcategorías
       const cat = await prisma.category.findUnique({
@@ -27,13 +35,13 @@ async function getProducts(req, res) {
       if (cat) {
         // Si la categoría tiene hijos, incluir productos de ella Y de sus subcategorías
         const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
-        where.categoryId = { in: categoryIds };
+        // Antes: where.categoryId = { in: categoryIds } — ahora M2M
+        where.categories = { some: { id: { in: categoryIds } } };
       } else {
-        // Si no existe la categoría, devolver resultado vacío
-        where.categoryId = -1;
+        // Si no existe la categoría, devolver vacío forzando condición imposible
+        // Antes: where.categoryId = -1
+        where.categories = { every: { id: -1 }, some: {} };
       }
-      // Comentado: filtrado anterior solo por slug exacto, no incluía subcategorías
-      // where.category = { slug: category };
     }
 
     if (search) {
@@ -52,7 +60,8 @@ async function getProducts(req, res) {
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
-        include: { category: { select: { id: true, name: true, slug: true } } },
+        // Antes: include: { category: { select: { id, name, slug } } }
+        include: { categories: { select: { id: true, name: true, slug: true } } },
         orderBy: { createdAt: "desc" },
         skip,
         take: parseInt(limit),
@@ -91,7 +100,8 @@ async function getProductsAdmin(req, res) {
     }
 
     if (category) {
-      where.category = { slug: category };
+      // Antes: where.category = { slug: category }
+      where.categories = { some: { slug: category } };
     }
 
     if (search) {
@@ -108,9 +118,10 @@ async function getProductsAdmin(req, res) {
     if (lowStock === "true") {
       const candidates = await prisma.product.findMany({
         where,
+        // Antes: include: { category: { select: { ... } } }
         include: {
-          category: {
-            select: { id: true, name: true, slug: true, parent: { select: { id: true, name: true } } },
+          categories: {
+            include: { parent: { select: { id: true, name: true } } },
           },
         },
         orderBy: { stock: "asc" },
@@ -125,15 +136,10 @@ async function getProductsAdmin(req, res) {
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
+        // Antes: include: { category: { select: { id, name, slug, parent: ... } } }
         include: {
-          category: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              // Incluir padre para mostrar el breadcrumb de categoría en el admin
-              parent: { select: { id: true, name: true } },
-            },
+          categories: {
+            include: { parent: { select: { id: true, name: true } } },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -165,7 +171,8 @@ async function getProduct(req, res) {
 
     const product = await prisma.product.findUnique({
       where: { id: parseInt(id) },
-      include: { category: true },
+      // Antes: include: { category: true }
+      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
     });
 
     if (!product) {
@@ -182,7 +189,31 @@ async function getProduct(req, res) {
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
-    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, sku, youtubeUrl, categoryId, featured, weight, length, width, height } = req.body;
+    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, weight, length, width, height, visibility } = req.body;
+    // priceTiers/wholesalePriceTiers vienen como JSON string desde FormData → parsear y ordenar por minQty
+    function parseTiers(raw) {
+      if (!raw) return null;
+      try {
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Convertir minQty y price a número para evitar comparaciones de string incorrectas
+          return parsed
+            .map((t) => ({ minQty: parseInt(t.minQty), price: parseFloat(t.price) }))
+            .filter((t) => t.minQty > 0 && t.price > 0)
+            .sort((a, b) => a.minQty - b.minQty);
+        }
+      } catch (_) { /* ignorar JSON inválido */ }
+      return null;
+    }
+    const priceTiers = parseTiers(priceTiersRaw);
+    const wholesalePriceTiers = parseTiers(wholesalePriceTiersRaw);
+    // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
+    // Antes: categoryId (single) — ahora: categoryIds (multiple)
+    const rawCategoryIds = req.body.categoryIds;
+    const categoryIds = rawCategoryIds
+      ? (Array.isArray(rawCategoryIds) ? rawCategoryIds : [rawCategoryIds])
+          .map((id) => parseInt(id)).filter(Boolean)
+      : [];
 
     if (!name || !price || !cost) {
       return res.status(400).json({ error: "Nombre, precio y costo son requeridos" });
@@ -222,11 +253,15 @@ async function createProduct(req, res) {
         length: length ? parseFloat(length) : null,
         width:  width  ? parseFloat(width)  : null,
         height: height ? parseFloat(height) : null,
-        categoryId: categoryId ? parseInt(categoryId) : null,
+        // Antes: categoryId: categoryId ? parseInt(categoryId) : null
+        categories: categoryIds.length > 0 ? { connect: categoryIds.map((id) => ({ id })) } : undefined,
         featured: featured === "true" || featured === true,
+        visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : "AMBOS",
+        priceTiers: priceTiers || undefined,
+        wholesalePriceTiers: wholesalePriceTiers || undefined,
         images,
       },
-      include: { category: true },
+      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
     });
 
     res.status(201).json(product);
@@ -240,7 +275,32 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, sku, youtubeUrl, categoryId, featured, active, keepImages, weight, length, width, height } = req.body;
+    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, active, keepImages, weight, length, width, height, visibility } = req.body;
+    // priceTiers/wholesalePriceTiers vienen como JSON string desde FormData → parsear y ordenar por minQty
+    // undefined significa "no vino en el body, no tocar"; null o [] borra los tiers
+    function parseTiersUpdate(raw) {
+      if (raw === undefined) return undefined; // no vino → no tocar
+      try {
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Convertir minQty y price a número para evitar comparaciones de string incorrectas
+          return parsed
+            .map((t) => ({ minQty: parseInt(t.minQty), price: parseFloat(t.price) }))
+            .filter((t) => t.minQty > 0 && t.price > 0)
+            .sort((a, b) => a.minQty - b.minQty);
+        }
+        return null; // array vacío → borrar tiers
+      } catch (_) { return null; }
+    }
+    const priceTiersUpdate = parseTiersUpdate(priceTiersRaw);
+    const wholesalePriceTiersUpdate = parseTiersUpdate(wholesalePriceTiersRaw);
+    // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
+    // Antes: categoryId (single) — ahora: categoryIds (multiple)
+    const rawCategoryIds = req.body.categoryIds;
+    const categoryIds = rawCategoryIds !== undefined
+      ? (Array.isArray(rawCategoryIds) ? rawCategoryIds : [rawCategoryIds])
+          .map((id) => parseInt(id)).filter(Boolean)
+      : null; // null significa "no vino en el body, no tocar"
 
     const existing = await prisma.product.findUnique({ where: { id: parseInt(id) } });
     if (!existing) {
@@ -304,12 +364,17 @@ async function updateProduct(req, res) {
         length: length !== undefined ? (length ? parseFloat(length) : null) : existing.length,
         width:  width  !== undefined ? (width  ? parseFloat(width)  : null) : existing.width,
         height: height !== undefined ? (height ? parseFloat(height) : null) : existing.height,
-        categoryId: categoryId !== undefined ? (categoryId ? parseInt(categoryId) : null) : existing.categoryId,
+        // Antes: categoryId: categoryId !== undefined ? (categoryId ? parseInt(categoryId) : null) : existing.categoryId
+        // set: reemplaza todas las categorías por las nuevas; si no vino en el body, no tocar
+        ...(categoryIds !== null ? { categories: { set: categoryIds.map((id) => ({ id })) } } : {}),
         featured: featured !== undefined ? (featured === "true" || featured === true) : existing.featured,
         active: active !== undefined ? (active === "true" || active === true) : existing.active,
+        visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : existing.visibility,
+        ...(priceTiersUpdate !== undefined ? { priceTiers: priceTiersUpdate } : {}),
+        ...(wholesalePriceTiersUpdate !== undefined ? { wholesalePriceTiers: wholesalePriceTiersUpdate } : {}),
         images,
       },
-      include: { category: true },
+      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
     });
 
     res.json(product);
@@ -379,14 +444,10 @@ async function quickUpdateProduct(req, res) {
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
       data: updateData,
+      // Antes: include: { category: { select: { id, name, slug, parent } } }
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            parent: { select: { id: true, name: true } },
-          },
+        categories: {
+          include: { parent: { select: { id: true, name: true } } },
         },
       },
     });

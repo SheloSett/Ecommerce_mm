@@ -25,7 +25,7 @@ model Category {
   parentId  Int?
   parent    Category?  @relation("SubCategories", fields: [parentId], references: [id])
   children  Category[] @relation("SubCategories")
-  products  Product[]
+  products  Product[]  // M2M implícita — inverso de Product.categories
   createdAt DateTime   @default(now())
 
   @@map("categories")
@@ -44,6 +44,11 @@ model Product {
   stock           Int         @default(0)
   stockUnlimited  Boolean     @default(false) // Si true, el stock es ilimitado (∞)
   stockBreak      Int?        // Umbral de quiebre de stock: si stock <= stockBreak, aparece en la pestaña de alertas
+  // Descuentos por cantidad minorista: [{ minQty: number, price: number }] ordenado por minQty asc.
+  // Se aplica el tier con mayor minQty que no supere la cantidad pedida.
+  priceTiers           Json?
+  // Descuentos por cantidad mayorista: misma estructura, aplica solo a clientes MAYORISTA.
+  wholesalePriceTiers  Json?
   sku             String?     // Código SKU del producto
   youtubeUrl      String?     // URL de video de YouTube del producto
   weight          Float?      // Peso en kg
@@ -51,16 +56,25 @@ model Product {
   width           Float?      // Ancho en cm
   height          Float?      // Alto en cm
   images          String[]
-  categoryId      Int?
-  category        Category?   @relation(fields: [categoryId], references: [id])
+  // categoryId/category reemplazados por relación M2M — un producto puede tener varias categorías
+  // categoryId   Int?
+  // category     Category?   @relation(fields: [categoryId], references: [id])
+  categories      Category[]  // M2M implícita — Prisma genera la tabla _CategoryToProduct
   orderItems      OrderItem[]
   cartItems       CartItem[]  // Items de carrito que referencian este producto
+  visibility      CustomerVisibility @default(AMBOS) // Quién puede ver este producto: AMBOS, MAYORISTA o MINORISTA
   active          Boolean     @default(true)
   featured        Boolean     @default(false)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
   @@map("products")
+}
+
+enum CustomerVisibility {
+  AMBOS
+  MAYORISTA
+  MINORISTA
 }
 
 model Order {
@@ -223,4 +237,20 @@ enum MayoristaRequestStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+model Gasto {
+  id          Int        @id @default(autoincrement())
+  amount      Float
+  description String
+  type        GastoType
+  date        DateTime   @default(now())
+  createdAt   DateTime   @default(now())
+
+  @@map("gastos")
+}
+
+enum GastoType {
+  PERSONAL
+  NEGOCIO
 }

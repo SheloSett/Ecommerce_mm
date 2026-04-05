@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { productsApi, categoriesApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
@@ -16,22 +16,34 @@ const EMPTY_FORM = {
   stock: "",
   stockUnlimited: false,
   stockBreak: "",
+  // priceTiers: array de { minQty, price } para descuentos por cantidad (minoristas)
+  priceTiers: [],
+  // wholesalePriceTiers: igual que priceTiers pero para clientes MAYORISTA
+  wholesalePriceTiers: [],
   sku: "",
   youtubeUrl: "",
   weight: "",
   length: "",
   width: "",
   height: "",
-  categoryId: "",
+  // categoryId: "",  // Reemplazado por categoryIds (array M2M)
+  categoryIds: [],
   featured: false,
   active: true,
+  visibility: "AMBOS",
 };
 
-// Genera el breadcrumb de categoría: "Padre > Hijo" o solo "Nombre"
+// Genera el breadcrumb de una categoría: "Padre > Hijo" o solo "Nombre"
 function getCategoryBreadcrumb(category) {
   if (!category) return null;
   if (category.parent) return `${category.parent.name} > ${category.name}`;
   return category.name;
+}
+
+// Lista los breadcrumbs de todas las categorías de un producto, separados por " · "
+function getProductCategoryLabels(categories) {
+  if (!categories || categories.length === 0) return null;
+  return categories.map(getCategoryBreadcrumb).join(" · ");
 }
 
 // Genera un SKU simple a partir del nombre del producto (slug-like)
@@ -46,7 +58,105 @@ function nameToSku(name) {
     .substring(0, 30);
 }
 
+// Editor de niveles de precio por cantidad (reutilizable para minoristas y mayoristas)
+function TierEditor({ label, tiers, fieldKey, setForm }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label className="block text-sm font-medium text-slate-700">
+          {label}
+          <span className="ml-1 text-xs font-normal text-slate-400">— opcional</span>
+        </label>
+        <button
+          type="button"
+          onClick={() => setForm((f) => ({ ...f, [fieldKey]: [...f[fieldKey], { minQty: "", price: "" }] }))}
+          className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
+        >
+          + Agregar nivel
+        </button>
+      </div>
+      {tiers.length === 0 ? (
+        <p className="text-xs text-slate-400 italic">Sin descuentos por cantidad configurados.</p>
+      ) : (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
+                <th className="px-3 py-2 text-left font-semibold">Desde (unidades)</th>
+                <th className="px-3 py-2 text-left font-semibold">Precio unitario</th>
+                <th className="px-3 py-2 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {tiers.map((tier, idx) => (
+                <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 text-xs">+</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={tier.minQty}
+                        onChange={(e) =>
+                          setForm((f) => {
+                            const updated = [...f[fieldKey]];
+                            updated[idx] = { ...updated[idx], minQty: e.target.value };
+                            return { ...f, [fieldKey]: updated };
+                          })
+                        }
+                        placeholder="ej: 10"
+                        className="w-24 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      <span className="text-xs text-slate-400">unid.</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-400 text-sm">$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={tier.price}
+                        onChange={(e) =>
+                          setForm((f) => {
+                            const updated = [...f[fieldKey]];
+                            updated[idx] = { ...updated[idx], price: e.target.value };
+                            return { ...f, [fieldKey]: updated };
+                          })
+                        }
+                        placeholder="0.00"
+                        className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((f) => ({ ...f, [fieldKey]: f[fieldKey].filter((_, i) => i !== idx) }))
+                      }
+                      className="text-red-400 hover:text-red-600 text-base leading-none"
+                      title="Eliminar nivel"
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-xs text-slate-400 mt-1">
+        Se aplica el precio del mayor nivel que no supere la cantidad pedida.
+      </p>
+    </div>
+  );
+}
+
 export default function AdminProducts() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") || "all";
   const isSinStock      = activeTab === "sinstock";
@@ -130,15 +240,19 @@ export default function AdminProducts() {
       stock: product.stock.toString(),
       stockUnlimited: product.stockUnlimited || false,
       stockBreak: product.stockBreak?.toString() || "",
+      priceTiers: Array.isArray(product.priceTiers) ? product.priceTiers : [],
+      wholesalePriceTiers: Array.isArray(product.wholesalePriceTiers) ? product.wholesalePriceTiers : [],
       sku: product.sku || "",
       youtubeUrl: product.youtubeUrl || "",
       weight: product.weight?.toString() || "",
       length: product.length?.toString() || "",
       width:  product.width?.toString()  || "",
       height: product.height?.toString() || "",
-      categoryId: product.categoryId?.toString() || "",
+      // categoryId: product.categoryId?.toString() || "",  // Reemplazado por M2M
+      categoryIds: product.categories?.map((c) => c.id.toString()) || [],
       featured: product.featured,
       active: product.active,
+      visibility: product.visibility || "AMBOS",
     });
     setNewImages([]);
     setKeepImages(product.images || []);
@@ -181,15 +295,20 @@ export default function AdminProducts() {
       formData.append("stock", form.stockUnlimited ? "0" : (form.stock || "0"));
       formData.append("stockUnlimited", form.stockUnlimited);
       formData.append("stockBreak", form.stockBreak || "");
+      // priceTiers/wholesalePriceTiers se envían como JSON string (FormData no admite arrays de objetos directamente)
+      formData.append("priceTiers", JSON.stringify(form.priceTiers || []));
+      formData.append("wholesalePriceTiers", JSON.stringify(form.wholesalePriceTiers || []));
       formData.append("sku", form.sku);
       formData.append("youtubeUrl", form.youtubeUrl);
       formData.append("weight", form.weight);
       formData.append("length", form.length);
       formData.append("width",  form.width);
       formData.append("height", form.height);
-      formData.append("categoryId", form.categoryId || "");
+      // categoryId: form.categoryId — Reemplazado por M2M: enviar cada ID por separado
+      form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       formData.append("featured", form.featured);
       formData.append("active", form.active);
+      formData.append("visibility", form.visibility || "AMBOS");
 
       newImages.forEach((file) => formData.append("images", file));
 
@@ -338,7 +457,7 @@ export default function AdminProducts() {
             />
             <button type="submit" className="btn-secondary px-4">🔍</button>
           </form>
-          <button onClick={openCreate} className="btn-primary">
+          <button onClick={() => navigate("/admin/productos/nuevo")} className="btn-primary">
             + Nuevo producto
           </button>
         </div>
@@ -391,7 +510,8 @@ export default function AdminProducts() {
               true
             ).map((p) => {
               const img = p.images?.[0];
-              const breadcrumb = getCategoryBreadcrumb(p.category);
+              // Antes: getCategoryBreadcrumb(p.category) — ahora M2M array
+              const breadcrumb = getProductCategoryLabels(p.categories);
               const isQuickOpen = openQuickEdit.has(p.id);
               const qv = quickEditValues[p.id] || {};
               const isSaving = quickEditSaving.has(p.id);
@@ -689,13 +809,13 @@ export default function AdminProducts() {
         )}
       </div>
 
-      {/* Modal crear / editar producto */}
-      {showModal && (
+      {/* Modal editar producto (crear va a /admin/productos/nuevo) */}
+      {showModal && editingProduct && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">
-                {editingProduct ? "Editar producto" : "Nuevo producto"}
+                Editar producto
               </h2>
               <button
                 onClick={() => setShowModal(false)}
@@ -882,35 +1002,46 @@ export default function AdminProducts() {
                 </div>
               </div>
 
-              {/* Categoría */}
+              {/* Categorías (M2M — múltiple selección con checkboxes) */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Categoría</label>
-                <select
-                  value={form.categoryId}
-                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
-                  className="input bg-white"
-                >
-                  <option value="">Sin categoría</option>
-                  {categories.map((c) =>
-                    // Si la categoría tiene subcategorías, usar optgroup para agruparlas visualmente
-                    c.children && c.children.length > 0 ? (
-                      <optgroup key={c.id} label={c.name}>
-                        {/* La categoría padre también es seleccionable */}
-                        <option value={c.id}>{c.name} (general)</option>
-                        {c.children.map((sub) => (
-                          <option key={sub.id} value={sub.id}>
-                            ↳ {sub.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : (
-                      // Categoría sin hijos: se muestra como opción simple
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    )
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Categorías
+                  {form.categoryIds.length > 0 && (
+                    <span className="ml-2 text-xs font-normal text-blue-600">
+                      {form.categoryIds.length} seleccionada{form.categoryIds.length > 1 ? "s" : ""}
+                    </span>
                   )}
-                </select>
+                </label>
+                <div className="border border-slate-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-slate-100">
+                  {categories.map((c) => {
+                    // Genera la lista plana de opciones: padre + hijos indentados
+                    const opts = c.children && c.children.length > 0
+                      ? [{ id: c.id, label: c.name, indent: false }, ...c.children.map((s) => ({ id: s.id, label: `↳ ${s.name}`, indent: true }))]
+                      : [{ id: c.id, label: c.name, indent: false }];
+                    return opts.map((opt) => {
+                      const checked = form.categoryIds.includes(opt.id.toString());
+                      return (
+                        <label key={opt.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50 ${opt.indent ? "pl-6" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const sid = opt.id.toString();
+                              setForm((f) => ({
+                                ...f,
+                                categoryIds: checked
+                                  ? f.categoryIds.filter((id) => id !== sid)
+                                  : [...f.categoryIds, sid],
+                              }));
+                            }}
+                            className="rounded border-slate-300 text-blue-600"
+                          />
+                          <span className="text-sm text-slate-700">{opt.label}</span>
+                        </label>
+                      );
+                    });
+                  })}
+                </div>
               </div>
 
               {/* Opciones */}
@@ -934,6 +1065,48 @@ export default function AdminProducts() {
                   <span className="text-sm font-medium text-slate-700">Activo (visible en tienda)</span>
                 </label>
               </div>
+
+              {/* Visibilidad por tipo de cliente */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
+                <div className="flex gap-3">
+                  {[
+                    { value: "AMBOS",     label: "Todos",       icon: "👥" },
+                    { value: "MINORISTA", label: "Minorista",   icon: "🛒" },
+                    { value: "MAYORISTA", label: "Mayorista",   icon: "🏭" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setForm({ ...form, visibility: opt.value })}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 text-sm font-medium transition-colors ${
+                        form.visibility === opt.value
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <span>{opt.icon}</span>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Descuentos por cantidad — Minoristas (priceTiers) */}
+              <TierEditor
+                label="Descuentos por cantidad — Minoristas"
+                tiers={form.priceTiers}
+                fieldKey="priceTiers"
+                setForm={setForm}
+              />
+
+              {/* Descuentos por cantidad — Mayoristas (wholesalePriceTiers) */}
+              <TierEditor
+                label="Descuentos por cantidad — Mayoristas"
+                tiers={form.wholesalePriceTiers}
+                fieldKey="wholesalePriceTiers"
+                setForm={setForm}
+              />
 
               {/* Imágenes existentes (al editar) */}
               {keepImages.length > 0 && (

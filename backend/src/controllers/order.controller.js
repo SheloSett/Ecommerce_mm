@@ -1,4 +1,17 @@
 const { PrismaClient } = require("@prisma/client");
+
+// Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
+// Los tiers son [{ minQty, price }] ordenados por minQty asc.
+// Se aplica el tier con mayor minQty que no supere la cantidad pedida.
+// Si no hay tiers o ninguno aplica, retorna null (usar precio normal).
+function applyPriceTier(tiers, quantity) {
+  if (!tiers || !Array.isArray(tiers) || tiers.length === 0) return null;
+  let tierPrice = null;
+  for (const tier of tiers) {
+    if (quantity >= tier.minQty) tierPrice = tier.price;
+  }
+  return tierPrice;
+}
 const {
   sendOrderConfirmationToCustomer,
   sendOrderNotificationToAdmin,
@@ -137,6 +150,12 @@ async function createOrder(req, res) {
       } else if (!isMayorista && product.salePrice && product.salePrice < product.price) {
         effectivePrice = product.salePrice;
       }
+
+      // Descuentos por cantidad: se aplica el tier del tipo de cliente correspondiente.
+      // Mayorista usa wholesalePriceTiers; minorista usa priceTiers.
+      const activeTiers = isMayorista ? product.wholesalePriceTiers : product.priceTiers;
+      const tierPrice = applyPriceTier(activeTiers, item.quantity);
+      if (tierPrice !== null) effectivePrice = tierPrice;
 
       // Para cotizaciones: si el cliente envió un customPrice válido, se usa ese precio.
       // Esto permite negociar precios por pedido sin modificar el producto publicado.

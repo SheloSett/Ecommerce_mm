@@ -125,7 +125,8 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
 router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) => {
   try {
     const customerId = req.user.id;
-    const { productId, quantity = 1, name, price, image } = req.body;
+    const { productId, name, price, image } = req.body;
+    const quantity = parseInt(req.body.quantity) || 1;
 
     // Upsert del carrito: crea si no existe, actualiza updatedAt si ya existe
     const cart = await prisma.cart.upsert({
@@ -140,20 +141,40 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     });
 
     if (existing) {
+      const newQty = existing.quantity + quantity;
+      // Recalcular precio según el nuevo total de cantidad y los tiers del producto
+      const productData = await prisma.product.findUnique({
+        where:  { id: productId },
+        select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
+      });
+      const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
+      const isMayorista = customer?.type === "MAYORISTA";
+      const basePrice = isMayorista && productData?.wholesalePrice
+        ? (productData.wholesaleSalePrice ?? productData.wholesalePrice)
+        : (productData?.salePrice ?? productData?.price ?? existing.price);
+      let newPrice = basePrice;
+      // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
+      const activeTiers = isMayorista ? productData?.wholesalePriceTiers : productData?.priceTiers;
+      if (Array.isArray(activeTiers) && activeTiers.length > 0) {
+        const applicableTier = [...activeTiers]
+          .sort((a, b) => b.minQty - a.minQty)
+          .find((t) => newQty >= t.minQty);
+        if (applicableTier) newPrice = parseFloat(applicableTier.price);
+      }
       await prisma.cartItem.update({
         where: { id: existing.id },
-        data:  { quantity: existing.quantity + quantity },
+        data:  { quantity: newQty, price: parseFloat(newPrice) },
       });
     } else {
       await prisma.cartItem.create({
-        data: { cartId: cart.id, productId, quantity, name, price, image },
+        data: { cartId: cart.id, productId, quantity, name, price: parseFloat(price), image },
       });
     }
 
     // Retornar carrito completo con stock del producto para validaciones en el frontend
     const updatedCart = await prisma.cart.findUnique({
       where:   { customerId },
-      include: { items: { include: { product: { select: { stock: true } } } } },
+      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
     });
 
     res.json(updatedCart);
@@ -172,7 +193,8 @@ router.patch("/my/items/:itemId", authMiddleware, customerMiddleware, async (req
 
     // Verificar que el item pertenece al carrito de este cliente
     const item = await prisma.cartItem.findFirst({
-      where: { id: itemId, cart: { customerId } },
+      where:   { id: itemId, cart: { customerId } },
+      include: { product: { select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true } } },
     });
     if (!item) return res.status(404).json({ error: "Item no encontrado" });
 
@@ -180,14 +202,34 @@ router.patch("/my/items/:itemId", authMiddleware, customerMiddleware, async (req
       // Si la cantidad baja a 0 o menos, eliminar el item directamente
       await prisma.cartItem.delete({ where: { id: itemId } });
     } else {
-      await prisma.cartItem.update({ where: { id: itemId }, data: { quantity } });
+      // Recalcular el precio según la nueva cantidad y los tiers del producto
+      // El precio base depende del tipo de cliente (mayorista o minorista)
+      const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
+      const isMayorista = customer?.type === "MAYORISTA";
+      const product = item.product;
+      const basePrice = isMayorista && product?.wholesalePrice
+        ? (product.wholesaleSalePrice ?? product.wholesalePrice)
+        : (product?.salePrice ?? product?.price ?? item.price);
+
+      // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
+      // Aplicar el tier con mayor minQty que no supere la nueva cantidad
+      let newPrice = basePrice;
+      const activeTiers = isMayorista ? product?.wholesalePriceTiers : product?.priceTiers;
+      if (Array.isArray(activeTiers) && activeTiers.length > 0) {
+        const applicableTier = [...activeTiers]
+          .sort((a, b) => b.minQty - a.minQty)
+          .find((t) => quantity >= t.minQty);
+        if (applicableTier) newPrice = parseFloat(applicableTier.price);
+      }
+
+      await prisma.cartItem.update({ where: { id: itemId }, data: { quantity: parseInt(quantity), price: parseFloat(newPrice) } });
     }
 
     await prisma.cart.update({ where: { customerId }, data: { updatedAt: new Date() } });
 
     const cart = await prisma.cart.findUnique({
       where:   { customerId },
-      include: { items: { include: { product: { select: { stock: true } } } } },
+      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
     });
 
     res.json(cart);
@@ -213,7 +255,7 @@ router.delete("/my/items/:itemId", authMiddleware, customerMiddleware, async (re
 
     const cart = await prisma.cart.findUnique({
       where:   { customerId },
-      include: { items: { include: { product: { select: { stock: true } } } } },
+      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
     });
 
     res.json(cart);
