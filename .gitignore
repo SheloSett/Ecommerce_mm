@@ -1,4 +1,7 @@
 .env
+.env.local
+.env.*.local
+.env.example
 node_modules
 .claude
 # Backups de base de datos (no versionar, pueden ser grandes)
