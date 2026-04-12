@@ -1,14 +1,20 @@
 const jwt = require("jsonwebtoken");
 
 // Verifica que el token JWT sea válido
+// Acepta el token vía header "Authorization: Bearer <token>" o via ?token= en query string.
+// El fallback a query param es necesario para SSE: el browser no permite headers custom en EventSource.
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  // Intentar header primero; si no hay, intentar query param (solo para SSE)
+  let token;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.query.token) {
+    token = req.query.token;
+  } else {
     return res.status(401).json({ error: "Token no proporcionado" });
   }
-
-  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);

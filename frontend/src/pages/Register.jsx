@@ -12,6 +12,8 @@ export default function Register() {
     password: "",
     confirmPassword: "",
     phone: "",
+    documentType: "DNI",
+    cuit: "",
     company: "",
   });
   const [loading, setLoading] = useState(false);
@@ -24,8 +26,8 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.name.trim() || !form.email.trim() || !form.password) {
-      toast.error("Nombre, email y contraseña son requeridos");
+    if (!form.name.trim() || !form.email.trim() || !form.password || !form.phone.trim() || !form.cuit.trim()) {
+      toast.error("Nombre, email, contraseña, teléfono y número de documento son requeridos");
       return;
     }
 
@@ -153,7 +155,7 @@ export default function Register() {
                 {/* Teléfono */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Teléfono <span className="text-slate-400 font-normal">(opcional)</span>
+                    Teléfono <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="tel"
@@ -162,7 +164,46 @@ export default function Register() {
                     onChange={handleChange}
                     placeholder="+54 11 1234-5678"
                     className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
                   />
+                </div>
+
+                {/* Tipo de documento + número */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Documento <span className="text-red-500">*</span>
+                  </label>
+                  <div className="flex gap-2">
+                    {/* Selector de tipo */}
+                    <div className="flex rounded-xl border border-slate-300 overflow-hidden text-sm">
+                      {["DNI", "CUIT", "CUIL"].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setForm((p) => ({ ...p, documentType: type }))}
+                          className={`px-3 py-2.5 font-medium transition-colors ${
+                            form.documentType === type
+                              ? "bg-blue-600 text-white"
+                              : "bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Número de documento */}
+                    <input
+                      type="text"
+                      name="cuit"
+                      value={form.cuit}
+                      onChange={handleChange}
+                      placeholder={
+                        form.documentType === "DNI" ? "12345678" : "20-12345678-9"
+                      }
+                      className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      required
+                    />
+                  </div>
                 </div>
 
                 {/* Empresa */}

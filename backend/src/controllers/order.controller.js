@@ -1,4 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
+const { pushToClient } = require("../sse/notificationSSE");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -8,7 +9,8 @@ function applyPriceTier(tiers, quantity) {
   if (!tiers || !Array.isArray(tiers) || tiers.length === 0) return null;
   let tierPrice = null;
   for (const tier of tiers) {
-    if (quantity >= tier.minQty) tierPrice = tier.price;
+    // parseFloat: los tiers guardados antes de la corrección pueden ser strings
+    if (quantity >= parseFloat(tier.minQty)) tierPrice = parseFloat(tier.price);
   }
   return tierPrice;
 }
@@ -84,6 +86,8 @@ async function getOrder(req, res) {
             product: { select: { id: true, name: true, images: true } },
           },
         },
+        // Incluir cupón para mostrarlo en el detalle de la orden en el panel admin
+        coupon: { select: { code: true, discountType: true, discountValue: true } },
       },
     });
 
@@ -101,7 +105,7 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode } = req.body;
 
     if (!customerName || !customerEmail || !items || items.length === 0) {
       return res.status(400).json({ error: "Datos de la orden incompletos" });
@@ -173,6 +177,46 @@ async function createOrder(req, res) {
       });
     }
 
+    // Aplicar cupón si se envió uno (ahora también válido para COTIZACION)
+    let appliedCoupon = null;
+    let couponDiscount = 0;
+    if (couponCode) {
+      const coupon = await prisma.coupon.findUnique({
+        where: { code: couponCode.toUpperCase().trim() },
+        include: { customer: { select: { email: true } } },
+      });
+      // Validar cupón (misma lógica que /validate, pero sin abortar la orden si falla)
+      const now = new Date();
+      const isValid =
+        coupon &&
+        coupon.active &&
+        (!coupon.expiresAt || now <= new Date(coupon.expiresAt)) &&
+        (!coupon.minPurchase || total >= coupon.minPurchase) &&
+        (!coupon.customerId || coupon.customer?.email.toLowerCase() === customerEmail.toLowerCase());
+
+      if (isValid) {
+        // Verificar usos totales
+        const totalUsages = coupon.maxUses
+          ? await prisma.couponUsage.count({ where: { couponId: coupon.id } })
+          : 0;
+        const underTotalLimit = !coupon.maxUses || totalUsages < coupon.maxUses;
+
+        // Verificar usos por cliente
+        const customerUsages = coupon.maxUsesPerCustomer
+          ? await prisma.couponUsage.count({ where: { couponId: coupon.id, customerEmail: customerEmail.toLowerCase() } })
+          : 0;
+        const underCustomerLimit = !coupon.maxUsesPerCustomer || customerUsages < coupon.maxUsesPerCustomer;
+
+        if (underTotalLimit && underCustomerLimit) {
+          appliedCoupon = coupon;
+          couponDiscount = coupon.discountType === "PERCENTAGE"
+            ? Math.round((total * coupon.discountValue) / 100 * 100) / 100
+            : Math.min(coupon.discountValue, total);
+          total = Math.max(0, total - couponDiscount);
+        }
+      }
+    }
+
     // Crear la orden en la base de datos con el método de pago elegido.
     // Si el cliente está registrado, vincular la orden a su cuenta via customerId.
     const order = await prisma.order.create({
@@ -184,6 +228,7 @@ async function createOrder(req, res) {
         total,
         status: "PENDING",
         paymentMethod: method,
+        ...(appliedCoupon ? { couponId: appliedCoupon.id, couponDiscount } : {}),
         items: {
           create: orderItems,
         },
@@ -194,8 +239,21 @@ async function createOrder(req, res) {
             product: { select: { id: true, name: true, images: true } },
           },
         },
+        // Incluir cupón para mostrarlo en el email de confirmación
+        coupon: { select: { code: true } },
       },
     });
+
+    // Registrar uso del cupón si se aplicó uno
+    if (appliedCoupon) {
+      await prisma.couponUsage.create({
+        data: {
+          couponId: appliedCoupon.id,
+          orderId: order.id,
+          customerEmail: customerEmail.toLowerCase(),
+        },
+      });
+    }
 
     // Para cotizaciones: reservar stock inmediatamente al crear la orden.
     // Esto evita que el mismo producto pueda agregarse al carrito de nuevo
@@ -424,22 +482,34 @@ async function updateOrderStatus(req, res) {
 }
 
 // GET /api/orders/stats - Estadísticas para el dashboard (admin)
+// Soporta filtro por fecha: ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
 async function getStats(req, res) {
   try {
+    const { dateFrom, dateTo } = req.query;
+    // Construir filtro de fecha si se pasan los parámetros
+    const dateFilter = {};
+    if (dateFrom) dateFilter.gte = new Date(dateFrom);
+    if (dateTo) {
+      const end = new Date(dateTo);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.lte = end;
+    }
+    const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+
     const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems] =
       await Promise.all([
-        prisma.order.count(),
-        prisma.order.count({ where: { status: "APPROVED" } }),
-        prisma.order.count({ where: { status: "PENDING" } }),
+        prisma.order.count({ where: { ...orderDateWhere } }),
+        prisma.order.count({ where: { status: "APPROVED", ...orderDateWhere } }),
+        prisma.order.count({ where: { status: "PENDING", ...orderDateWhere } }),
         prisma.order.aggregate({
-          where: { status: "APPROVED" },
+          where: { status: "APPROVED", ...orderDateWhere },
           _sum: { total: true },
         }),
         prisma.product.count({ where: { active: true } }),
         // Traer todos los items de órdenes APPROVED con el costo del producto
         // para calcular ganancia bruta = ingresos - costo
         prisma.orderItem.findMany({
-          where: { order: { status: "APPROVED" } },
+          where: { order: { status: "APPROVED", ...orderDateWhere } },
           include: { product: { select: { cost: true } } },
         }),
       ]);
@@ -611,7 +681,12 @@ async function getMyCotizaciones(req, res) {
     const customerId = req.user.id;
 
     const orders = await prisma.order.findMany({
-      where: { customerId, paymentMethod: "COTIZACION" },
+      where: {
+        customerId,
+        paymentMethod: "COTIZACION",
+        // Las APPROVED ya aparecen en la pestaña Pedidos — excluirlas de Cotizaciones
+        status: { not: "APPROVED" },
+      },
       orderBy: { createdAt: "desc" },
     });
 
@@ -648,9 +723,12 @@ async function buildSnapshot(orderId) {
 // ── Helper: crear notificación para el cliente ────────────────────────────────
 async function createNotification(customerId, orderId, type, message) {
   if (!customerId) return; // No notificar si la orden no está vinculada a cuenta
-  await prisma.notification.create({
+  const notification = await prisma.notification.create({
     data: { customerId, orderId, type, message },
   });
+  // Pushear en tiempo real si el cliente tiene una conexión SSE activa
+  // Si no está conectado, no pasa nada — verá la notificación cuando abra la app
+  pushToClient(customerId, { type: "notification", notification });
 }
 
 // POST /api/orders/:id/publish - Admin: publica cambios de items al cliente
@@ -811,6 +889,8 @@ async function confirmCotizacionPayment(req, res) {
         items: {
           include: { product: { select: { id: true, name: true, images: true } } },
         },
+        // Incluir cupón para mostrarlo en el email
+        coupon: { select: { code: true } },
       },
     });
     if (!order) return res.status(404).json({ error: "Cotización no encontrada o no disponible" });
@@ -834,9 +914,19 @@ async function confirmCotizacionPayment(req, res) {
 // GET /api/orders/metrics - Métricas: top clientes, top productos vendidos, top productos rentables
 async function getMetrics(req, res) {
   try {
+    const { dateFrom, dateTo } = req.query;
+    const dateFilter = {};
+    if (dateFrom) dateFilter.gte = new Date(dateFrom);
+    if (dateTo) {
+      const end = new Date(dateTo);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.lte = end;
+    }
+    const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+
     // Traer todos los items de órdenes APPROVED con producto y cliente
     const items = await prisma.orderItem.findMany({
-      where: { order: { status: "APPROVED" } },
+      where: { order: { status: "APPROVED", ...orderDateWhere } },
       include: {
         order: { select: { customerId: true, customerName: true, customerEmail: true, total: true } },
         product: { select: { id: true, name: true, images: true, cost: true } },
@@ -894,9 +984,187 @@ async function getMetrics(req, res) {
   }
 }
 
+// PATCH /api/orders/:id/apply-coupon — Aplicar cupón a una cotización ya creada (cliente MAYORISTA)
+// Valida el cupón, actualiza el total de la orden y registra el uso.
+async function applyCouponToOrder(req, res) {
+  try {
+    const orderId = parseInt(req.params.id);
+    const { couponCode, customerEmail } = req.body;
+
+    if (!couponCode || !customerEmail) {
+      return res.status(400).json({ valid: false, error: "Código y email son requeridos" });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { couponUsage: true },
+    });
+    if (!order) return res.status(404).json({ valid: false, error: "Orden no encontrada" });
+    if (order.couponId) return res.status(400).json({ valid: false, error: "Esta cotización ya tiene un cupón aplicado" });
+
+    const coupon = await prisma.coupon.findUnique({
+      where: { code: couponCode.toUpperCase().trim() },
+      include: { customer: { select: { email: true } } },
+    });
+
+    if (!coupon || !coupon.active) {
+      return res.json({ valid: false, error: "Cupón inválido o inactivo" });
+    }
+    if (coupon.expiresAt && new Date() > new Date(coupon.expiresAt)) {
+      return res.json({ valid: false, error: "El cupón ya venció" });
+    }
+    // El total de la cotización es el precio acordado por el admin (sin descuentos previos)
+    if (coupon.minPurchase && order.total < coupon.minPurchase) {
+      return res.json({
+        valid: false,
+        error: `El cupón requiere una compra mínima de $${coupon.minPurchase.toLocaleString("es-AR")}`,
+      });
+    }
+    if (coupon.customerId && coupon.customer) {
+      if (coupon.customer.email.toLowerCase() !== customerEmail.toLowerCase()) {
+        return res.json({ valid: false, error: "Este cupón no es válido para tu cuenta" });
+      }
+    }
+
+    // Verificar límites de uso
+    if (coupon.maxUses) {
+      const totalUsages = await prisma.couponUsage.count({ where: { couponId: coupon.id } });
+      if (totalUsages >= coupon.maxUses) {
+        return res.json({ valid: false, error: "El cupón alcanzó su límite de usos" });
+      }
+    }
+    if (coupon.maxUsesPerCustomer) {
+      const customerUsages = await prisma.couponUsage.count({
+        where: { couponId: coupon.id, customerEmail: customerEmail.toLowerCase() },
+      });
+      if (customerUsages >= coupon.maxUsesPerCustomer) {
+        return res.json({ valid: false, error: "Ya usaste este cupón el máximo de veces permitido" });
+      }
+    }
+
+    // Calcular descuento y nuevo total
+    const discount = coupon.discountType === "PERCENTAGE"
+      ? Math.round((order.total * coupon.discountValue) / 100 * 100) / 100
+      : Math.min(coupon.discountValue, order.total);
+    const newTotal = Math.max(0, order.total - discount);
+
+    // Actualizar orden y registrar uso en una transacción
+    const [updatedOrder] = await prisma.$transaction([
+      prisma.order.update({
+        where: { id: orderId },
+        data: { total: newTotal, couponId: coupon.id, couponDiscount: discount },
+      }),
+      prisma.couponUsage.create({
+        data: { couponId: coupon.id, orderId, customerEmail: customerEmail.toLowerCase() },
+      }),
+    ]);
+
+    return res.json({
+      valid: true,
+      discountAmount: discount,
+      newTotal: updatedOrder.total,
+      coupon: {
+        code: coupon.code,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
+      },
+    });
+  } catch (err) {
+    console.error("applyCouponToOrder error:", err);
+    res.status(500).json({ valid: false, error: "Error al aplicar el cupón" });
+  }
+}
+
+// POST /api/orders/admin/manual — Admin registra una venta manual (presencial/teléfono/etc.)
+// A diferencia del checkout público, el admin fija explícitamente el precio de cada item.
+// El stock se descuenta igual que en una venta normal.
+async function createManualOrder(req, res) {
+  try {
+    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status } = req.body;
+
+    if (!customerName || !customerEmail) {
+      return res.status(400).json({ error: "Nombre y email del cliente son requeridos" });
+    }
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: "La venta debe tener al menos un producto" });
+    }
+
+    const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA"];
+    const method = validMethods.includes(paymentMethod) ? paymentMethod : "EFECTIVO";
+
+    const validStatuses = ["PENDING", "APPROVED"];
+    const orderStatus = validStatuses.includes(status) ? status : "APPROVED";
+
+    // Verificar stock y armar items con el precio que fijó el admin
+    let total = 0;
+    const orderItems = [];
+
+    for (const item of items) {
+      const product = await prisma.product.findUnique({ where: { id: parseInt(item.productId) } });
+      if (!product) {
+        return res.status(400).json({ error: `Producto no encontrado: ${item.productId}` });
+      }
+
+      const qty = parseInt(item.quantity);
+      const price = parseFloat(item.price);
+
+      if (qty <= 0 || isNaN(price) || price < 0) {
+        return res.status(400).json({ error: `Cantidad o precio inválido para "${product.name}"` });
+      }
+
+      // Verificar stock (solo si no es ilimitado)
+      if (!product.stockUnlimited && product.stock < qty) {
+        return res.status(400).json({
+          error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
+        });
+      }
+
+      total += price * qty;
+      orderItems.push({ productId: product.id, quantity: qty, price });
+    }
+
+    // Crear la orden y descontar stock en una transacción
+    const order = await prisma.$transaction(async (tx) => {
+      // Descontar stock
+      for (const item of orderItems) {
+        const product = await tx.product.findUnique({ where: { id: item.productId } });
+        if (!product.stockUnlimited) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data:  { stock: { decrement: item.quantity } },
+          });
+        }
+      }
+
+      return tx.order.create({
+        data: {
+          customerName,
+          customerEmail,
+          customerPhone: customerPhone || null,
+          customerId:    customerId ? parseInt(customerId) : null,
+          total,
+          status:        orderStatus,
+          paymentMethod: method,
+          adminNotes:    notes || null,
+          items: { create: orderItems },
+        },
+        include: {
+          items: { include: { product: { select: { id: true, name: true, images: true } } } },
+        },
+      });
+    });
+
+    res.status(201).json(order);
+  } catch (err) {
+    console.error("createManualOrder error:", err);
+    res.status(500).json({ error: "Error al registrar la venta" });
+  }
+}
+
 module.exports = {
   getOrders, getOrder, createOrder, updateOrderStatus, getStats, getMetrics, deleteOrder,
   getMyOrders, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
+  applyCouponToOrder, createManualOrder,
 };

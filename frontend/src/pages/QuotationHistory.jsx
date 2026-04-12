@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, getImageUrl } from "../services/api";
@@ -91,16 +91,29 @@ export default function QuotationHistory() {
         <div className="max-w-3xl mx-auto px-4">
 
           {/* Encabezado */}
-          <div className="flex items-center gap-3 mb-8">
+          <div className="flex items-center gap-3 mb-6">
             <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-slate-800">Mis cotizaciones</h1>
+              <h1 className="text-2xl font-bold text-slate-800">Mis pedidos</h1>
               <p className="text-sm text-slate-500">Solicitudes enviadas al vendedor</p>
             </div>
+          </div>
+
+          {/* Tabs: Pedidos / Cotizaciones */}
+          <div className="flex border-b border-slate-200 mb-6">
+            <Link
+              to="/pedidos"
+              className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+            >
+              Pedidos
+            </Link>
+            <span className="px-4 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600">
+              Cotizaciones
+            </span>
           </div>
 
           {loading && (

@@ -121,8 +121,12 @@ export default function ProductDetail() {
     if (!product) return;
     if (outOfStock) return;
     const safeQty = isMayorista ? quantity : Math.min(quantity, availableStock);
-    // Si hay un tier seleccionado, usar su precio como override
-    await addItem(product, safeQty, selectedTier ? selectedTier.price : null);
+    // Solo aplicar precio del tier si la cantidad final sigue cumpliendo el mínimo requerido.
+    // Si el stock cap redujo la cantidad por debajo del minQty del tier, no aplicar el precio.
+    const tierPrice = (selectedTier && safeQty >= parseInt(selectedTier.minQty))
+      ? selectedTier.price
+      : null;
+    await addItem(product, safeQty, tierPrice);
     toast.success(`${safeQty}x "${product.name}" agregado al carrito`);
   };
 
@@ -336,22 +340,32 @@ export default function ProductDetail() {
                           ? Math.round(((basePrice - tier.price) / basePrice) * 100)
                           : null;
                         const isSelected = parseInt(selectedTier?.minQty) === parseInt(tier.minQty);
+                        // Deshabilitar si el stock disponible no alcanza el mínimo del tier.
+                        // Mayoristas tienen stock ilimitado, así que para ellos nunca se deshabilita.
+                        const sinStockSuficiente = !isMayorista
+                          && !product.stockUnlimited
+                          && availableStock < parseInt(tier.minQty);
                         return (
                           <tr
                             key={i}
                             onClick={() => {
-                              // Al hacer click en un tier, poner la cantidad mínima de ese tier
-                              // y dejar que changeQuantity seleccione el tier correcto
+                              if (sinStockSuficiente) return; // ignorar click si no hay stock
                               changeQuantity(tier.minQty);
                             }}
-                            className={`cursor-pointer transition-colors ${
-                              isSelected
-                                ? "bg-blue-50 border-l-4 border-blue-500"
-                                : i % 2 === 0 ? "bg-white hover:bg-slate-50" : "bg-slate-50 hover:bg-slate-100"
+                            title={sinStockSuficiente ? `Stock disponible: ${availableStock} unidades` : undefined}
+                            className={`transition-colors ${
+                              sinStockSuficiente
+                                ? "opacity-40 cursor-not-allowed"
+                                : isSelected
+                                  ? "cursor-pointer bg-blue-50 border-l-4 border-blue-500"
+                                  : `cursor-pointer ${i % 2 === 0 ? "bg-white hover:bg-slate-50" : "bg-slate-50 hover:bg-slate-100"}`
                             }`}
                           >
                             <td className={`px-4 py-3 font-medium ${isSelected ? "text-blue-700" : "text-slate-700"}`}>
                               +{tier.minQty} unidades
+                              {sinStockSuficiente && (
+                                <span className="ml-2 text-xs text-slate-400">(sin stock suficiente)</span>
+                              )}
                             </td>
                             <td className={`px-4 py-3 font-semibold ${isSelected ? "text-blue-700" : "text-slate-800"}`}>
                               {formatPrice(tier.price)}
@@ -360,7 +374,7 @@ export default function ProductDetail() {
                               {isSelected && (
                                 <span className="mr-2 text-blue-500 text-xs font-semibold">✓ seleccionado</span>
                               )}
-                              {discountPct > 0 && (
+                              {discountPct > 0 && !sinStockSuficiente && (
                                 <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded-full">
                                   {discountPct}% OFF
                                 </span>

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
-import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
+import { ordersApi, paymentsApi, couponsApi, getImageUrl } from "../services/api";
 import toast from "react-hot-toast";
 
 // Íconos de métodos de pago como SVG inline para no depender de librerías externas
@@ -44,12 +44,18 @@ export default function Checkout() {
   const [customPrices, setCustomPrices] = useState({});
   // ID del ítem cuyo precio se está editando en este momento
   const [editingPriceId, setEditingPriceId] = useState(null);
+  // Cupón de descuento aplicado
+  const [couponCode, setCouponCode]         = useState("");
+  const [couponResult, setCouponResult]     = useState(null); // { discountAmount, coupon }
+  const [couponLoading, setCouponLoading]   = useState(false);
 
   // Pre-rellenar con datos del cliente si está logueado
   const [form, setForm] = useState({
     customerName:  customer?.name  || "",
     customerEmail: customer?.email || "",
     customerPhone: customer?.phone || "",
+    customerCuit:  customer?.cuit  || "",
+    documentType:  customer?.documentType || "DNI",
   });
 
   // Método de pago: mayoristas siempre usan COTIZACION; minoristas eligen
@@ -67,12 +73,38 @@ export default function Checkout() {
   };
 
   // Total calculado con los precios custom (solo para cotización)
-  const finalTotal = isMayorista
+  const subtotal = isMayorista
     ? items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0)
     : totalPrice;
+  const couponDiscount = couponResult?.discountAmount || 0;
+  const finalTotal = Math.max(0, subtotal - couponDiscount);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setCouponLoading(true);
+    try {
+      const res = await couponsApi.validate(couponCode.trim(), subtotal, form.customerEmail);
+      if (res.data.valid) {
+        setCouponResult(res.data);
+        toast.success(`Cupón aplicado: -${res.data.coupon.discountType === "PERCENTAGE" ? res.data.coupon.discountValue + "%" : formatPrice(res.data.discountAmount)}`);
+      } else {
+        setCouponResult(null);
+        toast.error(res.data.error || "Cupón inválido");
+      }
+    } catch {
+      toast.error("Error al validar el cupón");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setCouponResult(null);
+    setCouponCode("");
   };
 
   const handleSubmit = async (e) => {
@@ -82,7 +114,7 @@ export default function Checkout() {
       toast.error("Tu carrito está vacío");
       return;
     }
-    if (!form.customerName || !form.customerEmail) {
+    if (!form.customerName || !form.customerEmail || !form.customerPhone || !form.customerCuit) {
       toast.error("Por favor completá los campos requeridos");
       return;
     }
@@ -106,6 +138,8 @@ export default function Checkout() {
           }),
         })),
         paymentMethod: isMayorista ? "COTIZACION" : paymentMethod,
+        // Enviar el cupón solo si fue validado correctamente (funciona para minoristas y mayoristas)
+        ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
       });
 
       const order = orderRes.data;
@@ -161,6 +195,18 @@ export default function Checkout() {
                   <span className="font-medium text-slate-900">{formatPrice(item.price * item.quantity)}</span>
                 </div>
               ))}
+              {/* Mostrar cupón aplicado si existía al confirmar el pedido */}
+              {couponResult && (
+                <div className="flex justify-between text-sm text-green-700 font-medium border-t border-slate-200 pt-2">
+                  <span>
+                    Cupón{" "}
+                    <span className="font-mono text-xs tracking-widest bg-green-100 px-1.5 py-0.5 rounded">
+                      {couponResult.coupon.code}
+                    </span>
+                  </span>
+                  <span>−{formatPrice(couponResult.discountAmount)}</span>
+                </div>
+              )}
               <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-slate-900">
                 <span>{isCotizacion ? "Total estimado" : "Total"}</span>
                 <span>{formatPrice(successOrder.total)}</span>
@@ -258,7 +304,7 @@ export default function Checkout() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Teléfono (opcional)
+                    Teléfono *
                   </label>
                   <input
                     type="tel"
@@ -267,7 +313,42 @@ export default function Checkout() {
                     onChange={handleChange}
                     className="input"
                     placeholder="+54 11 1234-5678"
+                    required
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Documento *
+                  </label>
+                  <div className="flex gap-2">
+                    {/* Selector de tipo */}
+                    <div className="flex rounded-xl border border-slate-300 overflow-hidden text-sm">
+                      {["DNI", "CUIT", "CUIL"].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setForm((p) => ({ ...p, documentType: type }))}
+                          className={`px-3 py-2 font-medium transition-colors ${
+                            form.documentType === type
+                              ? "bg-blue-600 text-white"
+                              : "bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Número de documento */}
+                    <input
+                      type="text"
+                      name="customerCuit"
+                      value={form.customerCuit}
+                      onChange={handleChange}
+                      className="input flex-1"
+                      placeholder={form.documentType === "DNI" ? "12345678" : "20-12345678-9"}
+                      required
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -449,8 +530,60 @@ export default function Checkout() {
               <div className="border-t border-slate-200 pt-4 space-y-2">
                 <div className="flex justify-between text-sm text-slate-600">
                   <span>Subtotal ({items.reduce((s, i) => s + i.quantity, 0)} productos)</span>
-                  <span>{formatPrice(finalTotal)}</span>
+                  <span>{formatPrice(subtotal)}</span>
                 </div>
+
+                {/* Cupón de descuento — para todos los clientes registrados */}
+                {(
+                  <div className="pt-1">
+                    {couponResult ? (
+                      <div className="flex items-center justify-between text-sm text-green-700 font-medium bg-green-50 rounded-lg px-3 py-2">
+                        <div>
+                          <span className="font-mono font-bold text-xs tracking-widest">{couponResult.coupon.code}</span>
+                          <span className="ml-2">
+                            {couponResult.coupon.discountType === "PERCENTAGE"
+                              ? `−${couponResult.coupon.discountValue}%`
+                              : `−${formatPrice(couponResult.discountAmount)}`}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRemoveCoupon}
+                          className="text-green-500 hover:text-red-500 text-xs underline"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={couponCode}
+                          onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleApplyCoupon())}
+                          placeholder="Código de cupón"
+                          className="input flex-1 text-sm font-mono tracking-widest py-2"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleApplyCoupon}
+                          disabled={couponLoading || !couponCode.trim()}
+                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {couponLoading ? "..." : "Aplicar"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {couponDiscount > 0 && (
+                  <div className="flex justify-between text-sm text-green-700 font-semibold">
+                    <span>Descuento cupón</span>
+                    <span>−{formatPrice(couponDiscount)}</span>
+                  </div>
+                )}
+
                 {isMayorista && (
                   <div className="flex justify-between text-sm text-green-700 font-medium">
                     <span>Precio final</span>

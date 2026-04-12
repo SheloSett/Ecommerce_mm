@@ -4,13 +4,15 @@ import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { getImageUrl } from "../services/api";
+import { useSiteConfig } from "../context/SiteConfigContext";
 import CartDrawer from "./CartDrawer";
 import toast from "react-hot-toast";
 
 export default function Navbar() {
   const { totalItems } = useCart();
   const { customer, customerLogout } = useCustomerAuth();
-  const { unreadCount, markAllRead } = useNotifications();
+  const { theme, setTheme } = useSiteConfig();
+  const { unreadCount } = useNotifications();
   const [cartOpen, setCartOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
@@ -92,6 +94,26 @@ export default function Navbar() {
                 Catálogo
               </Link>
 
+              {/* ─── Toggle claro / oscuro ─── */}
+              <button
+                onClick={() => setTheme(theme === "oscuro" ? "clasico" : "oscuro")}
+                className="p-2 rounded-xl hover:bg-slate-800 transition-colors text-slate-300 hover:text-white"
+                aria-label={theme === "oscuro" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
+                title={theme === "oscuro" ? "Modo claro" : "Modo oscuro"}
+              >
+                {theme === "oscuro" ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
+
               {/* ─── Ícono de usuario ─── */}
               {customer ? (
                 // Cliente logueado → dropdown con nombre y logout
@@ -155,7 +177,7 @@ export default function Navbar() {
                           </span>
                         </div>
                       </div>
-                      {/* Enlace a historial de pedidos */}
+                      {/* Enlace a pedidos (y cotizaciones para mayoristas — tabs dentro de la misma página) */}
                       <Link
                         to="/pedidos"
                         onClick={() => setUserDropdownOpen(false)}
@@ -165,28 +187,16 @@ export default function Navbar() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
                             d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
                         </svg>
-                        Mis pedidos
+                        <span className="flex-1">Mis pedidos</span>
+                        {/* Badge de notificaciones (cotizaciones sin leer) — solo para mayoristas */}
+                        {customer.type === "MAYORISTA" && unreadCount > 0 && (
+                          <span className="min-w-[20px] h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1">
+                            {unreadCount > 9 ? "9+" : unreadCount}
+                          </span>
+                        )}
+                        {/* Comentado: antes había un item separado "Mis cotizaciones" para mayoristas
+                        que ahora está integrado como tab dentro de /pedidos */}
                       </Link>
-                      {/* Enlace a cotizaciones — solo para clientes MAYORISTA */}
-                      {customer.type === "MAYORISTA" && (
-                        <Link
-                          to="/cotizaciones"
-                          onClick={() => { setUserDropdownOpen(false); markAllRead(); }}
-                          className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        >
-                          <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                              d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                          </svg>
-                          <span className="flex-1">Mis cotizaciones</span>
-                          {/* Badge: muestra cantidad de notificaciones no leídas */}
-                          {unreadCount > 0 && (
-                            <span className="min-w-[20px] h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1">
-                              {unreadCount > 9 ? "9+" : unreadCount}
-                            </span>
-                          )}
-                        </Link>
-                      )}
                       {/* Enlace a editar perfil */}
                       <Link
                         to="/perfil"
@@ -312,6 +322,16 @@ export default function Navbar() {
           )}
         </div>
       </nav>
+
+      {/* Banner mayorista — visible solo cuando no hay sesión de cliente activa */}
+      {!customer && (
+        <div className="mayorista-banner bg-amber-400 text-amber-900 text-xs font-medium text-center py-1.5 px-4 leading-tight">
+          ⚠️ Atención cliente mayorista: para ver los precios mayoristas debés{" "}
+          <Link to="/login" className="underline font-semibold hover:text-amber-950">
+            iniciar sesión con tu cuenta
+          </Link>
+        </div>
+      )}
 
       {/* CartDrawer solo si hay sesión de cliente */}
       {customer && <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />}

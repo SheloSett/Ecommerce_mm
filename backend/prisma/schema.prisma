@@ -94,6 +94,11 @@ model Order {
   mpPreferenceId String?
   items          OrderItem[]
   notifications  Notification[]
+  // Cupón aplicado a esta orden
+  couponId       Int?
+  coupon         Coupon?       @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponDiscount Float?        // Monto descontado por el cupón (en ARS)
+  couponUsage    CouponUsage?
   // Campos exclusivos para cotizaciones:
   // clientSnapshot: copia de los items visible al cliente. Se actualiza solo cuando el admin presiona
   //   "Actualizar cotización". Mientras no se actualice, el cliente sigue viendo la versión anterior.
@@ -168,15 +173,19 @@ model Customer {
   email             String             @unique
   password          String?            // Hasheada con bcrypt; opcional para no romper registros anteriores
   phone             String?
+  documentType      String?            // Tipo de documento: "DNI", "CUIT" o "CUIL" (null = registros anteriores)
+  cuit              String?            // Número de documento (DNI / CUIT / CUIL según documentType)
   company           String?            // Empresa u organización (útil para mayoristas)
   avatar            String?            // URL de la foto de perfil (guardada en /uploads)
   status            CustomerStatus     @default(PENDING)
   type              CustomerType       @default(MINORISTA)
   notes             String?            // Notas internas del admin
-  mayoristaRequests MayoristaRequest[] // Solicitudes para pasar a cuenta mayorista
+  mayoristaRequests   MayoristaRequest[]   // Solicitudes para pasar a cuenta mayorista
+  emailChangeRequests EmailChangeRequest[] // Solicitudes de cambio de email pendientes de aprobación
   cart              Cart?              // Carrito activo del cliente (uno por cliente)
   orders            Order[]            // Órdenes vinculadas a esta cuenta
   notifications     Notification[]     // Notificaciones de cotizaciones
+  coupons           Coupon[]           // Cupones personales asignados a este cliente
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
@@ -239,6 +248,60 @@ enum MayoristaRequestStatus {
   REJECTED
 }
 
+// Cupones de descuento: generales (customerId null) o personales (customerId asignado)
+model Coupon {
+  id                 Int          @id @default(autoincrement())
+  code               String       @unique
+  description        String?
+  discountType       DiscountType @default(PERCENTAGE)
+  discountValue      Float        // Porcentaje (0-100) o monto fijo en ARS
+  minPurchase        Float?       // Compra mínima para activar el cupón (null = sin mínimo)
+  maxUses            Int?         // Usos totales máximos (null = ilimitado)
+  maxUsesPerCustomer Int?         // Usos máximos por cliente/email (null = ilimitado)
+  expiresAt          DateTime?    // Fecha de vencimiento (null = sin vencimiento)
+  customerId         Int?         // null = para todos; asignado = cupón personal
+  customer           Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  active             Boolean      @default(true)
+  usages             CouponUsage[]
+  orders             Order[]
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@map("coupons")
+}
+
+// Registro de cada uso de un cupón (uno por orden)
+model CouponUsage {
+  id            Int      @id @default(autoincrement())
+  couponId      Int
+  coupon        Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId       Int      @unique
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerEmail String   // email del comprador al momento del uso
+  usedAt        DateTime @default(now())
+
+  @@map("coupon_usages")
+}
+
+enum DiscountType {
+  PERCENTAGE // % del total
+  FIXED      // monto fijo en ARS
+}
+
+// Slides del carrusel del hero en la página de inicio
+model Slide {
+  id        Int      @id @default(autoincrement())
+  image     String   // nombre del archivo en /uploads
+  title     String?  // título opcional superpuesto sobre la imagen
+  subtitle  String?  // subtítulo opcional
+  url       String?  // URL de destino al hacer click en el slide (puede ser relativa o absoluta)
+  order     Int      @default(0) // posición en el carrusel (menor = primero)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("slides")
+}
+
 model Gasto {
   id          Int        @id @default(autoincrement())
   amount      Float
@@ -253,4 +316,59 @@ model Gasto {
 enum GastoType {
   PERSONAL
   NEGOCIO
+}
+
+// Registro de compras de stock al proveedor
+model Purchase {
+  id        Int            @id @default(autoincrement())
+  supplier  String         // Nombre del proveedor
+  date      DateTime       // Fecha de la compra
+  items     PurchaseItem[]
+  createdAt DateTime       @default(now())
+
+  @@map("purchases")
+}
+
+// Cada línea de una compra (un producto comprado)
+model PurchaseItem {
+  id          Int      @id @default(autoincrement())
+  purchaseId  Int
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  sku         String?  // SKU del producto (puede no tenerlo)
+  productName String   // Nombre del producto en el momento de la compra
+  cost        Float    // Costo unitario pagado
+  quantity    Int      // Unidades recibidas
+  productId   Int?     // ID del producto afectado (creado o actualizado)
+
+  @@map("purchase_items")
+}
+
+// Solicitudes de cambio de email enviadas por clientes al admin para su aprobación
+model EmailChangeRequest {
+  id          Int                      @id @default(autoincrement())
+  customerId  Int
+  customer    Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  newEmail    String                   // Email solicitado
+  reason      String                   // Motivo del cambio
+  status      EmailChangeRequestStatus @default(PENDING)
+  adminNotes  String?                  // Respuesta del admin al rechazar
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@map("email_change_requests")
+}
+
+enum EmailChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Configuración general del sitio (key-value): tema, modo mantenimiento, etc.
+model SiteConfig {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+
+  @@map("site_config")
 }

@@ -5,6 +5,8 @@
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900;
+    /* Evita scroll horizontal en mobile — cualquier elemento que desborde queda recortado */
+    overflow-x: hidden;
   }
 }
 
@@ -61,5 +63,156 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TEMAS DE LA TIENDA
+   Solo afectan las paginas publicas (marcadas con la clase .storefront).
+   El panel de admin y las paginas de perfil/pedidos no cambian.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Tema Oscuro ──────────────────────────────────────────────────── */
+
+/* Fondo general de la pagina */
+html[data-theme="oscuro"] .storefront {
+  background-color: #0f172a !important;
+  color: #e2e8f0 !important;
+}
+
+/* Navbar */
+html[data-theme="oscuro"] .storefront nav.sticky {
+  background-color: #020617 !important;
+}
+
+/* Banner mayorista (amarillo) — clase específica para no afectar otros divs hermanos del nav (ej: CartDrawer) */
+html[data-theme="oscuro"] .storefront .mayorista-banner {
+  background-color: #78350f !important;
+  color: #fde68a !important;
+}
+
+/* Footer */
+html[data-theme="oscuro"] .storefront footer {
+  background-color: #020617 !important;
+}
+
+/* Cards (ProductCard, filtros, etc.) */
+html[data-theme="oscuro"] .storefront .card {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Titulos y subtitulos dentro de storefront */
+html[data-theme="oscuro"] .storefront h1,
+html[data-theme="oscuro"] .storefront h2,
+html[data-theme="oscuro"] .storefront h3,
+html[data-theme="oscuro"] .storefront h4 {
+  color: #f1f5f9 !important;
+}
+
+/* Textos secundarios */
+html[data-theme="oscuro"] .storefront .text-slate-900 { color: #f1f5f9 !important; }
+html[data-theme="oscuro"] .storefront .text-slate-800 { color: #e2e8f0 !important; }
+html[data-theme="oscuro"] .storefront .text-slate-700 { color: #cbd5e1 !important; }
+html[data-theme="oscuro"] .storefront .text-slate-600 { color: #94a3b8 !important; }
+html[data-theme="oscuro"] .storefront .text-slate-500 { color: #64748b !important; }
+
+/* Fondos claros dentro de storefront -> oscuros */
+html[data-theme="oscuro"] .storefront .bg-slate-50 { background-color: #0f172a !important; }
+html[data-theme="oscuro"] .storefront .bg-slate-100 { background-color: #1e293b !important; }
+html[data-theme="oscuro"] .storefront .bg-slate-200 { background-color: #334155 !important; color: #e2e8f0 !important; }
+html[data-theme="oscuro"] .storefront .bg-white { background-color: #1e293b !important; }
+
+/* Boton primario -> cyan */
+html[data-theme="oscuro"] .storefront .btn-primary {
+  background-color: #06b6d4 !important;
+}
+html[data-theme="oscuro"] .storefront .btn-primary:hover {
+  background-color: #0891b2 !important;
+}
+
+/* Boton secundario */
+html[data-theme="oscuro"] .storefront .btn-secondary {
+  background-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Input / Busqueda en navbar */
+html[data-theme="oscuro"] .storefront input {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Badge de categoria en ProductCard */
+html[data-theme="oscuro"] .storefront .text-blue-600 {
+  color: #22d3ee !important;
+}
+
+/* Paginacion */
+html[data-theme="oscuro"] .storefront button.bg-white {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Banner de MercadoPago */
+html[data-theme="oscuro"] .storefront .from-blue-600 {
+  --tw-gradient-from: #0e7490 !important;
+}
+html[data-theme="oscuro"] .storefront .to-blue-700 {
+  --tw-gradient-to: #155e75 !important;
+}
+
+/* Hero estatico (sin slides) */
+html[data-theme="oscuro"] .storefront .from-slate-900.via-blue-950 {
+  --tw-gradient-from: #000 !important;
+  --tw-gradient-via: #0c4a6e !important;
+}
+
+/* Sidebar filtros - botones hover */
+html[data-theme="oscuro"] .storefront .card button.text-slate-600:hover {
+  background-color: #334155 !important;
+}
+html[data-theme="oscuro"] .storefront .card .bg-blue-50 {
+  background-color: #1e3a5f !important;
+}
+html[data-theme="oscuro"] .storefront .card .text-blue-700 {
+  color: #38bdf8 !important;
+}
+
+/* Método de pago en checkout: estados seleccionados en modo oscuro */
+html[data-theme="oscuro"] .storefront .card .bg-green-50 {
+  background-color: #14532d !important;
+}
+html[data-theme="oscuro"] .storefront .card .bg-indigo-50 {
+  background-color: #1e1b4b !important;
+}
+html[data-theme="oscuro"] .storefront .card .border-green-500 {
+  border-color: #22c55e !important;
+}
+html[data-theme="oscuro"] .storefront .card .border-indigo-500 {
+  border-color: #818cf8 !important;
+}
+
+/* Bordes */
+html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
+html[data-theme="oscuro"] .storefront .border-white\/30 { border-color: rgba(255,255,255,0.15) !important; }
+
+
+/* ── Tema Calido — REMOVIDO: ahora solo hay clásico y oscuro ─────── */
+/* Se eliminó el tema cálido por decisión del proyecto. Solo quedan
+   "clasico" (claro) y "oscuro" como opciones de apariencia, y el
+   usuario las elige desde el toggle en la navbar (localStorage). */
+
+/* Scrollbar para tema oscuro */
+html[data-theme="oscuro"] ::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+html[data-theme="oscuro"] ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+html[data-theme="oscuro"] ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }

@@ -41,11 +41,81 @@ export default function AdminCustomers() {
   const [loadingRequests, setLoadingRequests]               = useState(false);
   const [mayoristaFilter, setMayoristaFilter]               = useState("PENDING");
 
+  // ── Estado solicitudes de cambio de email ────────────────────────────────────
+  const [emailRequests, setEmailRequests]       = useState([]);
+  const [loadingEmailReqs, setLoadingEmailReqs] = useState(false);
+  const [rejectModal, setRejectModal]           = useState(null);  // { id }
+  const [rejectNotes, setRejectNotes]           = useState("");
+
+  const fetchEmailRequests = async () => {
+    setLoadingEmailReqs(true);
+    try {
+      const res = await customersApi.getAllEmailChangeRequests();
+      setEmailRequests(res.data);
+    } catch {
+      toast.error("Error al cargar solicitudes de email");
+    } finally {
+      setLoadingEmailReqs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mainTab === "emails") fetchEmailRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab]);
+
+  const handleApproveEmail = async (id) => {
+    if (!confirm("¿Aprobar este cambio de email? El email del cliente se actualizará.")) return;
+    try {
+      await customersApi.approveEmailChangeRequest(id);
+      toast.success("Email actualizado correctamente");
+      fetchEmailRequests();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al aprobar");
+    }
+  };
+
+  const handleRejectEmail = async () => {
+    if (!rejectModal) return;
+    try {
+      await customersApi.rejectEmailChangeRequest(rejectModal.id, rejectNotes);
+      toast.success("Solicitud rechazada");
+      setRejectModal(null);
+      setRejectNotes("");
+      fetchEmailRequests();
+    } catch {
+      toast.error("Error al rechazar");
+    }
+  };
+
   // ── Estado carritos activos ───────────────────────────────────────────────────
   const [carts, setCarts]               = useState([]);
   const [loadingCarts, setLoadingCarts] = useState(false);
   const [expandedCart, setExpandedCart] = useState(null);    // id del carrito expandido
   const [confirmClear, setConfirmClear] = useState(null);    // id del carrito pendiente de confirmar limpiar
+
+  // Modal para crear cliente manualmente
+  const [newCustomerModal, setNewCustomerModal] = useState(false);
+  const [newCustomerForm, setNewCustomerForm]   = useState({
+    name: "", email: "", password: "", phone: "", documentType: "DNI", cuit: "", company: "", type: "MINORISTA",
+  });
+  const [savingNewCustomer, setSavingNewCustomer] = useState(false);
+
+  const handleCreateCustomer = async (e) => {
+    e.preventDefault();
+    setSavingNewCustomer(true);
+    try {
+      await customersApi.createAdmin(newCustomerForm);
+      toast.success("Cliente creado correctamente");
+      setNewCustomerModal(false);
+      setNewCustomerForm({ name: "", email: "", password: "", phone: "", documentType: "DNI", cuit: "", company: "", type: "MINORISTA" });
+      fetchCustomers();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al crear cliente");
+    } finally {
+      setSavingNewCustomer(false);
+    }
+  };
 
   // Modal de notas/rechazo (solo para clientes PENDING)
   const [notesModal, setNotesModal] = useState(null); // { customer }
@@ -376,7 +446,7 @@ export default function AdminCustomers() {
         ))}
       </div>
 
-      {/* Buscador */}
+      {/* Buscador + botón nuevo cliente */}
       <form onSubmit={handleSearch} className="flex gap-2 mb-6">
         <input
           type="text"
@@ -390,6 +460,13 @@ export default function AdminCustomers() {
           className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors"
         >
           Buscar
+        </button>
+        <button
+          type="button"
+          onClick={() => setNewCustomerModal(true)}
+          className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap"
+        >
+          + Nuevo cliente
         </button>
       </form>
 
@@ -627,6 +704,117 @@ export default function AdminCustomers() {
       )}
       </>)}
 
+      {/* ══ Panel Cambios de Email ══ */}
+      {mainTab === "emails" && (
+        <>
+          <div className="flex items-center justify-between mb-6">
+            <p className="text-sm text-slate-500">
+              {loadingEmailReqs ? "Cargando..." : `${emailRequests.filter(r => r.status === "PENDING").length} solicitud(es) pendiente(s)`}
+            </p>
+            <button onClick={fetchEmailRequests} className="text-xs text-blue-600 hover:underline">
+              Actualizar
+            </button>
+          </div>
+
+          {loadingEmailReqs ? (
+            <div className="text-center py-16 text-slate-400">Cargando...</div>
+          ) : emailRequests.length === 0 ? (
+            <div className="text-center py-16 text-slate-400">
+              <p className="text-4xl mb-3">📧</p>
+              <p>No hay solicitudes de cambio de email</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {emailRequests.map((req) => (
+                <div key={req.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-slate-800">{req.customer.name}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          req.status === "PENDING"  ? "bg-amber-100 text-amber-700" :
+                          req.status === "APPROVED" ? "bg-emerald-100 text-emerald-700" :
+                          "bg-red-100 text-red-700"
+                        }`}>
+                          {req.status === "PENDING" ? "Pendiente" : req.status === "APPROVED" ? "Aprobada" : "Rechazada"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Email actual: <span className="font-medium text-slate-700">{req.customer.email}</span>
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Email solicitado: <span className="font-medium text-blue-700">{req.newEmail}</span>
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Motivo: <span className="italic text-slate-600">"{req.reason}"</span>
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {new Date(req.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "long", year: "numeric" })}
+                      </p>
+                      {req.adminNotes && (
+                        <p className="text-xs text-red-500 mt-1">Respuesta: {req.adminNotes}</p>
+                      )}
+                    </div>
+
+                    {req.status === "PENDING" && (
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => handleApproveEmail(req.id)}
+                          className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
+                        >
+                          Aprobar
+                        </button>
+                        <button
+                          onClick={() => { setRejectModal({ id: req.id }); setRejectNotes(""); }}
+                          className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 text-xs font-semibold rounded-lg hover:bg-red-100 transition-colors"
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Modal rechazo */}
+          {rejectModal && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+                <h3 className="font-bold text-slate-800">Rechazar solicitud</h3>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Motivo del rechazo (opcional)
+                  </label>
+                  <textarea
+                    value={rejectNotes}
+                    onChange={(e) => setRejectNotes(e.target.value)}
+                    rows={3}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-400 resize-none"
+                    placeholder="Ej: el email solicitado ya está en uso..."
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setRejectModal(null)}
+                    className="px-4 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleRejectEmail}
+                    className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700"
+                  >
+                    Confirmar rechazo
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
       {/* ══ Panel Carritos Activos ══ */}
       {mainTab === "carts" && (
         <>
@@ -808,6 +996,135 @@ export default function AdminCustomers() {
             </div>
           )}
         </>
+      )}
+
+      {/* ══ Modal: Nuevo Cliente ══ */}
+      {newCustomerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <h2 className="font-bold text-slate-800 text-lg">Nuevo cliente</h2>
+              <button onClick={() => setNewCustomerModal(false)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+            </div>
+            <form onSubmit={handleCreateCustomer} className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Nombre *</label>
+                  <input
+                    required
+                    value={newCustomerForm.name}
+                    onChange={(e) => setNewCustomerForm((p) => ({ ...p, name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Juan García"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Email *</label>
+                  <input
+                    required
+                    type="email"
+                    value={newCustomerForm.email}
+                    onChange={(e) => setNewCustomerForm((p) => ({ ...p, email: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="juan@ejemplo.com"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Contraseña <span className="text-slate-400">(opcional)</span></label>
+                  <input
+                    type="password"
+                    value={newCustomerForm.password}
+                    onChange={(e) => setNewCustomerForm((p) => ({ ...p, password: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Mínimo 6 caracteres"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Teléfono</label>
+                  <input
+                    value={newCustomerForm.phone}
+                    onChange={(e) => setNewCustomerForm((p) => ({ ...p, phone: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="1150395166"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Documento</label>
+                  <div className="flex gap-2">
+                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-xs">
+                      {["DNI", "CUIT", "CUIL"].map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setNewCustomerForm((p) => ({ ...p, documentType: t }))}
+                          className={`px-3 py-2 font-medium transition-colors ${
+                            newCustomerForm.documentType === t
+                              ? "bg-blue-600 text-white"
+                              : "bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      value={newCustomerForm.cuit}
+                      onChange={(e) => setNewCustomerForm((p) => ({ ...p, cuit: e.target.value }))}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder={newCustomerForm.documentType === "DNI" ? "12345678" : "20-12345678-9"}
+                    />
+                  </div>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Empresa</label>
+                  <input
+                    value={newCustomerForm.company}
+                    onChange={(e) => setNewCustomerForm((p) => ({ ...p, company: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Nombre de la empresa (opcional)"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Tipo</label>
+                  <div className="flex gap-2">
+                    {["MINORISTA", "MAYORISTA"].map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setNewCustomerForm((p) => ({ ...p, type: t }))}
+                        className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                          newCustomerForm.type === t
+                            ? t === "MAYORISTA"
+                              ? "bg-purple-600 text-white border-purple-600"
+                              : "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-slate-500 border-slate-300 hover:border-slate-400"
+                        }`}
+                      >
+                        {t === "MAYORISTA" ? "Mayorista" : "Minorista"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setNewCustomerModal(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingNewCustomer}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {savingNewCustomer ? "Creando..." : "Crear cliente"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </AdminLayout>
   );

@@ -5,15 +5,22 @@ const { authMiddleware } = require("../middleware/auth.middleware");
 
 const prisma = new PrismaClient();
 
-// GET /api/gastos - listar todos los gastos (con filtro opcional por tipo)
+// GET /api/gastos - listar gastos con filtros opcionales: type, dateFrom, dateTo
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const { type } = req.query;
-    const where = type && ["PERSONAL", "NEGOCIO"].includes(type) ? { type } : {};
-    const gastos = await prisma.gasto.findMany({
-      where,
-      orderBy: { date: "desc" },
-    });
+    const { type, dateFrom, dateTo } = req.query;
+    const where = {};
+    if (type && ["PERSONAL", "NEGOCIO"].includes(type)) where.type = type;
+    if (dateFrom || dateTo) {
+      where.date = {};
+      if (dateFrom) where.date.gte = new Date(dateFrom);
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.date.lte = end;
+      }
+    }
+    const gastos = await prisma.gasto.findMany({ where, orderBy: { date: "desc" } });
     res.json(gastos);
   } catch (err) {
     console.error("Error al listar gastos:", err);

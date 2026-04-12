@@ -43,6 +43,88 @@ export default function AdminOrders() {
   const [priceUpdateTarget, setPriceUpdateTarget] = useState("minorista"); // "minorista" | "mayorista" | "ambos"
   const [updatingProductPrice, setUpdatingProductPrice] = useState(false);
 
+  // ── Modal Nueva Venta Manual ─────────────────────────────────────────────────
+  const [manualModal, setManualModal] = useState(false);
+  const [allProducts, setAllProducts] = useState([]);  // cache de productos para el selector
+  const [manualForm, setManualForm] = useState({
+    customerName: "", customerEmail: "", customerPhone: "",
+    paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
+    items: [{ productId: "", productName: "", price: "", quantity: 1 }],
+  });
+  const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
+  const [savingManual, setSavingManual] = useState(false);
+
+  // Carga productos al abrir el modal (solo la primera vez)
+  const openManualModal = async () => {
+    setManualModal(true);
+    if (allProducts.length === 0) {
+      try {
+        const res = await productsApi.getAllAdmin({ limit: 500, active: true });
+        setAllProducts(res.data.products || res.data);
+      } catch { /* silencioso */ }
+    }
+  };
+
+  const addManualItem = () =>
+    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1 }] }));
+
+  const removeManualItem = (idx) =>
+    setManualForm((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
+
+  const setManualItem = (idx, field, value) =>
+    setManualForm((p) => {
+      const items = [...p.items];
+      items[idx] = { ...items[idx], [field]: value };
+      return { ...p, items };
+    });
+
+  const selectProduct = (idx, product) => {
+    setManualItem(idx, "productId", product.id);
+    setManualItem(idx, "productName", product.name);
+    setManualItem(idx, "price", product.price);
+    setProductSearch((p) => ({ ...p, [idx]: "" }));
+  };
+
+  const manualTotal = manualForm.items.reduce(
+    (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
+  );
+
+  const handleSaveManual = async (e) => {
+    e.preventDefault();
+    if (manualForm.items.some((it) => !it.productId)) {
+      toast.error("Seleccioná un producto en cada línea");
+      return;
+    }
+    setSavingManual(true);
+    try {
+      await ordersApi.createManual({
+        customerName:  manualForm.customerName,
+        customerEmail: manualForm.customerEmail,
+        customerPhone: manualForm.customerPhone || undefined,
+        paymentMethod: manualForm.paymentMethod,
+        status:        manualForm.status,
+        notes:         manualForm.notes || undefined,
+        items: manualForm.items.map((it) => ({
+          productId: it.productId,
+          quantity:  parseInt(it.quantity),
+          price:     parseFloat(it.price),
+        })),
+      });
+      toast.success("Venta registrada correctamente");
+      setManualModal(false);
+      setManualForm({
+        customerName: "", customerEmail: "", customerPhone: "",
+        paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
+        items: [{ productId: "", productName: "", price: "", quantity: 1 }],
+      });
+      fetchOrders();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al guardar la venta");
+    } finally {
+      setSavingManual(false);
+    }
+  };
+
   const toggleExpanded = (orderId) => {
     setExpandedOrders((prev) => {
       const next = new Set(prev);
@@ -521,7 +603,16 @@ export default function AdminOrders() {
   return (
     <AdminLayout title="Órdenes">
       <div className="space-y-6">
-        {/* Filtros */}
+        {/* Filtros + botón nueva venta */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={openManualModal}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors whitespace-nowrap"
+          >
+            + Nueva venta
+          </button>
+          <div className="w-px h-6 bg-slate-200 mx-1" />
+        </div>
         <div className="flex gap-2 flex-wrap">
           {[{ value: "", label: "Todas" }, ...Object.entries(STATUS_CONFIG).map(([v, c]) => ({ value: v, label: c.label }))].map(
             ({ value, label }) => (
@@ -728,6 +819,24 @@ export default function AdminOrders() {
                   })}
                 </div>
 
+                {/* Cupón de descuento aplicado */}
+                {selectedOrder.coupon && selectedOrder.couponDiscount > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-200 space-y-1">
+                    <div className="flex justify-between text-sm text-slate-500">
+                      <span>Subtotal</span>
+                      <span>{formatPrice(selectedOrder.total + selectedOrder.couponDiscount)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-green-700 font-medium">
+                      <span>
+                        Cupón{" "}
+                        <span className="font-mono text-xs tracking-widest bg-green-100 px-1.5 py-0.5 rounded">
+                          {selectedOrder.coupon.code}
+                        </span>
+                      </span>
+                      <span>−{formatPrice(selectedOrder.couponDiscount)}</span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between font-bold text-lg text-slate-900 mt-4 pt-4 border-t border-slate-200">
                   <span>Total</span>
                   <span>{formatPrice(selectedOrder.total)}</span>
@@ -806,6 +915,210 @@ export default function AdminOrders() {
                 {updatingProductPrice ? "Actualizando..." : "Sí, actualizar"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Modal: Nueva Venta Manual ══ */}
+      {manualModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <h2 className="font-bold text-slate-800 text-lg">Nueva venta manual</h2>
+              <button onClick={() => setManualModal(false)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+            </div>
+            <form onSubmit={handleSaveManual} className="px-6 py-5 space-y-5">
+              {/* Datos del cliente */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Datos del cliente</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Nombre *</label>
+                    <input
+                      required
+                      value={manualForm.customerName}
+                      onChange={(e) => setManualForm((p) => ({ ...p, customerName: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Juan García"
+                    />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Email *</label>
+                    <input
+                      required
+                      type="email"
+                      value={manualForm.customerEmail}
+                      onChange={(e) => setManualForm((p) => ({ ...p, customerEmail: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="juan@ejemplo.com"
+                    />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Teléfono</label>
+                    <input
+                      value={manualForm.customerPhone}
+                      onChange={(e) => setManualForm((p) => ({ ...p, customerPhone: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="1150395166"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Productos */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Productos</p>
+                  <button type="button" onClick={addManualItem} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    + Agregar línea
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {manualForm.items.map((item, idx) => {
+                    const filtered = (allProducts || []).filter((p) =>
+                      productSearch[idx]
+                        ? p.name.toLowerCase().includes(productSearch[idx].toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(productSearch[idx].toLowerCase()))
+                        : false
+                    ).slice(0, 6);
+
+                    return (
+                      <div key={idx} className="bg-slate-50 rounded-xl p-3 space-y-2">
+                        {/* Buscador de producto */}
+                        <div className="relative">
+                          <input
+                            value={item.productName || productSearch[idx] || ""}
+                            onChange={(e) => {
+                              setProductSearch((p) => ({ ...p, [idx]: e.target.value }));
+                              setManualItem(idx, "productId", "");
+                              setManualItem(idx, "productName", "");
+                            }}
+                            placeholder="Buscar producto por nombre o SKU..."
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          {filtered.length > 0 && !item.productId && (
+                            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-48 overflow-y-auto">
+                              {filtered.map((p) => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  onClick={() => selectProduct(idx, p)}
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex justify-between items-center"
+                                >
+                                  <span className="font-medium text-slate-700">{p.name}</span>
+                                  <span className="text-slate-400 text-xs">{formatPrice(p.price)}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <label className="block text-xs text-slate-500 mb-1">Precio unitario *</label>
+                            <input
+                              required
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.price}
+                              onChange={(e) => setManualItem(idx, "price", e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <div className="w-24">
+                            <label className="block text-xs text-slate-500 mb-1">Cantidad *</label>
+                            <input
+                              required
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => setManualItem(idx, "quantity", e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="flex items-end pb-0.5">
+                            <button
+                              type="button"
+                              onClick={() => removeManualItem(idx)}
+                              disabled={manualForm.items.length === 1}
+                              className="px-3 py-2 text-slate-400 hover:text-red-500 disabled:opacity-30 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                        {item.productId && item.price && item.quantity && (
+                          <p className="text-xs text-slate-500 text-right">
+                            Subtotal: {formatPrice(parseFloat(item.price) * parseInt(item.quantity))}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Método de pago y estado */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Método de pago</label>
+                  <select
+                    value={manualForm.paymentMethod}
+                    onChange={(e) => setManualForm((p) => ({ ...p, paymentMethod: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="EFECTIVO">Efectivo</option>
+                    <option value="TRANSFERENCIA">Transferencia</option>
+                    <option value="MERCADOPAGO">MercadoPago</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Estado</label>
+                  <select
+                    value={manualForm.status}
+                    onChange={(e) => setManualForm((p) => ({ ...p, status: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="APPROVED">Abonada ✅</option>
+                    <option value="PENDING">Pendiente ⏳</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Notas internas</label>
+                  <input
+                    value={manualForm.notes}
+                    onChange={(e) => setManualForm((p) => ({ ...p, notes: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Observaciones opcionales..."
+                  />
+                </div>
+              </div>
+
+              {/* Total y acciones */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <div className="text-sm font-bold text-slate-800">
+                  Total: <span className="text-blue-600 text-base">{formatPrice(manualTotal)}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setManualModal(false)}
+                    className="px-5 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingManual}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                  >
+                    {savingManual ? "Guardando..." : "Registrar venta"}
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}

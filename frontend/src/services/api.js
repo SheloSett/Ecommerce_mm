@@ -74,11 +74,13 @@ export const categoriesApi = {
 // ─── Órdenes ──────────────────────────────────────────────────────────────────
 export const ordersApi = {
   create: (data) => api.post("/orders", data),
+  // Admin: registrar una venta manual (presencial, teléfono, etc.)
+  createManual: (data) => api.post("/orders/admin/manual", data),
   getAll: (params) => api.get("/orders", { params }),
   getById: (id) => api.get(`/orders/${id}`),
   updateStatus: (id, status) => api.patch(`/orders/${id}/status`, { status }),
-  getStats: () => api.get("/orders/stats"),
-  getMetrics: () => api.get("/orders/metrics"),
+  getStats:   (params) => api.get("/orders/stats",   { params: params || {} }),
+  getMetrics: (params) => api.get("/orders/metrics", { params: params || {} }),
   delete: (id) => api.delete(`/orders/${id}`),
   // Cliente: historial de pedidos propios (APPROVED)
   getMy: () => customerAuthApi.get("/orders/my"),
@@ -98,6 +100,9 @@ export const ordersApi = {
   // Cliente MAYORISTA: confirmar pago manual (efectivo o transferencia) — envía emails
   confirmCotizacionPayment: (orderId, paymentMethod) =>
     customerAuthApi.post(`/orders/${orderId}/confirm-payment`, { paymentMethod }),
+  // Cliente MAYORISTA: aplicar cupón a una cotización aprobada antes de pagar
+  applyCoupon: (orderId, couponCode, customerEmail) =>
+    customerAuthApi.patch(`/orders/${orderId}/apply-coupon`, { couponCode, customerEmail }),
 };
 
 // ─── Pagos ────────────────────────────────────────────────────────────────────
@@ -116,6 +121,8 @@ export const customersApi = {
   register: (data) => api.post("/customers/register", data),
   login: (data) => api.post("/customers/login", data),
   getAll: (params) => api.get("/customers", { params }),
+  // Admin: crear cliente directamente (queda APPROVED)
+  createAdmin: (data) => api.post("/customers/admin/create", data),
   updateStatus: (id, status, notes) => api.patch(`/customers/${id}/status`, { status, notes }),
   updateType: (id, type) => api.patch(`/customers/${id}/type`, { type }),
   update: (id, data) => api.put(`/customers/${id}`, data),
@@ -123,7 +130,14 @@ export const customersApi = {
   // Self-service: el cliente gestiona su propio perfil con su token
   getMe: () => customerAuthApi.get("/customers/me"),
   updateMe: (data) => customerAuthApi.put("/customers/me", data),
-  changeEmail: (data) => customerAuthApi.put("/customers/me/email", data),
+  // changeEmail: (data) => customerAuthApi.put("/customers/me/email", data), // REEMPLAZADO por sistema de solicitudes
+  // Solicitud de cambio de email al admin
+  requestEmailChange: (data) => customerAuthApi.post("/customers/me/email-change-request", data),
+  getMyEmailChangeRequest: () => customerAuthApi.get("/customers/me/email-change-request"),
+  // Admin: listar y gestionar solicitudes de cambio de email
+  getAllEmailChangeRequests: () => api.get("/customers/email-change-requests"),
+  approveEmailChangeRequest: (id) => api.patch(`/customers/email-change-requests/${id}/approve`),
+  rejectEmailChangeRequest: (id, adminNotes) => api.patch(`/customers/email-change-requests/${id}/reject`, { adminNotes }),
   uploadAvatar: (formData) => customerAuthApi.post("/customers/me/avatar", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   }),
@@ -175,15 +189,48 @@ export const authApi = {
 
 // ─── Gastos / Caja ────────────────────────────────────────────────────────────
 export const gastosApi = {
-  getAll: (type) => api.get("/gastos", { params: type ? { type } : {} }),
-  create: (data) => api.post("/gastos", data),
-  remove: (id)  => api.delete(`/gastos/${id}`),
+  getAll: (params) => api.get("/gastos", { params: params || {} }),
+  create: (data)   => api.post("/gastos", data),
+  remove: (id)     => api.delete(`/gastos/${id}`),
 };
 
 // ─── Notificaciones ───────────────────────────────────────────────────────────
 export const notificationsApi = {
   getMy:       () => customerAuthApi.get("/notifications/my"),
   markAllRead: () => customerAuthApi.patch("/notifications/read-all"),
+};
+
+// ─── Cupones ──────────────────────────────────────────────────────────────────
+export const couponsApi = {
+  // Público: validar un cupón antes del checkout
+  validate: (code, subtotal, customerEmail) =>
+    api.post("/coupons/validate", { code, subtotal, customerEmail }),
+  // Admin: CRUD
+  getAll:  ()         => api.get("/coupons"),
+  create:  (data)     => api.post("/coupons", data),
+  update:  (id, data) => api.patch(`/coupons/${id}`, data),
+  remove:  (id)       => api.delete(`/coupons/${id}`),
+  getUsages: (id)     => api.get(`/coupons/${id}/usages`),
+};
+
+export const slidesApi = {
+  getAll:  (params) => api.get("/slides", { params }),
+  create:  (formData) => api.post("/slides", formData),        // FormData con imagen
+  update:  (id, formData) => api.patch(`/slides/${id}`, formData),
+  remove:  (id) => api.delete(`/slides/${id}`),
+};
+
+// ─── Compras de stock ─────────────────────────────────────────────────────────
+export const purchasesApi = {
+  getAll:   ()         => api.get("/purchases"),
+  getById:  (id)       => api.get(`/purchases/${id}`),
+  create:   (data)     => api.post("/purchases", data),
+};
+
+// ─── Configuración del sitio ──────────────────────────────────────────────────
+export const settingsApi = {
+  get:    ()     => api.get("/settings"),           // público
+  update: (data) => api.put("/settings", data),     // admin
 };
 
 export const getImageUrl = (path) => {

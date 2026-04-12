@@ -15,14 +15,31 @@ export default function Catalog() {
   const { customer } = useCustomerAuth();
 
   const currentCategory = searchParams.get("category") || "";
-  const currentSearch = searchParams.get("search") || "";
-  const currentPage = parseInt(searchParams.get("page") || "1");
+  const currentSearch   = searchParams.get("search") || "";
+  const currentPage     = parseInt(searchParams.get("page") || "1");
+  const currentOnSale   = searchParams.get("onSale") === "true";
+  const currentLowStock = searchParams.get("lowStock") === "true";
+  const currentSortDate  = searchParams.get("sortDate")  || "newest"; // newest | oldest
+  const currentSortPrice = searchParams.get("sortPrice") || "";       // asc | desc | ""
+
+  // Ordena los productos según los filtros de fecha y precio seleccionados
+  const sortProducts = (list) => {
+    const sorted = [...list];
+    // Precio tiene prioridad si está seleccionado
+    if (currentSortPrice === "asc")  return sorted.sort((a, b) => a.price - b.price);
+    if (currentSortPrice === "desc") return sorted.sort((a, b) => b.price - a.price);
+    // Fecha
+    if (currentSortDate === "oldest") return sorted.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    return sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); // newest (default)
+  };
 
   const fetchProducts = useCallback(() => {
     setLoading(true);
     const params = { page: currentPage, limit: 20 };
     if (currentCategory) params.category = currentCategory;
-    if (currentSearch) params.search = currentSearch;
+    if (currentSearch)   params.search   = currentSearch;
+    if (currentOnSale)   params.onSale   = "true";
+    if (currentLowStock) params.lowStock = "true";
     // Filtrar por visibilidad según el tipo de cliente logueado
     params.visibleFor = customer?.type || "MINORISTA";
 
@@ -34,7 +51,7 @@ export default function Catalog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentCategory, currentSearch, currentPage, customer?.type]);
+  }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, customer?.type]);
 
   useEffect(() => {
     fetchProducts();
@@ -87,14 +104,49 @@ export default function Catalog() {
         <div className="flex flex-col md:flex-row gap-8">
           {/* Sidebar de filtros */}
           <aside className="w-full md:w-56 flex-shrink-0">
-            <div className="card p-4 sticky top-20">
+            <div className="card p-4 sticky top-20 space-y-4">
+              {/* Filtros especiales */}
+              <div className="space-y-2">
+                <button
+                  onClick={() => {
+                    const newParams = new URLSearchParams();
+                    if (!currentOnSale) newParams.set("onSale", "true");
+                    setSearchParams(newParams);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${
+                    currentOnSale
+                      ? "bg-red-50 text-red-600 border border-red-200"
+                      : "text-slate-600 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  🏷️ Descuentos
+                  {currentOnSale && <span className="ml-auto text-xs">✕</span>}
+                </button>
+                <button
+                  onClick={() => {
+                    const newParams = new URLSearchParams();
+                    if (!currentLowStock) newParams.set("lowStock", "true");
+                    setSearchParams(newParams);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2 ${
+                    currentLowStock
+                      ? "bg-orange-50 text-orange-600 border border-orange-200"
+                      : "text-slate-600 hover:bg-slate-50 border border-slate-200"
+                  }`}
+                >
+                  ⚡ Pocas unidades
+                  {currentLowStock && <span className="ml-auto text-xs">✕</span>}
+                </button>
+              </div>
+
+              <div>
               <h3 className="font-bold text-slate-800 mb-3">Categorías</h3>
               <ul className="space-y-1">
                 <li>
                   <button
                     onClick={() => setFilter("category", "")}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                      !currentCategory
+                      !currentCategory && !currentOnSale
                         ? "bg-blue-50 text-blue-700 font-semibold"
                         : "text-slate-600 hover:bg-slate-50"
                     }`}
@@ -140,6 +192,7 @@ export default function Catalog() {
                   </li>
                 ))}
               </ul>
+              </div>
             </div>
           </aside>
 
@@ -151,6 +204,10 @@ export default function Catalog() {
                 <h1 className="text-2xl font-bold text-slate-900">
                   {currentSearch
                     ? `Resultados para "${currentSearch}"`
+                    : currentOnSale
+                    ? "🏷️ Productos en oferta"
+                    : currentLowStock
+                    ? "⚡ Pocas unidades"
                     : currentCategory
                     ? findCategoryName(currentCategory)
                     : "Catálogo completo"}
@@ -161,14 +218,35 @@ export default function Catalog() {
                   </p>
                 )}
               </div>
-              {currentSearch && (
-                <button
-                  onClick={() => setFilter("search", "")}
-                  className="text-sm text-red-500 hover:underline"
+
+              {/* Filtros de ordenamiento */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {currentSearch && (
+                  <button
+                    onClick={() => setFilter("search", "")}
+                    className="text-sm text-red-500 hover:underline mr-2"
+                  >
+                    Limpiar búsqueda ✕
+                  </button>
+                )}
+                <select
+                  value={currentSortDate}
+                  onChange={(e) => setFilter("sortDate", e.target.value)}
+                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  Limpiar búsqueda ✕
-                </button>
-              )}
+                  <option value="newest">Más nuevo a más viejo</option>
+                  <option value="oldest">Más viejo a más nuevo</option>
+                </select>
+                <select
+                  value={currentSortPrice}
+                  onChange={(e) => setFilter("sortPrice", e.target.value)}
+                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Precio: sin orden</option>
+                  <option value="asc">Precio: menor a mayor</option>
+                  <option value="desc">Precio: mayor a menor</option>
+                </select>
+              </div>
             </div>
 
             {loading ? (
@@ -197,7 +275,7 @@ export default function Catalog() {
             ) : (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {products.map((p) => (
+                  {sortProducts(products).map((p) => (
                     <ProductCard key={p.id} product={p} />
                   ))}
                 </div>

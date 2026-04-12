@@ -445,6 +445,40 @@ export default function AdminProducts() {
   return (
     <AdminLayout title="Productos">
       <div className="space-y-4">
+
+        {/* ── Capital en stock ─────────────────────────────────────────────── */}
+        {(() => {
+          const withCost     = products.filter(p => !p.stockUnlimited && p.cost != null && p.cost > 0);
+          const sinCosto     = products.filter(p => !p.stockUnlimited && (p.cost == null || p.cost <= 0)).length;
+          const capitalTotal = withCost.reduce((sum, p) => sum + p.stock * p.cost, 0);
+          const infinitos    = products.filter(p => p.stockUnlimited).length;
+          return (
+            <div className="rounded-2xl bg-gradient-to-r from-slate-800 to-slate-700 text-white px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4 shadow-lg">
+              <div className="flex-1">
+                <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-1">Capital total en stock</p>
+                <p className="text-4xl font-extrabold tracking-tight">
+                  {new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(capitalTotal)}
+                </p>
+              </div>
+              <div className="flex flex-col gap-1 text-sm sm:text-right">
+                <span className="text-slate-300">
+                  <span className="font-semibold text-white">{withCost.length}</span> producto{withCost.length !== 1 ? "s" : ""} contabilizados
+                </span>
+                {sinCosto > 0 && (
+                  <span className="text-amber-400 font-medium">
+                    ⚠ {sinCosto} sin costo — no incluidos
+                  </span>
+                )}
+                {infinitos > 0 && (
+                  <span className="text-slate-400">
+                    ∞ {infinitos} con stock ilimitado — no incluidos
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Header con búsqueda y botón crear */}
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <form onSubmit={handleSearch} className="flex gap-2 flex-1 max-w-md">

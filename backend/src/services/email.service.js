@@ -181,6 +181,23 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
       rowY += rowH;
     });
 
+    // Fila de cupón (si aplica)
+    if (order.couponDiscount > 0) {
+      doc.rect(tableX, rowY, tableW, 22).fill("#f0fdf4");
+      doc.fillColor("#16a34a").fontSize(9).font("Helvetica-Bold")
+        .text(
+          `Cupón aplicado${order.coupon?.code ? ` (${order.coupon.code})` : ""}`,
+          tableX + 8, rowY + 6,
+          { width: tableW - cols.subtotal - 8 }
+        );
+      doc.text(
+        `- ${formatARS(order.couponDiscount)}`,
+        tableX + tableW - cols.subtotal - 4, rowY + 6,
+        { width: cols.subtotal - 4, align: "right" }
+      );
+      rowY += 22;
+    }
+
     // Fila de total
     doc.rect(tableX, rowY, tableW, 28).fill(ACCENT);
     doc.fillColor("white").fontSize(11).font("Helvetica-Bold")
@@ -324,8 +341,17 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                 </tr>
               </thead>
               <tbody>${rowsHtml}</tbody>
-              <!-- Total -->
+              <!-- Cupón de descuento (si aplica) -->
               <tfoot>
+                ${order.couponDiscount > 0 ? `
+                <tr style="background:#f0fdf4;">
+                  <td colspan="5" style="padding:10px 16px;color:#16a34a;font-size:13px;font-weight:600;">
+                    🏷️ Cupón aplicado${order.coupon?.code ? ` (${order.coupon.code})` : ""}
+                  </td>
+                  <td style="padding:10px 16px;color:#16a34a;font-weight:700;font-size:13px;text-align:right;">
+                    - ${formatARS(order.couponDiscount)}
+                  </td>
+                </tr>` : ""}
                 <tr style="background:#3b82f6;">
                   <td colspan="5" style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:14px;">TOTAL</td>
                   <td style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:15px;text-align:right;">${formatARS(order.total)}</td>

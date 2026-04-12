@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
+// ordersApi.applyCoupon se usa para aplicar cupones a cotizaciones aprobadas
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 
@@ -49,6 +50,11 @@ export default function PayQuotation() {
   const [paying, setPaying]         = useState(false);
   // success: null = en progreso, "MANUAL" = efectivo/transferencia, "MP_REDIRECT" = redirigiendo
   const [success, setSuccess]       = useState(null);
+  // Cupón de descuento — MOVIDO al formulario de envío de cotización (Checkout.jsx)
+  // El cupón ahora se aplica al crear la cotización, no al pagarla.
+  // const [couponCode, setCouponCode]       = useState("");
+  // const [couponResult, setCouponResult]   = useState(null);
+  // const [couponLoading, setCouponLoading] = useState(false);
 
   // Redirigir si no es MAYORISTA o no está logueado
   useEffect(() => {
@@ -64,6 +70,12 @@ export default function PayQuotation() {
       .catch(() => { toast.error("Cotización no encontrada"); navigate("/cotizaciones"); })
       .finally(() => setLoading(false));
   }, [id, customer?.id, loadingCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // totalAPagar usa directamente quote.total (ya incluye el descuento si se aplicó un cupón al crear la cotización)
+  const totalAPagar = quote?.total ?? 0;
+
+  // handleApplyCoupon — MOVIDO: el cupón se aplica al crear la cotización en Checkout.jsx
+  // const handleApplyCoupon = async () => { ... };
 
   const handlePay = async () => {
     if (!quote) return;
@@ -182,10 +194,23 @@ export default function PayQuotation() {
               ))}
             </div>
             {/* Total */}
-            <div className="px-5 py-4 border-t border-slate-100 flex justify-between items-center">
-              <span className="font-semibold text-slate-700">Total a pagar</span>
-              <span className="text-xl font-bold text-slate-800">{formatPrice(quote.total)}</span>
+            <div className="px-5 py-4 border-t border-slate-100 space-y-1">
+              {/* El descuento del cupón ya está incluido en quote.total si se aplicó al crear la cotización */}
+              <div className="flex justify-between items-center">
+                <span className="font-semibold text-slate-700">Total a pagar</span>
+                <span className="text-xl font-bold text-slate-800">{formatPrice(totalAPagar)}</span>
+              </div>
             </div>
+
+            {/* Cupón de descuento — REMOVIDO: ahora se ingresa al enviar la cotización (Checkout.jsx) */}
+            {/* {couponResult ? (
+                <div ...>Descuento aplicado</div>
+              ) : (
+                <div className="flex gap-2">
+                  <input ... placeholder="Código de cupón" />
+                  <button onClick={handleApplyCoupon}>Aplicar</button>
+                </div>
+              )} */}
           </div>
 
           {/* Nota del admin si existe */}
@@ -244,8 +269,8 @@ export default function PayQuotation() {
             {paying
               ? "Procesando..."
               : paymentMethod === "MERCADOPAGO"
-                ? `💳 Pagar ${formatPrice(quote.total)} con MercadoPago`
-                : `✅ Confirmar pedido — ${formatPrice(quote.total)}`
+                ? `💳 Pagar ${formatPrice(totalAPagar)} con MercadoPago`
+                : `✅ Confirmar pedido — ${formatPrice(totalAPagar)}`
             }
           </button>
 

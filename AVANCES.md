@@ -36,4 +36,46 @@
 que en la cotizacion tambien se pueda editar los precios PERO solo para el pedido, que no lo cambie en el producto general publicado <---->
 ahora:
 pregunta si queres actualizarl el precio si para mayorista, minorista o ambos. ✅
+
+18- hacer flyers - Seleccionar productos y el precio que se le pone ✅
+
+19- cupones de descuento - compra minima - fecha de vencimiento - cant de veces por cliente - cupon especial para un cliente ✅
+
+20- logo wpp ✅
+
+21- capital de stock ✅
+
+22- revisar q cuando agregue una cantidad en oferta pero no hay stock no tome el precio de oferta ✅
+
+23- Tienda en modo mantenimiento ✅
+
+24- tema oscuro ✅
+
+25- Cuit/Cuil ✅
+
+26- Banners ✅
+
+27- filtro Precios menor a mayor y viceversa --- antiguedad ✅
+
+28- filtros x descuentos y pocas unidades ✅
+
+29- columna de contacto ✅
+
+30- Seguridad ✅ 
+
+31- Server-Sent Events (SSE) ✅
+
+32- agregar clientes de forma manual ✅
+
+33- agregar ventas de forma manual ✅
+
+34- agregar opcion de DNI/Cuit/Cuil al registrarse y a la hora de comprar ✅
+
+35- Banner de redes sociales ✅
+
+<-- //TODO rate limit al modo mantenimiento -->
+
+36- cambiar el fabico por IG ✅
+
+37- Seguir con el tema de LEGALES ✅
 ##

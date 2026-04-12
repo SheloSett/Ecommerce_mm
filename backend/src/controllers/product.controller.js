@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock } = req.query;
 
     const where = {};
 
@@ -53,6 +53,20 @@ async function getProducts(req, res) {
 
     if (featured === "true") {
       where.featured = true;
+    }
+
+    // Filtrar solo productos en oferta: tienen salePrice o wholesaleSalePrice definido
+    if (onSale === "true") {
+      where.OR = [
+        { salePrice: { not: null } },
+        { wholesaleSalePrice: { not: null } },
+      ];
+    }
+
+    // Filtrar productos con pocas unidades: stock > 0 y <= 5, no ilimitado
+    if (lowStock === "true") {
+      where.stockUnlimited = false;
+      where.stock = { gt: 0, lte: 5 };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);

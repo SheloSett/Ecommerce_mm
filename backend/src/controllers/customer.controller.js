@@ -7,10 +7,16 @@ const prisma = new PrismaClient();
 // Registro público: cualquier visitante puede solicitar alta
 async function register(req, res) {
   try {
-    const { name, email, password, phone, company } = req.body;
+    const { name, email, password, phone, cuit, documentType, company } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: "Nombre, email y contraseña son requeridos" });
+    if (!name || !email || !password || !phone || !cuit) {
+      return res.status(400).json({ error: "Nombre, email, contraseña, teléfono y número de documento son requeridos" });
+    }
+
+    // Validar que el tipo de documento sea uno de los permitidos
+    const validDocTypes = ["DNI", "CUIT", "CUIL"];
+    if (documentType && !validDocTypes.includes(documentType)) {
+      return res.status(400).json({ error: "Tipo de documento inválido" });
     }
 
     if (password.length < 6) {
@@ -27,7 +33,7 @@ async function register(req, res) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const customer = await prisma.customer.create({
-      data: { name, email, password: hashedPassword, phone, company },
+      data: { name, email, password: hashedPassword, phone, cuit, documentType: documentType || null, company },
     });
 
     res.status(201).json({
@@ -223,6 +229,7 @@ async function getMe(req, res) {
       name: customer.name,
       email: customer.email,
       phone: customer.phone,
+      cuit: customer.cuit,
       company: customer.company,
       type: customer.type,
       avatar: customer.avatar,
@@ -237,27 +244,33 @@ async function getMe(req, res) {
 async function updateMe(req, res) {
   try {
     const { id } = req.user;
-    const { name, phone } = req.body;
+    const { name, phone, cuit, documentType } = req.body;
 
     if (name !== undefined && !name.trim()) {
       return res.status(400).json({ error: "El nombre no puede estar vacío" });
     }
 
+    const validDocTypes = ["DNI", "CUIT", "CUIL"];
+
     const updated = await prisma.customer.update({
       where: { id },
       data: {
-        ...(name  !== undefined && { name: name.trim() }),
-        ...(phone !== undefined && { phone }),
+        ...(name         !== undefined && { name: name.trim() }),
+        ...(phone        !== undefined && { phone }),
+        ...(cuit         !== undefined && { cuit: cuit.trim() || null }),
+        ...(documentType !== undefined && validDocTypes.includes(documentType) && { documentType }),
       },
     });
 
     res.json({
-      id: updated.id,
-      name: updated.name,
-      email: updated.email,
-      phone: updated.phone,
-      type: updated.type,
-      avatar: updated.avatar,
+      id:           updated.id,
+      name:         updated.name,
+      email:        updated.email,
+      phone:        updated.phone,
+      cuit:         updated.cuit,
+      documentType: updated.documentType,
+      type:         updated.type,
+      avatar:       updated.avatar,
     });
   } catch (err) {
     console.error("UpdateMe error:", err);
@@ -358,4 +371,201 @@ async function deleteCustomer(req, res) {
   }
 }
 
-module.exports = { register, customerLogin, getAll, updateStatus, updateType, updateCustomer, deleteCustomer, getMe, updateMe, changeEmail, uploadAvatar };
+// ── Solicitudes de cambio de email ───────────────────────────────────────────
+
+// POST /api/customers/me/email-change-request
+// El cliente envía una solicitud de cambio de email (requiere autenticación de cliente)
+async function requestEmailChange(req, res) {
+  try {
+    const { id } = req.user;
+    const { newEmail, reason } = req.body;
+
+    if (!newEmail || !newEmail.trim()) {
+      return res.status(400).json({ error: "El nuevo email es requerido" });
+    }
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: "El motivo del cambio es requerido" });
+    }
+
+    // Verificar que el nuevo email no esté registrado por otro cliente
+    const existing = await prisma.customer.findUnique({ where: { email: newEmail.trim() } });
+    if (existing) {
+      return res.status(409).json({ error: "Ese email ya está registrado" });
+    }
+
+    // Si ya hay una solicitud PENDING del mismo cliente, la reemplazamos
+    await prisma.emailChangeRequest.deleteMany({
+      where: { customerId: id, status: "PENDING" },
+    });
+
+    const request = await prisma.emailChangeRequest.create({
+      data: {
+        customerId: id,
+        newEmail:   newEmail.trim(),
+        reason:     reason.trim(),
+      },
+    });
+
+    res.status(201).json(request);
+  } catch (err) {
+    console.error("Error al crear solicitud de email:", err);
+    res.status(500).json({ error: "Error al enviar la solicitud" });
+  }
+}
+
+// GET /api/customers/me/email-change-request
+// El cliente consulta su solicitud activa
+async function getMyEmailChangeRequest(req, res) {
+  try {
+    const { id } = req.user;
+    const request = await prisma.emailChangeRequest.findFirst({
+      where: { customerId: id },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(request || null);
+  } catch (err) {
+    console.error("Error al obtener solicitud:", err);
+    res.status(500).json({ error: "Error al obtener solicitud" });
+  }
+}
+
+// GET /api/customers/email-change-requests — admin: listar todas
+async function getAllEmailChangeRequests(req, res) {
+  try {
+    const requests = await prisma.emailChangeRequest.findMany({
+      include: { customer: { select: { id: true, name: true, email: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json(requests);
+  } catch (err) {
+    console.error("Error al listar solicitudes:", err);
+    res.status(500).json({ error: "Error al listar solicitudes" });
+  }
+}
+
+// PATCH /api/customers/email-change-requests/:id/approve — admin: aprobar
+async function approveEmailChangeRequest(req, res) {
+  try {
+    const requestId = parseInt(req.params.id);
+    const emailReq = await prisma.emailChangeRequest.findUnique({
+      where: { id: requestId },
+      include: { customer: true },
+    });
+
+    if (!emailReq) return res.status(404).json({ error: "Solicitud no encontrada" });
+    if (emailReq.status !== "PENDING") {
+      return res.status(400).json({ error: "La solicitud ya fue procesada" });
+    }
+
+    // Verificar que el nuevo email siga libre
+    const taken = await prisma.customer.findUnique({ where: { email: emailReq.newEmail } });
+    if (taken) {
+      return res.status(409).json({ error: "El email solicitado ya está en uso" });
+    }
+
+    // Cambiar el email del cliente y marcar la solicitud como aprobada en una transacción
+    await prisma.$transaction([
+      prisma.customer.update({
+        where: { id: emailReq.customerId },
+        data: { email: emailReq.newEmail },
+      }),
+      prisma.emailChangeRequest.update({
+        where: { id: requestId },
+        data: { status: "APPROVED" },
+      }),
+    ]);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error al aprobar solicitud:", err);
+    res.status(500).json({ error: "Error al aprobar solicitud" });
+  }
+}
+
+// PATCH /api/customers/email-change-requests/:id/reject — admin: rechazar
+async function rejectEmailChangeRequest(req, res) {
+  try {
+    const requestId = parseInt(req.params.id);
+    const { adminNotes } = req.body;
+
+    const emailReq = await prisma.emailChangeRequest.findUnique({ where: { id: requestId } });
+    if (!emailReq) return res.status(404).json({ error: "Solicitud no encontrada" });
+    if (emailReq.status !== "PENDING") {
+      return res.status(400).json({ error: "La solicitud ya fue procesada" });
+    }
+
+    await prisma.emailChangeRequest.update({
+      where: { id: requestId },
+      data: { status: "REJECTED", adminNotes: adminNotes?.trim() || null },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error al rechazar solicitud:", err);
+    res.status(500).json({ error: "Error al rechazar solicitud" });
+  }
+}
+
+// POST /api/customers/admin/create — Admin crea un cliente directamente (sin flujo de solicitud)
+// A diferencia del registro público, el cliente queda APPROVED inmediatamente.
+async function createCustomerAdmin(req, res) {
+  try {
+    const { name, email, password, phone, cuit, documentType, company, type } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({ error: "Nombre y email son requeridos" });
+    }
+
+    const existing = await prisma.customer.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(409).json({ error: "Ya existe un cliente con ese email" });
+    }
+
+    // Hashear contraseña solo si se proporcionó; si no, el cliente no podrá loguearse
+    // hasta que establezca una contraseña (o el admin se la envíe)
+    const hashedPassword = password && password.length >= 6
+      ? await bcrypt.hash(password, 10)
+      : null;
+
+    const validTypes = ["MINORISTA", "MAYORISTA"];
+    const customerType = validTypes.includes(type) ? type : "MINORISTA";
+
+    const validDocTypes = ["DNI", "CUIT", "CUIL"];
+    const customer = await prisma.customer.create({
+      data: {
+        name,
+        email,
+        password:     hashedPassword,
+        phone:        phone        || null,
+        cuit:         cuit         || null,
+        documentType: documentType && validDocTypes.includes(documentType) ? documentType : null,
+        company:      company      || null,
+        type:         customerType,
+        status:       "APPROVED", // El admin crea clientes ya aprobados
+      },
+    });
+
+    res.status(201).json({
+      id:        customer.id,
+      name:      customer.name,
+      email:     customer.email,
+      phone:     customer.phone,
+      type:      customer.type,
+      status:    customer.status,
+      createdAt: customer.createdAt,
+    });
+  } catch (err) {
+    console.error("createCustomerAdmin error:", err);
+    res.status(500).json({ error: "Error al crear el cliente" });
+  }
+}
+
+module.exports = {
+  register, customerLogin, getAll, updateStatus, updateType, updateCustomer, deleteCustomer,
+  getMe, updateMe,
+  // changeEmail, // REEMPLAZADO: el cambio de email ahora pasa por solicitud al admin
+  uploadAvatar,
+  requestEmailChange, getMyEmailChangeRequest,
+  getAllEmailChangeRequests, approveEmailChangeRequest, rejectEmailChangeRequest,
+  createCustomerAdmin,
+};

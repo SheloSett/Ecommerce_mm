@@ -16,21 +16,31 @@ export default function EditProfile() {
   }
 
   // ─── Estado formulario datos generales ───────────────────────────────────────
-  const [name, setName]   = useState(customer.name || "");
-  const [phone, setPhone] = useState(customer.phone || "");
+  const [name, setName]               = useState(customer.name || "");
+  const [phone, setPhone]             = useState(customer.phone || "");
+  const [documentType, setDocumentType] = useState(customer.documentType || "DNI");
+  const [cuit, setCuit]               = useState(customer.cuit || "");
   const [savingProfile, setSavingProfile] = useState(false);
 
-  // ─── Estado cambio de email ───────────────────────────────────────────────────
-  const [emailSection, setEmailSection] = useState(false);
-  const [newEmail, setNewEmail]         = useState("");
-  const [emailPassword, setEmailPassword] = useState("");
-  const [savingEmail, setSavingEmail]   = useState(false);
+  // ─── Estado solicitud cambio de email ────────────────────────────────────────
+  const [emailSection, setEmailSection]     = useState(false);
+  const [newEmail, setNewEmail]             = useState("");
+  const [emailReason, setEmailReason]       = useState("");
+  const [savingEmail, setSavingEmail]       = useState(false);
+  const [emailRequest, setEmailRequest]     = useState(null); // solicitud activa del cliente
 
   // ─── Estado solicitud mayorista ──────────────────────────────────────────────
   const [mayoristaRequest, setMayoristaRequest]       = useState(null); // solicitud actual
   const [mayoristaMessage, setMayoristaMessage]       = useState("");
   const [sendingRequest, setSendingRequest]           = useState(false);
   const [mayoristaFormOpen, setMayoristaFormOpen]     = useState(false);
+
+  // Cargar solicitud de cambio de email activa
+  useEffect(() => {
+    customersApi.getMyEmailChangeRequest()
+      .then((res) => setEmailRequest(res.data))
+      .catch(() => {});
+  }, []);
 
   // Cargar la solicitud existente al montar (si es MINORISTA)
   useEffect(() => {
@@ -73,8 +83,8 @@ export default function EditProfile() {
     }
     setSavingProfile(true);
     try {
-      const res = await customersApi.updateMe({ name: name.trim(), phone });
-      updateCustomerData({ name: res.data.name, phone: res.data.phone });
+      const res = await customersApi.updateMe({ name: name.trim(), phone, cuit, documentType });
+      updateCustomerData({ name: res.data.name, phone: res.data.phone, cuit: res.data.cuit, documentType: res.data.documentType });
       toast.success("Perfil actualizado");
     } catch (err) {
       toast.error(err.response?.data?.error || "Error al actualizar el perfil");
@@ -83,23 +93,26 @@ export default function EditProfile() {
     }
   };
 
-  // ─── Cambiar email ────────────────────────────────────────────────────────────
-  const handleChangeEmail = async (e) => {
+  // ─── Solicitar cambio de email ────────────────────────────────────────────────
+  const handleRequestEmailChange = async (e) => {
     e.preventDefault();
-    if (!newEmail.trim() || !emailPassword) {
+    if (!newEmail.trim() || !emailReason.trim()) {
       toast.error("Completá todos los campos");
       return;
     }
     setSavingEmail(true);
     try {
-      const res = await customersApi.changeEmail({ newEmail: newEmail.trim(), password: emailPassword });
-      updateCustomerWithToken(res.data.token, { email: res.data.customer.email });
-      toast.success("Email actualizado correctamente");
+      const res = await customersApi.requestEmailChange({
+        newEmail: newEmail.trim(),
+        reason:   emailReason.trim(),
+      });
+      setEmailRequest(res.data);
+      toast.success("Solicitud enviada. El administrador la revisará pronto.");
       setEmailSection(false);
       setNewEmail("");
-      setEmailPassword("");
+      setEmailReason("");
     } catch (err) {
-      toast.error(err.response?.data?.error || "Error al cambiar el email");
+      toast.error(err.response?.data?.error || "Error al enviar la solicitud");
     } finally {
       setSavingEmail(false);
     }
@@ -225,6 +238,36 @@ export default function EditProfile() {
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Documento</label>
+                <div className="flex gap-2">
+                  {/* Selector de tipo */}
+                  <div className="flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+                    {["DNI", "CUIT", "CUIL"].map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => setDocumentType(type)}
+                        className={`px-3 py-2 font-medium transition-colors ${
+                          documentType === type
+                            ? "bg-blue-600 text-white"
+                            : "bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Número de documento */}
+                  <input
+                    type="text"
+                    value={cuit}
+                    onChange={(e) => setCuit(e.target.value)}
+                    className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                    placeholder={documentType === "DNI" ? "12345678" : "20-12345678-9"}
+                  />
+                </div>
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de cuenta</label>
                 <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${
                   customer.type === "MAYORISTA"
@@ -345,23 +388,47 @@ export default function EditProfile() {
             </div>
           )}
 
-          {/* ── Cambio de email ── */}
+          {/* ── Cambio de email (sistema de solicitud) ── */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Email</h2>
-              <button
-                onClick={() => { setEmailSection((v) => !v); setNewEmail(""); setEmailPassword(""); }}
-                className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors"
-              >
-                {emailSection ? "Cancelar" : "Cambiar"}
-              </button>
+              {/* Solo mostrar el botón "Solicitar cambio" si no hay solicitud pendiente */}
+              {(!emailRequest || emailRequest.status !== "PENDING") && (
+                <button
+                  onClick={() => { setEmailSection((v) => !v); setNewEmail(""); setEmailReason(""); }}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                >
+                  {emailSection ? "Cancelar" : "Solicitar cambio"}
+                </button>
+              )}
             </div>
             <p className="text-sm text-slate-700 mb-3">{customer.email}</p>
 
+            {/* Estado de solicitud existente */}
+            {emailRequest && emailRequest.status === "PENDING" && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 space-y-1">
+                <p className="font-semibold">⏳ Solicitud pendiente de aprobación</p>
+                <p>Email solicitado: <span className="font-medium">{emailRequest.newEmail}</span></p>
+                <p className="text-xs text-amber-600">El administrador revisará tu solicitud pronto.</p>
+              </div>
+            )}
+            {emailRequest && emailRequest.status === "APPROVED" && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-sm text-emerald-800">
+                <p className="font-semibold">✅ Último cambio aprobado</p>
+              </div>
+            )}
+            {emailRequest && emailRequest.status === "REJECTED" && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 space-y-1">
+                <p className="font-semibold">❌ Solicitud rechazada</p>
+                {emailRequest.adminNotes && <p className="text-xs">{emailRequest.adminNotes}</p>}
+              </div>
+            )}
+
+            {/* Formulario de nueva solicitud */}
             {emailSection && (
-              <form onSubmit={handleChangeEmail} className="space-y-3 pt-2 border-t border-slate-100">
+              <form onSubmit={handleRequestEmailChange} className="space-y-3 pt-3 border-t border-slate-100 mt-3">
                 <p className="text-xs text-slate-500">
-                  Para cambiar el email debés confirmar tu contraseña actual.
+                  Tu solicitud será revisada por el administrador antes de aplicarse.
                 </p>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Nuevo email</label>
@@ -375,13 +442,13 @@ export default function EditProfile() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Contraseña actual</label>
-                  <input
-                    type="password"
-                    value={emailPassword}
-                    onChange={(e) => setEmailPassword(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
-                    placeholder="••••••••"
+                  <label className="block text-sm font-medium text-slate-700 mb-1">¿Por qué querés cambiarlo?</label>
+                  <textarea
+                    value={emailReason}
+                    onChange={(e) => setEmailReason(e.target.value)}
+                    rows={3}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 bg-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors resize-none"
+                    placeholder="Ej: perdí acceso a la cuenta anterior, quiero usar un email empresarial..."
                     required
                   />
                 </div>
@@ -390,7 +457,7 @@ export default function EditProfile() {
                   disabled={savingEmail}
                   className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                 >
-                  {savingEmail ? "Verificando..." : "Confirmar cambio de email"}
+                  {savingEmail ? "Enviando..." : "Enviar solicitud"}
                 </button>
               </form>
             )}
