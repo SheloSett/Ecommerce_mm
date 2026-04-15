@@ -1,6 +1,6 @@
 const express = require("express");
 const {
-  getOrders, getOrder, createOrder, updateOrderStatus, getStats, getMetrics, deleteOrder,
+  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
   getMyOrders, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
@@ -35,6 +35,8 @@ router.get("/metrics", authMiddleware, adminMiddleware, getMetrics);
 router.get("/", authMiddleware, adminMiddleware, getOrders);
 router.get("/:id", authMiddleware, adminMiddleware, getOrder);
 router.patch("/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
+// Admin: actualizar método de pago y/o estado de pedido (fulfillment)
+router.patch("/:id/fields", authMiddleware, adminMiddleware, updateOrderFields);
 // Admin: editar/eliminar un item individual de una cotización
 router.patch("/:orderId/items/:itemId", authMiddleware, adminMiddleware, updateOrderItem);
 router.delete("/:orderId/items/:itemId", authMiddleware, adminMiddleware, deleteOrderItem);

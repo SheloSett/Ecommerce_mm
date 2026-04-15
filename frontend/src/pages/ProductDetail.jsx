@@ -275,14 +275,26 @@ export default function ProductDetail() {
               const hasTierDiscount = selectedTier && selectedTier.price < baseUnitPrice;
 
               if (isMayorista && product.wholesalePrice) {
+                // hasWholesaleSale: hay precio de oferta mayorista activo
+                const hasWholesaleSale = product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice;
                 return (
                   <div className="mb-6">
+                    {/* Precio original tachado: se muestra si hay oferta mayorista O si hay descuento por tier */}
+                    {(hasWholesaleSale && !hasTierDiscount) && (
+                      <p className="text-lg text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</p>
+                    )}
                     {hasTierDiscount && (
                       <p className="text-lg text-slate-400 line-through">{formatPrice(baseUnitPrice)}</p>
                     )}
-                    <p className="text-4xl font-bold text-green-700">{formatPrice(displayPrice)}</p>
-                    <span className="inline-block mt-1 px-3 py-1 bg-green-100 text-green-700 text-sm font-semibold rounded-full">
-                      {hasTierDiscount ? "Precio mayorista c/descuento" : "Precio mayorista"}
+                    <p className={`text-4xl font-bold ${hasWholesaleSale || hasTierDiscount ? "text-red-600" : "text-green-700"}`}>
+                      {formatPrice(displayPrice)}
+                    </p>
+                    <span className={`inline-block mt-1 px-3 py-1 text-sm font-semibold rounded-full ${
+                      hasWholesaleSale || hasTierDiscount
+                        ? "bg-red-100 text-red-600"
+                        : "bg-green-100 text-green-700"
+                    }`}>
+                      {hasTierDiscount ? "Precio mayorista c/descuento" : hasWholesaleSale ? "Oferta mayorista" : "Precio mayorista"}
                     </span>
                   </div>
                 );
@@ -290,19 +302,26 @@ export default function ProductDetail() {
 
               // Minorista
               const originalPrice = product.price;
+              // showStrike: hay precio de oferta minorista activo O hay descuento por tier
               const showStrike = displayPrice < originalPrice;
               return (
                 <div className="mb-6">
                   {showStrike && (
                     <p className="text-lg text-slate-400 line-through">{formatPrice(originalPrice)}</p>
                   )}
-                  <p className={`text-4xl font-bold mb-1 ${displayPrice < originalPrice ? "text-red-600" : "text-blue-600"}`}>
+                  <p className={`text-4xl font-bold mb-1 ${showStrike ? "text-red-600" : "text-blue-600"}`}>
                     {formatPrice(displayPrice)}
                   </p>
-                  {displayPrice < originalPrice && (
+                  {showStrike && (
                     <span className="inline-block px-3 py-1 bg-red-100 text-red-600 text-sm font-semibold rounded-full">
                       {hasTierDiscount ? "Precio por cantidad" : "Precio oferta"}
                     </span>
+                  )}
+                  {/* Precio sin impuesto — calculado como price / 1.21, solo visible para MINORISTA */}
+                  {customer?.type !== "MAYORISTA" && (
+                    <p className="text-sm text-slate-400 mt-1">
+                      Precio sin impuestos {formatPrice(product.price / 1.21)}
+                    </p>
                   )}
                 </div>
               );

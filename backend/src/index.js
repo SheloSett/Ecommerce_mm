@@ -19,6 +19,7 @@ const couponRoutes   = require("./routes/coupon.routes");
 const slideRoutes    = require("./routes/slide.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const settingsRoutes = require("./routes/settings.routes");
+const returnRoutes   = require("./routes/return.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -31,16 +32,32 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
-// Rate limiter general: protege contra scraping masivo y abusos de la API
-// 200 req/15 min es suficiente ahora que las notificaciones usan SSE (1 conexión persistente)
-// en lugar de polling cada 30s (que sumaba ~30 req/15 min por sí solo).
-// Las rutas de auth (login/registro) tienen su propio limiter mucho más estricto (8 req/15 min).
+// Rate limiter general: protege rutas sensibles (órdenes, pagos, clientes, admin)
+// Las rutas GET públicas (productos, categorías, slides, settings) están EXCLUIDAS porque:
+// - Son de solo lectura, sin riesgo de abuso real
+// - En desarrollo, admin y cliente comparten IP (localhost) y agotaban el límite rápido
+// - En prod, un CDN/cache debería cubrir estas rutas de todas formas
+// Las rutas de auth tienen su propio limiter mucho más estricto (8 req/15 min).
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1500,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Demasiadas solicitudes. Intentá de nuevo en 15 minutos." },
+  skip: (req) => {
+    // Saltar el limiter para GETs públicos de solo lectura.
+    // IMPORTANTE: el middleware está montado en "/api", por lo que req.path ya NO incluye
+    // el prefijo "/api" — es solo "/products", "/categories", etc. Antes la lista tenía
+    // "/api/products" etc., lo que hacía que el skip nunca funcionara (startsWith fallaba).
+    const publicGetPaths = [
+      "/products",
+      "/categories",
+      "/slides",
+      "/settings",
+      "/health",
+    ];
+    return req.method === "GET" && publicGetPaths.some((p) => req.path.startsWith(p));
+  },
 });
 app.use("/api", generalLimiter);
 
@@ -73,6 +90,7 @@ app.use("/api/coupons",   couponRoutes);
 app.use("/api/slides",    slideRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/settings",  settingsRoutes);
+app.use("/api/returns",   returnRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

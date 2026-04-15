@@ -16,6 +16,8 @@ const mapItem = (dbItem) => ({
   image:      dbItem.image,
   images:     dbItem.image ? [dbItem.image] : [],
   stock:      dbItem.product?.stock ?? -1,
+  // ivaRate: alícuota del producto (10.5 o 21%). Default 21 si no viene del backend.
+  ivaRate:    dbItem.product?.ivaRate ?? 21,
 });
 
 export function CartProvider({ children }) {

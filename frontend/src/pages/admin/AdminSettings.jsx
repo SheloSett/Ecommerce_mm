@@ -9,22 +9,55 @@ const SECTIONS = [
   // Aquí se pueden agregar más secciones en el futuro
 ];
 
+// Convierte un Date a string compatible con <input type="datetime-local"> (YYYY-MM-DDTHH:MM)
+function toDatetimeLocal(date) {
+  if (!date) return "";
+  const d = new Date(date);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function AdminSettings() {
   const { refetch } = useSiteConfig();
   const [activeSection, setActiveSection] = useState("mantenimiento");
   const [maintenance, setMaintenance] = useState(false);
+  // scheduledInput: string en formato datetime-local ("YYYY-MM-DDTHH:MM") para el input
+  const [scheduledInput, setScheduledInput] = useState("");
+  // scheduledSaved: ISO string guardado en el backend (vacío = sin programar)
+  const [scheduledSaved, setScheduledSaved] = useState("");
   const [loading, setLoading]         = useState(true);
   const [saving, setSaving]           = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   useEffect(() => {
     settingsApi
       .get()
       .then((res) => {
-        setMaintenance(res.data.maintenance === "true");
+        const maintenanceOn = res.data.maintenance === "true";
+        const raw = res.data.maintenanceScheduledAt || "";
+        const scheduledDate = raw ? new Date(raw) : null;
+        const scheduleExpired = scheduledDate && scheduledDate <= new Date();
+
+        // Si la hora programada ya pasó y el mantenimiento aún no está activado en el backend,
+        // lo activamos automáticamente y limpiamos el schedule para que el toggle quede consistente.
+        if (!maintenanceOn && scheduleExpired) {
+          settingsApi.update({ maintenance: "true", maintenanceScheduledAt: "" })
+            .then(() => {
+              setMaintenance(true);
+              setScheduledSaved("");
+              setScheduledInput("");
+              refetch();
+            })
+            .catch(console.error);
+        } else {
+          setMaintenance(maintenanceOn);
+          setScheduledSaved(raw);
+          setScheduledInput(raw && !scheduleExpired ? toDatetimeLocal(scheduledDate) : "");
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [refetch]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -38,6 +71,46 @@ export default function AdminSettings() {
       toast.error("Error al guardar");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Guardar la fecha programada
+  const handleSaveSchedule = async () => {
+    if (!scheduledInput) {
+      toast.error("Seleccioná una fecha y hora");
+      return;
+    }
+    const date = new Date(scheduledInput);
+    if (isNaN(date.getTime()) || date <= new Date()) {
+      toast.error("La fecha debe ser en el futuro");
+      return;
+    }
+    setSavingSchedule(true);
+    try {
+      await settingsApi.update({ maintenanceScheduledAt: date.toISOString() });
+      setScheduledSaved(date.toISOString());
+      refetch();
+      toast.success("Mantenimiento programado");
+    } catch {
+      toast.error("Error al programar");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  // Cancelar la programación
+  const handleCancelSchedule = async () => {
+    setSavingSchedule(true);
+    try {
+      await settingsApi.update({ maintenanceScheduledAt: "" });
+      setScheduledSaved("");
+      setScheduledInput("");
+      refetch();
+      toast.success("Programación cancelada");
+    } catch {
+      toast.error("Error al cancelar");
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -127,7 +200,7 @@ export default function AdminSettings() {
                   </div>
                 </div>
 
-                {/* Botón guardar */}
+                {/* Botón guardar toggle */}
                 <div className="flex justify-end">
                   <button
                     onClick={handleSave}
@@ -137,6 +210,70 @@ export default function AdminSettings() {
                     {saving ? "Guardando…" : "Guardar cambios"}
                   </button>
                 </div>
+
+                {/* Card de programación — solo visible cuando el mantenimiento está desactivado */}
+                {!maintenance && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <span>🗓️</span> Programar mantenimiento
+                      </h3>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Elegí una fecha y hora para que el sitio entre en mantenimiento automáticamente.
+                        Los clientes verán un banner con la cuenta regresiva hasta ese momento.
+                      </p>
+                    </div>
+
+                    {/* Fecha programada actualmente guardada */}
+                    {scheduledSaved && (
+                      <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
+                        <div className="flex items-center gap-2 text-amber-800">
+                          <span>⏳</span>
+                          <span>
+                            Programado para el{" "}
+                            <strong>
+                              {new Date(scheduledSaved).toLocaleString("es-AR", {
+                                weekday: "long", day: "numeric", month: "long",
+                                hour: "2-digit", minute: "2-digit",
+                              })}
+                            </strong>
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleCancelSchedule}
+                          disabled={savingSchedule}
+                          className="text-xs font-semibold text-red-600 hover:text-red-700 underline underline-offset-2 disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Input de fecha/hora + botón programar */}
+                    <div className="flex gap-3 items-end">
+                      <div className="flex-1">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          Fecha y hora
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={scheduledInput}
+                          onChange={(e) => setScheduledInput(e.target.value)}
+                          // El mínimo es "ahora" para evitar programar en el pasado
+                          min={toDatetimeLocal(new Date())}
+                          className="input text-sm"
+                        />
+                      </div>
+                      <button
+                        onClick={handleSaveSchedule}
+                        disabled={savingSchedule || !scheduledInput}
+                        className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl disabled:opacity-50 transition-colors text-sm whitespace-nowrap"
+                      >
+                        {savingSchedule ? "Guardando…" : scheduledSaved ? "Actualizar" : "Programar"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 

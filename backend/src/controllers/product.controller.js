@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer } = req.query;
 
     const where = {};
 
@@ -55,12 +55,21 @@ async function getProducts(req, res) {
       where.featured = true;
     }
 
-    // Filtrar solo productos en oferta: tienen salePrice o wholesaleSalePrice definido
+    // homeOffer=true filtra los productos marcados como "Oferta en Home" (campo onSale booleano)
+    if (homeOffer === "true") {
+      where.onSale = true;
+    }
+
+    // Filtrar solo productos en oferta según el tipo de cliente:
+    // - MAYORISTA → solo productos con wholesaleSalePrice (oferta mayorista)
+    // - MINORISTA (o sin sesión) → solo productos con salePrice (oferta minorista)
+    // Antes filtraba con OR (cualquier oferta), lo que mostraba ofertas minoristas a mayoristas y viceversa.
     if (onSale === "true") {
-      where.OR = [
-        { salePrice: { not: null } },
-        { wholesaleSalePrice: { not: null } },
-      ];
+      if (visibleFor === "MAYORISTA") {
+        where.wholesaleSalePrice = { not: null };
+      } else {
+        where.salePrice = { not: null };
+      }
     }
 
     // Filtrar productos con pocas unidades: stock > 0 y <= 5, no ilimitado
@@ -200,25 +209,57 @@ async function getProduct(req, res) {
   }
 }
 
+// ── Helpers de módulo ─────────────────────────────────────────────────────────
+
+// Parsea price tiers desde FormData (JSON string o array).
+// allowUndefined=true → si raw es undefined devuelve undefined (para update, "no tocar").
+// allowUndefined=false → si raw es undefined/vacío devuelve null (para create).
+function parseTiers(raw, allowUndefined = false) {
+  if (raw === undefined) return allowUndefined ? undefined : null;
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed
+        .map((t) => ({ minQty: parseInt(t.minQty), price: parseFloat(t.price) }))
+        .filter((t) => t.minQty > 0 && t.price > 0)
+        .sort((a, b) => a.minQty - b.minQty);
+    }
+  } catch (_) { /* JSON inválido → tratar como vacío */ }
+  return null;
+}
+
+// Máximo de productos permitidos por cada sección del carrusel de la home.
+// Si al marcar un producto ya se alcanzó el límite, el más viejo se desmarca.
+const CAROUSEL_LIMIT = 20;
+
+async function enforceCarouselLimit(field, excludeId = null) {
+  const where = { [field]: true };
+  if (excludeId) where.id = { not: excludeId };
+
+  // Trae exactamente CAROUSEL_LIMIT productos ordenados del más viejo al más nuevo.
+  // Si la lista tiene CAROUSEL_LIMIT elementos, significa que ya se alcanzó el tope
+  // y el primero (índice 0) es el candidato a desmarcar — sin necesidad de count() separado.
+  const items = await prisma.product.findMany({
+    where,
+    orderBy: { createdAt: "asc" },
+    take: CAROUSEL_LIMIT,
+    select: { id: true, name: true },
+  });
+
+  if (items.length >= CAROUSEL_LIMIT) {
+    const oldest = items[0];
+    await prisma.product.update({
+      where: { id: oldest.id },
+      data: { [field]: false },
+    });
+    console.log(`[carousel] Se quitó ${field} del producto ID ${oldest.id} ("${oldest.name}") por alcanzar el límite de ${CAROUSEL_LIMIT}.`);
+  }
+}
+
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
-    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, weight, length, width, height, visibility } = req.body;
-    // priceTiers/wholesalePriceTiers vienen como JSON string desde FormData → parsear y ordenar por minQty
-    function parseTiers(raw) {
-      if (!raw) return null;
-      try {
-        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Convertir minQty y price a número para evitar comparaciones de string incorrectas
-          return parsed
-            .map((t) => ({ minQty: parseInt(t.minQty), price: parseFloat(t.price) }))
-            .filter((t) => t.minQty > 0 && t.price > 0)
-            .sort((a, b) => a.minQty - b.minQty);
-        }
-      } catch (_) { /* ignorar JSON inválido */ }
-      return null;
-    }
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, weight, length, width, height, visibility } = req.body;
     const priceTiers = parseTiers(priceTiersRaw);
     const wholesalePriceTiers = parseTiers(wholesalePriceTiersRaw);
     // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
@@ -248,12 +289,18 @@ async function createProduct(req, res) {
       ? req.files.map((f) => `/uploads/${f.filename}`)
       : [];
 
+    // Si se activa featured u onSale, verificar que no se supere el límite del carrusel.
+    // Si ya hay 20, el más viejo se desmarca automáticamente antes de insertar el nuevo.
+    if (featured === "true" || featured === true) await enforceCarouselLimit("featured");
+    if (onSale === "true" || onSale === true)     await enforceCarouselLimit("onSale");
+
     const product = await prisma.product.create({
       data: {
         name,
         description: description || null,
         price: parseFloat(price),
         cost: cost ? parseFloat(cost) : null,
+        ivaRate: ivaRate ? parseFloat(ivaRate) : 21,
         salePrice: salePrice ? parseFloat(salePrice) : null,
         wholesalePrice: wholesalePrice ? parseFloat(wholesalePrice) : null,
         wholesaleSalePrice: wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null,
@@ -270,6 +317,8 @@ async function createProduct(req, res) {
         // Antes: categoryId: categoryId ? parseInt(categoryId) : null
         categories: categoryIds.length > 0 ? { connect: categoryIds.map((id) => ({ id })) } : undefined,
         featured: featured === "true" || featured === true,
+        // onSale: marca el producto para la sección "Ofertas" de la home
+        onSale: onSale === "true" || onSale === true,
         visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : "AMBOS",
         priceTiers: priceTiers || undefined,
         wholesalePriceTiers: wholesalePriceTiers || undefined,
@@ -289,25 +338,10 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, active, keepImages, weight, length, width, height, visibility } = req.body;
-    // priceTiers/wholesalePriceTiers vienen como JSON string desde FormData → parsear y ordenar por minQty
-    // undefined significa "no vino en el body, no tocar"; null o [] borra los tiers
-    function parseTiersUpdate(raw) {
-      if (raw === undefined) return undefined; // no vino → no tocar
-      try {
-        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Convertir minQty y price a número para evitar comparaciones de string incorrectas
-          return parsed
-            .map((t) => ({ minQty: parseInt(t.minQty), price: parseFloat(t.price) }))
-            .filter((t) => t.minQty > 0 && t.price > 0)
-            .sort((a, b) => a.minQty - b.minQty);
-        }
-        return null; // array vacío → borrar tiers
-      } catch (_) { return null; }
-    }
-    const priceTiersUpdate = parseTiersUpdate(priceTiersRaw);
-    const wholesalePriceTiersUpdate = parseTiersUpdate(wholesalePriceTiersRaw);
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, active, keepImages, weight, length, width, height, visibility } = req.body;
+    // undefined → no tocar (allowUndefined=true); null/[] → borrar tiers
+    const priceTiersUpdate = parseTiers(priceTiersRaw, true);
+    const wholesalePriceTiersUpdate = parseTiers(wholesalePriceTiersRaw, true);
     // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
     // Antes: categoryId (single) — ahora: categoryIds (multiple)
     const rawCategoryIds = req.body.categoryIds;
@@ -358,6 +392,16 @@ async function updateProduct(req, res) {
       images = Array.isArray(keepImages) ? keepImages : [keepImages];
     }
 
+    // Si se activa featured u onSale (y antes no lo estaba), verificar límite del carrusel.
+    // Se ejecutan en paralelo si ambas condiciones aplican — excludeId evita contar el producto actual.
+    const isFeaturedNow = featured !== undefined ? (featured === "true" || featured === true) : existing.featured;
+    const isOnSaleNow   = onSale   !== undefined ? (onSale   === "true" || onSale   === true) : existing.onSale;
+    const numericId = parseInt(id);
+    const carouselChecks = [];
+    if (isFeaturedNow && !existing.featured) carouselChecks.push(enforceCarouselLimit("featured", numericId));
+    if (isOnSaleNow   && !existing.onSale)   carouselChecks.push(enforceCarouselLimit("onSale",   numericId));
+    if (carouselChecks.length) await Promise.all(carouselChecks);
+
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
       data: {
@@ -365,6 +409,7 @@ async function updateProduct(req, res) {
         description: description !== undefined ? description : existing.description,
         price: price ? parseFloat(price) : existing.price,
         cost: cost !== undefined ? (cost ? parseFloat(cost) : null) : existing.cost,
+        ivaRate: ivaRate !== undefined ? parseFloat(ivaRate) : existing.ivaRate,
         salePrice: salePrice !== undefined ? (salePrice ? parseFloat(salePrice) : null) : existing.salePrice,
         wholesalePrice: wholesalePrice !== undefined ? (wholesalePrice ? parseFloat(wholesalePrice) : null) : existing.wholesalePrice,
         wholesaleSalePrice: wholesaleSalePrice !== undefined ? (wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null) : existing.wholesaleSalePrice,
@@ -382,6 +427,8 @@ async function updateProduct(req, res) {
         // set: reemplaza todas las categorías por las nuevas; si no vino en el body, no tocar
         ...(categoryIds !== null ? { categories: { set: categoryIds.map((id) => ({ id })) } } : {}),
         featured: featured !== undefined ? (featured === "true" || featured === true) : existing.featured,
+        // onSale: si viene en el body lo actualiza, sino conserva el valor actual
+        onSale: onSale !== undefined ? (onSale === "true" || onSale === true) : existing.onSale,
         active: active !== undefined ? (active === "true" || active === true) : existing.active,
         visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : existing.visibility,
         ...(priceTiersUpdate !== undefined ? { priceTiers: priceTiersUpdate } : {}),

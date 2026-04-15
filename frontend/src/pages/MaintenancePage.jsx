@@ -1,4 +1,18 @@
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useSiteConfig } from "../context/SiteConfigContext";
+
 export default function MaintenancePage() {
+  const { maintenance, loading } = useSiteConfig();
+  const navigate = useNavigate();
+
+  // Cuando el admin desactiva el mantenimiento, redirigir al home automáticamente
+  useEffect(() => {
+    if (!loading && !maintenance) {
+      navigate("/", { replace: true });
+    }
+  }, [maintenance, loading, navigate]);
+
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
       <div className="text-center max-w-md">

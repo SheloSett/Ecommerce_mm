@@ -14,6 +14,49 @@ function formatDate(dateStr) {
   });
 }
 
+const FULFILLMENT_STAGES = [
+  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
+  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
+  { value: "ENVIADO",        label: "Enviado",        icon: "🚚" },
+  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
+];
+
+function FulfillmentTracker({ status = "PENDIENTE" }) {
+  const currentIdx = FULFILLMENT_STAGES.findIndex((s) => s.value === status);
+  return (
+    <div className="flex items-start mt-3 w-full">
+      {FULFILLMENT_STAGES.map((stage, idx) => {
+        const isDone    = idx < currentIdx;
+        const isCurrent = idx === currentIdx;
+        return (
+          <div key={stage.value} className="flex-1 flex flex-col items-center relative">
+            {/* Línea izquierda (excepto primer nodo) */}
+            {idx > 0 && (
+              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone ? "bg-green-300" : "bg-slate-200"}`} />
+            )}
+            {/* Nodo */}
+            <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-sm border-2 transition-colors ${
+              isCurrent ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" :
+              isDone    ? "border-green-400 bg-green-50 text-green-600" :
+                          "border-slate-200 bg-white text-slate-300"
+            }`}>
+              {isDone ? "✓" : stage.icon}
+            </div>
+            {/* Label */}
+            <span className={`text-[10px] mt-1 text-center leading-tight w-full px-1 ${
+              isCurrent ? "text-blue-600 font-semibold" :
+              isDone    ? "text-green-600" :
+                          "text-slate-400"
+            }`}>
+              {stage.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function formatPrice(price) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 }
@@ -82,7 +125,7 @@ export default function OrderHistory() {
               </svg>
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-slate-800">Mis pedidos</h1>
+              <h1 className="text-2xl font-bold text-slate-800">Historial de pedidos</h1>
               <p className="text-sm text-slate-500">Pedidos aprobados / pagados</p>
             </div>
           </div>
@@ -142,9 +185,10 @@ export default function OrderHistory() {
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{formatDate(order.createdAt)}</p>
                       <p className="text-base font-bold text-slate-800 mt-1">{formatPrice(order.total)}</p>
+                      <FulfillmentTracker status={order.fulfillmentStatus} />
                     </div>
 
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2 flex-shrink-0 self-start">
                       {/* Ver detalles */}
                       <button
                         onClick={() => toggleExpand(order.id)}
@@ -216,6 +260,38 @@ export default function OrderHistory() {
                           </div>
                         );
                       })}
+
+                      {/* Desglose de totales (cupón y/o IVA) */}
+                      {(() => {
+                        const discount = order.couponDiscount || 0;
+                        const iva      = order.ivaAmount      || 0;
+                        const hasLines = discount > 0 || iva > 0;
+                        const subtotal = order.total + discount - iva;
+                        return hasLines ? (
+                          <div className="border-t border-slate-100 pt-3 mt-1 space-y-1.5">
+                            <div className="flex justify-between text-xs text-slate-400">
+                              <span>Subtotal</span>
+                              <span>{formatPrice(subtotal)}</span>
+                            </div>
+                            {discount > 0 && (
+                              <div className="flex justify-between text-xs text-green-600 font-medium">
+                                <span>Cupón aplicado</span>
+                                <span>−{formatPrice(discount)}</span>
+                              </div>
+                            )}
+                            {iva > 0 && (
+                              <div className="flex justify-between text-xs text-slate-400">
+                                <span>IVA (21%)</span>
+                                <span>+{formatPrice(iva)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between text-sm font-bold text-slate-800 pt-1 border-t border-slate-100">
+                              <span>Total</span>
+                              <span>{formatPrice(order.total)}</span>
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
 
                       {/* Nota si hay productos discontinuados */}
                       {order.items.some((i) => !i.product?.active) && (

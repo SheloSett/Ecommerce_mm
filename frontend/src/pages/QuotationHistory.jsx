@@ -11,6 +11,46 @@ function formatDate(dateStr) {
     day: "2-digit", month: "long", year: "numeric",
   });
 }
+
+const FULFILLMENT_STAGES = [
+  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
+  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
+  { value: "ENVIADO",        label: "Enviado",        icon: "🚚" },
+  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
+];
+
+function FulfillmentTracker({ status = "PENDIENTE" }) {
+  const currentIdx = FULFILLMENT_STAGES.findIndex((s) => s.value === status);
+  return (
+    <div className="flex items-start mt-3 w-full">
+      {FULFILLMENT_STAGES.map((stage, idx) => {
+        const isDone    = idx < currentIdx;
+        const isCurrent = idx === currentIdx;
+        return (
+          <div key={stage.value} className="flex-1 flex flex-col items-center relative">
+            {idx > 0 && (
+              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone ? "bg-green-300" : "bg-slate-200"}`} />
+            )}
+            <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-sm border-2 transition-colors ${
+              isCurrent ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" :
+              isDone    ? "border-green-400 bg-green-50 text-green-600" :
+                          "border-slate-200 bg-white text-slate-300"
+            }`}>
+              {isDone ? "✓" : stage.icon}
+            </div>
+            <span className={`text-[10px] mt-1 text-center leading-tight w-full px-1 ${
+              isCurrent ? "text-blue-600 font-semibold" :
+              isDone    ? "text-green-600" :
+                          "text-slate-400"
+            }`}>
+              {stage.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 function formatPrice(price) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 }
@@ -153,6 +193,10 @@ export default function QuotationHistory() {
                       <p className="text-base font-bold text-slate-800 mt-1">
                         {quote.status === "APPROVED" ? "Total: " : "Total estimado: "}{formatPrice(quote.total)}
                       </p>
+                      {/* Tracker de estado de pedido — solo cuando ya está pagada/aprobada */}
+                      {quote.status === "APPROVED" && (
+                        <FulfillmentTracker status={quote.fulfillmentStatus} />
+                      )}
                       {/* Nota del admin: si menciona "stock" es una alerta, sino nota normal */}
                       {quote.adminNotes && (() => {
                         const isStockAlert = quote.adminNotes.includes("stock");

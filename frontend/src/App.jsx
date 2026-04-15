@@ -19,6 +19,9 @@ import QuotationHistory from "./pages/QuotationHistory";
 import PayQuotation from "./pages/PayQuotation";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
+import AboutUs from "./pages/AboutUs";
+import HowToBuy from "./pages/HowToBuy";
+import ReturnRequest from "./pages/ReturnRequest";
 
 // Panel de administración
 import AdminLogin from "./pages/admin/AdminLogin";
@@ -35,16 +38,35 @@ import AdminCoupons from "./pages/admin/AdminCoupons";
 import AdminPurchases from "./pages/admin/AdminPurchases";
 import AdminCarousel from "./pages/admin/AdminCarousel";
 import AdminSettings from "./pages/admin/AdminSettings";
+import AdminReturns from "./pages/admin/AdminReturns";
 import ProtectedRoute from "./components/ProtectedRoute";
 import WhatsAppButton from "./components/WhatsAppButton";
+import ScrollToTop from "./components/ScrollToTop";
 import MaintenancePage from "./pages/MaintenancePage";
+import MaintenanceBanner from "./components/MaintenanceBanner";
 
 // Wrapper que aplica el modo mantenimiento y la clase .storefront (para temas CSS)
-// a todas las paginas publicas. Las rutas /admin/* no se ven afectadas.
+// a todas las páginas públicas. Las rutas /admin/* no se ven afectadas.
+// Antes: renderizaba <MaintenancePage /> en el mismo URL (el cliente podía ver /catalogo pero con la pantalla de mantenimiento)
+// Ahora: redirige a /mantenimiento — todas las URLs quedan bloqueadas y la URL es explícita
 function PublicRoute({ children }) {
-  const { maintenance } = useSiteConfig();
-  if (maintenance) return <MaintenancePage />;
-  return <div className="storefront">{children}</div>;
+  const { maintenance, loading } = useSiteConfig();
+  // Esperar a que el contexto cargue antes de decidir qué mostrar.
+  // Sin esto, maintenance=false (estado inicial) y se renderiza el contenido
+  // un instante antes de que llegue la respuesta del backend.
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-900">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400" />
+    </div>
+  );
+  if (maintenance) return <Navigate to="/mantenimiento" replace />;
+  return (
+    <div className="storefront">
+      {/* Banner con countdown — se muestra solo si hay un mantenimiento programado futuro */}
+      <MaintenanceBanner />
+      {children}
+    </div>
+  );
 }
 
 export default function App() {
@@ -54,8 +76,12 @@ export default function App() {
       <CustomerAuthProvider>
       <NotificationProvider>
       <CartProvider>
+        <ScrollToTop />
         <WhatsAppButton />
         <Routes>
+          {/* Ruta de mantenimiento — fuera de PublicRoute para evitar redirect infinito */}
+          <Route path="/mantenimiento" element={<MaintenancePage />} />
+
           {/* ── Tienda pública (envuelta en PublicRoute para mantenimiento) ── */}
           <Route path="/" element={<PublicRoute><Home /></PublicRoute>} />
           <Route path="/catalogo" element={<PublicRoute><Catalog /></PublicRoute>} />
@@ -72,6 +98,9 @@ export default function App() {
           <Route path="/pagar-cotizacion/:id" element={<PublicRoute><PayQuotation /></PublicRoute>} />
           <Route path="/privacidad" element={<PublicRoute><Privacy /></PublicRoute>} />
           <Route path="/terminos" element={<PublicRoute><Terms /></PublicRoute>} />
+          <Route path="/sobre-nosotros" element={<PublicRoute><AboutUs /></PublicRoute>} />
+          <Route path="/como-comprar" element={<PublicRoute><HowToBuy /></PublicRoute>} />
+          <Route path="/arrepentimiento" element={<PublicRoute><ReturnRequest /></PublicRoute>} />
 
           {/* ── Admin ── */}
           <Route path="/admin/login" element={<AdminLogin />} />
@@ -181,6 +210,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <AdminSettings />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/devoluciones"
+            element={
+              <ProtectedRoute>
+                <AdminReturns />
               </ProtectedRoute>
             }
           />

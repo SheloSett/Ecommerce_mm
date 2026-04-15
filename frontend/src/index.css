@@ -24,7 +24,7 @@
   }
 
   .input {
-    @apply border border-slate-300 rounded-lg px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200;
+    @apply border border-slate-300 rounded-lg px-3 py-2 w-full bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200;
   }
 
   .card {
@@ -65,6 +65,212 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   TEMA OSCURO DEL PANEL DE ADMINISTRACIÓN
+   Activado con la clase .admin-dark en el wrapper raíz del AdminLayout.
+   No afecta las páginas públicas de la tienda (.storefront).
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Cards */
+.admin-dark .card {
+  background-color: #1e293b !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Fondos neutros */
+.admin-dark .bg-white     { background-color: #1e293b !important; }
+.admin-dark .bg-slate-50  { background-color: #0f172a !important; }
+.admin-dark .bg-slate-100 { background-color: #1e293b !important; }
+.admin-dark .bg-slate-200 { background-color: #334155 !important; }
+
+/* Fondos de color (azul, rojo, verde, amber, etc.) — versiones oscuras */
+.admin-dark .bg-blue-50    { background-color: #0f1f35 !important; }
+.admin-dark .bg-red-50     { background-color: #1f0f0f !important; }
+.admin-dark .bg-green-50   { background-color: #0f1f14 !important; }
+.admin-dark .bg-amber-50   { background-color: #1c1408 !important; }
+.admin-dark .bg-orange-50  { background-color: #1c1208 !important; }
+.admin-dark .bg-emerald-50 { background-color: #0a1f14 !important; }
+.admin-dark .bg-purple-50  { background-color: #150f1f !important; }
+
+/* Bordes de color */
+.admin-dark .border-blue-200   { border-color: #1e3a5f !important; }
+.admin-dark .border-red-200    { border-color: #3b1111 !important; }
+.admin-dark .border-green-200  { border-color: #14532d !important; }
+.admin-dark .border-amber-200  { border-color: #78350f !important; }
+.admin-dark .border-orange-200 { border-color: #431407 !important; }
+
+/* Textos de color dentro de fondos oscuros — selector amplio por atributo */
+.admin-dark [class*="bg-amber"] [class*="text-amber"],
+.admin-dark [class*="bg-amber"] [class*="text-slate"] { color: #fcd34d !important; }
+
+.admin-dark [class*="bg-blue"] [class*="text-blue"],
+.admin-dark [class*="bg-blue"] [class*="text-slate"]  { color: #93c5fd !important; }
+
+.admin-dark [class*="bg-red"] [class*="text-red"],
+.admin-dark [class*="bg-red"] [class*="text-slate"]   { color: #fca5a5 !important; }
+
+.admin-dark [class*="bg-green"] [class*="text-green"],
+.admin-dark [class*="bg-green"] [class*="text-slate"] { color: #86efac !important; }
+
+/* Textos sobre fondos de color — aumentar contraste */
+.admin-dark .bg-blue-50 .text-slate-400,
+.admin-dark .bg-blue-50 .text-slate-500,
+.admin-dark .bg-blue-50 .text-slate-600,
+.admin-dark .bg-blue-50 .text-slate-700,
+.admin-dark .bg-blue-50 .text-slate-800,
+.admin-dark .bg-blue-50 .text-blue-600,
+.admin-dark .bg-blue-50 .text-blue-700,
+.admin-dark .bg-blue-50 .text-blue-800,
+.admin-dark .bg-blue-50 .text-blue-900 { color: #93c5fd !important; }
+
+.admin-dark .bg-red-50 .text-slate-400,
+.admin-dark .bg-red-50 .text-slate-500,
+.admin-dark .bg-red-50 .text-slate-600,
+.admin-dark .bg-red-50 .text-slate-700,
+.admin-dark .bg-red-50 .text-slate-800,
+.admin-dark .bg-red-50 .text-red-600,
+.admin-dark .bg-red-50 .text-red-700,
+.admin-dark .bg-red-50 .text-red-800,
+.admin-dark .bg-red-50 .text-red-900 { color: #fca5a5 !important; }
+
+.admin-dark .bg-green-50 .text-slate-400,
+.admin-dark .bg-green-50 .text-slate-500,
+.admin-dark .bg-green-50 .text-slate-600,
+.admin-dark .bg-green-50 .text-slate-700,
+.admin-dark .bg-green-50 .text-slate-800,
+.admin-dark .bg-green-50 .text-green-600,
+.admin-dark .bg-green-50 .text-green-700,
+.admin-dark .bg-green-50 .text-green-800,
+.admin-dark .bg-green-50 .text-green-900 { color: #86efac !important; }
+
+.admin-dark .bg-amber-50 .text-slate-400,
+.admin-dark .bg-amber-50 .text-slate-500,
+.admin-dark .bg-amber-50 .text-slate-600,
+.admin-dark .bg-amber-50 .text-slate-700,
+.admin-dark .bg-amber-50 .text-slate-800,
+.admin-dark .bg-amber-50 .text-amber-600,
+.admin-dark .bg-amber-50 .text-amber-700,
+.admin-dark .bg-amber-50 .text-amber-800,
+.admin-dark .bg-amber-50 .text-amber-900 { color: #fcd34d !important; }
+
+/* Color base de herencia — cualquier texto sin clase explícita hereda este valor */
+.admin-dark { color: #e2e8f0; }
+
+/* Textos slate — se aclaran para garantizar contraste sobre fondos oscuros */
+.admin-dark .text-slate-900 { color: #f1f5f9 !important; }
+.admin-dark .text-slate-800 { color: #e2e8f0 !important; }
+.admin-dark .text-slate-700 { color: #cbd5e1 !important; }
+.admin-dark .text-slate-600 { color: #b0bec5 !important; } /* era #94a3b8, subido para mejor contraste */
+.admin-dark .text-slate-500 { color: #94a3b8 !important; } /* era #64748b, demasiado oscuro */
+.admin-dark .text-slate-400 { color: #94a3b8 !important; }
+
+/* Textos gray — misma familia visual, mismo tratamiento */
+.admin-dark .text-gray-900 { color: #f1f5f9 !important; }
+.admin-dark .text-gray-800 { color: #e2e8f0 !important; }
+.admin-dark .text-gray-700 { color: #cbd5e1 !important; }
+.admin-dark .text-gray-600 { color: #b0bec5 !important; }
+.admin-dark .text-gray-500 { color: #94a3b8 !important; }
+.admin-dark .text-gray-400 { color: #94a3b8 !important; }
+
+/* Textos zinc */
+.admin-dark .text-zinc-900 { color: #f1f5f9 !important; }
+.admin-dark .text-zinc-800 { color: #e2e8f0 !important; }
+.admin-dark .text-zinc-700 { color: #cbd5e1 !important; }
+.admin-dark .text-zinc-600 { color: #b0bec5 !important; }
+.admin-dark .text-zinc-500 { color: #94a3b8 !important; }
+
+/* Textos neutral */
+.admin-dark .text-neutral-900 { color: #f1f5f9 !important; }
+.admin-dark .text-neutral-800 { color: #e2e8f0 !important; }
+.admin-dark .text-neutral-700 { color: #cbd5e1 !important; }
+.admin-dark .text-neutral-600 { color: #b0bec5 !important; }
+.admin-dark .text-neutral-500 { color: #94a3b8 !important; }
+
+/* Negro puro */
+.admin-dark .text-black { color: #f1f5f9 !important; }
+
+/* Colores de acento usados como texto independiente (no dentro de bg de color) */
+.admin-dark .text-blue-600   { color: #60a5fa !important; }
+.admin-dark .text-blue-700   { color: #93c5fd !important; }
+.admin-dark .text-blue-800   { color: #bfdbfe !important; }
+.admin-dark .text-blue-900   { color: #dbeafe !important; }
+.admin-dark .text-green-600  { color: #4ade80 !important; }
+.admin-dark .text-green-700  { color: #86efac !important; }
+.admin-dark .text-green-800  { color: #bbf7d0 !important; }
+.admin-dark .text-green-900  { color: #dcfce7 !important; }
+.admin-dark .text-red-600    { color: #f87171 !important; }
+.admin-dark .text-red-700    { color: #fca5a5 !important; }
+.admin-dark .text-red-800    { color: #fecaca !important; }
+.admin-dark .text-red-900    { color: #fee2e2 !important; }
+.admin-dark .text-amber-600  { color: #fbbf24 !important; }
+.admin-dark .text-amber-700  { color: #fcd34d !important; }
+.admin-dark .text-amber-800  { color: #fde68a !important; }
+.admin-dark .text-amber-900  { color: #fef3c7 !important; }
+.admin-dark .text-orange-600 { color: #fb923c !important; }
+.admin-dark .text-orange-700 { color: #fdba74 !important; }
+.admin-dark .text-orange-800 { color: #fed7aa !important; }
+.admin-dark .text-emerald-600 { color: #34d399 !important; }
+.admin-dark .text-emerald-700 { color: #6ee7b7 !important; }
+.admin-dark .text-purple-600  { color: #a78bfa !important; }
+.admin-dark .text-purple-700  { color: #c4b5fd !important; }
+
+/* Bordes */
+.admin-dark .border-slate-100 { border-color: #1e293b !important; }
+.admin-dark .border-slate-200 { border-color: #334155 !important; }
+.admin-dark .border-slate-300 { border-color: #475569 !important; }
+
+/* Inputs */
+.admin-dark .input {
+  background-color: #0f172a !important;
+  border-color: #475569 !important;
+  color: #e2e8f0 !important;
+}
+.admin-dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.admin-dark textarea,
+.admin-dark select {
+  background-color: #0f172a !important;
+  border-color: #475569 !important;
+  color: #e2e8f0 !important;
+}
+.admin-dark input::placeholder,
+.admin-dark textarea::placeholder { color: #64748b !important; }
+
+/* Tablas */
+.admin-dark thead { background-color: #0f172a !important; }
+.admin-dark thead th { color: #94a3b8 !important; }
+.admin-dark tbody tr { border-color: #1e293b !important; }
+.admin-dark tbody tr:hover { background-color: #1e293b !important; }
+.admin-dark td { color: #cbd5e1 !important; }
+
+/* Botones secundarios */
+.admin-dark .btn-secondary {
+  background-color: #334155 !important;
+  color: #e2e8f0 !important;
+}
+.admin-dark .btn-secondary:hover { background-color: #475569 !important; }
+
+/* Hover de botones neutros */
+.admin-dark button.hover\:bg-slate-50:hover  { background-color: #1e293b !important; }
+.admin-dark button.hover\:bg-slate-100:hover { background-color: #334155 !important; }
+
+/* Badges / pills claros */
+.admin-dark .bg-slate-100.text-slate-700,
+.admin-dark .bg-slate-200.text-slate-700 {
+  background-color: #334155 !important;
+  color: #cbd5e1 !important;
+}
+
+/* Dividers */
+.admin-dark hr { border-color: #334155 !important; }
+.admin-dark .divide-slate-100 > * + * { border-color: #1e293b !important; }
+.admin-dark .divide-slate-200 > * + * { border-color: #334155 !important; }
+
+/* Scrollbar en modo oscuro admin */
+.admin-dark ::-webkit-scrollbar-track { background: #1e293b; }
+.admin-dark ::-webkit-scrollbar-thumb { background: #475569; }
+.admin-dark ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
 /* ══════════════════════════════════════════════════════════════════════
    TEMAS DE LA TIENDA
@@ -199,6 +405,30 @@ html[data-theme="oscuro"] .storefront .card .border-indigo-500 {
 /* Bordes */
 html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
 html[data-theme="oscuro"] .storefront .border-white\/30 { border-color: rgba(255,255,255,0.15) !important; }
+
+/* ── Página "Cómo comprar" — step cards en modo oscuro ── */
+/* Los fondos bg-*-50 y bg-*-100 son blancos/muy claros: en oscuro se los pisa
+   con tonos oscuros del mismo matiz para mantener la identidad de color de cada paso. */
+html[data-theme="oscuro"] .storefront .htb-steps .bg-blue-50    { background-color: #0f2a4a !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-blue-100   { border-color: #1e3a5f !important; }
+
+html[data-theme="oscuro"] .storefront .htb-steps .bg-indigo-50  { background-color: #1a1240 !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-indigo-100 { border-color: #2e1f6e !important; }
+
+html[data-theme="oscuro"] .storefront .htb-steps .bg-violet-50  { background-color: #200a45 !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-violet-100 { border-color: #3b0764 !important; }
+
+html[data-theme="oscuro"] .storefront .htb-steps .bg-cyan-50    { background-color: #042d3f !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-cyan-100   { border-color: #0e4f6b !important; }
+
+html[data-theme="oscuro"] .storefront .htb-steps .bg-emerald-50 { background-color: #022818 !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-emerald-100 { border-color: #064e3b !important; }
+
+html[data-theme="oscuro"] .storefront .htb-steps .bg-orange-50  { background-color: #2c1004 !important; }
+html[data-theme="oscuro"] .storefront .htb-steps .border-orange-100 { border-color: #7c2d12 !important; }
+
+/* Tip boxes dentro de los steps (bg-white/70 -> fondo oscuro semitransparente) */
+html[data-theme="oscuro"] .storefront .htb-steps .bg-white\/70  { background-color: rgba(255,255,255,0.06) !important; }
 
 
 /* ── Tema Calido — REMOVIDO: ahora solo hay clásico y oscuro ─────── */

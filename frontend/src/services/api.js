@@ -79,6 +79,8 @@ export const ordersApi = {
   getAll: (params) => api.get("/orders", { params }),
   getById: (id) => api.get(`/orders/${id}`),
   updateStatus: (id, status) => api.patch(`/orders/${id}/status`, { status }),
+  // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
+  updateFields: (id, fields) => api.patch(`/orders/${id}/fields`, fields),
   getStats:   (params) => api.get("/orders/stats",   { params: params || {} }),
   getMetrics: (params) => api.get("/orders/metrics", { params: params || {} }),
   delete: (id) => api.delete(`/orders/${id}`),
@@ -225,6 +227,20 @@ export const purchasesApi = {
   getAll:   ()         => api.get("/purchases"),
   getById:  (id)       => api.get(`/purchases/${id}`),
   create:   (data)     => api.post("/purchases", data),
+};
+
+// ─── Botón de Arrepentimiento / Devoluciones ─────────────────────────────────
+export const returnsApi = {
+  // Público: buscar pedidos por email para clientes sin cuenta
+  lookupByEmail: (email) => api.get("/returns/lookup", { params: { email } }),
+  // Público: crear solicitud de arrepentimiento
+  create: (data) => api.post("/returns", data),
+  // Cliente autenticado: ver sus propias solicitudes
+  getMy: () => customerAuthApi.get("/returns/my"),
+  // Admin: listar todas
+  getAll: (params) => api.get("/returns", { params }),
+  // Admin: aprobar o rechazar
+  updateStatus: (id, status, adminNotes) => api.patch(`/returns/${id}/status`, { status, adminNotes }),
 };
 
 // ─── Configuración del sitio ──────────────────────────────────────────────────

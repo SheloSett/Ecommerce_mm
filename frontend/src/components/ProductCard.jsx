@@ -69,12 +69,12 @@ export default function ProductCard({ product }) {
 
       {/* Info */}
       <div className="p-4 flex flex-col flex-1">
-        {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
-        {product.categories && product.categories.length > 0 && (
+        {/* Categoría ocultada por decisión de diseño — la info está en el detalle del producto */}
+        {/* {product.categories && product.categories.length > 0 && (
           <span className="text-xs text-blue-600 font-semibold uppercase tracking-wide mb-1">
             {product.categories.map((c) => c.name).join(" · ")}
           </span>
-        )}
+        )} */}
         <h3 className="font-semibold text-slate-800 text-sm leading-tight mb-2 flex-1 line-clamp-2">
           {product.name}
         </h3>
@@ -105,7 +105,15 @@ export default function ProductCard({ product }) {
               </>
             ) : (
               // Precio normal minorista
-              <span className="text-lg font-bold text-slate-900">{formatPrice(product.price)}</span>
+              <>
+                <span className="text-lg font-bold text-slate-900">{formatPrice(product.price)}</span>
+                {/* Precio sin impuestos removido de la card — solo se muestra en el detalle del producto */}
+                {/* {customer?.type !== "MAYORISTA" && (
+                  <span className="text-xs text-slate-400">
+                    Precio sin impuestos {formatPrice(product.price / 1.21)}
+                  </span>
+                )} */}
+              </>
             )}
           </div>
           {/* Si no hay usuario logueado se muestra "Iniciar sesión" en lugar de "Agregar" */}

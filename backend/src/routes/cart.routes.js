@@ -110,7 +110,7 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
       where: { customerId },
       include: {
         items: {
-          include: { product: { select: { stock: true } } },
+          include: { product: { select: { stock: true, ivaRate: true } } },
         },
       },
     });

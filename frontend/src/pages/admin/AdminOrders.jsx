@@ -12,6 +12,31 @@ const STATUS_CONFIG = {
   CANCELLED:      { label: "Cancelada",           color: "bg-slate-100 text-slate-600",   icon: "🚫" },
 };
 
+// Etiquetas para método de pago
+const PAYMENT_LABEL = {
+  EFECTIVO:      { label: "Efectivo",      icon: "💵" },
+  TRANSFERENCIA: { label: "Transferencia", icon: "🏦" },
+  MERCADOPAGO:   { label: "MercadoPago",   icon: "💳" },
+  COTIZACION:    { label: "Cotización",    icon: "📋" },
+};
+
+// Etiquetas para canal de venta
+const CHANNEL_LABEL = {
+  WEB:        { label: "Web",        icon: "🌐" },
+  MOSTRADOR:  { label: "Mostrador",  icon: "🏪" },
+  WHATSAPP:   { label: "WhatsApp",   icon: "💬" },
+  INSTAGRAM:  { label: "Instagram",  icon: "📸" },
+  TELEFONO:   { label: "Teléfono",   icon: "📞" },
+  MANUAL:     { label: "Manual",     icon: "✏️" },
+  OTRO:       { label: "Otro",       icon: "📋" },
+};
+
+// Etiquetas para tipo de cliente
+const TYPE_LABEL = {
+  MINORISTA: { label: "Minorista", color: "bg-blue-100 text-blue-700" },
+  MAYORISTA: { label: "Mayorista", color: "bg-purple-100 text-purple-700" },
+};
+
 export default function AdminOrders() {
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "";
@@ -21,10 +46,15 @@ export default function AdminOrders() {
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterSearch, setFilterSearch] = useState("");
+  const [filterSort, setFilterSort] = useState("desc"); // "desc" = más nuevo, "asc" = más viejo
+  const [filterType, setFilterType] = useState("");     // "" | "MINORISTA" | "MAYORISTA"
   const [page, setPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState(null);
   // IDs de órdenes seleccionadas para borrado masivo
   const [checkedIds, setCheckedIds] = useState([]);
+  // Actualizando campos del modal (método de pago / fulfillment)
+  const [updatingFields, setUpdatingFields] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // Estado para edición inline de items en cotizaciones
@@ -48,6 +78,10 @@ export default function AdminOrders() {
   const [allProducts, setAllProducts] = useState([]);  // cache de productos para el selector
   const [manualForm, setManualForm] = useState({
     customerName: "", customerEmail: "", customerPhone: "",
+    // customerType: tipo de cliente para determinar qué precio cargar al seleccionar un producto
+    customerType: "MINORISTA",
+    // salesChannel: canal por el que llegó el cliente (solo en ventas manuales; las web se marcan automáticamente como "WEB")
+    salesChannel: "MOSTRADOR",
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
     items: [{ productId: "", productName: "", price: "", quantity: 1 }],
   });
@@ -78,11 +112,31 @@ export default function AdminOrders() {
       return { ...p, items };
     });
 
+  // Devuelve el precio correcto según el tipo de cliente seleccionado en el form
+  const getPriceForType = (product, type) => {
+    if (type === "MAYORISTA" && product.wholesalePrice) return product.wholesalePrice;
+    return product.price;
+  };
+
   const selectProduct = (idx, product) => {
     setManualItem(idx, "productId", product.id);
     setManualItem(idx, "productName", product.name);
-    setManualItem(idx, "price", product.price);
+    // Usa el precio según el tipo de cliente activo al momento de seleccionar
+    setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
     setProductSearch((p) => ({ ...p, [idx]: "" }));
+  };
+
+  // Al cambiar el tipo de cliente, actualiza los precios de todos los ítems que ya tienen producto cargado
+  const handleCustomerTypeChange = (newType) => {
+    setManualForm((prev) => {
+      const updatedItems = prev.items.map((item) => {
+        if (!item.productId) return item;
+        const prod = allProducts.find((p) => p.id === item.productId);
+        if (!prod) return item;
+        return { ...item, price: getPriceForType(prod, newType) };
+      });
+      return { ...prev, customerType: newType, items: updatedItems };
+    });
   };
 
   const manualTotal = manualForm.items.reduce(
@@ -104,6 +158,8 @@ export default function AdminOrders() {
         paymentMethod: manualForm.paymentMethod,
         status:        manualForm.status,
         notes:         manualForm.notes || undefined,
+        salesChannel:  manualForm.salesChannel,
+        customerType:  manualForm.customerType,
         items: manualForm.items.map((it) => ({
           productId: it.productId,
           quantity:  parseInt(it.quantity),
@@ -114,6 +170,8 @@ export default function AdminOrders() {
       setManualModal(false);
       setManualForm({
         customerName: "", customerEmail: "", customerPhone: "",
+        customerType: "MINORISTA",
+        salesChannel: "MOSTRADOR",
         paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
         items: [{ productId: "", productName: "", price: "", quantity: 1 }],
       });
@@ -140,7 +198,10 @@ export default function AdminOrders() {
     if (isCotizaciones) {
       params.paymentMethod = "COTIZACION";
     } else {
-      if (filterStatus) params.status = filterStatus;
+      if (filterStatus)   params.status       = filterStatus;
+      if (filterSearch)   params.search       = filterSearch;
+      if (filterSort)     params.sortOrder    = filterSort;
+      if (filterType)     params.customerType = filterType;
     }
 
     ordersApi
@@ -157,7 +218,7 @@ export default function AdminOrders() {
 
   useEffect(() => {
     fetchOrders();
-  }, [page, filterStatus, isCotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [page, filterStatus, filterSearch, filterSort, filterType, isCotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Guardar cantidad y/o precio editado de un item (cotizaciones)
   const handleSaveQty = async (orderId, itemId) => {
@@ -289,11 +350,156 @@ export default function AdminOrders() {
       toast.success("Estado actualizado");
       fetchOrders();
       if (selectedOrder?.id === orderId) {
-        setSelectedOrder((prev) => ({ ...prev, status: newStatus }));
+        setSelectedOrder((prev) => ({
+          ...prev,
+          status: newStatus,
+          // Si pasa a Abonada y estaba en Pendiente, reflejar el avance automático en el modal
+          fulfillmentStatus:
+            newStatus === "APPROVED" && prev.fulfillmentStatus === "PENDIENTE"
+              ? "EN_PREPARACION"
+              : prev.fulfillmentStatus,
+        }));
       }
     } catch (err) {
       toast.error("Error al actualizar el estado");
     }
+  };
+
+  const handleUpdateFields = async (orderId, fields) => {
+    setUpdatingFields(true);
+    try {
+      await ordersApi.updateFields(orderId, fields);
+      toast.success("Actualizado");
+      // Actualizar el selectedOrder en memoria para que el modal refleje el cambio
+      setSelectedOrder((prev) => ({ ...prev, ...fields }));
+      // Reflejar en la lista también
+      setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, ...fields } : o));
+    } catch (err) {
+      toast.error("Error al actualizar");
+    } finally {
+      setUpdatingFields(false);
+    }
+  };
+
+  const handlePrint = (order) => {
+    const status  = STATUS_CONFIG[order.status]  || { label: order.status };
+    const payment = PAYMENT_LABEL[order.paymentMethod] || { label: order.paymentMethod, icon: "" };
+    const type    = TYPE_LABEL[order.customerType]     || { label: order.customerType, color: "" };
+    const channel = CHANNEL_LABEL[order.salesChannel]  || { label: order.salesChannel, icon: "" };
+
+    const subtotalSinDesc = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
+    const hasDiscount = order.couponDiscount > 0;
+    const hasIva      = order.wantsInvoice && order.ivaAmount > 0;
+
+    // Filas de producto compactas con imagen pequeña
+    const itemCards = (order.items || []).map((item) => {
+      const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
+      const imgHtml = imgSrc
+        ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
+        : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
+      return `
+      <tr>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
+          <div style="display:flex;align-items:center;gap:10px">
+            ${imgHtml}
+            <div>
+              <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
+              <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
+            </div>
+          </div>
+        </td>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPrice(item.price * item.quantity)}</td>
+      </tr>`;
+    }).join("");
+
+    // Resumen de totales
+    const totalRows = `
+      <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>
+      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : ""}
+      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA 21%</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : ""}
+      <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`;
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Orden #${order.id} — IGWT Store</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #1e293b; background: #f1f5f9; }
+    .page { max-width: 720px; margin: 0 auto; background: #fff; padding: 28px; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 2px solid #1e40af; margin-bottom: 16px; }
+    .logo-name { font-size: 18px; font-weight: 900; color: #1e40af; }
+    .order-badge { background: #1e40af; color: #fff; border-radius: 8px; padding: 5px 14px; font-size: 16px; font-weight: 900; }
+    .order-date { font-size: 10px; color: #94a3b8; text-align: right; margin-top: 4px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+    .card-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 8px; }
+    .row { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+    .row-label { font-size: 10px; color: #94a3b8; min-width: 72px; flex-shrink: 0; }
+    .row-value { font-size: 12px; font-weight: 600; color: #1e293b; }
+    .section-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    .totals-table { margin-left: auto; width: 260px; margin-top: 10px; border-top: 1px solid #e2e8f0; }
+    .note-box { border-radius: 6px; padding: 7px 10px; margin-bottom: 10px; font-size: 11px; }
+    .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e2e8f0; color: #cbd5e1; font-size: 9px; text-align: center; }
+    @media print {
+      body { background: #fff; }
+      .page { padding: 16px; max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div>
+      <div class="logo-name">⚡ IGWT Store</div>
+    </div>
+    <div>
+      <div class="order-badge">Orden #${order.id}</div>
+      <div class="order-date">${formatDate(order.createdAt)}</div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">Cliente</div>
+      <div class="row"><span class="row-label">Nombre</span><span class="row-value">${order.customerName}</span></div>
+      <div class="row"><span class="row-label">Tipo</span><span class="row-value">${type.label}</span></div>
+      ${order.customerEmail ? `<div class="row"><span class="row-label">Email</span><span class="row-value" style="font-weight:400;font-size:11px">${order.customerEmail}</span></div>` : ""}
+      ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${order.customerPhone}</span></div>` : ""}
+    </div>
+    <div class="card">
+      <div class="card-title">Pedido</div>
+      <div class="row"><span class="row-label">Estado</span><span class="row-value">${status.label}</span></div>
+      <div class="row"><span class="row-label">Pago</span><span class="row-value">${payment.icon} ${payment.label}</span></div>
+      <div class="row"><span class="row-label">Canal</span><span class="row-value">${channel.icon} ${channel.label}</span></div>
+      ${order.wantsInvoice ? `<div class="row"><span class="row-label">Factura</span><span class="row-value" style="color:#2563eb">Solicitada — IVA 21%</span></div>` : ""}
+    </div>
+  </div>
+
+  ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del cliente:</strong> ${order.customerNote}</div>` : ""}
+  ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>Nota interna:</strong> ${order.adminNotes}</div>` : ""}
+
+  <div class="section-title">Productos</div>
+  <table>
+    <tbody>${itemCards}</tbody>
+  </table>
+
+  <table class="totals-table">
+    <tbody>${totalRows}</tbody>
+  </table>
+
+  <div class="footer">Generado el ${new Date().toLocaleString("es-AR")} · IGWT Store</div>
+</div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, "_blank", "width=820,height=760");
+    win.onload = () => { win.focus(); win.print(); URL.revokeObjectURL(url); };
   };
 
   const handleDelete = async (order) => {
@@ -603,7 +809,7 @@ export default function AdminOrders() {
   return (
     <AdminLayout title="Órdenes">
       <div className="space-y-6">
-        {/* Filtros + botón nueva venta */}
+        {/* Fila superior: Nueva venta + Buscador + Sort + Tipo */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={openManualModal}
@@ -611,8 +817,63 @@ export default function AdminOrders() {
           >
             + Nueva venta
           </button>
+
           <div className="w-px h-6 bg-slate-200 mx-1" />
+
+          {/* Buscador por nombre o número de orden */}
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
+            <input
+              type="text"
+              value={filterSearch}
+              onChange={(e) => { setFilterSearch(e.target.value); setPage(1); }}
+              placeholder="Buscar cliente o #orden..."
+              className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            />
+            {filterSearch && (
+              <button
+                onClick={() => { setFilterSearch(""); setPage(1); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* Sort por fecha */}
+          <button
+            onClick={() => { setFilterSort((s) => s === "desc" ? "asc" : "desc"); setPage(1); }}
+            className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:border-blue-400 bg-white whitespace-nowrap transition-colors"
+            title={filterSort === "desc" ? "Mostrando más nuevos primero" : "Mostrando más viejos primero"}
+          >
+            {filterSort === "desc" ? (
+              <>↓ Más nuevo</>
+            ) : (
+              <>↑ Más viejo</>
+            )}
+          </button>
+
+          {/* Filtro Minorista / Mayorista */}
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm bg-white">
+            {[{ value: "", label: "Todos" }, { value: "MINORISTA", label: "Minorista" }, { value: "MAYORISTA", label: "Mayorista" }].map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => { setFilterType(value); setPage(1); }}
+                className={`px-3 py-2 font-medium transition-colors ${
+                  filterType === value
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Filtros por estado */}
         <div className="flex gap-2 flex-wrap">
           {[{ value: "", label: "Todas" }, ...Object.entries(STATUS_CONFIG).map(([v, c]) => ({ value: v, label: c.label }))].map(
             ({ value, label }) => (
@@ -671,6 +932,9 @@ export default function AdminOrders() {
                   </th>
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">Cliente</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Canal</th>
+                  <th className="px-4 py-3">Pago</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3">Fecha</th>
@@ -680,13 +944,13 @@ export default function AdminOrders() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center">
+                    <td colSpan={10} className="px-6 py-12 text-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" />
                     </td>
                   </tr>
                 ) : orders.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                    <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
                       No hay órdenes con este filtro.
                     </td>
                   </tr>
@@ -708,9 +972,45 @@ export default function AdminOrders() {
                           />
                         </td>
                         <td className="px-4 py-3 font-mono font-bold text-slate-600">#{order.id}</td>
+                        {/* Columna Cliente: solo nombre y email */}
                         <td className="px-4 py-3">
                           <p className="font-semibold text-slate-800">{order.customerName}</p>
-                          <p className="text-xs text-slate-400">{order.customerEmail}</p>
+                          {order.customerEmail && (
+                            <p className="text-xs text-slate-400">{order.customerEmail}</p>
+                          )}
+                        </td>
+                        {/* Columna Tipo: Minorista / Mayorista */}
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const t = TYPE_LABEL[order.customerType] || TYPE_LABEL.MINORISTA;
+                            return (
+                              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${t.color}`}>
+                                {t.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        {/* Columna Canal: Web, Mostrador, WhatsApp, etc. */}
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const ch = CHANNEL_LABEL[order.salesChannel] || CHANNEL_LABEL.WEB;
+                            return (
+                              <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                                {ch.icon} {ch.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        {/* Columna Pago: Efectivo, Transferencia, MercadoPago */}
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const pm = PAYMENT_LABEL[order.paymentMethod] || PAYMENT_LABEL.EFECTIVO;
+                            return (
+                              <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                                {pm.icon} {pm.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 font-semibold">{formatPrice(order.total)}</td>
                         <td className="px-4 py-3">
@@ -721,6 +1021,16 @@ export default function AdminOrders() {
                         <td className="px-4 py-3 text-slate-500 text-xs">{formatDate(order.createdAt)}</td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => handlePrint(order)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold flex items-center gap-1"
+                              title="Imprimir orden"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                              Imprimir
+                            </button>
                             <button
                               onClick={() => setSelectedOrder(order)}
                               className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold"
@@ -780,13 +1090,51 @@ export default function AdminOrders() {
 
             <div className="p-6 space-y-5">
               {/* Cliente */}
-              <div className="bg-slate-50 rounded-xl p-4 space-y-1 text-sm">
+              <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm">
                 <p><span className="font-medium text-slate-600">Cliente:</span> {selectedOrder.customerName}</p>
-                <p><span className="font-medium text-slate-600">Email:</span> {selectedOrder.customerEmail}</p>
+                {selectedOrder.customerEmail && (
+                  <p><span className="font-medium text-slate-600">Email:</span> {selectedOrder.customerEmail}</p>
+                )}
                 {selectedOrder.customerPhone && (
                   <p><span className="font-medium text-slate-600">Teléfono:</span> {selectedOrder.customerPhone}</p>
                 )}
                 <p><span className="font-medium text-slate-600">Fecha:</span> {formatDate(selectedOrder.createdAt)}</p>
+                {/* Badges: tipo de cliente · canal de venta · método de pago */}
+                <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-200">
+                  {(() => {
+                    const t = TYPE_LABEL[selectedOrder.customerType] || TYPE_LABEL.MINORISTA;
+                    return (
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${t.color}`}>
+                        {t.label}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
+                    const ch = CHANNEL_LABEL[selectedOrder.salesChannel] || CHANNEL_LABEL.WEB;
+                    return (
+                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-slate-200 text-slate-700">
+                        {ch.icon} {ch.label}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
+                    const pm = PAYMENT_LABEL[selectedOrder.paymentMethod] || PAYMENT_LABEL.EFECTIVO;
+                    return (
+                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-slate-200 text-slate-700">
+                        {pm.icon} {pm.label}
+                      </span>
+                    );
+                  })()}
+                </div>
+                {selectedOrder.customerNote && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <p className="text-xs font-semibold text-amber-700 mb-0.5">💬 Nota del cliente</p>
+                    <p className="text-sm text-amber-900">{selectedOrder.customerNote}</p>
+                  </div>
+                )}
+                {selectedOrder.adminNotes && (
+                  <p><span className="font-medium text-slate-600">Notas internas:</span> <span className="text-slate-700">{selectedOrder.adminNotes}</span></p>
+                )}
                 {selectedOrder.mpPaymentId && (
                   <p><span className="font-medium text-slate-600">ID Pago MP:</span> <span className="font-mono text-xs">{selectedOrder.mpPaymentId}</span></p>
                 )}
@@ -819,33 +1167,50 @@ export default function AdminOrders() {
                   })}
                 </div>
 
-                {/* Cupón de descuento aplicado */}
-                {selectedOrder.coupon && selectedOrder.couponDiscount > 0 && (
-                  <div className="mt-3 pt-3 border-t border-slate-200 space-y-1">
-                    <div className="flex justify-between text-sm text-slate-500">
-                      <span>Subtotal</span>
-                      <span>{formatPrice(selectedOrder.total + selectedOrder.couponDiscount)}</span>
+                {/* Desglose: cupón + IVA */}
+                {(() => {
+                  const discount = selectedOrder.couponDiscount || 0;
+                  const iva      = selectedOrder.ivaAmount      || 0;
+                  const hasLines = discount > 0 || iva > 0;
+                  // subtotal = total de items antes de cupón y antes de IVA
+                  const subtotal = selectedOrder.total + discount - iva;
+                  return hasLines ? (
+                    <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
+                      <div className="flex justify-between text-sm text-slate-500">
+                        <span>Subtotal</span>
+                        <span>{formatPrice(subtotal)}</span>
+                      </div>
+                      {discount > 0 && (
+                        <div className="flex justify-between text-sm text-green-700 font-medium">
+                          <span>
+                            Cupón{" "}
+                            {selectedOrder.coupon?.code && (
+                              <span className="font-mono text-xs tracking-widest bg-green-100 px-1.5 py-0.5 rounded">
+                                {selectedOrder.coupon.code}
+                              </span>
+                            )}
+                          </span>
+                          <span>−{formatPrice(discount)}</span>
+                        </div>
+                      )}
+                      {iva > 0 && (
+                        <div className="flex justify-between text-sm text-slate-500">
+                          <span>IVA (21%)</span>
+                          <span>+{formatPrice(iva)}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between text-sm text-green-700 font-medium">
-                      <span>
-                        Cupón{" "}
-                        <span className="font-mono text-xs tracking-widest bg-green-100 px-1.5 py-0.5 rounded">
-                          {selectedOrder.coupon.code}
-                        </span>
-                      </span>
-                      <span>−{formatPrice(selectedOrder.couponDiscount)}</span>
-                    </div>
-                  </div>
-                )}
+                  ) : null;
+                })()}
                 <div className="flex justify-between font-bold text-lg text-slate-900 mt-4 pt-4 border-t border-slate-200">
                   <span>Total</span>
                   <span>{formatPrice(selectedOrder.total)}</span>
                 </div>
               </div>
 
-              {/* Cambiar estado */}
+              {/* Estado de Pago */}
               <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Cambiar estado</h3>
+                <h3 className="font-semibold text-slate-700 mb-3">Estado de pago</h3>
                 <div className="grid grid-cols-2 gap-2">
                   {Object.entries(STATUS_CONFIG).map(([value, config]) => (
                     <button
@@ -860,6 +1225,63 @@ export default function AdminOrders() {
                       {config.icon} {config.label}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Método de pago */}
+              <div>
+                <h3 className="font-semibold text-slate-700 mb-3">Método de pago</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(PAYMENT_LABEL).map(([value, config]) => (
+                    <button
+                      key={value}
+                      onClick={() => handleUpdateFields(selectedOrder.id, { paymentMethod: value })}
+                      disabled={updatingFields}
+                      className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
+                        selectedOrder.paymentMethod === value
+                          ? "bg-indigo-100 text-indigo-800 ring-2 ring-offset-1 ring-indigo-400"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      {config.icon} {config.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Estado de pedido (fulfillment) */}
+              <div>
+                <h3 className="font-semibold text-slate-700 mb-3">Estado de pedido</h3>
+                <div className="flex flex-col gap-2">
+                  {[
+                    { value: "PENDIENTE",       label: "Pendiente",       icon: "🕐", color: "bg-slate-100 text-slate-700" },
+                    { value: "EN_PREPARACION",  label: "En preparación",  icon: "🔧", color: "bg-yellow-100 text-yellow-800" },
+                    { value: "ENVIADO",         label: "Enviado",         icon: "🚚", color: "bg-blue-100 text-blue-800" },
+                    { value: "ENTREGADO",       label: "Entregado",       icon: "✅", color: "bg-green-100 text-green-800" },
+                  ].map((stage, idx, arr) => {
+                    const current = selectedOrder.fulfillmentStatus || "PENDIENTE";
+                    const currentIdx = arr.findIndex((s) => s.value === current);
+                    const isActive = stage.value === current;
+                    const isPast   = idx < currentIdx;
+                    return (
+                      <button
+                        key={stage.value}
+                        onClick={() => handleUpdateFields(selectedOrder.id, { fulfillmentStatus: stage.value })}
+                        disabled={updatingFields}
+                        className={`flex items-center gap-3 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 ${
+                          isActive
+                            ? stage.color + " ring-2 ring-offset-1 ring-blue-400"
+                            : isPast
+                            ? "bg-slate-50 text-slate-400"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        <span className="text-base">{stage.icon}</span>
+                        <span className="flex-1 text-left">{stage.label}</span>
+                        {isActive && <span className="text-xs font-bold opacity-70">● Actual</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -943,14 +1365,14 @@ export default function AdminOrders() {
                     />
                   </div>
                   <div className="col-span-2 sm:col-span-1">
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Email *</label>
+                    {/* Email es opcional en ventas manuales — el cliente puede no tener */}
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
                     <input
-                      required
                       type="email"
                       value={manualForm.customerEmail}
                       onChange={(e) => setManualForm((p) => ({ ...p, customerEmail: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="juan@ejemplo.com"
+                      placeholder="juan@ejemplo.com (opcional)"
                     />
                   </div>
                   <div className="col-span-2 sm:col-span-1">
@@ -961,6 +1383,18 @@ export default function AdminOrders() {
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="1150395166"
                     />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    {/* Tipo de cliente: determina qué precio se carga al seleccionar un producto */}
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Tipo de cliente</label>
+                    <select
+                      value={manualForm.customerType}
+                      onChange={(e) => handleCustomerTypeChange(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="MINORISTA">Minorista</option>
+                      <option value="MAYORISTA">Mayorista</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -998,17 +1432,28 @@ export default function AdminOrders() {
                           />
                           {filtered.length > 0 && !item.productId && (
                             <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-48 overflow-y-auto">
-                              {filtered.map((p) => (
-                                <button
-                                  key={p.id}
-                                  type="button"
-                                  onClick={() => selectProduct(idx, p)}
-                                  className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex justify-between items-center"
-                                >
-                                  <span className="font-medium text-slate-700">{p.name}</span>
-                                  <span className="text-slate-400 text-xs">{formatPrice(p.price)}</span>
-                                </button>
-                              ))}
+                              {filtered.map((p) => {
+                                // Muestra el precio que corresponde al tipo de cliente seleccionado
+                                const displayPrice = getPriceForType(p, manualForm.customerType);
+                                const isMayorista = manualForm.customerType === "MAYORISTA";
+                                return (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => selectProduct(idx, p)}
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex justify-between items-center gap-2"
+                                  >
+                                    <span className="font-medium text-slate-700 truncate">{p.name}</span>
+                                    <span className="text-slate-500 text-xs shrink-0 flex items-center gap-1">
+                                      {/* Muestra etiqueta del tipo de precio para que quede claro */}
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isMayorista ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                                        {isMayorista ? "May." : "Min."}
+                                      </span>
+                                      {formatPrice(displayPrice)}
+                                    </span>
+                                  </button>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
@@ -1060,7 +1505,7 @@ export default function AdminOrders() {
                 </div>
               </div>
 
-              {/* Método de pago y estado */}
+              {/* Método de pago, estado y canal de venta */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Método de pago</label>
@@ -1083,6 +1528,22 @@ export default function AdminOrders() {
                   >
                     <option value="APPROVED">Abonada ✅</option>
                     <option value="PENDING">Pendiente ⏳</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  {/* Canal de venta: indica por dónde llegó el cliente. Solo editable en ventas manuales;
+                      las órdenes web se marcan automáticamente como "WEB" en el backend. */}
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Canal de venta</label>
+                  <select
+                    value={manualForm.salesChannel}
+                    onChange={(e) => setManualForm((p) => ({ ...p, salesChannel: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="MOSTRADOR">🏪 Mostrador</option>
+                    <option value="WHATSAPP">💬 WhatsApp</option>
+                    <option value="INSTAGRAM">📸 Instagram</option>
+                    <option value="TELEFONO">📞 Teléfono</option>
+                    <option value="OTRO">📋 Otro</option>
                   </select>
                 </div>
                 <div className="col-span-2">

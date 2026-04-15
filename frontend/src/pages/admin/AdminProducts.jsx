@@ -9,6 +9,7 @@ const EMPTY_FORM = {
   description: "",
   cost: "",
   price: "",
+  ivaRate: "21",
   salePrice: "",
   wholesalePrice: "",
   wholesaleSalePrice: "",
@@ -29,6 +30,8 @@ const EMPTY_FORM = {
   // categoryId: "",  // Reemplazado por categoryIds (array M2M)
   categoryIds: [],
   featured: false,
+  // onSale: marca el producto para la sección "Ofertas" de la home
+  onSale: false,
   active: true,
   visibility: "AMBOS",
 };
@@ -176,6 +179,12 @@ export default function AdminProducts() {
   // Tab activa via searchParams: "" = todos, "sinstock" = sin stock
   // (reemplaza el estado local activeTab que ya no se usa)
 
+  // Mini-formulario "Crear categoría" inline dentro del modal de producto
+  const [showNewCatForm, setShowNewCatForm]     = useState(false);
+  const [newCatName, setNewCatName]             = useState("");
+  const [newCatParentId, setNewCatParentId]     = useState("");
+  const [savingCat, setSavingCat]               = useState(false);
+
   // IDs de productos con la sección "Edición rápida" abierta
   const [openQuickEdit, setOpenQuickEdit] = useState(new Set());
   // Valores del form de edición rápida por producto { [productId]: { price, salePrice, ... } }
@@ -201,6 +210,41 @@ export default function AdminProducts() {
     fetchProducts();
     categoriesApi.getAll().then((res) => setCategories(res.data));
   }, []);
+
+  // Crea una categoría nueva desde el mini-form inline del modal de producto.
+  // Después de crearla, recarga la lista de categorías y la selecciona automáticamente.
+  const handleCreateCategory = async () => {
+    if (!newCatName.trim()) return;
+    setSavingCat(true);
+    try {
+      const payload = { name: newCatName.trim() };
+      if (newCatParentId) payload.parentId = parseInt(newCatParentId);
+      const res = await categoriesApi.create(payload);
+      const created = res.data;
+      // Recargar lista para que aparezca la nueva categoría
+      const catsRes = await categoriesApi.getAll();
+      setCategories(catsRes.data);
+      // Seleccionarla automáticamente en el form del producto
+      setForm((f) => ({ ...f, categoryIds: [...f.categoryIds, created.id.toString()] }));
+      // Limpiar y cerrar el mini-form
+      setNewCatName("");
+      setNewCatParentId("");
+      setShowNewCatForm(false);
+    } catch (err) {
+      alert(err.response?.data?.error || "Error al crear la categoría");
+    } finally {
+      setSavingCat(false);
+    }
+  };
+
+  // Limpiar el mini-form de "Crear categoría" cada vez que el modal se cierra
+  useEffect(() => {
+    if (!showModal) {
+      setShowNewCatForm(false);
+      setNewCatName("");
+      setNewCatParentId("");
+    }
+  }, [showModal]);
 
   // Cerrar el menú de tres puntos si se hace click fuera de él
   useEffect(() => {
@@ -233,6 +277,7 @@ export default function AdminProducts() {
       description: product.description || "",
       cost: product.cost?.toString() || "",
       price: product.price.toString(),
+      ivaRate: product.ivaRate?.toString() || "21",
       salePrice: product.salePrice?.toString() || "",
       wholesalePrice: product.wholesalePrice?.toString() || "",
       wholesaleSalePrice: product.wholesaleSalePrice?.toString() || "",
@@ -251,6 +296,7 @@ export default function AdminProducts() {
       // categoryId: product.categoryId?.toString() || "",  // Reemplazado por M2M
       categoryIds: product.categories?.map((c) => c.id.toString()) || [],
       featured: product.featured,
+      onSale: product.onSale ?? false,
       active: product.active,
       visibility: product.visibility || "AMBOS",
     });
@@ -288,6 +334,7 @@ export default function AdminProducts() {
       formData.append("description", form.description);
       formData.append("cost", form.cost);
       formData.append("price", form.price);
+      formData.append("ivaRate", form.ivaRate || "21");
       formData.append("salePrice", form.salePrice);
       formData.append("wholesalePrice", form.wholesalePrice);
       formData.append("wholesaleSalePrice", form.wholesaleSalePrice);
@@ -307,6 +354,7 @@ export default function AdminProducts() {
       // categoryId: form.categoryId — Reemplazado por M2M: enviar cada ID por separado
       form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       formData.append("featured", form.featured);
+      formData.append("onSale", form.onSale);
       formData.append("active", form.active);
       formData.append("visibility", form.visibility || "AMBOS");
 
@@ -958,6 +1006,27 @@ export default function AdminProducts() {
                 </div>
               </div>
 
+              {/* Alícuota IVA del producto */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Alícuota IVA</label>
+                <div className="flex gap-3">
+                  {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setForm({ ...form, ivaRate: opt.value })}
+                      className={`flex-1 py-2 rounded-xl border-2 text-sm font-semibold transition-colors ${
+                        form.ivaRate === opt.value
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Precios: minorista, oferta minorista, mayorista, oferta mayorista */}
               <div className="grid grid-cols-4 gap-3">
                 {[
@@ -1076,10 +1145,60 @@ export default function AdminProducts() {
                     });
                   })}
                 </div>
+
+                {/* Mini-form para crear una categoría nueva sin salir del modal */}
+                {!showNewCatForm ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewCatForm(true)}
+                    className="mt-2 text-xs text-blue-600 hover:underline flex items-center gap-1"
+                  >
+                    + Crear nueva categoría
+                  </button>
+                ) : (
+                  <div className="mt-2 border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                    <p className="text-xs font-semibold text-blue-700">Nueva categoría</p>
+                    <input
+                      type="text"
+                      placeholder="Nombre de la categoría"
+                      value={newCatName}
+                      onChange={(e) => setNewCatName(e.target.value)}
+                      className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      autoFocus
+                    />
+                    <select
+                      value={newCatParentId}
+                      onChange={(e) => setNewCatParentId(e.target.value)}
+                      className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Sin categoría padre (raíz)</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCreateCategory}
+                        disabled={savingCat || !newCatName.trim()}
+                        className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg font-semibold"
+                      >
+                        {savingCat ? "Creando..." : "Crear"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setShowNewCatForm(false); setNewCatName(""); setNewCatParentId(""); }}
+                        className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 bg-white"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Opciones */}
-              <div className="flex gap-6">
+              <div className="flex flex-wrap gap-6">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1087,7 +1206,26 @@ export default function AdminProducts() {
                     onChange={(e) => setForm({ ...form, featured: e.target.checked })}
                     className="w-4 h-4 accent-blue-600"
                   />
-                  <span className="text-sm font-medium text-slate-700">⭐ Destacado en Home</span>
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">⭐ Destacado en Home</span>
+                    {form.featured && !editingProduct && (
+                      <p className="text-xs text-amber-600">Máx. 20 — si ya hay 20, el más viejo se desmarca</p>
+                    )}
+                  </div>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.onSale}
+                    onChange={(e) => setForm({ ...form, onSale: e.target.checked })}
+                    className="w-4 h-4 accent-orange-500"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-slate-700">🔥 Oferta en Home</span>
+                    {form.onSale && !editingProduct && (
+                      <p className="text-xs text-amber-600">Máx. 20 — si ya hay 20, el más viejo se desmarca</p>
+                    )}
+                  </div>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

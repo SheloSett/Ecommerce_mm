@@ -19,17 +19,18 @@ export default function Catalog() {
   const currentPage     = parseInt(searchParams.get("page") || "1");
   const currentOnSale   = searchParams.get("onSale") === "true";
   const currentLowStock = searchParams.get("lowStock") === "true";
-  const currentSortDate  = searchParams.get("sortDate")  || "newest"; // newest | oldest
-  const currentSortPrice = searchParams.get("sortPrice") || "";       // asc | desc | ""
+  const currentSortOrder = searchParams.get("sortOrder") || "newest"; // newest | oldest | az | za
+  const currentSortPrice = searchParams.get("sortPrice") || "";        // asc | desc | ""
 
-  // Ordena los productos según los filtros de fecha y precio seleccionados
   const sortProducts = (list) => {
     const sorted = [...list];
     // Precio tiene prioridad si está seleccionado
     if (currentSortPrice === "asc")  return sorted.sort((a, b) => a.price - b.price);
     if (currentSortPrice === "desc") return sorted.sort((a, b) => b.price - a.price);
-    // Fecha
-    if (currentSortDate === "oldest") return sorted.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // Orden alfabético / fecha
+    if (currentSortOrder === "oldest") return sorted.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    if (currentSortOrder === "az")     return sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
+    if (currentSortOrder === "za")     return sorted.sort((a, b) => b.name.localeCompare(a.name, "es"));
     return sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); // newest (default)
   };
 
@@ -230,12 +231,14 @@ export default function Catalog() {
                   </button>
                 )}
                 <select
-                  value={currentSortDate}
-                  onChange={(e) => setFilter("sortDate", e.target.value)}
+                  value={currentSortOrder}
+                  onChange={(e) => setFilter("sortOrder", e.target.value)}
                   className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="newest">Más nuevo a más viejo</option>
                   <option value="oldest">Más viejo a más nuevo</option>
+                  <option value="az">Nombre: A → Z</option>
+                  <option value="za">Nombre: Z → A</option>
                 </select>
                 <select
                   value={currentSortPrice}

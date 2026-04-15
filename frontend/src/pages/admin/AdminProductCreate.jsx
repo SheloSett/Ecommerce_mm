@@ -9,6 +9,7 @@ const EMPTY_FORM = {
   description: "",
   cost: "",
   price: "",
+  ivaRate: "21",
   salePrice: "",
   wholesalePrice: "",
   wholesaleSalePrice: "",
@@ -75,6 +76,7 @@ export default function AdminProductCreate() {
       formData.append("description", form.description);
       formData.append("cost", form.cost);
       formData.append("price", form.price);
+      formData.append("ivaRate", form.ivaRate || "21");
       formData.append("salePrice", form.salePrice);
       formData.append("wholesalePrice", form.wholesalePrice);
       formData.append("wholesaleSalePrice", form.wholesaleSalePrice);
@@ -223,6 +225,27 @@ export default function AdminProductCreate() {
                 required
                 className="flex-1 px-3 py-2 text-sm focus:outline-none"
               />
+            </div>
+          </div>
+
+          {/* Alícuota IVA del producto */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Alícuota IVA</label>
+            <div className="flex gap-3">
+              {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, ivaRate: opt.value })}
+                  className={`flex-1 py-2 rounded-xl border-2 text-sm font-semibold transition-colors ${
+                    form.ivaRate === opt.value
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
 

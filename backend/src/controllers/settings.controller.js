@@ -5,6 +5,8 @@ const prisma = new PrismaClient();
 const DEFAULTS = {
   theme: "clasico",
   maintenance: "false",
+  // maintenanceScheduledAt: ISO string de la fecha/hora programada (vacío = sin programar)
+  maintenanceScheduledAt: "",
 };
 
 // GET /api/settings — obtener toda la configuración (público, lo necesita el frontend)

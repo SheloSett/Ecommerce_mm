@@ -198,6 +198,19 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
       rowY += 22;
     }
 
+    // Fila de IVA (si solicitó factura)
+    if (order.wantsInvoice && order.ivaAmount > 0) {
+      doc.rect(tableX, rowY, tableW, 22).fill("#eff6ff");
+      doc.fillColor("#2563eb").fontSize(9).font("Helvetica-Bold")
+        .text("IVA (21%)", tableX + 8, rowY + 6, { width: tableW - cols.subtotal - 8 });
+      doc.text(
+        `+ ${formatARS(order.ivaAmount)}`,
+        tableX + tableW - cols.subtotal - 4, rowY + 6,
+        { width: cols.subtotal - 4, align: "right" }
+      );
+      rowY += 22;
+    }
+
     // Fila de total
     doc.rect(tableX, rowY, tableW, 28).fill(ACCENT);
     doc.fillColor("white").fontSize(11).font("Helvetica-Bold")
@@ -350,6 +363,15 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                   </td>
                   <td style="padding:10px 16px;color:#16a34a;font-weight:700;font-size:13px;text-align:right;">
                     - ${formatARS(order.couponDiscount)}
+                  </td>
+                </tr>` : ""}
+                ${order.wantsInvoice && order.ivaAmount > 0 ? `
+                <tr style="background:#eff6ff;">
+                  <td colspan="5" style="padding:10px 16px;color:#2563eb;font-size:13px;font-weight:600;">
+                    🧾 IVA (21%)
+                  </td>
+                  <td style="padding:10px 16px;color:#2563eb;font-weight:700;font-size:13px;text-align:right;">
+                    + ${formatARS(order.ivaAmount)}
                   </td>
                 </tr>` : ""}
                 <tr style="background:#3b82f6;">
@@ -650,6 +672,233 @@ async function sendCotizacionToAdmin(order) {
   }
 }
 
+// ─── Emails de Botón de Arrepentimiento ─────────────────────────────────────
+
+// 1. Confirmación al cliente cuando envía la solicitud
+async function sendReturnRequestConfirmation(toEmail, customerName, returnRequest) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Confirmación devolución #${returnRequest.id} a ${toEmail}`);
+    return;
+  }
+
+  const html = `
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+
+        <!-- Cabecera -->
+        <tr>
+          <td style="background:#1e293b;padding:24px 40px;">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#fff;">
+              ⚡ IGWT Store
+            </p>
+          </td>
+        </tr>
+
+        <!-- Cuerpo -->
+        <tr>
+          <td style="padding:32px 40px;">
+            <h2 style="margin:0 0 8px;color:#1e293b;font-size:20px;">Solicitud de devolución recibida ✅</h2>
+            <p style="margin:0 0 20px;color:#475569;font-size:15px;">
+              Hola <strong>${customerName}</strong>, recibimos tu solicitud de arrepentimiento.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0"
+                   style="background:#fffbeb;border-radius:10px;border-left:4px solid #f59e0b;margin-bottom:20px;">
+              <tr><td style="padding:16px 20px;">
+                <p style="margin:0 0 6px;font-size:11px;color:#b45309;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
+                  ⚠️ Condición importante
+                </p>
+                <p style="margin:0;font-size:14px;color:#78350f;line-height:1.6;">
+                  Toda la mercadería debe encontrarse en el <strong>mismo estado en que la recibiste</strong>,
+                  en perfecto estado y con su embalaje original. De lo contrario, la solicitud podrá ser rechazada.
+                </p>
+              </td></tr>
+            </table>
+            <p style="margin:0 0 8px;font-size:14px;color:#475569;"><strong>Tu motivo:</strong></p>
+            <p style="margin:0 0 24px;font-size:14px;color:#1e293b;background:#f8fafc;padding:12px 16px;border-radius:8px;border:1px solid #e2e8f0;">
+              ${returnRequest.reason}
+            </p>
+            <p style="margin:0;font-size:14px;color:#475569;line-height:1.6;">
+              Revisaremos tu solicitud a la brevedad y te notificaremos por email con la resolución.
+              El plazo legal de arrepentimiento es de <strong>10 días hábiles</strong> desde que recibiste el producto
+              (Ley 24.240 — Defensa del Consumidor).
+            </p>
+          </td>
+        </tr>
+
+        <!-- Pie -->
+        <tr>
+          <td style="background:#f8fafc;padding:16px 40px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;">© IGWT Store · Ante cualquier consulta respondé este email.</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: toEmail,
+      subject: `Solicitud de devolución recibida — IGWT Store`,
+      html,
+    });
+    console.log(`[EMAIL] Confirmación devolución #${returnRequest.id} enviada a ${toEmail}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendReturnRequestConfirmation:", err.message);
+  }
+}
+
+// 2. Aprobación: se envían las instrucciones de devolución
+async function sendReturnRequestApproved(toEmail, customerName, returnRequest) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Aprobación devolución #${returnRequest.id} a ${toEmail}`);
+    return;
+  }
+
+  const html = `
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+
+        <tr>
+          <td style="background:#1e293b;padding:24px 40px;">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#fff;">⚡ IGWT Store</p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px 40px;">
+            <h2 style="margin:0 0 8px;color:#15803d;font-size:20px;">✅ Solicitud de devolución aprobada</h2>
+            <p style="margin:0 0 20px;color:#475569;font-size:15px;">
+              Hola <strong>${customerName}</strong>, tu solicitud de devolución para el
+              <strong>Pedido #${returnRequest.orderId}</strong> fue <strong>aprobada</strong>.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0"
+                   style="background:#f0fdf4;border-radius:10px;border-left:4px solid #22c55e;margin-bottom:20px;">
+              <tr><td style="padding:16px 20px;">
+                <p style="margin:0 0 8px;font-size:11px;color:#15803d;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
+                  📦 Instrucciones para enviar tu devolución
+                </p>
+                <p style="margin:0;font-size:14px;color:#166534;line-height:1.7;white-space:pre-line;">${returnRequest.adminNotes}</p>
+              </td></tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0"
+                   style="background:#fffbeb;border-radius:10px;border-left:4px solid #f59e0b;margin-bottom:20px;">
+              <tr><td style="padding:14px 20px;">
+                <p style="margin:0;font-size:14px;color:#78350f;line-height:1.6;">
+                  ⚠️ Recordá que <strong>toda la mercadería debe estar en el mismo estado en que la recibiste</strong>,
+                  en perfecto estado y con su embalaje original.
+                </p>
+              </td></tr>
+            </table>
+            <p style="margin:0;font-size:14px;color:#475569;">
+              Una vez que recibamos el paquete, procesaremos el reembolso correspondiente.
+              Ante cualquier duda, respondé este email o contactanos por WhatsApp.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="background:#f8fafc;padding:16px 40px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;">© IGWT Store · Gracias por tu paciencia.</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: toEmail,
+      subject: `Devolución aprobada — Pedido #${returnRequest.orderId} — IGWT Store`,
+      html,
+    });
+    console.log(`[EMAIL] Aprobación devolución #${returnRequest.id} enviada a ${toEmail}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendReturnRequestApproved:", err.message);
+  }
+}
+
+// 3. Rechazo: se informa el motivo
+async function sendReturnRequestRejected(toEmail, customerName, returnRequest) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Rechazo devolución #${returnRequest.id} a ${toEmail}`);
+    return;
+  }
+
+  const html = `
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+
+        <tr>
+          <td style="background:#1e293b;padding:24px 40px;">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#fff;">⚡ IGWT Store</p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:32px 40px;">
+            <h2 style="margin:0 0 8px;color:#dc2626;font-size:20px;">❌ Solicitud de devolución no aprobada</h2>
+            <p style="margin:0 0 20px;color:#475569;font-size:15px;">
+              Hola <strong>${customerName}</strong>, lamentablemente tu solicitud de devolución para el
+              <strong>Pedido #${returnRequest.orderId}</strong> no pudo ser aprobada.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0"
+                   style="background:#fef2f2;border-radius:10px;border-left:4px solid #ef4444;margin-bottom:20px;">
+              <tr><td style="padding:16px 20px;">
+                <p style="margin:0 0 8px;font-size:11px;color:#b91c1c;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
+                  Motivo del rechazo
+                </p>
+                <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.7;white-space:pre-line;">${returnRequest.adminNotes}</p>
+              </td></tr>
+            </table>
+            <p style="margin:0;font-size:14px;color:#475569;">
+              Si creés que se trata de un error o querés realizar una consulta adicional, respondé este email
+              o contactanos por WhatsApp. Estamos para ayudarte.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="background:#f8fafc;padding:16px 40px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;">© IGWT Store · Lamentamos los inconvenientes.</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: toEmail,
+      subject: `Devolución no aprobada — Pedido #${returnRequest.orderId} — IGWT Store`,
+      html,
+    });
+    console.log(`[EMAIL] Rechazo devolución #${returnRequest.id} enviada a ${toEmail}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendReturnRequestRejected:", err.message);
+  }
+}
+
 module.exports = {
   sendMayoristaRequestEmail,
   sendMayoristaApprovedEmail,
@@ -658,4 +907,7 @@ module.exports = {
   sendOrderNotificationToAdmin,
   sendCotizacionToCustomer,
   sendCotizacionToAdmin,
+  sendReturnRequestConfirmation,
+  sendReturnRequestApproved,
+  sendReturnRequestRejected,
 };

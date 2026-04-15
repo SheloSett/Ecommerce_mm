@@ -37,6 +37,7 @@ model Product {
   description     String?
   price           Float
   cost                 Float?  // Precio de costo (interno, solo visible para el admin)
+  ivaRate              Float   @default(21) // Alícuota de IVA aplicable: 10.5 o 21 (%)
   salePrice            Float?  // Precio oferta minorista (debe ser < price)
   wholesalePrice       Float?  // Precio mayorista para clientes tipo MAYORISTA
   wholesaleSalePrice   Float?  // Precio oferta mayorista (debe ser < wholesalePrice)
@@ -65,6 +66,8 @@ model Product {
   visibility      CustomerVisibility @default(AMBOS) // Quién puede ver este producto: AMBOS, MAYORISTA o MINORISTA
   active          Boolean     @default(true)
   featured        Boolean     @default(false)
+  // onSale: aparece en la sección "Ofertas" de la home (separado de destacados)
+  onSale          Boolean     @default(false)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
@@ -105,8 +108,22 @@ model Order {
   clientSnapshot Json?
   // adminNotes: mensaje del admin al cliente cuando publica cambios o aprueba la cotización.
   adminNotes     String?
+  // customerNote: comentario libre que el cliente deja al momento de hacer el pedido/cotización.
+  customerNote   String?
   // cancelReason: motivo de cancelación ingresado por el cliente.
   cancelReason   String?
+  // salesChannel: de dónde llegó el cliente. "WEB" para órdenes online, valores personalizados para ventas manuales.
+  // Default "WEB" para que todos los pedidos existentes queden correctamente clasificados.
+  salesChannel   String        @default("WEB")
+  // customerType: si el cliente fue atendido como MINORISTA o MAYORISTA. Default MINORISTA para pedidos web.
+  customerType   String        @default("MINORISTA")
+  // wantsInvoice: el cliente mayorista solicitó factura (se aplica 21% IVA al total)
+  wantsInvoice        Boolean       @default(false)
+  // ivaAmount: monto del IVA aplicado (0 si no solicitó factura)
+  ivaAmount           Float         @default(0)
+  // fulfillmentStatus: etapa logística del pedido (independiente del estado de pago)
+  fulfillmentStatus   String        @default("PENDIENTE")  // PENDIENTE | EN_PREPARACION | ENVIADO | ENTREGADO
+  returnRequests ReturnRequest[]    // Solicitudes de arrepentimiento vinculadas a esta orden
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -186,6 +203,7 @@ model Customer {
   orders            Order[]            // Órdenes vinculadas a esta cuenta
   notifications     Notification[]     // Notificaciones de cotizaciones
   coupons           Coupon[]           // Cupones personales asignados a este cliente
+  returnRequests    ReturnRequest[]    // Solicitudes de arrepentimiento del cliente
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
@@ -307,6 +325,10 @@ model Gasto {
   amount      Float
   description String
   type        GastoType
+  // subtype: "GASTO" (gasto normal) o "RMA" (devolución/reparación de producto)
+  subtype     String     @default("GASTO")
+  // productId: referencia al producto devuelto (solo cuando subtype = "RMA")
+  productId   Int?
   date        DateTime   @default(now())
   createdAt   DateTime   @default(now())
 
@@ -362,6 +384,32 @@ enum EmailChangeRequestStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+// Solicitudes de arrepentimiento / devolución (Ley 24.240 — 10 días hábiles)
+model ReturnRequest {
+  id            Int                 @id @default(autoincrement())
+  // orderId opcional: el cliente puede indicar el número de pedido en el mensaje
+  orderId       Int?
+  order         Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customerId    Int?
+  customer      Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String
+  customerEmail String
+  customerPhone String?             // Teléfono de contacto ingresado en el formulario
+  reason        String              // Mensaje / motivo del cliente
+  status        ReturnRequestStatus @default(PENDING)
+  adminNotes    String?             // Instrucciones de envío (si APPROVED) o motivo de rechazo
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@map("return_requests")
+}
+
+enum ReturnRequestStatus {
+  PENDING   // Pendiente de revisión del admin
+  APPROVED  // Aprobado — se envían instrucciones de devolución al cliente
+  REJECTED  // Rechazado con motivo
 }
 
 // Configuración general del sitio (key-value): tema, modo mantenimiento, etc.

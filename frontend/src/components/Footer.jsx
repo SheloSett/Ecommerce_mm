@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useCustomerAuth } from "../context/CustomerAuthContext";
 
 /* SOCIAL comentado — el banner de redes se movió al componente Home.jsx
 const SOCIAL = [
@@ -9,13 +10,17 @@ const SOCIAL = [
 */
 
 export default function Footer() {
+  const { customer } = useCustomerAuth();
+  // Los clientes MAYORISTA no tienen derecho a arrepentimiento por ley (Ley 24.240 aplica solo a consumidores finales)
+  const isMayorista = customer?.type === "MAYORISTA";
+
   return (
     <footer className="bg-slate-900 text-slate-400 mt-16">
 
       {/* ── Links del footer ── */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
-          <div className="col-span-2 md:col-span-1">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-6">
+          <div>
             <h3 className="text-white font-bold text-lg mb-3">
               <span className="text-blue-400">⚡</span> IGWT Store
             </h3>
@@ -31,24 +36,104 @@ export default function Footer() {
             </ul>
           </div>
           <div>
+            <h4 className="text-white font-semibold mb-3">La tienda</h4>
+            <ul className="space-y-2 text-sm">
+              <li><Link to="/sobre-nosotros" className="hover:text-white transition-colors">Sobre nosotros</Link></li>
+              <li><Link to="/como-comprar" className="hover:text-white transition-colors">Cómo comprar</Link></li>
+            </ul>
+          </div>
+          <div>
             <h4 className="text-white font-semibold mb-3">Legal</h4>
             <ul className="space-y-2 text-sm">
               <li><Link to="/privacidad" className="hover:text-white transition-colors">Política de privacidad</Link></li>
               <li><Link to="/terminos" className="hover:text-white transition-colors">Términos y condiciones</Link></li>
+              {!isMayorista && (
+                <li className="pt-1">
+                  <Link
+                    to="/arrepentimiento"
+                    className="hover:text-white transition-colors"
+                  >
+                    Botón de arrepentimiento
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
           <div>
             <h4 className="text-white font-semibold mb-3">Pagos seguros</h4>
-            <p className="text-sm">Aceptamos pagos a través de MercadoPago.</p>
-            <p className="text-sm mt-1">Transferencias bancarias.</p>
-            <p className="text-xs mt-2">🔒 Tus datos están protegidos.</p>
+            <p className="text-sm mb-1">Aceptamos pagos a través de MercadoPago.</p>
+            <p className="text-sm mb-3">Transferencias bancarias.</p>
+            {/* Logos de medios de pago — sin Diners, Banelco ni T. Shopping */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
+
+              {/* VISA — SVG inline */}
+              <span className="inline-flex items-center justify-center w-10 h-6 rounded bg-[#1a1f71]">
+                <svg viewBox="0 0 48 16" className="w-8" fill="none">
+                  <text x="1" y="13" fontFamily="Arial" fontWeight="900" fontSize="14" fill="white" fontStyle="italic" letterSpacing="-0.5">VISA</text>
+                </svg>
+              </span>
+
+              {/* Mastercard — dos círculos superpuestos */}
+              <span className="inline-flex items-center justify-center w-10 h-6 rounded bg-[#252525]">
+                <svg viewBox="0 0 32 20" className="w-7">
+                  <circle cx="11" cy="10" r="7.5" fill="#eb001b"/>
+                  <circle cx="21" cy="10" r="7.5" fill="#f79e1b"/>
+                  {/* intersección en color naranja oscuro */}
+                  <path d="M16 4.2a7.5 7.5 0 0 1 0 11.6A7.5 7.5 0 0 1 16 4.2z" fill="#ff5f00"/>
+                </svg>
+              </span>
+
+              {/* AMEX — texto blanco sobre azul */}
+              <span className="inline-flex items-center justify-center w-10 h-6 rounded bg-[#2e77bc]">
+                <svg viewBox="0 0 40 16" className="w-9" fill="none">
+                  <text x="2" y="12" fontFamily="Arial" fontWeight="900" fontSize="10" fill="white" letterSpacing="0.5">AMEX</text>
+                </svg>
+              </span>
+
+              {/* CABAL */}
+              <span className="inline-flex items-center justify-center w-10 h-6 rounded bg-[#1b2a4a]">
+                <svg viewBox="0 0 42 16" className="w-9" fill="none">
+                  <text x="2" y="12" fontFamily="Arial" fontWeight="900" fontSize="10" fill="white">CABAL</text>
+                </svg>
+              </span>
+
+              {/* Pago Fácil — amarillo con texto oscuro */}
+              <span className="inline-flex items-center justify-center px-1.5 h-6 rounded bg-[#f5a800]">
+                <svg viewBox="0 0 60 16" className="w-12" fill="none">
+                  <text x="1" y="12" fontFamily="Arial" fontWeight="900" fontSize="10" fill="#1b2a4a">Pago Fácil</text>
+                </svg>
+              </span>
+
+              {/* Rapipago */}
+              <span className="inline-flex items-center justify-center px-1.5 h-6 rounded bg-[#e8420e]">
+                <svg viewBox="0 0 62 16" className="w-12" fill="none">
+                  <text x="1" y="12" fontFamily="Arial" fontWeight="800" fontSize="10" fill="white">Rapipago</text>
+                </svg>
+              </span>
+
+              {/* Naranja */}
+              <span className="inline-flex items-center justify-center px-1.5 h-6 rounded bg-[#ff6200]">
+                <svg viewBox="0 0 54 16" className="w-10" fill="none">
+                  <text x="1" y="12" fontFamily="Arial" fontWeight="900" fontSize="10" fill="white">Naranja</text>
+                </svg>
+              </span>
+
+              {/* MercadoPago */}
+              <span className="inline-flex items-center justify-center px-1.5 h-6 rounded bg-[#009ee3]">
+                <svg viewBox="0 0 80 16" className="w-16" fill="none">
+                  <text x="1" y="12" fontFamily="Arial" fontWeight="700" fontSize="9" fill="white">MercadoPago</text>
+                </svg>
+              </span>
+
+            </div>
+            <p className="text-xs text-slate-500">🔒 Tus datos están protegidos.</p>
           </div>
           <div>
             <h4 className="text-white font-semibold mb-3">Contacto</h4>
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-2">
                 <span>📧</span>
-                <a href="mailto:info@igwtstore.com.ar" className="hover:text-white transition-colors">info@igwtstore.com.ar</a>
+                <a href="mailto:info@lsmarket.com.ar" className="hover:text-white transition-colors">info@lsmarket.com.ar</a>
               </li>
               <li className="flex items-center gap-2">
                 <span>📞</span>

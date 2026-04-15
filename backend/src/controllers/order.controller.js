@@ -26,7 +26,7 @@ const prisma = new PrismaClient();
 // GET /api/orders - Listar órdenes (solo admin)
 async function getOrders(req, res) {
   try {
-    const { status, paymentMethod, page = 1, limit = 20 } = req.query;
+    const { status, paymentMethod, page = 1, limit = 20, search, sortOrder, customerType } = req.query;
 
     const where = {};
     if (status) where.status = status;
@@ -39,7 +39,26 @@ async function getOrders(req, res) {
       }
     }
 
+    // Búsqueda por nombre de cliente o número de orden
+    if (search && search.trim()) {
+      const trimmed = search.trim();
+      const searchNum = parseInt(trimmed);
+      where.OR = [
+        { customerName: { contains: trimmed, mode: "insensitive" } },
+        // Si el texto es un número, buscar también por ID de orden
+        ...(!isNaN(searchNum) ? [{ id: searchNum }] : []),
+      ];
+    }
+
+    // Filtro por tipo de cliente (MINORISTA / MAYORISTA)
+    if (customerType && ["MINORISTA", "MAYORISTA"].includes(customerType)) {
+      where.customerType = customerType;
+    }
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Ordenamiento por fecha: "asc" = más viejo primero, "desc" (default) = más nuevo primero
+    const orderDirection = sortOrder === "asc" ? "asc" : "desc";
 
     const [orders, total] = await Promise.all([
       prisma.order.findMany({
@@ -50,8 +69,10 @@ async function getOrders(req, res) {
               product: { select: { id: true, name: true, images: true } },
             },
           },
+          // Incluir datos del cupón para mostrar en detalle y en impresión
+          coupon: { select: { code: true, discountType: true, discountValue: true } },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: orderDirection },
         skip,
         take: parseInt(limit),
       }),
@@ -105,7 +126,7 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote } = req.body;
 
     if (!customerName || !customerEmail || !items || items.length === 0) {
       return res.status(400).json({ error: "Datos de la orden incompletos" });
@@ -119,11 +140,21 @@ async function createOrder(req, res) {
     let total = 0;
     const orderItems = [];
 
-    // Determinar si el cliente es mayorista para aplicar precios correctos
-    const registeredCustomer = await prisma.customer.findUnique({
-      where: { email: customerEmail },
-      select: { type: true },
-    });
+    // Determinar si el cliente es mayorista para aplicar precios correctos.
+    // Preferimos buscar por customerId (más confiable) y solo hacemos fallback por email si no viene ID.
+    let registeredCustomer = null;
+    if (customerId) {
+      registeredCustomer = await prisma.customer.findUnique({
+        where: { id: parseInt(customerId) },
+        select: { type: true },
+      });
+    }
+    if (!registeredCustomer && customerEmail) {
+      registeredCustomer = await prisma.customer.findUnique({
+        where: { email: customerEmail },
+        select: { type: true },
+      });
+    }
     const isMayorista = registeredCustomer?.type === "MAYORISTA";
 
     for (const item of items) {
@@ -161,13 +192,10 @@ async function createOrder(req, res) {
       const tierPrice = applyPriceTier(activeTiers, item.quantity);
       if (tierPrice !== null) effectivePrice = tierPrice;
 
-      // Para cotizaciones: si el cliente envió un customPrice válido, se usa ese precio.
-      // Esto permite negociar precios por pedido sin modificar el producto publicado.
-      const isCotizacion = method === "COTIZACION";
-      const customPrice = item.customPrice ? parseFloat(item.customPrice) : null;
-      const finalPrice = (isCotizacion && customPrice && customPrice > 0)
-        ? customPrice
-        : effectivePrice;
+      // SEGURIDAD: el precio SIEMPRE se calcula server-side a partir de la BD.
+      // Nunca se acepta un precio enviado por el cliente — cualquier customPrice del body se ignora.
+      // (El campo customPrice solo lo puede aplicar el ADMIN al editar una cotización desde el panel.)
+      const finalPrice = effectivePrice;
 
       total += finalPrice * item.quantity;
       orderItems.push({
@@ -217,6 +245,26 @@ async function createOrder(req, res) {
       }
     }
 
+    // Aplicar IVA si el cliente es mayorista y lo solicitó.
+    // SEGURIDAD: solo se aplica si el cliente está registrado como MAYORISTA en la DB.
+    // El flag wantsInvoice del body se ignora para minoristas.
+    // El IVA se calcula por producto según su campo ivaRate (10.5% o 21%).
+    const applyIva = isMayorista && wantsInvoice === true;
+    let ivaAmount = 0;
+    if (applyIva) {
+      // Para cada item de la orden, buscar el ivaRate del producto y calcular su IVA
+      for (const item of orderItems) {
+        const prod = await prisma.product.findUnique({
+          where: { id: item.productId },
+          select: { ivaRate: true },
+        });
+        const rate = (prod?.ivaRate ?? 21) / 100;
+        ivaAmount += Math.round(item.price * item.quantity * rate * 100) / 100;
+      }
+      ivaAmount = Math.round(ivaAmount * 100) / 100;
+      total = Math.round((total + ivaAmount) * 100) / 100;
+    }
+
     // Crear la orden en la base de datos con el método de pago elegido.
     // Si el cliente está registrado, vincular la orden a su cuenta via customerId.
     const order = await prisma.order.create({
@@ -228,6 +276,12 @@ async function createOrder(req, res) {
         total,
         status: "PENDING",
         paymentMethod: method,
+        // customerType se determina a partir del tipo de cliente registrado
+        // isMayorista ya fue calculado arriba consultando la DB por el email
+        customerType: isMayorista ? "MAYORISTA" : "MINORISTA",
+        wantsInvoice: applyIva,
+        ivaAmount,
+        customerNote: customerNote?.trim() || null,
         ...(appliedCoupon ? { couponId: appliedCoupon.id, couponDiscount } : {}),
         items: {
           create: orderItems,
@@ -337,9 +391,15 @@ async function updateOrderStatus(req, res) {
     });
     if (!existing) return res.status(404).json({ error: "Orden no encontrada" });
 
+    const updateData = { status };
+    // Al abonar, pasar automáticamente a "En preparación" si estaba en Pendiente
+    if (status === "APPROVED" && existing.fulfillmentStatus === "PENDIENTE") {
+      updateData.fulfillmentStatus = "EN_PREPARACION";
+    }
+
     const order = await prisma.order.update({
       where: { id: parseInt(id) },
-      data: { status },
+      data: updateData,
     });
 
     // Devolver stock si una COTIZACION pasa a CANCELLED o REJECTED
@@ -1080,10 +1140,11 @@ async function applyCouponToOrder(req, res) {
 // El stock se descuenta igual que en una venta normal.
 async function createManualOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status } = req.body;
+    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType } = req.body;
 
-    if (!customerName || !customerEmail) {
-      return res.status(400).json({ error: "Nombre y email del cliente son requeridos" });
+    // Email es opcional en ventas manuales — solo el nombre es obligatorio
+    if (!customerName) {
+      return res.status(400).json({ error: "El nombre del cliente es requerido" });
     }
     if (!items || items.length === 0) {
       return res.status(400).json({ error: "La venta debe tener al menos un producto" });
@@ -1139,13 +1200,19 @@ async function createManualOrder(req, res) {
       return tx.order.create({
         data: {
           customerName,
-          customerEmail,
+          // customerEmail es opcional en ventas manuales — si viene vacío se guarda como ""
+          // (el schema no permite null sin migración, string vacío es equivalente a "sin email")
+          customerEmail: customerEmail || "",
           customerPhone: customerPhone || null,
           customerId:    customerId ? parseInt(customerId) : null,
           total,
           status:        orderStatus,
           paymentMethod: method,
           adminNotes:    notes || null,
+          // salesChannel: canal de venta ingresado por el admin. Si no viene, se usa "MANUAL" como fallback.
+          salesChannel:  salesChannel || "MANUAL",
+          // customerType: MINORISTA o MAYORISTA según seleccionó el admin al registrar la venta.
+          customerType:  customerType || "MINORISTA",
           items: { create: orderItems },
         },
         include: {
@@ -1161,8 +1228,48 @@ async function createManualOrder(req, res) {
   }
 }
 
+// PATCH /api/orders/:id/fields — actualiza paymentMethod y/o fulfillmentStatus
+async function updateOrderFields(req, res) {
+  try {
+    const { id } = req.params;
+    const { paymentMethod, fulfillmentStatus } = req.body;
+
+    const data = {};
+
+    if (paymentMethod) {
+      const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION"];
+      if (!validMethods.includes(paymentMethod)) {
+        return res.status(400).json({ error: "Método de pago inválido" });
+      }
+      data.paymentMethod = paymentMethod;
+    }
+
+    if (fulfillmentStatus) {
+      const validFulfillment = ["PENDIENTE", "EN_PREPARACION", "ENVIADO", "ENTREGADO"];
+      if (!validFulfillment.includes(fulfillmentStatus)) {
+        return res.status(400).json({ error: "Estado de pedido inválido" });
+      }
+      data.fulfillmentStatus = fulfillmentStatus;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: "No se envió ningún campo para actualizar" });
+    }
+
+    const order = await prisma.order.update({
+      where: { id: parseInt(id) },
+      data,
+    });
+
+    res.json(order);
+  } catch (err) {
+    console.error("updateOrderFields error:", err);
+    res.status(500).json({ error: "Error al actualizar la orden" });
+  }
+}
+
 module.exports = {
-  getOrders, getOrder, createOrder, updateOrderStatus, getStats, getMetrics, deleteOrder,
+  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
   getMyOrders, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,

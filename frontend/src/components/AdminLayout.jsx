@@ -8,8 +8,18 @@ export default function AdminLayout({ children, title }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  // sidebarOpen controla si el sidebar está visible en mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(
+    () => localStorage.getItem("adminDark") === "1"
+  );
+
+  const toggleDark = () => {
+    setDarkMode((prev) => {
+      const next = !prev;
+      localStorage.setItem("adminDark", next ? "1" : "0");
+      return next;
+    });
+  };
 
   // Cierra el sidebar automáticamente al cambiar de ruta (navegación mobile)
   useEffect(() => {
@@ -49,10 +59,11 @@ export default function AdminLayout({ children, title }) {
         { label: "Cotizaciones",      tab: "cotizaciones" },
       ],
     },
-    { path: "/admin/caja",      label: "Caja",       icon: "💰" },
-    { path: "/admin/compras",   label: "Compras",    icon: "🛍️" },
-    { path: "/admin/cupones",   label: "Cupones",    icon: "🏷️" },
-    { path: "/admin/carrusel",  label: "Carrusel",   icon: "🖼️" },
+    { path: "/admin/caja",         label: "Caja",            icon: "💰" },
+    { path: "/admin/compras",      label: "Compras",         icon: "🛍️" },
+    { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️" },
+    { path: "/admin/carrusel",     label: "Carrusel",        icon: "🖼️" },
+    { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️" },
     {
       path: "/admin/clientes",
       label: "Clientes",
@@ -74,7 +85,7 @@ export default function AdminLayout({ children, title }) {
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between">
+      <div className="px-6 h-16 border-b border-slate-800 flex items-center justify-between flex-shrink-0">
         <Link to="/" target="_blank" className="flex items-center gap-2 font-bold text-lg">
           <span className="text-blue-400">⚡</span>
           <span>IGWT Store</span>
@@ -166,7 +177,7 @@ export default function AdminLayout({ children, title }) {
 
   // overflow-x-hidden previene que cualquier hijo desborde el ancho de la pantalla en mobile
   return (
-    <div className="min-h-screen bg-slate-100 flex overflow-x-hidden">
+    <div className={`min-h-screen flex overflow-x-hidden ${darkMode ? "admin-dark bg-slate-950" : "bg-slate-100"}`}>
       {/* ── Sidebar desktop: siempre visible en lg+ ── */}
       <aside className="hidden lg:flex w-60 bg-slate-900 text-white flex-col fixed inset-y-0 left-0 z-30">
         {sidebarContent}
@@ -194,18 +205,25 @@ export default function AdminLayout({ children, title }) {
       {/* lg:ml-60 compensa el sidebar fijo en desktop; en mobile ocupa todo el ancho */}
       <div className="flex-1 lg:ml-60 min-w-0">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-4 sm:px-8 py-3 sm:py-4 sticky top-0 z-20 flex items-center gap-3">
-          {/* Botón hamburguesa — solo visible en mobile */}
+        <header className={`px-4 sm:px-8 h-16 sticky top-0 z-20 flex items-center gap-3 border-b ${darkMode ? "bg-slate-900 border-slate-700" : "bg-white border-slate-200"}`}>
           <button
             onClick={() => setSidebarOpen(true)}
-            className="lg:hidden flex flex-col gap-1.5 p-1.5 rounded-lg hover:bg-slate-100 shrink-0"
+            className={`lg:hidden flex flex-col gap-1.5 p-1.5 rounded-lg shrink-0 ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-100"}`}
             aria-label="Abrir menú"
           >
-            <span className="block w-5 h-0.5 bg-slate-700" />
-            <span className="block w-5 h-0.5 bg-slate-700" />
-            <span className="block w-5 h-0.5 bg-slate-700" />
+            <span className={`block w-5 h-0.5 ${darkMode ? "bg-slate-300" : "bg-slate-700"}`} />
+            <span className={`block w-5 h-0.5 ${darkMode ? "bg-slate-300" : "bg-slate-700"}`} />
+            <span className={`block w-5 h-0.5 ${darkMode ? "bg-slate-300" : "bg-slate-700"}`} />
           </button>
-          <h1 className="text-lg sm:text-xl font-bold text-slate-800 truncate">{title}</h1>
+          <h1 className={`text-lg sm:text-xl font-bold truncate flex-1 ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{title}</h1>
+          {/* Toggle tema oscuro */}
+          <button
+            onClick={toggleDark}
+            title={darkMode ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+            className={`p-2 rounded-lg transition-colors text-lg ${darkMode ? "hover:bg-slate-700 text-yellow-300" : "hover:bg-slate-100 text-slate-500"}`}
+          >
+            {darkMode ? "☀️" : "🌙"}
+          </button>
         </header>
 
         <main className="p-4 sm:p-8">{children}</main>

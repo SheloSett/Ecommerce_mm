@@ -18,10 +18,22 @@ export function AuthProvider({ children }) {
       authApi
         .me()
         .then((res) => setUser(res.data))
-        .catch(() => {
-          localStorage.removeItem("admin_token");
-          localStorage.removeItem("admin_user");
-          setUser(null);
+        .catch((err) => {
+          // Solo limpiar sesión en 401 (token inválido/expirado).
+          // Errores como 429 (rate limit) o 5xx (backend caído) no deben desloguear al admin
+          // — el token sigue siendo válido, simplemente el servidor no pudo responder.
+          const status = err?.response?.status;
+          if (status === 401) {
+            localStorage.removeItem("admin_token");
+            localStorage.removeItem("admin_user");
+            setUser(null);
+          } else {
+            // Mantener el usuario logueado con los datos guardados en localStorage
+            // para que no pierda la sesión por un error transitorio del servidor
+            const savedUser = localStorage.getItem("admin_user");
+            if (savedUser) setUser(JSON.parse(savedUser));
+            else setUser(null);
+          }
         })
         .finally(() => setLoading(false));
     } else {

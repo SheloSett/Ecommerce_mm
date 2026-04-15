@@ -7,13 +7,18 @@ import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, getImageUrl } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 
+const CAROUSEL_PAGE_SIZE = 4; // cards visibles a la vez en los carruseles de la home
+
 export default function Home() {
   const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [saleProducts, setSaleProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [slides, setSlides] = useState([]);
   const [currentSlide, setCurrentSlide] = useState(0);
   const timerRef = useRef(null);
+  const [featuredOffset, setFeaturedOffset] = useState(0);
+  const [saleOffset, setSaleOffset] = useState(0);
   const { customer } = useCustomerAuth();
   const navigate = useNavigate();
 
@@ -21,11 +26,13 @@ export default function Home() {
     const visibleFor = customer?.type || "MINORISTA";
     Promise.all([
       productsApi.getAll({ featured: true, limit: 8, visibleFor }),
+      productsApi.getAll({ homeOffer: true, limit: 8, visibleFor }),
       categoriesApi.getAll(),
       slidesApi.getAll(),
     ])
-      .then(([productsRes, catsRes, slidesRes]) => {
+      .then(([productsRes, saleRes, catsRes, slidesRes]) => {
         setFeaturedProducts(productsRes.data.products);
+        setSaleProducts(saleRes.data.products);
         setCategories(catsRes.data);
         setSlides(slidesRes.data);
       })
@@ -59,13 +66,37 @@ export default function Home() {
     }
   };
 
-  const categoryIcons = {
-    cables: "🔌",
-    auriculares: "🎧",
-    cargadores: "⚡",
-    almacenamiento: "💾",
-    perifericos: "🖱️",
-    accesorios: "📱",
+  // Antes: objeto de slug exacto → emoji (solo 6 entradas, nuevas categorías mostraban 📦)
+  // const categoryIcons = { cables: "🔌", auriculares: "🎧", ... };
+  //
+  // Ahora: función que busca palabras clave dentro del slug para auto-asignar el emoji.
+  // Funciona para cualquier categoría nueva sin tocar código.
+  const getCategoryEmoji = (slug) => {
+    const s = slug.toLowerCase();
+    if (s.includes("auricular") || s.includes("audifonos") || s.includes("headphone")) return "🎧";
+    if (s.includes("cable"))                                                             return "🔌";
+    if (s.includes("cargador") || s.includes("carga"))                                  return "⚡";
+    if (s.includes("almacenamiento") || s.includes("disco") || s.includes("pendrive") || s.includes("memoria")) return "💾";
+    if (s.includes("periferico") || s.includes("mouse") || s.includes("teclado"))       return "🖱️";
+    if (s.includes("accesorio"))                                                         return "📱";
+    if (s.includes("parlante") || s.includes("altavoz") || s.includes("bocina") || s.includes("speaker")) return "🔊";
+    if (s.includes("adaptador") || s.includes("hub") || s.includes("conversor"))        return "🔄";
+    if (s.includes("bateria") || s.includes("pila") || s.includes("powerbank"))         return "🔋";
+    if (s.includes("notebook") || s.includes("laptop") || s.includes("computadora") || s.includes("pc")) return "💻";
+    if (s.includes("celular") || s.includes("smartphone") || s.includes("movil"))       return "📱";
+    if (s.includes("tablet") || s.includes("ipad"))                                     return "📟";
+    if (s.includes("camara") || s.includes("foto") || s.includes("video"))              return "📷";
+    if (s.includes("impresora") || s.includes("scanner"))                               return "🖨️";
+    if (s.includes("red") || s.includes("router") || s.includes("wifi") || s.includes("ethernet")) return "📶";
+    if (s.includes("monitor") || s.includes("pantalla") || s.includes("display"))      return "🖥️";
+    if (s.includes("gaming") || s.includes("juego") || s.includes("control") || s.includes("joystick") || s.includes("consola")) return "🎮";
+    // Nota: s ya está en minúsculas via .toLowerCase() — "Joystick" con mayúscula nunca haría match
+    if (s.includes("iluminacion") || s.includes("lampara") || s.includes("luz"))       return "💡";
+    if (s.includes("funda") || s.includes("protector") || s.includes("case"))          return "🛡️";
+    if (s.includes("soporte") || s.includes("stand") || s.includes("base"))            return "🗜️";
+    if (s.includes("limpieza") || s.includes("mantenimiento"))                          return "🧹";
+    if (s.includes("audio") || s.includes("microfono") || s.includes("mic"))           return "🎙️";
+    return "📦"; // fallback genérico
   };
 
   return (
@@ -202,7 +233,7 @@ export default function Home() {
                   className="card p-4 text-center hover:shadow-md hover:border-blue-200 transition-all group"
                 >
                   <div className="text-3xl mb-2">
-                    {categoryIcons[cat.slug] || "📦"}
+                    {getCategoryEmoji(cat.slug)}
                   </div>
                   <p className="text-sm font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">
                     {cat.name}
@@ -216,18 +247,33 @@ export default function Home() {
           </section>
         )}
 
+        {/* Botón "Ver el catálogo" — entre categorías y productos destacados, ancho completo */}
+        <div className="mb-14 -mt-6">
+          <Link
+            to="/catalogo"
+            className="group w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold px-8 py-4 rounded-2xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 hover:-translate-y-0.5 text-base"
+          >
+            <span>🛒</span>
+            Ver el catálogo completo
+            <svg
+              className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        </div>
+
         {/* Productos destacados */}
         <section>
-          <div className="flex items-center justify-between mb-6">
+          {/* Quitado "Ver todos →" — reemplazado por el botón llamativo de arriba */}
+          <div className="mb-6">
             <h2 className="text-2xl font-bold text-slate-900">Productos destacados</h2>
-            <Link to="/catalogo" className="text-blue-600 hover:underline text-sm font-medium">
-              Ver todos →
-            </Link>
           </div>
 
           {loading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {[...Array(8)].map((_, i) => (
+              {[...Array(4)].map((_, i) => (
                 <div key={i} className="card animate-pulse">
                   <div className="aspect-square bg-slate-200" />
                   <div className="p-4 space-y-2">
@@ -238,10 +284,56 @@ export default function Home() {
               ))}
             </div>
           ) : featuredProducts.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {featuredProducts.map((p) => (
-                <ProductCard key={p.id} product={p} />
-              ))}
+            <div className="relative">
+              {/* Flecha izquierda */}
+              {featuredOffset > 0 && (
+                <button
+                  onClick={() => setFeaturedOffset((o) => Math.max(0, o - CAROUSEL_PAGE_SIZE))}
+                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Cards visibles */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                {featuredProducts
+                  .slice(featuredOffset, featuredOffset + CAROUSEL_PAGE_SIZE)
+                  .map((p) => (
+                    <ProductCard key={p.id} product={p} />
+                  ))}
+              </div>
+
+              {/* Flecha derecha */}
+              {featuredOffset + CAROUSEL_PAGE_SIZE < featuredProducts.length && (
+                <button
+                  onClick={() => setFeaturedOffset((o) => Math.min(featuredProducts.length - CAROUSEL_PAGE_SIZE, o + CAROUSEL_PAGE_SIZE))}
+                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Indicador de página */}
+              {featuredProducts.length > CAROUSEL_PAGE_SIZE && (
+                <div className="flex justify-center gap-1.5 mt-4">
+                  {Array.from({ length: Math.ceil(featuredProducts.length / CAROUSEL_PAGE_SIZE) }).map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setFeaturedOffset(i * CAROUSEL_PAGE_SIZE)}
+                      className={`rounded-full transition-all ${
+                        Math.floor(featuredOffset / CAROUSEL_PAGE_SIZE) === i
+                          ? "bg-blue-600 w-5 h-2"
+                          : "bg-slate-300 hover:bg-slate-400 w-2 h-2"
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-16 text-slate-400">
@@ -253,6 +345,67 @@ export default function Home() {
             </div>
           )}
         </section>
+
+        {/* Ofertas — solo se renderiza si hay productos con onSale=true */}
+        {saleProducts.length > 0 && (
+          <section className="mt-14">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-slate-900">🔥 Ofertas</h2>
+            </div>
+
+            <div className="relative">
+              {/* Flecha izquierda */}
+              {saleOffset > 0 && (
+                <button
+                  onClick={() => setSaleOffset((o) => Math.max(0, o - CAROUSEL_PAGE_SIZE))}
+                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Cards visibles */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                {saleProducts
+                  .slice(saleOffset, saleOffset + CAROUSEL_PAGE_SIZE)
+                  .map((p) => (
+                    <ProductCard key={p.id} product={p} />
+                  ))}
+              </div>
+
+              {/* Flecha derecha */}
+              {saleOffset + CAROUSEL_PAGE_SIZE < saleProducts.length && (
+                <button
+                  onClick={() => setSaleOffset((o) => Math.min(saleProducts.length - CAROUSEL_PAGE_SIZE, o + CAROUSEL_PAGE_SIZE))}
+                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* Indicador de página */}
+              {saleProducts.length > CAROUSEL_PAGE_SIZE && (
+                <div className="flex justify-center gap-1.5 mt-4">
+                  {Array.from({ length: Math.ceil(saleProducts.length / CAROUSEL_PAGE_SIZE) }).map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setSaleOffset(i * CAROUSEL_PAGE_SIZE)}
+                      className={`rounded-full transition-all ${
+                        Math.floor(saleOffset / CAROUSEL_PAGE_SIZE) === i
+                          ? "bg-orange-500 w-5 h-2"
+                          : "bg-slate-300 hover:bg-slate-400 w-2 h-2"
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* Banner Redes Sociales — 3 cards lado a lado, cada una con color de la red */}
         <section className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4">

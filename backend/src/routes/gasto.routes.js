@@ -31,18 +31,23 @@ router.get("/", authMiddleware, async (req, res) => {
 // POST /api/gastos - crear un gasto
 router.post("/", authMiddleware, async (req, res) => {
   try {
-    const { amount, description, type, date } = req.body;
+    const { amount, description, type, date, subtype, productId } = req.body;
     if (!amount || !description || !type) {
       return res.status(400).json({ error: "Monto, descripción y tipo son requeridos" });
     }
     if (!["PERSONAL", "NEGOCIO"].includes(type)) {
       return res.status(400).json({ error: "Tipo inválido. Debe ser PERSONAL o NEGOCIO" });
     }
+    // subtype: "GASTO" (default) o "RMA"
+    const validSubtype = subtype === "RMA" ? "RMA" : "GASTO";
     const gasto = await prisma.gasto.create({
       data: {
         amount: parseFloat(amount),
         description,
         type,
+        subtype: validSubtype,
+        // productId solo se guarda si es RMA y se envió un ID válido
+        productId: validSubtype === "RMA" && productId ? parseInt(productId) : null,
         date: date ? new Date(date) : new Date(),
       },
     });

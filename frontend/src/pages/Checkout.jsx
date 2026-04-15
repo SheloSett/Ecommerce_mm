@@ -31,7 +31,8 @@ function IconTransfer() {
 }
 
 export default function Checkout() {
-  const { items, totalPrice, clearCart } = useCart();
+  // totalPrice removido: el subtotal ahora siempre se calcula directamente desde items.price
+  const { items, /* totalPrice, */ clearCart } = useCart();
   const { customer } = useCustomerAuth();
   const navigate = useNavigate();
 
@@ -40,10 +41,13 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false);
   // Estado de éxito: null = en progreso, objeto = orden creada exitosamente (para no-MP)
   const [successOrder, setSuccessOrder] = useState(null);
-  // Precios editados por ítem solo para esta cotización (key: cartItemId, value: número)
-  const [customPrices, setCustomPrices] = useState({});
-  // ID del ítem cuyo precio se está editando en este momento
-  const [editingPriceId, setEditingPriceId] = useState(null);
+  // SEGURIDAD: se eliminó la posibilidad de que el cliente edite precios.
+  // Los precios siempre se calculan server-side en el backend.
+  // const [customPrices, setCustomPrices] = useState({});
+  // const [editingPriceId, setEditingPriceId] = useState(null);
+  // Factura con IVA — solo para mayoristas
+  const [wantsInvoice, setWantsInvoice] = useState(false);
+  // IVA_RATE eliminado — el IVA ahora se calcula por producto según su campo ivaRate
   // Cupón de descuento aplicado
   const [couponCode, setCouponCode]         = useState("");
   const [couponResult, setCouponResult]     = useState(null); // { discountAmount, coupon }
@@ -56,6 +60,7 @@ export default function Checkout() {
     customerPhone: customer?.phone || "",
     customerCuit:  customer?.cuit  || "",
     documentType:  customer?.documentType || "DNI",
+    customerNote:  "",
   });
 
   // Método de pago: mayoristas siempre usan COTIZACION; minoristas eligen
@@ -66,18 +71,29 @@ export default function Checkout() {
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 
-  // Precio efectivo de un ítem: usa el custom si fue editado, sino el precio del carrito
-  const getItemPrice = (item) => {
-    const key = item.cartItemId ?? item.id;
-    return customPrices[key] !== undefined ? customPrices[key] : item.price;
-  };
+  // SEGURIDAD: getItemPrice eliminado — el precio siempre viene del carrito (calculado server-side).
+  // const getItemPrice = (item) => {
+  //   const key = item.cartItemId ?? item.id;
+  //   return customPrices[key] !== undefined ? customPrices[key] : item.price;
+  // };
 
-  // Total calculado con los precios custom (solo para cotización)
-  const subtotal = isMayorista
-    ? items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0)
-    : totalPrice;
+  // El subtotal siempre usa item.price directamente (sin permitir precios custom del cliente)
+  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
+  // Antes: isMayorista usaba getItemPrice para permitir edición — removido por seguridad
+  // const subtotal = isMayorista
+  //   ? items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0)
+  //   : totalPrice;
   const couponDiscount = couponResult?.discountAmount || 0;
-  const finalTotal = Math.max(0, subtotal - couponDiscount);
+  const baseTotal = Math.max(0, subtotal - couponDiscount);
+  // IVA calculado por producto según su campo ivaRate (10.5% o 21%).
+  // Se aplica proporcionalmente al subtotal de cada item (ya descontado el cupón en forma proporcional).
+  const ivaAmount = (isMayorista && wantsInvoice)
+    ? items.reduce((acc, item) => {
+        const rate = (item.ivaRate ?? 21) / 100;
+        return acc + item.price * item.quantity * rate;
+      }, 0)
+    : 0;
+  const finalTotal = baseTotal + ivaAmount;
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -132,14 +148,15 @@ export default function Checkout() {
         items: items.map((i) => ({
           productId: i.id,
           quantity: i.quantity,
-          // Solo enviar customPrice si el precio fue editado manualmente
-          ...(customPrices[i.cartItemId ?? i.id] !== undefined && {
-            customPrice: customPrices[i.cartItemId ?? i.id],
-          }),
+          // SEGURIDAD: customPrice removido — el backend ignora precios enviados por el cliente.
+          // ...(customPrices[i.cartItemId ?? i.id] !== undefined && {
+          //   customPrice: customPrices[i.cartItemId ?? i.id],
+          // }),
         })),
         paymentMethod: isMayorista ? "COTIZACION" : paymentMethod,
-        // Enviar el cupón solo si fue validado correctamente (funciona para minoristas y mayoristas)
+        wantsInvoice: isMayorista ? wantsInvoice : false,
         ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
+        ...(form.customerNote.trim() ? { customerNote: form.customerNote.trim() } : {}),
       });
 
       const order = orderRes.data;
@@ -195,7 +212,7 @@ export default function Checkout() {
                   <span className="font-medium text-slate-900">{formatPrice(item.price * item.quantity)}</span>
                 </div>
               ))}
-              {/* Mostrar cupón aplicado si existía al confirmar el pedido */}
+              {/* Cupón aplicado */}
               {couponResult && (
                 <div className="flex justify-between text-sm text-green-700 font-medium border-t border-slate-200 pt-2">
                   <span>
@@ -205,6 +222,13 @@ export default function Checkout() {
                     </span>
                   </span>
                   <span>−{formatPrice(couponResult.discountAmount)}</span>
+                </div>
+              )}
+              {/* IVA si solicitó factura — usar el valor real guardado en la orden */}
+              {successOrder.ivaAmount > 0 && (
+                <div className={`flex justify-between text-sm text-slate-600 ${!couponResult ? "border-t border-slate-200 pt-2" : ""}`}>
+                  <span>IVA</span>
+                  <span>+{formatPrice(successOrder.ivaAmount)}</span>
                 </div>
               )}
               <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-slate-900">
@@ -350,6 +374,21 @@ export default function Checkout() {
                     />
                   </div>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Comentarios u observaciones
+                  </label>
+                  <textarea
+                    name="customerNote"
+                    value={form.customerNote}
+                    onChange={handleChange}
+                    rows={3}
+                    maxLength={500}
+                    className="input resize-none bg-white text-slate-800 placeholder:text-slate-400"
+                    placeholder="Ej: entregar en horario de la tarde, producto de regalo, consulta especial..."
+                  />
+                  <p className="text-xs text-slate-400 mt-1">{form.customerNote.length}/500</p>
+                </div>
               </div>
             </div>
 
@@ -461,8 +500,10 @@ export default function Checkout() {
                 {items.map((item) => {
                   const img = item.images?.[0];
                   const key = item.cartItemId ?? item.id;
-                  const price = getItemPrice(item);
-                  const isEditing = editingPriceId === key;
+                  // SEGURIDAD: precio siempre de item.price, nunca editable por el cliente.
+                  // Antes existía un input editable con lápiz para mayoristas (removido).
+                  const price = item.price;
+                  // const isEditing = editingPriceId === key; // removido junto con la edición
                   return (
                     <div key={key} className="flex gap-3">
                       <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
@@ -475,50 +516,17 @@ export default function Checkout() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
 
-                        {/* Precio editable solo en cotizaciones */}
+                        {/* Precio de solo lectura — igual para minoristas y mayoristas */}
+                        <p className="text-xs text-slate-500">x{item.quantity} · {formatPrice(price)} c/u</p>
+
+                        {/* Bloque de precio editable para mayoristas REMOVIDO por seguridad:
                         {isMayorista ? (
                           <div className="flex items-center gap-1 mt-0.5">
-                            <span className="text-xs text-slate-500">x{item.quantity} · </span>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                autoFocus
-                                defaultValue={price}
-                                onBlur={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val >= 0) {
-                                    setCustomPrices((prev) => ({ ...prev, [key]: val }));
-                                  }
-                                  setEditingPriceId(null);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") e.target.blur();
-                                  if (e.key === "Escape") { setEditingPriceId(null); }
-                                }}
-                                className="w-28 text-xs border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setEditingPriceId(key)}
-                                className="flex items-center gap-1 text-xs text-slate-600 hover:text-blue-600 group"
-                                title="Editar precio para esta cotización"
-                              >
-                                <span className={customPrices[key] !== undefined ? "font-semibold text-blue-700" : ""}>
-                                  {formatPrice(price)} c/u
-                                </span>
-                                {/* Ícono lápiz */}
-                                <svg className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H8v-2.414a2 2 0 01.586-1.414z" />
-                                </svg>
-                              </button>
-                            )}
+                            ... input editable con lápiz ...
                           </div>
                         ) : (
                           <p className="text-xs text-slate-500">x{item.quantity} · {formatPrice(price)} c/u</p>
-                        )}
+                        )} */}
 
                         <p className="text-sm font-bold text-slate-900">{formatPrice(price * item.quantity)}</p>
                       </div>
@@ -581,6 +589,29 @@ export default function Checkout() {
                   <div className="flex justify-between text-sm text-green-700 font-semibold">
                     <span>Descuento cupón</span>
                     <span>−{formatPrice(couponDiscount)}</span>
+                  </div>
+                )}
+
+                {/* Opción de factura con IVA — solo para mayoristas */}
+                {isMayorista && (
+                  <label className="flex items-center gap-2.5 py-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={wantsInvoice}
+                      onChange={(e) => setWantsInvoice(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"
+                    />
+                    <span className="text-sm text-slate-700">
+                      Quiero factura <span className="text-slate-400 font-normal">(+ IVA)</span>
+                    </span>
+                  </label>
+                )}
+
+                {/* Línea de IVA — visible solo cuando está tildado */}
+                {ivaAmount > 0 && (
+                  <div className="flex justify-between text-sm text-slate-600">
+                    <span>IVA</span>
+                    <span>+{formatPrice(ivaAmount)}</span>
                   </div>
                 )}
 
