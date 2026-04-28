@@ -1,23 +1,64 @@
 import { useState, useEffect, useRef } from "react";
 import AdminLayout from "../../components/AdminLayout";
-import { slidesApi, getImageUrl } from "../../services/api";
+import { slidesApi, settingsApi, getImageUrl } from "../../services/api";
+import { useSiteConfig } from "../../context/SiteConfigContext";
 import toast from "react-hot-toast";
 
 const EMPTY_FORM = { title: "", subtitle: "", url: "", active: true };
 
 export default function AdminCarousel() {
+  const { refetch } = useSiteConfig();
   const [slides, setSlides]       = useState([]);
   const [loading, setLoading]     = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing]     = useState(null); // null = crear, objeto = editar
+  const [editing, setEditing]     = useState(null);
   const [form, setForm]           = useState(EMPTY_FORM);
   const [saving, setSaving]       = useState(false);
-  // Imágenes seleccionadas: múltiples al crear, una sola al editar
-  const [imageFiles, setImageFiles]       = useState([]); // File[]
-  const [imagePreviews, setImagePreviews] = useState([]); // object URLs para preview
+  const [imageFiles, setImageFiles]       = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const fileInputRef = useRef(null);
 
-  useEffect(() => { loadSlides(); }, []);
+  // Banner de anuncio
+  const [annActive,    setAnnActive]    = useState(false);
+  const [annText,      setAnnText]      = useState("");
+  const [annLinkText,  setAnnLinkText]  = useState("");
+  const [annUrl,       setAnnUrl]       = useState("");
+  const [annBgColor,   setAnnBgColor]   = useState("blue");
+  const [annTextColor, setAnnTextColor] = useState("white");
+  const [savingAnn,    setSavingAnn]    = useState(false);
+
+  useEffect(() => {
+    loadSlides();
+    settingsApi.get().then((res) => {
+      setAnnActive(res.data.announcementActive === "true");
+      setAnnText(res.data.announcementText || "");
+      setAnnLinkText(res.data.announcementLinkText || "");
+      setAnnUrl(res.data.announcementUrl || "");
+      setAnnBgColor(res.data.announcementBgColor || "blue");
+      setAnnTextColor(res.data.announcementTextColor || "white");
+    }).catch(console.error);
+  }, []);
+
+  async function handleSaveAnnouncement() {
+    if (annActive && !annText.trim()) { toast.error("Escribí un texto para el banner"); return; }
+    if (annLinkText && annText && !annText.includes(annLinkText)) {
+      toast.error(`"${annLinkText}" no aparece en el texto del banner`); return;
+    }
+    setSavingAnn(true);
+    try {
+      await settingsApi.update({
+        announcementActive:   annActive ? "true" : "false",
+        announcementText:     annText.trim(),
+        announcementLinkText: annLinkText.trim(),
+        announcementUrl:      annUrl.trim(),
+        announcementBgColor:  annBgColor,
+        announcementTextColor: annTextColor,
+      });
+      refetch();
+      toast.success("Banner guardado");
+    } catch { toast.error("Error al guardar el banner"); }
+    finally { setSavingAnn(false); }
+  }
 
   async function loadSlides() {
     setLoading(true);
@@ -242,6 +283,9 @@ export default function AdminCarousel() {
           </div>
         )}
       </div>
+
+      {/* Banner de anuncio movido a su propia página: /admin/carrusel/banner (AdminAnnouncementBanner.jsx)
+          accesible desde el sub-ítem "📢 Banner de anuncio" bajo Carrusel en el sidebar */}
 
       {/* ── Modal crear/editar ───────────────────────────────────────────────── */}
       {showModal && (

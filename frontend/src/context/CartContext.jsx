@@ -8,16 +8,18 @@ const CartContext = createContext(null);
 // cartItemId: ID del registro en BD (para PATCH/DELETE via API)
 // id: productId (para deduplicación y compatibilidad con componentes existentes)
 const mapItem = (dbItem) => ({
-  cartItemId: dbItem.id,
-  id:         dbItem.productId,
-  name:       dbItem.name,
-  price:      dbItem.price,
-  quantity:   dbItem.quantity,
-  image:      dbItem.image,
-  images:     dbItem.image ? [dbItem.image] : [],
-  stock:      dbItem.product?.stock ?? -1,
+  cartItemId:   dbItem.id,
+  id:           dbItem.productId,
+  name:         dbItem.name,
+  price:        dbItem.price,
+  quantity:     dbItem.quantity,
+  image:        dbItem.image,
+  images:       dbItem.image ? [dbItem.image] : [],
+  stock:        dbItem.product?.stock ?? -1,
   // ivaRate: alícuota del producto (10.5 o 21%). Default 21 si no viene del backend.
-  ivaRate:    dbItem.product?.ivaRate ?? 21,
+  ivaRate:      dbItem.product?.ivaRate ?? 21,
+  variantId:    dbItem.variantId    ?? null,
+  variantLabel: dbItem.variantLabel ?? null,
 });
 
 export function CartProvider({ children }) {
@@ -86,17 +88,19 @@ export function CartProvider({ children }) {
 
   // Agrega un item al carrito — llama directo al backend sin localStorage
   // priceOverride: si se pasa, usa ese precio en vez del precio efectivo (para descuentos por cantidad)
-  const addItem = async (product, quantity = 1, priceOverride = null) => {
+  const addItem = async (product, quantity = 1, priceOverride = null, variantId = null, variantLabel = null) => {
     if (!customer) return;
     const effectivePrice = priceOverride !== null ? priceOverride : getEffectivePrice(product);
     setLoading(true);
     try {
       const res = await cartsApi.addItem({
-        productId: product.id,
+        productId:    product.id,
         quantity,
-        name:      product.name,
-        price:     effectivePrice,
-        image:     product.images?.[0] || null,
+        name:         product.name,
+        price:        effectivePrice,
+        image:        product.images?.[0] || null,
+        variantId:    variantId    || null,
+        variantLabel: variantLabel || null,
       });
       setItems(res.data.items.map(mapItem));
     } catch (err) {
@@ -149,11 +153,13 @@ export function CartProvider({ children }) {
 
         const effectivePrice = getEffectivePrice(item.product);
         await cartsApi.addItem({
-          productId: item.productId,
-          quantity: item.quantity,
-          name: item.product.name,
-          price: effectivePrice,
-          image: item.product.images?.[0] || null,
+          productId:    item.productId,
+          quantity:     item.quantity,
+          name:         item.product.name,
+          price:        effectivePrice,
+          image:        item.product.images?.[0] || null,
+          variantId:    item.variantId    || null,
+          variantLabel: item.variantLabel || null,
         });
       }
 

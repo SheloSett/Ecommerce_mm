@@ -5,7 +5,9 @@ const SiteConfigContext = createContext({
   theme: "clasico",
   setTheme: () => {},
   maintenance: false,
-  scheduledAt: null,   // Date | null — fecha/hora programada para el mantenimiento
+  scheduledAt: null,
+  announcement: null,  // { text, linkText, url, bgColor } | null
+  mayoristaMinimoCompra: 0,
   loading: true,
   refetch: () => {},
 });
@@ -15,6 +17,8 @@ export function SiteConfigProvider({ children }) {
   const [maintenanceRaw, setMaintenanceRaw] = useState(false); // valor real del backend
   // scheduledAt: Date | null — fecha programada leída del backend
   const [scheduledAt, setScheduledAt] = useState(null);
+  const [announcement, setAnnouncement] = useState(null);
+  const [mayoristaMinimoCompra, setMayoristaMinimo] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Tema se lee de localStorage (preferencia individual de cada usuario)
@@ -47,6 +51,29 @@ export function SiteConfigProvider({ children }) {
         } else {
           setScheduledAt(null);
         }
+        // Leer banners de anuncio (nuevo formato: JSON array en announcementBanners)
+        // Fallback al formato legacy de un solo banner para compatibilidad
+        if (res.data.announcementBanners) {
+          try {
+            const banners = JSON.parse(res.data.announcementBanners);
+            setAnnouncement(Array.isArray(banners) ? banners.filter((b) => b.active && b.text) : null);
+          } catch { setAnnouncement(null); }
+        } else if (res.data.announcementActive === "true" && res.data.announcementText) {
+          setAnnouncement([{
+            id: "legacy",
+            active: true,
+            text: res.data.announcementText,
+            linkText: res.data.announcementLinkText || "",
+            url: res.data.announcementUrl || "",
+            bgColor: res.data.announcementBgColor || "blue",
+            textColor: res.data.announcementTextColor || "white",
+            scrollDir: res.data.announcementScrollDir || "ltr",
+            visibleFor: "AMBOS",
+          }]);
+        } else {
+          setAnnouncement(null);
+        }
+        setMayoristaMinimo(parseFloat(res.data.mayoristaMinimoCompra) || 0);
         // Ya no leemos theme del backend — viene de localStorage
       })
       .catch(console.error)
@@ -106,6 +133,8 @@ export function SiteConfigProvider({ children }) {
         setTheme,
         maintenance,
         scheduledAt,
+        announcement,
+        mayoristaMinimoCompra,
         loading,
         refetch: fetchConfig,
       }}

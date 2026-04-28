@@ -14,7 +14,7 @@ export default function Register() {
     phone: "",
     documentType: "DNI",
     cuit: "",
-    company: "",
+    // company: "",  // eliminado — campo innecesario según el negocio
   });
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -206,20 +206,7 @@ export default function Register() {
                   </div>
                 </div>
 
-                {/* Empresa */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Empresa / Negocio <span className="text-slate-400 font-normal">(opcional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="company"
-                    value={form.company}
-                    onChange={handleChange}
-                    placeholder="Mi empresa S.A."
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
+                {/* Empresa eliminada — no se solicita en el registro */}
 
                 <button
                   type="submit"

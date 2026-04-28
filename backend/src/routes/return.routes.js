@@ -6,6 +6,7 @@ const {
   getMyReturnRequests,
   getAllReturnRequests,
   updateReturnRequestStatus,
+  markReturnSeen,
 } = require("../controllers/return.controller");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 
@@ -21,6 +22,7 @@ router.get("/my", authMiddleware, customerMiddleware, getMyReturnRequests);
 
 // Rutas del admin
 router.get("/", authMiddleware, adminMiddleware, getAllReturnRequests);
+router.patch("/:id/seen", authMiddleware, adminMiddleware, markReturnSeen);
 router.patch("/:id/status", authMiddleware, adminMiddleware, updateReturnRequestStatus);
 
 module.exports = router;

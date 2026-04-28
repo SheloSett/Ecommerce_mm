@@ -6,6 +6,7 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, getImageUrl } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { getRecent } from "../utils/recentlyViewed";
 
 const CAROUSEL_PAGE_SIZE = 4; // cards visibles a la vez en los carruseles de la home
 
@@ -14,6 +15,7 @@ export default function Home() {
   const [saleProducts, setSaleProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [recentProducts] = useState(() => getRecent().slice(0, 4));
   const [slides, setSlides] = useState([]);
   const [currentSlide, setCurrentSlide] = useState(0);
   const timerRef = useRef(null);
@@ -251,7 +253,7 @@ export default function Home() {
         <div className="mb-14 -mt-6">
           <Link
             to="/catalogo"
-            className="group w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white font-bold px-8 py-4 rounded-2xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 hover:-translate-y-0.5 text-base"
+            className="group w-full flex items-center justify-center gap-3 bg-gradient-to-r from-secondary-800 via-secondary-600 to-secondary-400 hover:from-secondary-800 hover:via-secondary-700 hover:to-secondary-500 text-white font-bold px-8 py-4 rounded-2xl shadow-lg hover:shadow-secondary-600/30 transition-all duration-200 hover:-translate-y-0.5 text-base"
           >
             <span>🛒</span>
             Ver el catálogo completo
@@ -466,6 +468,18 @@ export default function Home() {
           </a>
 
         </section>
+
+        {/* Visitados recientemente */}
+        {recentProducts.length > 0 && (
+          <section className="mt-14">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Visto recientemente</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {recentProducts.map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Banner MercadoPago */}
         <section className="mt-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-8 text-white text-center">

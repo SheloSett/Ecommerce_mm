@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useBadges } from "../context/BadgeContext";
 import toast from "react-hot-toast";
 
 // Layout compartido para todas las páginas del panel de administración
@@ -35,6 +36,8 @@ export default function AdminLayout({ children, title }) {
   const [searchParams] = useSearchParams();
   const currentTab = searchParams.get("tab") || "";
 
+  const { badges } = useBadges();
+
   const navItems = [
     { path: "/admin",            label: "Dashboard",  icon: "📊" },
     {
@@ -45,7 +48,7 @@ export default function AdminLayout({ children, title }) {
         { label: "Todos los productos", tab: "" },
         { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
-        { label: "🖨 Generar flyer",      href: "/admin/productos/flyer" },
+        { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },
     { path: "/admin/categorias", label: "Categorías", icon: "🏷️" },
@@ -56,22 +59,30 @@ export default function AdminLayout({ children, title }) {
       icon: "🛒",
       subItems: [
         { label: "Todos los pedidos", tab: "" },
-        { label: "Cotizaciones",      tab: "cotizaciones" },
+        { label: "Cotizaciones", tab: "cotizaciones", badge: badges.cotizaciones },
       ],
     },
     { path: "/admin/caja",         label: "Caja",            icon: "💰" },
     { path: "/admin/compras",      label: "Compras",         icon: "🛍️" },
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️" },
-    { path: "/admin/carrusel",     label: "Carrusel",        icon: "🖼️" },
-    { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️" },
+    {
+      path: "/admin/carrusel",
+      label: "Carrusel",
+      icon: "🖼️",
+      subItems: [
+        { label: "Slides",             href: "/admin/carrusel" },
+        { label: "📢 Banner de anuncio", href: "/admin/carrusel/banner" },
+      ],
+    },
+    { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones },
     {
       path: "/admin/clientes",
       label: "Clientes",
       icon: "👥",
-      // Sub-ítems que se muestran cuando se está en /admin/clientes
+      badge: badges.clientes + badges.solicitudesMayorista,
       subItems: [
-        { label: "Lista de Clientes",       tab: "" },
-        { label: "Solicitudes Mayorista",  tab: "mayorista" },
+        { label: "Lista de Clientes",      tab: "",          badge: badges.clientes },
+        { label: "Solicitudes Mayorista",  tab: "mayorista", badge: badges.solicitudesMayorista },
         { label: "Carritos Activos",       tab: "carts" },
         { label: "Cambios de Email",       tab: "emails" },
       ],
@@ -116,7 +127,12 @@ export default function AdminLayout({ children, title }) {
                 }`}
               >
                 <span>{item.icon}</span>
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.badge > 0 && (
+                  <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center leading-none">
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
+                )}
               </Link>
 
               {/* Sub-ítems: solo se muestran cuando el ítem padre está activo */}
@@ -133,13 +149,18 @@ export default function AdminLayout({ children, title }) {
                       <Link
                         key={sub.href || sub.tab}
                         to={to}
-                        className={`flex items-center px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                           subActive
                             ? "bg-slate-700 text-white"
                             : "text-slate-400 hover:bg-slate-800 hover:text-white"
                         }`}
                       >
-                        {sub.label}
+                        <span className="flex-1">{sub.label}</span>
+                        {sub.badge > 0 && (
+                          <span className="min-w-[18px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
+                            {sub.badge > 99 ? "99+" : sub.badge}
+                          </span>
+                        )}
                       </Link>
                     );
                   })}

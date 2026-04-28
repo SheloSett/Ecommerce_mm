@@ -63,9 +63,14 @@ model Product {
   categories      Category[]  // M2M implícita — Prisma genera la tabla _CategoryToProduct
   orderItems      OrderItem[]
   cartItems       CartItem[]  // Items de carrito que referencian este producto
+  wishlistItems   Wishlist[]  // Registros de favoritos que incluyen este producto
   visibility      CustomerVisibility @default(AMBOS) // Quién puede ver este producto: AMBOS, MAYORISTA o MINORISTA
   active          Boolean     @default(true)
   featured        Boolean     @default(false)
+  hotSeller          Boolean  @default(false) // Más vendidos — se activa manual o automático por threshold
+  hotSellerThreshold Int?                    // Si se define, hotSeller se auto-activa cuando totalSold >= este valor
+  attributes      ProductAttribute[]  // Atributos de variante definidos para este producto
+  variants        ProductVariant[]    // Combinaciones generadas
   // onSale: aparece en la sección "Ofertas" de la home (separado de destacados)
   onSale          Boolean     @default(false)
   createdAt       DateTime    @default(now())
@@ -123,7 +128,11 @@ model Order {
   ivaAmount           Float         @default(0)
   // fulfillmentStatus: etapa logística del pedido (independiente del estado de pago)
   fulfillmentStatus   String        @default("PENDIENTE")  // PENDIENTE | EN_PREPARACION | ENVIADO | ENTREGADO
-  returnRequests ReturnRequest[]    // Solicitudes de arrepentimiento vinculadas a esta orden
+  // shippingMethod: cómo el cliente quiere recibir su pedido. "RETIRO" = retiro en local, "ENVIO" = acordar envío.
+  // Extensible en el futuro para soportar correo argentino u otros carriers.
+  shippingMethod      String        @default("RETIRO")     // RETIRO | ENVIO
+  returnRequests  ReturnRequest[]    // Solicitudes de arrepentimiento vinculadas a esta orden
+  seenByAdmin     Boolean       @default(false) // true = el admin abrió el detalle de la cotización
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -146,13 +155,16 @@ model Notification {
 }
 
 model OrderItem {
-  id        Int     @id @default(autoincrement())
-  orderId   Int
-  productId Int
-  quantity  Int
-  price     Float
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product   Product @relation(fields: [productId], references: [id])
+  id           Int     @id @default(autoincrement())
+  orderId      Int
+  productId    Int
+  quantity     Int
+  price        Float
+  variantId    Int?    // ID de la variante seleccionada (null si sin variante)
+  variantLabel String? // Ej: "Color: Negro / RGB: Si" — guardado al momento del pedido
+  variantSku   String? // SKU de la variante seleccionada al momento del pedido
+  order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product      Product @relation(fields: [productId], references: [id])
 
   @@map("order_items")
 }
@@ -192,18 +204,18 @@ model Customer {
   phone             String?
   documentType      String?            // Tipo de documento: "DNI", "CUIT" o "CUIL" (null = registros anteriores)
   cuit              String?            // Número de documento (DNI / CUIT / CUIL según documentType)
-  company           String?            // Empresa u organización (útil para mayoristas)
-  avatar            String?            // URL de la foto de perfil (guardada en /uploads)
   status            CustomerStatus     @default(PENDING)
   type              CustomerType       @default(MINORISTA)
   notes             String?            // Notas internas del admin
   mayoristaRequests   MayoristaRequest[]   // Solicitudes para pasar a cuenta mayorista
   emailChangeRequests EmailChangeRequest[] // Solicitudes de cambio de email pendientes de aprobación
+  wishlist          Wishlist[]         // Productos guardados como favoritos
   cart              Cart?              // Carrito activo del cliente (uno por cliente)
   orders            Order[]            // Órdenes vinculadas a esta cuenta
   notifications     Notification[]     // Notificaciones de cotizaciones
   coupons           Coupon[]           // Cupones personales asignados a este cliente
   returnRequests    ReturnRequest[]    // Solicitudes de arrepentimiento del cliente
+  seenByAdmin       Boolean            @default(false) // true = el admin abrió el detalle del cliente
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
@@ -229,10 +241,12 @@ model CartItem {
   cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
   productId Int      // Referencia al producto (con FK para poder hacer include de stock)
   product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade) // onDelete: Cascade: si se elimina el producto, se elimina el item del carrito
-  name      String   // Nombre del producto al momento de agregar
-  price     Float    // Precio efectivo según tipo de cliente
-  quantity  Int
-  image     String?  // Primera imagen del producto
+  name         String   // Nombre del producto al momento de agregar
+  price        Float    // Precio efectivo según tipo de cliente
+  quantity     Int
+  image        String?  // Primera imagen del producto
+  variantId    Int?     // ID de la variante seleccionada (null si el producto no tiene variantes)
+  variantLabel String?  // Etiqueta legible: "Rojo / 2m" (para mostrar en carrito y checkout)
 
   @@map("cart_items")
 }
@@ -400,6 +414,7 @@ model ReturnRequest {
   reason        String              // Mensaje / motivo del cliente
   status        ReturnRequestStatus @default(PENDING)
   adminNotes    String?             // Instrucciones de envío (si APPROVED) o motivo de rechazo
+  seenByAdmin   Boolean             @default(false) // true = el admin abrió el detalle
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
@@ -412,6 +427,19 @@ enum ReturnRequestStatus {
   REJECTED  // Rechazado con motivo
 }
 
+// Favoritos del cliente: cada fila = un producto guardado por un cliente
+model Wishlist {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  Int
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([customerId, productId])
+  @@map("wishlists")
+}
+
 // Configuración general del sitio (key-value): tema, modo mantenimiento, etc.
 model SiteConfig {
   id    Int    @id @default(autoincrement())
@@ -419,4 +447,51 @@ model SiteConfig {
   value String
 
   @@map("site_config")
+}
+
+// Atributo de un producto: nombre libre definido por el admin (ej: "Color", "Metros", "Voltaje")
+// Cada producto define sus propios atributos independientemente.
+model ProductAttribute {
+  id        Int                    @id @default(autoincrement())
+  productId Int
+  product   Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String                 // Nombre libre: "Color", "Tamaño", "Material"
+  position  Int                    @default(0)
+  values    ProductAttributeValue[]
+  createdAt DateTime               @default(now())
+
+  @@map("product_attributes")
+}
+
+// Valor posible de un atributo (ej: "Rojo", "1 metro", "220V")
+model ProductAttributeValue {
+  id          Int              @id @default(autoincrement())
+  attributeId Int
+  attribute   ProductAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  value       String
+  position    Int              @default(0)
+  createdAt   DateTime         @default(now())
+
+  @@unique([attributeId, value])
+  @@map("product_attribute_values")
+}
+
+// Combinación específica de atributos para un producto (una variante)
+// combination: JSON con los pares nombre-valor, ej: [{ "name": "Color", "value": "Rojo" }, { "name": "Metros", "value": "2m" }]
+model ProductVariant {
+  id             Int      @id @default(autoincrement())
+  productId      Int
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  combination    Json     // [{ name, value }] — snapshot de los atributos al generar
+  sku            String?
+  stock          Int      @default(0)
+  stockUnlimited Boolean  @default(false)
+  price          Float?   // null = usar precio base del producto
+  cost           Float?   // costo de la variante (sobrescribe el costo del producto padre)
+  image          String?  // imagen específica de esta variante (nombre de archivo en /uploads)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("product_variants")
 }

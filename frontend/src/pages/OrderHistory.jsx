@@ -14,31 +14,43 @@ function formatDate(dateStr) {
   });
 }
 
-const FULFILLMENT_STAGES = [
+// Etapas para pedidos con envío a domicilio
+const FULFILLMENT_STAGES_ENVIO = [
   { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
   { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
   { value: "ENVIADO",        label: "Enviado",        icon: "🚚" },
   { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
 ];
 
-function FulfillmentTracker({ status = "PENDIENTE" }) {
-  const currentIdx = FULFILLMENT_STAGES.findIndex((s) => s.value === status);
+// Etapas para pedidos con retiro en el local:
+// "ENVIADO" en DB se muestra como "Pedido listo" — el paquete no se despacha, está listo para retirar
+const FULFILLMENT_STAGES_RETIRO = [
+  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
+  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
+  { value: "ENVIADO",        label: "Pedido listo",   icon: "📦" },
+  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
+];
+
+function FulfillmentTracker({ status = "PENDIENTE", shippingMethod = "RETIRO" }) {
+  const stages = shippingMethod === "ENVIO" ? FULFILLMENT_STAGES_ENVIO : FULFILLMENT_STAGES_RETIRO;
+  const currentIdx = stages.findIndex((s) => s.value === status);
   return (
     <div className="flex items-start mt-3 w-full">
-      {FULFILLMENT_STAGES.map((stage, idx) => {
+      {stages.map((stage, idx) => {
         const isDone    = idx < currentIdx;
         const isCurrent = idx === currentIdx;
         return (
           <div key={stage.value} className="flex-1 flex flex-col items-center relative">
-            {/* Línea izquierda (excepto primer nodo) */}
+            {/* Línea izquierda (excepto primer nodo) — verde si el nodo está completo O es el actual */}
             {idx > 0 && (
-              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone ? "bg-green-300" : "bg-slate-200"}`} />
+              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone || isCurrent ? "bg-green-300" : "bg-slate-200"}`} />
             )}
             {/* Nodo */}
             <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-sm border-2 transition-colors ${
               isCurrent ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" :
               isDone    ? "border-green-400 bg-green-50 text-green-600" :
-                          "border-slate-200 bg-white text-slate-300"
+                          /* text-slate-300 sobre bg-white tenía contraste ~1.7:1 — cambiado a text-slate-400 (~3:1) para ser legible */
+                          "border-slate-200 bg-white text-slate-400"
             }`}>
               {isDone ? "✓" : stage.icon}
             </div>
@@ -126,7 +138,7 @@ export default function OrderHistory() {
             </button>
             <div>
               <h1 className="text-2xl font-bold text-slate-800">Historial de pedidos</h1>
-              <p className="text-sm text-slate-500">Pedidos aprobados / pagados</p>
+              <p className="text-sm text-slate-500">Pedidos pendientes y aprobados</p>
             </div>
           </div>
 
@@ -156,7 +168,7 @@ export default function OrderHistory() {
           {!loading && orders.length === 0 && (
             <div className="text-center py-20">
               <div className="text-5xl mb-4">📦</div>
-              <p className="text-slate-500 text-lg">Aún no tenés pedidos aprobados</p>
+              <p className="text-slate-500 text-lg">Aún no tenés pedidos</p>
               <button
                 onClick={() => navigate("/catalogo")}
                 className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -179,13 +191,19 @@ export default function OrderHistory() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-slate-700">Pedido #{order.id}</span>
-                        <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
-                          Aprobado
-                        </span>
+                        {order.status === "PENDING" ? (
+                          <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
+                            Pendiente de pago
+                          </span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
+                            Aprobado
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{formatDate(order.createdAt)}</p>
                       <p className="text-base font-bold text-slate-800 mt-1">{formatPrice(order.total)}</p>
-                      <FulfillmentTracker status={order.fulfillmentStatus} />
+                      <FulfillmentTracker status={order.fulfillmentStatus} shippingMethod={order.shippingMethod} />
                     </div>
 
                     <div className="flex items-center gap-2 flex-shrink-0 self-start">
@@ -197,8 +215,8 @@ export default function OrderHistory() {
                         {isExpanded ? "Ocultar" : `Ver ${order.items.length} item${order.items.length !== 1 ? "s" : ""}`}
                       </button>
 
-                      {/* Repetir pedido */}
-                      <button
+                      {/* Repetir pedido — solo para pedidos ya aprobados */}
+                      {order.status !== "PENDING" && <button
                         onClick={() => handleRepeat(order)}
                         disabled={isRepeating || cartLoading}
                         className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
@@ -212,7 +230,7 @@ export default function OrderHistory() {
                           </svg>
                         )}
                         Repetir pedido
-                      </button>
+                      </button>}
                     </div>
                   </div>
 
@@ -247,6 +265,9 @@ export default function OrderHistory() {
                               </p>
                               {discontinued && (
                                 <span className="text-xs text-red-400">Producto no disponible</span>
+                              )}
+                              {item.variantLabel && (
+                                <p className="text-xs text-blue-500 font-medium">{item.variantLabel}</p>
                               )}
                               <p className="text-xs text-slate-400">
                                 {formatPrice(item.price)} × {item.quantity}

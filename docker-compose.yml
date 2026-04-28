@@ -70,7 +70,7 @@ services:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      SCHEDULE: "0 22 * * *"   # Todos los días a las 22:00
+      SCHEDULE: "59 23 * * *"   # Todos los días a las 23:59
       BACKUP_KEEP_DAYS: 7
       BACKUP_KEEP_WEEKS: 4
       BACKUP_KEEP_MONTHS: 6

@@ -189,10 +189,19 @@ async function updateReturnRequestStatus(req, res) {
   }
 }
 
+// PATCH /api/returns/:id/seen — marcar solicitud de devolución como vista por el admin
+async function markReturnSeen(req, res) {
+  try {
+    await prisma.returnRequest.update({ where: { id: parseInt(req.params.id) }, data: { seenByAdmin: true } });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Error al marcar como visto" }); }
+}
+
 module.exports = {
   lookupOrdersByEmail,
   createReturnRequest,
   getMyReturnRequests,
   getAllReturnRequests,
   updateReturnRequestStatus,
+  markReturnSeen,
 };

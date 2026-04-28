@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, productsApi, getImageUrl } from "../../services/api";
+import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 
 const STATUS_CONFIG = {
-  PENDING:        { label: "Pendiente",           color: "bg-yellow-100 text-yellow-800", icon: "⏳" },
-  QUOTE_APPROVED: { label: "Aprobada (sin pagar)", color: "bg-teal-100 text-teal-800",    icon: "💳" },
-  APPROVED:       { label: "Abonada",             color: "bg-green-100 text-green-800",   icon: "✅" },
-  REJECTED:       { label: "Rechazada",           color: "bg-red-100 text-red-800",       icon: "❌" },
-  CANCELLED:      { label: "Cancelada",           color: "bg-slate-100 text-slate-600",   icon: "🚫" },
+  PENDING:        { label: "Pendiente",           color: "bg-yellow-500 text-white",  icon: "⏳" },
+  QUOTE_APPROVED: { label: "Aprobada (sin pagar)", color: "bg-teal-600 text-white",   icon: "💳" },
+  APPROVED:       { label: "Abonada",             color: "bg-green-600 text-white",   icon: "✅" },
+  REJECTED:       { label: "Rechazada",           color: "bg-red-600 text-white",     icon: "❌" },
+  CANCELLED:      { label: "Cancelada",           color: "bg-slate-500 text-white",   icon: "🚫" },
 };
 
 // Etiquetas para método de pago
@@ -33,11 +34,18 @@ const CHANNEL_LABEL = {
 
 // Etiquetas para tipo de cliente
 const TYPE_LABEL = {
-  MINORISTA: { label: "Minorista", color: "bg-blue-100 text-blue-700" },
-  MAYORISTA: { label: "Mayorista", color: "bg-purple-100 text-purple-700" },
+  MINORISTA: { label: "Minorista", color: "bg-blue-600 text-white" },
+  MAYORISTA: { label: "Mayorista", color: "bg-purple-600 text-white" },
+};
+
+// Etiquetas para método de entrega
+const SHIPPING_LABEL = {
+  RETIRO: { label: "Retiro",  icon: "🏪" },
+  ENVIO:  { label: "Envío",   icon: "🚚" },
 };
 
 export default function AdminOrders() {
+  const { decrementBadge } = useBadges();
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "";
   const isCotizaciones = tab === "cotizaciones";
@@ -70,6 +78,11 @@ export default function AdminOrders() {
   const [expandedOrders, setExpandedOrders] = useState(new Set());
   // Modal de confirmación para actualizar precio del producto en la BD
   const [priceUpdateConfirm, setPriceUpdateConfirm] = useState(null); // { productId, productName, newPrice }
+
+  // Asignación de variantes en cotizaciones mayoristas
+  const [variantPanelOpen, setVariantPanelOpen]     = useState({}); // { [itemId]: bool }
+  const [variantOptionsCache, setVariantOptionsCache] = useState({}); // { [productId]: variants[] }
+  const [variantAssignments, setVariantAssignments]  = useState({}); // { [itemId]: [{variantId, quantity}] }
   const [priceUpdateTarget, setPriceUpdateTarget] = useState("minorista"); // "minorista" | "mayorista" | "ambos"
   const [updatingProductPrice, setUpdatingProductPrice] = useState(false);
 
@@ -186,8 +199,17 @@ export default function AdminOrders() {
   const toggleExpanded = (orderId) => {
     setExpandedOrders((prev) => {
       const next = new Set(prev);
-      if (next.has(orderId)) next.delete(orderId);
-      else next.add(orderId);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+        // Marcar cotización como vista al expandir → badge instantáneo
+        const order = orders.find((o) => o.id === orderId);
+        if (order && !order.seenByAdmin && order.paymentMethod === "COTIZACION") {
+          ordersApi.markSeen(orderId).catch(() => {});
+          decrementBadge("cotizaciones");
+        }
+      }
       return next;
     });
   };
@@ -219,6 +241,50 @@ export default function AdminOrders() {
   useEffect(() => {
     fetchOrders();
   }, [page, filterStatus, filterSearch, filterSort, filterType, isCotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Al expandir una cotización PENDING, auto-cargar variantes de cada item sin variantId asignada.
+  // Esto permite saber de antemano cuáles items necesitan asignación y deshabilitar el botón Aprobar.
+  useEffect(() => {
+    if (expandedOrders.size === 0) return;
+    for (const order of orders) {
+      if (!expandedOrders.has(order.id)) continue;
+      if (order.paymentMethod !== "COTIZACION" || order.status !== "PENDING") continue;
+      for (const item of (order.items || [])) {
+        if (item.variantId) continue;
+        if (variantOptionsCache[item.productId] !== undefined) continue;
+        // Marcar como cargando (null) para no lanzar requests duplicados
+        setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: null }));
+        productsApi.getById(item.productId).then((res) => {
+          const variants = (res.data.variants || []).filter((v) => v.active);
+          setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: variants }));
+          if (variants.length > 0) {
+            // Auto-abrir el panel y pre-inicializar asignación
+            setVariantPanelOpen((prev) => ({ ...prev, [item.id]: true }));
+            setVariantAssignments((prev) => prev[item.id] ? prev : { ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] });
+          }
+        }).catch(() => {
+          setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: [] }));
+        });
+      }
+    }
+  }, [expandedOrders, orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Determina si el botón Aprobar debe estar deshabilitado para una orden.
+  // Devuelve true si algún item necesita asignación de variante y aún está incompleto.
+  const isApproveBlocked = (order) => {
+    if (order.paymentMethod !== "COTIZACION" || order.status !== "PENDING") return false;
+    return (order.items || []).some((item) => {
+      if (item.variantId) return false; // ya asignada
+      const variants = variantOptionsCache[item.productId];
+      if (variants === undefined || variants === null) return true; // todavía cargando
+      if (variants.length === 0) return false; // sin variantes, no requiere asignación
+      // Tiene variantes: verificar que la asignación esté completa
+      const rows = variantAssignments[item.id] || [];
+      const totalAssigned = rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
+      const allSelected = rows.length > 0 && rows.every((r) => r.variantId);
+      return !allSelected || totalAssigned !== item.quantity;
+    });
+  };
 
   // Guardar cantidad y/o precio editado de un item (cotizaciones)
   const handleSaveQty = async (orderId, itemId) => {
@@ -296,8 +362,73 @@ export default function AdminOrders() {
     }
   };
 
+  // Abrir el panel de asignación de variantes para un item de cotización
+  const openVariantPanel = async (item) => {
+    setVariantPanelOpen((prev) => ({ ...prev, [item.id]: true }));
+    if (!variantOptionsCache[item.productId]) {
+      try {
+        const res = await productsApi.getById(item.productId);
+        const variants = (res.data.variants || []).filter((v) => v.active);
+        setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: variants }));
+        // Inicializar asignaciones: una fila vacía
+        if (!variantAssignments[item.id]) {
+          setVariantAssignments((prev) => ({ ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] }));
+        }
+      } catch {
+        toast.error("No se pudieron cargar las variantes");
+        setVariantPanelOpen((prev) => ({ ...prev, [item.id]: false }));
+      }
+    } else if (!variantAssignments[item.id]) {
+      setVariantAssignments((prev) => ({ ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] }));
+    }
+  };
+
+  const updateAssignment = (itemId, idx, field, value) => {
+    setVariantAssignments((prev) => {
+      const rows = [...(prev[itemId] || [])];
+      rows[idx] = { ...rows[idx], [field]: value };
+      return { ...prev, [itemId]: rows };
+    });
+  };
+
+  const addAssignmentRow = (itemId, item) => {
+    setVariantAssignments((prev) => {
+      const rows = [...(prev[itemId] || [])];
+      const totalAssigned = rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
+      if (totalAssigned >= item.quantity) return prev; // no agregar si ya se cubrió la cantidad
+      const remaining = item.quantity - totalAssigned;
+      rows.push({ variantId: "", quantity: Math.max(1, remaining) });
+      return { ...prev, [itemId]: rows };
+    });
+  };
+
+  const removeAssignmentRow = (itemId, idx) => {
+    setVariantAssignments((prev) => {
+      const rows = (prev[itemId] || []).filter((_, i) => i !== idx);
+      return { ...prev, [itemId]: rows };
+    });
+  };
+
   // Abrir modal de nota y luego publicar o aprobar
   const openNoteModal = (orderId, action) => {
+    if (action === "approve") {
+      // Verificar que todos los panels abiertos de asignación estén completos
+      const order = orders.find((o) => o.id === orderId);
+      for (const item of (order?.items || [])) {
+        if (!variantPanelOpen[item.id]) continue; // panel no abierto → no verificar
+        const rows = variantAssignments[item.id] || [];
+        const totalAssigned = rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
+        const allSelected = rows.length > 0 && rows.every((r) => r.variantId);
+        if (!allSelected || totalAssigned !== item.quantity) {
+          toast.error(`Completá la asignación de variantes para "${item.product?.name || "producto"}" antes de aprobar (${totalAssigned}/${item.quantity} unid. asignadas)`);
+          return;
+        }
+        if (totalAssigned > item.quantity) {
+          toast.error(`La asignación de "${item.product?.name || "producto"}" supera la cantidad pedida (${totalAssigned} > ${item.quantity}). Eliminá filas sobrantes.`);
+          return;
+        }
+      }
+    }
     setNoteModal({ orderId, action });
     setNoteText("");
   };
@@ -312,12 +443,23 @@ export default function AdminOrders() {
         toast.success("Cambios publicados — el cliente fue notificado");
         setDirtyOrders((prev) => { const n = new Set(prev); n.delete(orderId); return n; });
       } else {
-        await ordersApi.approveCotizacion(orderId, noteText);
+        // Recopilar asignaciones de variantes para esta orden
+        const order = orders.find((o) => o.id === orderId);
+        const itemAssignments = [];
+        for (const item of (order?.items || [])) {
+          const rows = variantAssignments[item.id] || [];
+          for (const row of rows) {
+            if (row.variantId && parseInt(row.quantity) > 0) {
+              itemAssignments.push({ itemId: item.id, variantId: parseInt(row.variantId), quantity: parseInt(row.quantity) });
+            }
+          }
+        }
+        await ordersApi.approveCotizacion(orderId, noteText, itemAssignments);
         toast.success("Cotización aprobada — el cliente fue notificado");
       }
       fetchOrders();
-    } catch {
-      toast.error("Error al procesar la acción");
+    } catch (err) {
+      toast.error(err?.response?.data?.error || "Error al procesar la acción");
     } finally {
       setPublishing(null);
       setNoteModal(null);
@@ -404,6 +546,7 @@ export default function AdminOrders() {
             ${imgHtml}
             <div>
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
+              ${item.variantLabel ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${item.variantLabel}</div>` : ""}
               <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
@@ -622,8 +765,14 @@ export default function AdminOrders() {
                         const isEditingPrice = editingPrice[item.id] !== undefined;
                         const displayPrice = isEditingPrice ? parseFloat(editingPrice[item.id]) || item.price : item.price;
 
+                        // Mostrar panel de asignación solo en cotizaciones PENDING sin variante asignada
+                        const needsVariantAssign = order.paymentMethod === "COTIZACION"
+                          && order.status === "PENDING"
+                          && !item.variantId;
+
                         return (
-                          <div key={item.id} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
+                          <div key={item.id} className="bg-slate-50 rounded-xl p-3 space-y-2">
+                          <div className="flex items-center gap-3">
                             {/* Imagen */}
                             <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0">
                               {img
@@ -635,6 +784,9 @@ export default function AdminOrders() {
                             {/* Nombre y precio estático */}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-slate-800 truncate">{item.product?.name || "Producto"}</p>
+                              {item.variantLabel && (
+                                <p className="text-xs text-slate-500">{item.variantLabel}</p>
+                              )}
                               <p className="text-xs text-slate-400">{formatPrice(displayPrice)} c/u</p>
                             </div>
 
@@ -716,6 +868,94 @@ export default function AdminOrders() {
                               </svg>
                             </button>
                           </div>
+
+                          {/* Panel de asignación de variantes para cotizaciones mayoristas */}
+                          {needsVariantAssign && (
+                            <div className="border-t border-slate-200 pt-2">
+                              {variantPanelOpen[item.id] ? (
+                                <div className="space-y-2 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                                  <p className="text-xs font-bold text-amber-800">
+                                    🎯 Indicar qué variante(s) se van a enviar — cantidad total: <span className="underline">{item.quantity} unid.</span>
+                                  </p>
+                                  {(() => {
+                                    const variants = variantOptionsCache[item.productId];
+                                    if (!variants) return <p className="text-xs text-slate-400">Cargando variantes...</p>;
+                                    if (variants.length === 0) return <p className="text-xs text-slate-500 italic">Este producto no tiene variantes — no requiere asignación.</p>;
+                                    const rows = variantAssignments[item.id] || [];
+                                    const totalAssigned = rows.reduce((s, r) => s + (parseInt(r.quantity) || 0), 0);
+                                    const ok = totalAssigned === item.quantity;
+                                    const over = totalAssigned > item.quantity;
+                                    const canAddRow = totalAssigned < item.quantity;
+                                    return (
+                                      <>
+                                        {rows.map((row, idx) => (
+                                          <div key={idx} className="flex items-center gap-2">
+                                            <select
+                                              value={row.variantId}
+                                              onChange={(e) => updateAssignment(item.id, idx, "variantId", e.target.value)}
+                                              className="flex-1 text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                            >
+                                              <option value="">— Seleccionar variante —</option>
+                                              {variants.map((v) => {
+                                                const combo = Array.isArray(v.combination) ? v.combination : JSON.parse(v.combination || "[]");
+                                                const label = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
+                                                return (
+                                                  <option key={v.id} value={v.id}>
+                                                    {label} (stock: {v.stockUnlimited ? "∞" : v.stock})
+                                                  </option>
+                                                );
+                                              })}
+                                            </select>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              max={item.quantity}
+                                              value={row.quantity}
+                                              onChange={(e) => updateAssignment(item.id, idx, "quantity", e.target.value)}
+                                              className="w-16 text-center text-xs border border-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                            />
+                                            {rows.length > 1 && (
+                                              <button onClick={() => removeAssignmentRow(item.id, idx)} className="text-red-400 hover:text-red-600 text-xs font-bold">✕</button>
+                                            )}
+                                          </div>
+                                        ))}
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                          <button
+                                            onClick={() => addAssignmentRow(item.id, item)}
+                                            disabled={!canAddRow}
+                                            className="text-xs border border-blue-400 text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                          >
+                                            + Agregar otra variante
+                                          </button>
+                                          {over ? (
+                                            <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-1 rounded-lg">
+                                              ⚠ Excede la cantidad ({totalAssigned} &gt; {item.quantity}) — eliminá {totalAssigned - item.quantity} fila(s)
+                                            </span>
+                                          ) : ok ? (
+                                            <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-lg">
+                                              ✓ Asignación completa
+                                            </span>
+                                          ) : (
+                                            <span className="text-xs font-semibold text-orange-600">
+                                              Asignado: {totalAssigned} / {item.quantity}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => openVariantPanel(item)}
+                                  className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-colors shadow-sm"
+                                >
+                                  🎯 Asignar variante a enviar — OBLIGATORIO antes de aprobar
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          </div>
                         );
                       })}
                     </div>
@@ -734,15 +974,23 @@ export default function AdminOrders() {
                       )}
 
                       {/* Aprobar cotización — no mostrar si ya está aprobada o cancelada */}
-                      {order.status !== "QUOTE_APPROVED" && order.status !== "APPROVED" && order.status !== "CANCELLED" && (
-                        <button
-                          onClick={() => openNoteModal(order.id, "approve")}
-                          disabled={publishing === order.id}
-                          className="px-4 py-1.5 rounded-lg text-xs font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 transition-colors"
-                        >
-                          ✅ Aprobar cotización
-                        </button>
-                      )}
+                      {order.status !== "QUOTE_APPROVED" && order.status !== "APPROVED" && order.status !== "CANCELLED" && (() => {
+                        const blocked = isApproveBlocked(order);
+                        return (
+                          <button
+                            onClick={() => openNoteModal(order.id, "approve")}
+                            disabled={publishing === order.id || blocked}
+                            title={blocked ? "Asigná las variantes de todos los productos antes de aprobar" : undefined}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                              blocked
+                                ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                                : "bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                            }`}
+                          >
+                            {blocked ? "⏳ Asignar variantes primero" : "✅ Aprobar cotización"}
+                          </button>
+                        );
+                      })()}
 
                       {/* Eliminar */}
                       <button
@@ -935,6 +1183,7 @@ export default function AdminOrders() {
                   <th className="px-4 py-3">Tipo</th>
                   <th className="px-4 py-3">Canal</th>
                   <th className="px-4 py-3">Pago</th>
+                  <th className="px-4 py-3">Entrega</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3">Fecha</th>
@@ -944,7 +1193,7 @@ export default function AdminOrders() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={10} className="px-6 py-12 text-center">
+                    <td colSpan={11} className="px-6 py-12 text-center">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" />
                     </td>
                   </tr>
@@ -1012,6 +1261,17 @@ export default function AdminOrders() {
                             );
                           })()}
                         </td>
+                        {/* Columna Entrega: Retiro en local / Acordar envío */}
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const sh = SHIPPING_LABEL[order.shippingMethod] || SHIPPING_LABEL.RETIRO;
+                            return (
+                              <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                                {sh.icon} {sh.label}
+                              </span>
+                            );
+                          })()}
+                        </td>
                         <td className="px-4 py-3 font-semibold">{formatPrice(order.total)}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded-full text-xs font-semibold ${status.color}`}>
@@ -1032,7 +1292,13 @@ export default function AdminOrders() {
                               Imprimir
                             </button>
                             <button
-                              onClick={() => setSelectedOrder(order)}
+                              onClick={() => {
+                                setSelectedOrder(order);
+                                if (!order.seenByAdmin && order.paymentMethod === "COTIZACION") {
+                                  ordersApi.markSeen(order.id).catch(() => {});
+                                  decrementBadge("cotizaciones");
+                                }
+                              }}
                               className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold"
                             >
                               Ver detalle
@@ -1125,6 +1391,15 @@ export default function AdminOrders() {
                       </span>
                     );
                   })()}
+                  {/* Badge método de entrega */}
+                  {(() => {
+                    const sh = SHIPPING_LABEL[selectedOrder.shippingMethod] || SHIPPING_LABEL.RETIRO;
+                    return (
+                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-orange-100 text-orange-700">
+                        {sh.icon} {sh.label}
+                      </span>
+                    );
+                  })()}
                 </div>
                 {selectedOrder.customerNote && (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -1157,6 +1432,9 @@ export default function AdminOrders() {
                         </div>
                         <div className="flex-1 text-sm">
                           <p className="font-medium text-slate-800">{item.product?.name}</p>
+                          {item.variantLabel && (
+                            <p className="text-xs text-blue-600 font-medium">{item.variantLabel}</p>
+                          )}
                           <p className="text-slate-500">x{item.quantity} × {formatPrice(item.price)}</p>
                         </div>
                         <span className="font-bold text-slate-800 text-sm">
@@ -1218,8 +1496,8 @@ export default function AdminOrders() {
                       onClick={() => handleStatusChange(selectedOrder.id, value)}
                       className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
                         selectedOrder.status === value
-                          ? config.color + " ring-2 ring-offset-1 ring-blue-400"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          ? config.color + " ring-2 ring-offset-2 ring-white/50"
+                          : "bg-slate-700 text-slate-300 hover:bg-slate-600"
                       }`}
                     >
                       {config.icon} {config.label}
@@ -1239,7 +1517,7 @@ export default function AdminOrders() {
                       disabled={updatingFields}
                       className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
                         selectedOrder.paymentMethod === value
-                          ? "bg-indigo-100 text-indigo-800 ring-2 ring-offset-1 ring-indigo-400"
+                          ? "bg-indigo-600 text-white ring-2 ring-offset-1 ring-indigo-400"
                           : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                       }`}
                     >
@@ -1256,7 +1534,10 @@ export default function AdminOrders() {
                   {[
                     { value: "PENDIENTE",       label: "Pendiente",       icon: "🕐", color: "bg-slate-100 text-slate-700" },
                     { value: "EN_PREPARACION",  label: "En preparación",  icon: "🔧", color: "bg-yellow-100 text-yellow-800" },
-                    { value: "ENVIADO",         label: "Enviado",         icon: "🚚", color: "bg-blue-100 text-blue-800" },
+                    // Para RETIRO: "Pedido listo" (a retirar); para ENVIO: "Enviado" (en camino)
+                    selectedOrder.shippingMethod === "RETIRO"
+                      ? { value: "ENVIADO", label: "Pedido listo",  icon: "🏪", color: "bg-orange-100 text-orange-800" }
+                      : { value: "ENVIADO", label: "Enviado",       icon: "🚚", color: "bg-blue-100 text-blue-800" },
                     { value: "ENTREGADO",       label: "Entregado",       icon: "✅", color: "bg-green-100 text-green-800" },
                   ].map((stage, idx, arr) => {
                     const current = selectedOrder.fulfillmentStatus || "PENDIENTE";

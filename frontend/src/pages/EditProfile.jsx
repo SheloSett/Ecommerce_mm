@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, /* useRef, */ useEffect } from "react"; // useRef eliminado: ya no se usa el file input de avatar
 import { useNavigate } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
-import { customersApi, mayoristaRequestsApi, getImageUrl } from "../services/api";
+import { customersApi, mayoristaRequestsApi /*, getImageUrl */ } from "../services/api"; // getImageUrl eliminado: ya no se muestra avatar
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 
@@ -66,13 +66,13 @@ export default function EditProfile() {
     }
   };
 
-  // ─── Estado avatar ────────────────────────────────────────────────────────────
-  const [avatarPreview, setAvatarPreview] = useState(
-    customer.avatar ? getImageUrl(customer.avatar) : null
-  );
-  const [avatarFile, setAvatarFile] = useState(null);
-  const [savingAvatar, setSavingAvatar] = useState(false);
-  const fileInputRef = useRef(null);
+  // ─── Estado avatar — Eliminado: campo removido del schema para ahorrar espacio en BD ─
+  // const [avatarPreview, setAvatarPreview] = useState(
+  //   customer.avatar ? getImageUrl(customer.avatar) : null
+  // );
+  // const [avatarFile, setAvatarFile] = useState(null);
+  // const [savingAvatar, setSavingAvatar] = useState(false);
+  // const fileInputRef = useRef(null);
 
   // ─── Guardar nombre y teléfono ────────────────────────────────────────────────
   const handleSaveProfile = async (e) => {
@@ -118,31 +118,29 @@ export default function EditProfile() {
     }
   };
 
-  // ─── Seleccionar imagen de perfil ─────────────────────────────────────────────
-  const handleAvatarChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setAvatarFile(file);
-    setAvatarPreview(URL.createObjectURL(file));
-  };
-
-  // ─── Subir avatar ─────────────────────────────────────────────────────────────
-  const handleUploadAvatar = async () => {
-    if (!avatarFile) return;
-    setSavingAvatar(true);
-    try {
-      const formData = new FormData();
-      formData.append("avatar", avatarFile);
-      const res = await customersApi.uploadAvatar(formData);
-      updateCustomerData({ avatar: res.data.avatar });
-      setAvatarFile(null);
-      toast.success("Foto de perfil actualizada");
-    } catch (err) {
-      toast.error(err.response?.data?.error || "Error al subir la imagen");
-    } finally {
-      setSavingAvatar(false);
-    }
-  };
+  // ─── Seleccionar/subir imagen de perfil — Eliminado: avatar removido del schema ─
+  // const handleAvatarChange = (e) => {
+  //   const file = e.target.files[0];
+  //   if (!file) return;
+  //   setAvatarFile(file);
+  //   setAvatarPreview(URL.createObjectURL(file));
+  // };
+  // const handleUploadAvatar = async () => {
+  //   if (!avatarFile) return;
+  //   setSavingAvatar(true);
+  //   try {
+  //     const formData = new FormData();
+  //     formData.append("avatar", avatarFile);
+  //     const res = await customersApi.uploadAvatar(formData);
+  //     updateCustomerData({ avatar: res.data.avatar });
+  //     setAvatarFile(null);
+  //     toast.success("Foto de perfil actualizada");
+  //   } catch (err) {
+  //     toast.error(err.response?.data?.error || "Error al subir la imagen");
+  //   } finally {
+  //     setSavingAvatar(false);
+  //   }
+  // };
 
   return (
     <>
@@ -164,53 +162,11 @@ export default function EditProfile() {
             <h1 className="text-2xl font-bold text-slate-800">Editar perfil</h1>
           </div>
 
-          {/* ── Foto de perfil ── */}
+          {/* ── Foto de perfil — Eliminada: campo avatar removido del schema ──
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-4">Foto de perfil</h2>
-            <div className="flex items-center gap-5">
-              {/* Avatar actual o placeholder */}
-              <div
-                className="w-20 h-20 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden cursor-pointer border-2 border-slate-300 hover:border-blue-400 transition-colors flex-shrink-0"
-                onClick={() => fileInputRef.current?.click()}
-                title="Cambiar foto"
-              >
-                {avatarPreview ? (
-                  <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                      d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                  </svg>
-                )}
-              </div>
-
-              <div className="flex-1 space-y-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  onChange={handleAvatarChange}
-                  className="hidden"
-                />
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  Elegir imagen
-                </button>
-                {avatarFile && (
-                  <button
-                    onClick={handleUploadAvatar}
-                    disabled={savingAvatar}
-                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                  >
-                    {savingAvatar ? "Subiendo..." : "Guardar foto"}
-                  </button>
-                )}
-                <p className="text-xs text-slate-400">JPG, PNG, WEBP o GIF · máx. 5 MB</p>
-              </div>
-            </div>
+            ...
           </div>
+          ── fin foto de perfil comentada ── */}
 
           {/* ── Datos personales ── */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">

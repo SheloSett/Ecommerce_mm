@@ -4,6 +4,7 @@ import Navbar from "../components/Navbar";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, couponsApi, getImageUrl } from "../services/api";
+import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
 
 // Íconos de métodos de pago como SVG inline para no depender de librerías externas
@@ -34,6 +35,7 @@ export default function Checkout() {
   // totalPrice removido: el subtotal ahora siempre se calcula directamente desde items.price
   const { items, /* totalPrice, */ clearCart } = useCart();
   const { customer } = useCustomerAuth();
+  const { mayoristaMinimoCompra } = useSiteConfig();
   const navigate = useNavigate();
 
   const isMayorista = customer?.type === "MAYORISTA";
@@ -68,21 +70,13 @@ export default function Checkout() {
     isMayorista ? "COTIZACION" : "MERCADOPAGO"
   );
 
+  // Método de envío: "RETIRO" = retirar en el local, "ENVIO" = acordar envío
+  const [shippingMethod, setShippingMethod] = useState("RETIRO");
+
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 
-  // SEGURIDAD: getItemPrice eliminado — el precio siempre viene del carrito (calculado server-side).
-  // const getItemPrice = (item) => {
-  //   const key = item.cartItemId ?? item.id;
-  //   return customPrices[key] !== undefined ? customPrices[key] : item.price;
-  // };
-
-  // El subtotal siempre usa item.price directamente (sin permitir precios custom del cliente)
   const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  // Antes: isMayorista usaba getItemPrice para permitir edición — removido por seguridad
-  // const subtotal = isMayorista
-  //   ? items.reduce((s, i) => s + getItemPrice(i) * i.quantity, 0)
-  //   : totalPrice;
   const couponDiscount = couponResult?.discountAmount || 0;
   const baseTotal = Math.max(0, subtotal - couponDiscount);
   // IVA calculado por producto según su campo ivaRate (10.5% o 21%).
@@ -134,6 +128,10 @@ export default function Checkout() {
       toast.error("Por favor completá los campos requeridos");
       return;
     }
+    if (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra) {
+      toast.error(`El pedido mínimo mayorista es ${formatPrice(mayoristaMinimoCompra)}`);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -146,14 +144,13 @@ export default function Checkout() {
         // El email del formulario es solo para recibir confirmaciones/facturas.
         customerId:    customer?.id || null,
         items: items.map((i) => ({
-          productId: i.id,
-          quantity: i.quantity,
-          // SEGURIDAD: customPrice removido — el backend ignora precios enviados por el cliente.
-          // ...(customPrices[i.cartItemId ?? i.id] !== undefined && {
-          //   customPrice: customPrices[i.cartItemId ?? i.id],
-          // }),
+          productId:    i.id,
+          quantity:     i.quantity,
+          variantId:    i.variantId   || null,
+          variantLabel: i.variantLabel || null,
         })),
         paymentMethod: isMayorista ? "COTIZACION" : paymentMethod,
+        shippingMethod,
         wantsInvoice: isMayorista ? wantsInvoice : false,
         ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
         ...(form.customerNote.trim() ? { customerNote: form.customerNote.trim() } : {}),
@@ -207,9 +204,14 @@ export default function Checkout() {
                 {isCotizacion ? `Cotización #${successOrder.id}` : `Pedido #${successOrder.id}`}
               </p>
               {successOrder.items.map((item) => (
-                <div key={item.id} className="flex justify-between text-sm">
-                  <span className="text-slate-700">{item.name || "Producto"} x{item.quantity}</span>
-                  <span className="font-medium text-slate-900">{formatPrice(item.price * item.quantity)}</span>
+                <div key={item.id} className="flex justify-between text-sm gap-2">
+                  <div>
+                    <span className="text-slate-700">{item.product?.name || "Producto"} x{item.quantity}</span>
+                    {item.variantLabel && (
+                      <p className="text-xs text-slate-500">{item.variantLabel}</p>
+                    )}
+                  </div>
+                  <span className="font-medium text-slate-900 shrink-0">{formatPrice(item.price * item.quantity)}</span>
                 </div>
               ))}
               {/* Cupón aplicado */}
@@ -235,6 +237,16 @@ export default function Checkout() {
                 <span>{isCotizacion ? "Total estimado" : "Total"}</span>
                 <span>{formatPrice(successOrder.total)}</span>
               </div>
+            </div>
+
+            {/* Método de entrega confirmado */}
+            <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700">
+              <span className="text-lg">{successOrder.shippingMethod === "ENVIO" ? "🚚" : "🏪"}</span>
+              <span>
+                {successOrder.shippingMethod === "ENVIO"
+                  ? "Acordamos el envío por WhatsApp una vez confirmado el pedido."
+                  : "Retiro en el local — Av. La Plata 744 Timbre 3, CABA."}
+              </span>
             </div>
 
             <p className="text-xs text-slate-400">
@@ -394,12 +406,12 @@ export default function Checkout() {
 
             {/* ── MAYORISTA: "A convenir" ────────────────────────────────── */}
             {isMayorista && (
-              <div className="card p-6 bg-green-50 border-green-200">
+              <div className="p-6 rounded-2xl border" style={{ backgroundColor: "#14532d", borderColor: "#166534" }}>
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-2xl">🤝</span>
-                  <h3 className="font-semibold text-green-900">Precio a convenir</h3>
+                  <h3 className="font-semibold text-white">Precio a convenir</h3>
                 </div>
-                <p className="text-sm text-green-800">
+                <p className="text-sm text-green-100">
                   Enviaremos tu cotización para confirmar la disponibilidad de stock de todos los productos
                   solicitados. Te contactaremos a la brevedad con la confirmación y los detalles de entrega.
                 </p>
@@ -470,10 +482,68 @@ export default function Checkout() {
               </div>
             )}
 
+            {/* ── Método de entrega (todos los clientes) ─────────────────── */}
+            <div className="card p-6">
+              <h2 className="text-lg font-bold text-slate-800 mb-4">Método de entrega</h2>
+              <div className="space-y-3">
+
+                {/* Retirar en el local */}
+                <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-colors ${shippingMethod === "RETIRO" ? "border-blue-500 bg-blue-50" : "border-slate-200 hover:border-slate-300"}`}>
+                  <input
+                    type="radio"
+                    name="shippingMethod"
+                    value="RETIRO"
+                    checked={shippingMethod === "RETIRO"}
+                    onChange={() => setShippingMethod("RETIRO")}
+                    className="sr-only"
+                  />
+                  <span className="text-2xl flex-shrink-0">🏪</span>
+                  <div className="flex-1">
+                    <p className="font-semibold text-slate-800">Retirar en el local</p>
+                    <p className="text-xs text-slate-500">Av. La Plata 744 Timbre 3, CABA · Coordinamos el horario por WhatsApp</p>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "RETIRO" ? "border-blue-500 bg-blue-500" : "border-slate-300"}`} />
+                </label>
+
+                {/* Acordar envío */}
+                <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-colors ${shippingMethod === "ENVIO" ? "border-orange-500 bg-orange-50" : "border-slate-200 hover:border-slate-300"}`}>
+                  <input
+                    type="radio"
+                    name="shippingMethod"
+                    value="ENVIO"
+                    checked={shippingMethod === "ENVIO"}
+                    onChange={() => setShippingMethod("ENVIO")}
+                    className="sr-only"
+                  />
+                  <span className="text-2xl flex-shrink-0">🚚</span>
+                  <div className="flex-1">
+                    <p className="font-semibold text-slate-800">Acordar envío</p>
+                    <p className="text-xs text-slate-500">Coordinamos la forma y costo de envío por WhatsApp una vez confirmado el pedido</p>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "ENVIO" ? "border-orange-500 bg-orange-500" : "border-slate-300"}`} />
+                </label>
+
+              </div>
+            </div>
+
+            {/* Aviso de compra mínima mayorista */}
+            {isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 flex items-start gap-3 text-sm">
+                <span className="text-xl flex-shrink-0">⚠️</span>
+                <div>
+                  <p className="font-semibold text-amber-800">Mínimo de compra no alcanzado</p>
+                  <p className="text-amber-700 mt-0.5">
+                    El pedido mínimo mayorista es <strong>{formatPrice(mayoristaMinimoCompra)}</strong>.
+                    Te faltan <strong>{formatPrice(mayoristaMinimoCompra - subtotal)}</strong> para continuar.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Botón principal */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)}
               className={`w-full py-4 text-lg font-bold rounded-xl transition-colors ${
                 isMayorista
                   ? "bg-green-600 hover:bg-green-700 text-white"
@@ -515,19 +585,11 @@ export default function Checkout() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                        {item.variantLabel && (
+                          <p className="text-xs text-slate-600">{item.variantLabel}</p>
+                        )}
 
-                        {/* Precio de solo lectura — igual para minoristas y mayoristas */}
                         <p className="text-xs text-slate-500">x{item.quantity} · {formatPrice(price)} c/u</p>
-
-                        {/* Bloque de precio editable para mayoristas REMOVIDO por seguridad:
-                        {isMayorista ? (
-                          <div className="flex items-center gap-1 mt-0.5">
-                            ... input editable con lápiz ...
-                          </div>
-                        ) : (
-                          <p className="text-xs text-slate-500">x{item.quantity} · {formatPrice(price)} c/u</p>
-                        )} */}
-
                         <p className="text-sm font-bold text-slate-900">{formatPrice(price * item.quantity)}</p>
                       </div>
                     </div>

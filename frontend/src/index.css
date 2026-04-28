@@ -12,11 +12,12 @@
 
 @layer components {
   .btn-primary {
-    @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+    /* Antes: bg-primary-600 (azul-gris). Ahora usa el secundario (verde) como color de acción principal */
+    @apply bg-secondary-600 hover:bg-secondary-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .btn-secondary {
-    @apply bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold px-4 py-2 rounded-lg transition-colors duration-200;
+    @apply bg-primary-600 hover:bg-primary-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors duration-200;
   }
 
   .btn-danger {
@@ -286,9 +287,9 @@ html[data-theme="oscuro"] .storefront {
   color: #e2e8f0 !important;
 }
 
-/* Navbar */
+/* Navbar — antes era #020617 (negro); ahora usa el primario para consistencia con el tema claro */
 html[data-theme="oscuro"] .storefront nav.sticky {
-  background-color: #020617 !important;
+  background-color: #273d4d !important; /* primary-700, un tono más oscuro para el tema oscuro */
 }
 
 /* Banner mayorista (amarillo) — clase específica para no afectar otros divs hermanos del nav (ej: CartDrawer) */
@@ -302,10 +303,10 @@ html[data-theme="oscuro"] .storefront footer {
   background-color: #020617 !important;
 }
 
-/* Cards (ProductCard, filtros, etc.) */
+/* Cards (ProductCard, filtros, etc.) — usa el color primario para que sean visibles sobre el fondo oscuro */
 html[data-theme="oscuro"] .storefront .card {
-  background-color: #1e293b !important;
-  border-color: #334155 !important;
+  background-color: #32485c !important; /* primary-600 — antes #1e293b */
+  border-color: #4a6d87 !important;
   color: #e2e8f0 !important;
 }
 
@@ -322,26 +323,35 @@ html[data-theme="oscuro"] .storefront .text-slate-900 { color: #f1f5f9 !importan
 html[data-theme="oscuro"] .storefront .text-slate-800 { color: #e2e8f0 !important; }
 html[data-theme="oscuro"] .storefront .text-slate-700 { color: #cbd5e1 !important; }
 html[data-theme="oscuro"] .storefront .text-slate-600 { color: #94a3b8 !important; }
-html[data-theme="oscuro"] .storefront .text-slate-500 { color: #64748b !important; }
+html[data-theme="oscuro"] .storefront .text-slate-500 { color: #94a3b8 !important; }
+/* text-slate-400 se usa para precios tachados (line-through). En oscuro debe ser blanco-grisáceo para verse */
+html[data-theme="oscuro"] .storefront .text-slate-400 { color: #e2e8f0 !important; }
+
+/* Cart drawer y otros elementos: bg-slate-50 se vuelve #0f172a oscuro — los textos deben aclararse */
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-500 { color: #94a3b8 !important; }
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-600 { color: #94a3b8 !important; }
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-900 { color: #f1f5f9 !important; }
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-blue-600  { color: #38bdf8 !important; }
+html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
 
 /* Fondos claros dentro de storefront -> oscuros */
 html[data-theme="oscuro"] .storefront .bg-slate-50 { background-color: #0f172a !important; }
 html[data-theme="oscuro"] .storefront .bg-slate-100 { background-color: #1e293b !important; }
 html[data-theme="oscuro"] .storefront .bg-slate-200 { background-color: #334155 !important; color: #e2e8f0 !important; }
-html[data-theme="oscuro"] .storefront .bg-white { background-color: #1e293b !important; }
+html[data-theme="oscuro"] .storefront .bg-white { background-color: #32485c !important; } /* primary-600 — antes #1e293b */
 
-/* Boton primario -> cyan */
+/* Boton primario: verde secundario — antes usaba primary (azul-gris) */
 html[data-theme="oscuro"] .storefront .btn-primary {
-  background-color: #06b6d4 !important;
+  background-color: #009900 !important; /* secondary-600 */
 }
 html[data-theme="oscuro"] .storefront .btn-primary:hover {
-  background-color: #0891b2 !important;
+  background-color: #007500 !important; /* secondary-700 */
 }
 
 /* Boton secundario */
 html[data-theme="oscuro"] .storefront .btn-secondary {
-  background-color: #334155 !important;
-  color: #e2e8f0 !important;
+  background-color: #007500 !important; /* secondary-700 — ligeramente oscurecido para dark mode */
+  color: #ffffff !important;
 }
 
 /* Input / Busqueda en navbar */
@@ -351,9 +361,9 @@ html[data-theme="oscuro"] .storefront input {
   color: #e2e8f0 !important;
 }
 
-/* Badge de categoria en ProductCard */
+/* Links y badges de categoría en modo oscuro — color primario aclarado para contraste */
 html[data-theme="oscuro"] .storefront .text-blue-600 {
-  color: #22d3ee !important;
+  color: #8ca6b8 !important; /* primary-300 */
 }
 
 /* Paginacion */
@@ -388,19 +398,54 @@ html[data-theme="oscuro"] .storefront .card .text-blue-700 {
   color: #38bdf8 !important;
 }
 
-/* Método de pago en checkout: estados seleccionados en modo oscuro */
-html[data-theme="oscuro"] .storefront .card .bg-green-50 {
-  background-color: #14532d !important;
-}
-html[data-theme="oscuro"] .storefront .card .bg-indigo-50 {
-  background-color: #1e1b4b !important;
-}
-html[data-theme="oscuro"] .storefront .card .border-green-500 {
-  border-color: #22c55e !important;
-}
-html[data-theme="oscuro"] .storefront .card .border-indigo-500 {
-  border-color: #818cf8 !important;
-}
+/* Bordes de color en métodos de pago/entrega seleccionados (checkout dark mode) */
+html[data-theme="oscuro"] .storefront .card .border-green-500  { border-color: #22c55e !important; }
+html[data-theme="oscuro"] .storefront .card .border-indigo-500 { border-color: #818cf8 !important; }
+html[data-theme="oscuro"] .storefront .card .border-orange-500 { border-color: #f97316 !important; }
+/* Los bg-green-50, bg-indigo-50, bg-orange-50 ya se manejan con reglas globales más abajo */
+
+/* Fondos de color seleccionados en dark mode (checkout, PayQuotation, etc.).
+   Se aplican SIN requerir .card para cubrir también contenedores bg-white/bg-slate-50
+   que usan rounded-2xl u otras clases en vez de .card. */
+html[data-theme="oscuro"] .storefront .bg-blue-50   { background-color: #0f1f35 !important; }
+html[data-theme="oscuro"] .storefront .bg-green-50  { background-color: #14532d !important; }
+html[data-theme="oscuro"] .storefront .bg-indigo-50 { background-color: #1e1b4b !important; }
+html[data-theme="oscuro"] .storefront .bg-orange-50 { background-color: #431407 !important; }
+html[data-theme="oscuro"] .storefront .bg-amber-50  { background-color: #1c1408 !important; }
+html[data-theme="oscuro"] .storefront .bg-red-50    { background-color: #1f0f0f !important; }
+
+/* Texto legible dentro de fondos de color en dark mode.
+   La regla general .text-slate-500 queda en #64748b que no tiene contraste
+   suficiente sobre estos fondos oscuros — estas reglas más específicas lo corrigen. */
+html[data-theme="oscuro"] .storefront .bg-blue-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-blue-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-blue-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-blue-50 .text-slate-500 { color: #93c5fd !important; }
+
+html[data-theme="oscuro"] .storefront .bg-green-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-green-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-green-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-green-50 .text-slate-500 { color: #86efac !important; }
+
+html[data-theme="oscuro"] .storefront .bg-indigo-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-indigo-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-indigo-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-indigo-50 .text-slate-500 { color: #a5b4fc !important; }
+
+html[data-theme="oscuro"] .storefront .bg-orange-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-orange-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-orange-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-orange-50 .text-slate-500 { color: #fdba74 !important; }
+
+html[data-theme="oscuro"] .storefront .bg-amber-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-amber-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-amber-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-amber-50 .text-slate-500 { color: #fde68a !important; }
+
+html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-500 { color: #fca5a5 !important; }
 
 /* Bordes */
 html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
@@ -435,6 +480,75 @@ html[data-theme="oscuro"] .storefront .htb-steps .bg-white\/70  { background-col
 /* Se eliminó el tema cálido por decisión del proyecto. Solo quedan
    "clasico" (claro) y "oscuro" como opciones de apariencia, y el
    usuario las elige desde el toggle en la navbar (localStorage). */
+
+/* ── Colores adaptativos del RichTextEditor ───────────────────────────────
+   El mark genera style="color: var(--rte-nombre)" como inline style.
+   Las variables CSS cambian de valor según el tema activo.
+   También quedan los selectores data-rte-color como respaldo.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Variables — modo claro (default) */
+:root {
+  --rte-negro:    #1e293b;
+  --rte-rojo:     #dc2626;
+  --rte-naranja:  #ea580c;
+  --rte-amarillo: #ca8a04;
+  --rte-verde:    #16a34a;
+  --rte-azul:     #2563eb;
+  --rte-violeta:  #7c3aed;
+  --rte-rosa:     #db2777;
+  --rte-blanco:   #1e293b; /* en claro: "blanco" se convierte en oscuro para ser legible */
+}
+
+/* Variables — modo oscuro admin */
+.admin-dark {
+  --rte-negro:    #f1f5f9;
+  --rte-rojo:     #fca5a5;
+  --rte-naranja:  #fdba74;
+  --rte-amarillo: #fde047;
+  --rte-verde:    #86efac;
+  --rte-azul:     #93c5fd;
+  --rte-violeta:  #c4b5fd;
+  --rte-rosa:     #f9a8d4;
+  --rte-blanco:   #ffffff;
+}
+
+/* Variables — modo oscuro storefront */
+html[data-theme="oscuro"] {
+  --rte-negro:    #f1f5f9;
+  --rte-rojo:     #fca5a5;
+  --rte-naranja:  #fdba74;
+  --rte-amarillo: #fde047;
+  --rte-verde:    #86efac;
+  --rte-azul:     #93c5fd;
+  --rte-violeta:  #c4b5fd;
+  --rte-rosa:     #f9a8d4;
+  --rte-blanco:   #ffffff;
+}
+
+/* ── Override para colores hex hardcodeados viejos ────────────────────────
+   Textos guardados con color:#ffffff antes del nuevo sistema adaptativo.
+   En modo claro se fuerzan a oscuro para que sean legibles.
+   ─────────────────────────────────────────────────────────────────────── */
+.prose [style*="color: #ffffff"],
+.prose [style*="color:#ffffff"],
+.prose [style*="color: rgb(255, 255, 255)"],
+.ProseMirror [style*="color: #ffffff"],
+.ProseMirror [style*="color:#ffffff"],
+.ProseMirror [style*="color: rgb(255, 255, 255)"] {
+  color: #1e293b !important;
+}
+/* En oscuro: restaurar blanco */
+.admin-dark .prose [style*="color: #ffffff"],
+.admin-dark .prose [style*="color:#ffffff"],
+.admin-dark .prose [style*="color: rgb(255, 255, 255)"],
+.admin-dark .ProseMirror [style*="color: #ffffff"],
+.admin-dark .ProseMirror [style*="color:#ffffff"],
+html[data-theme="oscuro"] .prose [style*="color: #ffffff"],
+html[data-theme="oscuro"] .prose [style*="color:#ffffff"],
+html[data-theme="oscuro"] .prose [style*="color: rgb(255, 255, 255)"] {
+  color: #ffffff !important;
+}
 
 /* Scrollbar para tema oscuro */
 html[data-theme="oscuro"] ::-webkit-scrollbar-track {

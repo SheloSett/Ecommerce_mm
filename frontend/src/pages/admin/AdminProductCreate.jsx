@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { productsApi, categoriesApi, getImageUrl } from "../../services/api";
+import { productsApi, categoriesApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
 import toast from "react-hot-toast";
+import RichTextEditor from "../../components/RichTextEditor";
+import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
+import TierEditor from "../../components/admin/TierEditor";
 
 const EMPTY_FORM = {
   name: "",
@@ -27,6 +30,10 @@ const EMPTY_FORM = {
   height: "",
   categoryIds: [],
   featured: false,
+  // onSale: marca el producto para la sección "Ofertas" de la home
+  onSale: false,
+  hotSeller: false,
+  hotSellerThreshold: "",
   active: true,
   visibility: "AMBOS",
 };
@@ -48,7 +55,15 @@ export default function AdminProductCreate() {
   const [categories, setCategories] = useState([]);
   const [newImages, setNewImages] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [savedProduct, setSavedProduct] = useState(null);
   const fileInputRef = useRef();
+  const priceBeforeEditRef = useRef({});
+
+  // Mini-formulario "Crear categoría" inline
+  const [showNewCatForm, setShowNewCatForm] = useState(false);
+  const [newCatName, setNewCatName]         = useState("");
+  const [newCatParentId, setNewCatParentId] = useState("");
+  const [savingCat, setSavingCat]           = useState(false);
 
   useEffect(() => {
     categoriesApi.getAll().then((res) => setCategories(res.data));
@@ -56,6 +71,27 @@ export default function AdminProductCreate() {
 
   const handleImageSelect = (e) => {
     setNewImages(Array.from(e.target.files));
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCatName.trim()) return;
+    setSavingCat(true);
+    try {
+      const payload = { name: newCatName.trim() };
+      if (newCatParentId) payload.parentId = parseInt(newCatParentId);
+      const res = await categoriesApi.create(payload);
+      const created = res.data;
+      const catsRes = await categoriesApi.getAll();
+      setCategories(catsRes.data);
+      setForm((f) => ({ ...f, categoryIds: [...f.categoryIds, created.id.toString()] }));
+      setNewCatName("");
+      setNewCatParentId("");
+      setShowNewCatForm(false);
+    } catch (err) {
+      alert(err.response?.data?.error || "Error al crear la categoría");
+    } finally {
+      setSavingCat(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -91,6 +127,9 @@ export default function AdminProductCreate() {
       formData.append("width", form.width);
       formData.append("height", form.height);
       formData.append("featured", form.featured);
+      formData.append("onSale", form.onSale);
+      formData.append("hotSeller", form.hotSeller);
+      if (form.hotSellerThreshold) formData.append("hotSellerThreshold", form.hotSellerThreshold);
       formData.append("active", form.active);
       formData.append("visibility", form.visibility || "AMBOS");
       formData.append("priceTiers", JSON.stringify(form.priceTiers));
@@ -98,9 +137,9 @@ export default function AdminProductCreate() {
       form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       newImages.forEach((file) => formData.append("images", file));
 
-      await productsApi.create(formData);
-      toast.success("Producto creado");
-      navigate("/admin/productos");
+      const res = await productsApi.create(formData);
+      toast.success("Producto creado. Ahora podés agregar variantes.");
+      setSavedProduct(res.data);
     } catch (err) {
       const msg = err.response?.data?.error || "Error al guardar el producto";
       toast.error(msg);
@@ -109,9 +148,41 @@ export default function AdminProductCreate() {
     }
   };
 
+  // ─── Vista post-creación: editor de variantes ────────────────────────────
+  if (savedProduct) {
+    return (
+      <AdminLayout>
+        <div className="max-w-5xl mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-slate-800">¡Producto creado!</h1>
+                <p className="text-sm text-slate-500">{savedProduct.name} — podés agregar variantes ahora o hacerlo después</p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate("/admin/productos")}
+              className="btn-primary"
+            >
+              Ir al listado →
+            </button>
+          </div>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} />
+          </div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout>
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         {/* Encabezado */}
         <div className="flex items-center gap-3 mb-6">
           <button
@@ -119,7 +190,7 @@ export default function AdminProductCreate() {
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
           <div>
@@ -130,28 +201,28 @@ export default function AdminProductCreate() {
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
 
-          {/* Nombre */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Nombre *</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="input"
-              required
-            />
-          </div>
-
-          {/* SKU */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
-            <input
-              type="text"
-              value={form.sku}
-              onChange={(e) => setForm({ ...form, sku: e.target.value })}
-              placeholder={form.name ? nameToSku(form.name) : "Código interno del producto"}
-              className="input"
-            />
+          {/* Nombre + SKU en la misma fila */}
+          <div className="grid grid-cols-[2fr_1fr] gap-3">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Título *</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="input"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
+              <input
+                type="text"
+                value={form.sku}
+                onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                placeholder={form.name ? nameToSku(form.name) : "Código interno del producto"}
+                className="input"
+              />
+            </div>
           </div>
 
           {/* Video de YouTube */}
@@ -195,57 +266,53 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
-          {/* Descripción */}
+          {/* Descripción — editor rich text */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Descripción</label>
-            <textarea
+            <RichTextEditor
               value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="input resize-none"
-              rows={3}
-              placeholder="Descripción del producto..."
+              onChange={(html) => setForm((f) => ({ ...f, description: html }))}
             />
           </div>
 
-          {/* Costo */}
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
-              Costo *
-              <span className="ml-1 normal-case font-normal text-slate-400">— solo visible para el admin</span>
-            </label>
-            <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400">
-              <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.cost}
-                onChange={(e) => setForm({ ...form, cost: e.target.value })}
-                placeholder="0.00"
-                required
-                className="flex-1 px-3 py-2 text-sm focus:outline-none"
-              />
+          {/* Costo + Alícuota IVA en la misma fila */}
+          <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                Costo * <span className="normal-case font-normal text-slate-400">— solo visible para el admin</span>
+              </label>
+              <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 h-9">
+                <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.cost}
+                  onChange={(e) => setForm({ ...form, cost: e.target.value })}
+                  placeholder="0.00"
+                  required
+                  className="flex-1 px-3 py-2 text-sm focus:outline-none"
+                />
+              </div>
             </div>
-          </div>
-
-          {/* Alícuota IVA del producto */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Alícuota IVA</label>
-            <div className="flex gap-3">
-              {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setForm({ ...form, ivaRate: opt.value })}
-                  className={`flex-1 py-2 rounded-xl border-2 text-sm font-semibold transition-colors ${
-                    form.ivaRate === opt.value
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-slate-200 text-slate-600 hover:border-slate-300"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">IVA</label>
+              <div className="flex gap-2">
+                {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setForm({ ...form, ivaRate: opt.value })}
+                    className={`px-3 h-9 rounded-lg border-2 text-sm font-semibold transition-colors whitespace-nowrap ${
+                      form.ivaRate === opt.value
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-slate-200 text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -269,6 +336,41 @@ export default function AdminProductCreate() {
                     min="0"
                     value={form[key]}
                     onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                    onFocus={() => {
+                      if (key === "price" || key === "wholesalePrice") {
+                        priceBeforeEditRef.current[key] = form[key];
+                      }
+                    }}
+                    onBlur={() => {
+                      if (key === "price") {
+                        const oldPrice = parseFloat(priceBeforeEditRef.current.price);
+                        const newPrice = parseFloat(form.price);
+                        if (oldPrice > 0 && newPrice > 0 && !isNaN(oldPrice) && !isNaN(newPrice) && oldPrice !== newPrice && form.priceTiers.length > 0) {
+                          const ratio = newPrice / oldPrice;
+                          setForm((f) => ({
+                            ...f,
+                            priceTiers: f.priceTiers.map((t) => ({
+                              ...t,
+                              price: t.price ? String(Math.round(parseFloat(t.price) * ratio * 100) / 100) : t.price,
+                            })),
+                          }));
+                        }
+                      }
+                      if (key === "wholesalePrice") {
+                        const oldPrice = parseFloat(priceBeforeEditRef.current.wholesalePrice);
+                        const newPrice = parseFloat(form.wholesalePrice);
+                        if (oldPrice > 0 && newPrice > 0 && !isNaN(oldPrice) && !isNaN(newPrice) && oldPrice !== newPrice && form.wholesalePriceTiers.length > 0) {
+                          const ratio = newPrice / oldPrice;
+                          setForm((f) => ({
+                            ...f,
+                            wholesalePriceTiers: f.wholesalePriceTiers.map((t) => ({
+                              ...t,
+                              price: t.price ? String(Math.round(parseFloat(t.price) * ratio * 100) / 100) : t.price,
+                            })),
+                          }));
+                        }
+                      }
+                    }}
                     placeholder="—"
                     required={required}
                     className="flex-1 px-2 py-2 text-sm focus:outline-none w-0"
@@ -327,6 +429,20 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
+          {/* Descuentos por cantidad */}
+          <TierEditor
+            label="Descuentos por cantidad — Minoristas"
+            tiers={form.priceTiers}
+            fieldKey="priceTiers"
+            setForm={setForm}
+          />
+          <TierEditor
+            label="Descuentos por cantidad — Mayoristas"
+            tiers={form.wholesalePriceTiers}
+            fieldKey="wholesalePriceTiers"
+            setForm={setForm}
+          />
+
           {/* Categorías */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -366,10 +482,60 @@ export default function AdminProductCreate() {
                 });
               })}
             </div>
+
+            {/* Mini-form para crear una categoría nueva sin salir del form */}
+            {!showNewCatForm ? (
+              <button
+                type="button"
+                onClick={() => setShowNewCatForm(true)}
+                className="mt-2 text-xs text-blue-600 hover:underline flex items-center gap-1"
+              >
+                + Crear nueva categoría
+              </button>
+            ) : (
+              <div className="mt-2 border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                <p className="text-xs font-semibold text-blue-700">Nueva categoría</p>
+                <input
+                  type="text"
+                  placeholder="Nombre de la categoría"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+                <select
+                  value={newCatParentId}
+                  onChange={(e) => setNewCatParentId(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Sin categoría padre (raíz)</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCreateCategory}
+                    disabled={savingCat || !newCatName.trim()}
+                    className="text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg font-semibold"
+                  >
+                    {savingCat ? "Creando..." : "Crear"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowNewCatForm(false); setNewCatName(""); setNewCatParentId(""); }}
+                    className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 bg-white"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Opciones */}
-          <div className="flex gap-6">
+          <div className="flex flex-wrap gap-6">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -379,6 +545,54 @@ export default function AdminProductCreate() {
               />
               <span className="text-sm font-medium text-slate-700">⭐ Destacado en Home</span>
             </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.onSale}
+                onChange={(e) => setForm({ ...form, onSale: e.target.checked })}
+                className="w-4 h-4 accent-orange-500"
+              />
+              <span className="text-sm font-medium text-slate-700">🔥 Oferta en Home</span>
+            </label>
+            {/* Más vendido con threshold */}
+            <div className={`flex flex-col gap-2 px-3 py-2.5 rounded-xl border-2 transition-colors ${form.hotSeller ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.hotSeller}
+                  onChange={(e) => setForm({ ...form, hotSeller: e.target.checked })}
+                  className="w-4 h-4 accent-red-500"
+                />
+                <span className="text-sm font-semibold text-slate-700">🔥 Más vendido</span>
+              </label>
+              {/* Input de threshold: si se define, el backend auto-activa hotSeller cuando totalSold >= threshold */}
+              <div className="flex items-center gap-2 pl-6">
+                <span className="text-xs text-slate-500 whitespace-nowrap">Auto-activar desde</span>
+                <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-red-400 bg-white">
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.hotSellerThreshold}
+                    onChange={(e) => setForm({ ...form, hotSellerThreshold: e.target.value })}
+                    placeholder="—"
+                    className="w-16 px-2 py-1 text-sm focus:outline-none text-center"
+                  />
+                  <span className="px-2 py-1 text-xs text-slate-400 border-l border-slate-200 bg-slate-50">unid.</span>
+                </div>
+                {form.hotSellerThreshold && (
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, hotSellerThreshold: "" })}
+                    className="text-slate-400 hover:text-slate-600 text-sm leading-none"
+                  >✕</button>
+                )}
+              </div>
+              {form.hotSellerThreshold && (
+                <p className="text-xs text-red-500 pl-6">
+                  🔥 se activa al llegar a {form.hotSellerThreshold}+ unidades vendidas
+                </p>
+              )}
+            </div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -414,178 +628,6 @@ export default function AdminProductCreate() {
                 </button>
               ))}
             </div>
-          </div>
-
-          {/* Descuentos por cantidad — Minoristas */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-slate-700">
-                Descuentos por cantidad — Minoristas
-                <span className="ml-1 text-xs font-normal text-slate-400">— opcional</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setForm((f) => ({ ...f, priceTiers: [...f.priceTiers, { minQty: "", price: "" }] }))}
-                className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
-              >
-                + Agregar nivel
-              </button>
-            </div>
-            {form.priceTiers.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">Sin descuentos por cantidad configurados.</p>
-            ) : (
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
-                      <th className="px-3 py-2 text-left font-semibold">Desde (unidades)</th>
-                      <th className="px-3 py-2 text-left font-semibold">Precio unitario</th>
-                      <th className="px-3 py-2 w-8"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {form.priceTiers.map((tier, idx) => (
-                      <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-400 text-xs">+</span>
-                            <input
-                              type="number"
-                              min="1"
-                              value={tier.minQty}
-                              onChange={(e) => setForm((f) => {
-                                const tiers = [...f.priceTiers];
-                                tiers[idx] = { ...tiers[idx], minQty: e.target.value };
-                                return { ...f, priceTiers: tiers };
-                              })}
-                              placeholder="ej: 10"
-                              className="w-24 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                            <span className="text-xs text-slate-400">unid.</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-400 text-sm">$</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={tier.price}
-                              onChange={(e) => setForm((f) => {
-                                const tiers = [...f.priceTiers];
-                                tiers[idx] = { ...tiers[idx], price: e.target.value };
-                                return { ...f, priceTiers: tiers };
-                              })}
-                              placeholder="0.00"
-                              className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => setForm((f) => ({ ...f, priceTiers: f.priceTiers.filter((_, i) => i !== idx) }))}
-                            className="text-red-400 hover:text-red-600 text-base leading-none"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p className="text-xs text-slate-400 mt-1">
-              Se aplica el precio del mayor nivel que no supere la cantidad pedida.
-            </p>
-          </div>
-
-          {/* Descuentos por cantidad — Mayoristas */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-slate-700">
-                Descuentos por cantidad — Mayoristas
-                <span className="ml-1 text-xs font-normal text-slate-400">— opcional</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setForm((f) => ({ ...f, wholesalePriceTiers: [...f.wholesalePriceTiers, { minQty: "", price: "" }] }))}
-                className="text-xs text-blue-600 hover:text-blue-700 font-semibold"
-              >
-                + Agregar nivel
-              </button>
-            </div>
-            {form.wholesalePriceTiers.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">Sin descuentos por cantidad configurados.</p>
-            ) : (
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
-                      <th className="px-3 py-2 text-left font-semibold">Desde (unidades)</th>
-                      <th className="px-3 py-2 text-left font-semibold">Precio unitario</th>
-                      <th className="px-3 py-2 w-8"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {form.wholesalePriceTiers.map((tier, idx) => (
-                      <tr key={idx} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-400 text-xs">+</span>
-                            <input
-                              type="number"
-                              min="1"
-                              value={tier.minQty}
-                              onChange={(e) => setForm((f) => {
-                                const tiers = [...f.wholesalePriceTiers];
-                                tiers[idx] = { ...tiers[idx], minQty: e.target.value };
-                                return { ...f, wholesalePriceTiers: tiers };
-                              })}
-                              placeholder="ej: 10"
-                              className="w-24 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                            <span className="text-xs text-slate-400">unid.</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-400 text-sm">$</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={tier.price}
-                              onChange={(e) => setForm((f) => {
-                                const tiers = [...f.wholesalePriceTiers];
-                                tiers[idx] = { ...tiers[idx], price: e.target.value };
-                                return { ...f, wholesalePriceTiers: tiers };
-                              })}
-                              placeholder="0.00"
-                              className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                            />
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => setForm((f) => ({ ...f, wholesalePriceTiers: f.wholesalePriceTiers.filter((_, i) => i !== idx) }))}
-                            className="text-red-400 hover:text-red-600 text-base leading-none"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p className="text-xs text-slate-400 mt-1">
-              Se aplica el precio del mayor nivel que no supere la cantidad pedida.
-            </p>
           </div>
 
           {/* Imágenes */}

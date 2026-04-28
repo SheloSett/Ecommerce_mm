@@ -15,11 +15,13 @@ const mayoristaRequestRoutes = require("./routes/mayoristaRequest.routes");
 const cartRoutes = require("./routes/cart.routes");
 const notificationRoutes = require("./routes/notification.routes");
 const gastoRoutes    = require("./routes/gasto.routes");
+const variantRoutes  = require("./routes/variant.routes");
 const couponRoutes   = require("./routes/coupon.routes");
 const slideRoutes    = require("./routes/slide.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const returnRoutes   = require("./routes/return.routes");
+const wishlistRoutes = require("./routes/wishlist.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -59,12 +61,12 @@ const generalLimiter = rateLimit({
     return req.method === "GET" && publicGetPaths.some((p) => req.path.startsWith(p));
   },
 });
-app.use("/api", generalLimiter);
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:3000",
   credentials: true,
 }));
+app.use("/api", generalLimiter);
 
 // El webhook de MercadoPago necesita el body en raw, por eso va antes del json parser
 app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
@@ -91,6 +93,8 @@ app.use("/api/slides",    slideRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/settings",  settingsRoutes);
 app.use("/api/returns",   returnRoutes);
+app.use("/api/variants",  variantRoutes);
+app.use("/api/wishlist",  wishlistRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

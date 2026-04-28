@@ -1,5 +1,6 @@
 const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
+const { syncProductVisibility } = require("./product.controller");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -19,6 +20,8 @@ const {
   sendOrderNotificationToAdmin,
   sendCotizacionToCustomer,
   sendCotizacionToAdmin,
+  sendOrderPaymentStatusEmail,
+  sendOrderFulfillmentEmail,
 } = require("../services/email.service");
 
 const prisma = new PrismaClient();
@@ -126,7 +129,7 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod } = req.body;
 
     if (!customerName || !customerEmail || !items || items.length === 0) {
       return res.status(400).json({ error: "Datos de la orden incompletos" });
@@ -139,6 +142,7 @@ async function createOrder(req, res) {
     // Verificar stock y calcular total
     let total = 0;
     const orderItems = [];
+    const itemHasVariants = {}; // productId -> bool: si el producto tiene variantes activas
 
     // Determinar si el cliente es mayorista para aplicar precios correctos.
     // Preferimos buscar por customerId (más confiable) y solo hacemos fallback por email si no viene ID.
@@ -166,10 +170,31 @@ async function createOrder(req, res) {
         return res.status(400).json({ error: `Producto no disponible: ${item.productId}` });
       }
 
-      if (!product.stockUnlimited && product.stock < item.quantity) {
-        return res.status(400).json({
-          error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
-        });
+      // Determinar si el producto tiene variantes activas para el control de stock
+      const activeVariants = await prisma.productVariant.findMany({
+        where: { productId: product.id, active: true },
+        select: { stock: true, stockUnlimited: true },
+      });
+      const productHasVariants = activeVariants.length > 0;
+      itemHasVariants[product.id] = productHasVariants;
+
+      // Validación de stock: con variantes usar la suma de stocks de variantes; sin variantes usar product.stock
+      if (productHasVariants) {
+        const anyUnlimited = activeVariants.some((v) => v.stockUnlimited);
+        if (!anyUnlimited) {
+          const totalVariantStock = activeVariants.reduce((sum, v) => sum + v.stock, 0);
+          if (totalVariantStock < item.quantity) {
+            return res.status(400).json({
+              error: `Stock insuficiente para "${product.name}". Stock total disponible: ${totalVariantStock}`,
+            });
+          }
+        }
+      } else {
+        if (!product.stockUnlimited && product.stock < item.quantity) {
+          return res.status(400).json({
+            error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
+          });
+        }
       }
 
       // Lógica de precios:
@@ -198,11 +223,36 @@ async function createOrder(req, res) {
       const finalPrice = effectivePrice;
 
       total += finalPrice * item.quantity;
+
+      // Buscar SKU de la variante seleccionada si se proporcionó variantId
+      let variantSku = null;
+      if (item.variantId) {
+        const variant = await prisma.productVariant.findUnique({
+          where: { id: parseInt(item.variantId) },
+          select: { sku: true },
+        });
+        variantSku = variant?.sku || null;
+      }
+
       orderItems.push({
-        productId: product.id,
-        quantity: item.quantity,
-        price: finalPrice,
+        productId:    product.id,
+        quantity:     item.quantity,
+        price:        finalPrice,
+        variantId:    item.variantId ? parseInt(item.variantId) : null,
+        variantLabel: item.variantLabel || null,
+        variantSku,
       });
+    }
+
+    // Validar compra mínima para clientes mayoristas
+    if (isMayorista) {
+      const configRows = await prisma.siteConfig.findMany({ where: { key: "mayoristaMinimoCompra" } });
+      const minimo = parseFloat(configRows[0]?.value || "0");
+      if (minimo > 0 && total < minimo) {
+        return res.status(400).json({
+          error: `El pedido no llega al monto mínimo mayorista de ${new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(minimo)}`,
+        });
+      }
     }
 
     // Aplicar cupón si se envió uno (ahora también válido para COTIZACION)
@@ -274,7 +324,13 @@ async function createOrder(req, res) {
         customerPhone: customerPhone || null,
         customerId:    customerId ? parseInt(customerId) : null,
         total,
-        status: "PENDING",
+        // Pedidos MINORISTA con efectivo o transferencia pasan a QUOTE_APPROVED ("Aprobada sin pagar"):
+        // el pedido está aceptado pero el pago aún no fue confirmado por el admin.
+        // MercadoPago queda PENDING hasta que el webhook confirme el pago.
+        // COTIZACION siempre sigue su flujo propio.
+        status: (!isMayorista && ["EFECTIVO", "TRANSFERENCIA"].includes(method)) ? "QUOTE_APPROVED" : "PENDING",
+        // fulfillmentStatus queda PENDIENTE hasta que el admin confirme el pago (APPROVED)
+        fulfillmentStatus: "PENDIENTE",
         paymentMethod: method,
         // customerType se determina a partir del tipo de cliente registrado
         // isMayorista ya fue calculado arriba consultando la DB por el email
@@ -282,6 +338,9 @@ async function createOrder(req, res) {
         wantsInvoice: applyIva,
         ivaAmount,
         customerNote: customerNote?.trim() || null,
+        // shippingMethod: "RETIRO" (retiro en el local) o "ENVIO" (acordar envío).
+        // Solo se aceptan los dos valores válidos; cualquier otro valor usa el default "RETIRO".
+        shippingMethod: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO",
         ...(appliedCoupon ? { couponId: appliedCoupon.id, couponDiscount } : {}),
         items: {
           create: orderItems,
@@ -310,10 +369,11 @@ async function createOrder(req, res) {
     }
 
     // Para cotizaciones: reservar stock inmediatamente al crear la orden.
-    // Esto evita que el mismo producto pueda agregarse al carrito de nuevo
-    // mientras la cotización está pendiente.
+    // SOLO para productos sin variantes — para productos con variantes el stock se descuenta
+    // cuando el admin asigna las variantes al confirmar la cotización (approveCotizacion).
     if (method === "COTIZACION") {
       for (const item of orderItems) {
+        if (itemHasVariants[item.productId]) continue; // variantes: stock se descuenta al confirmar
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
         const newStock = Math.max(0, product.stock - item.quantity);
@@ -327,6 +387,9 @@ async function createOrder(req, res) {
         });
       }
     }
+
+    // El stock se descuenta cuando el admin confirma el pago (APPROVED via updateOrderStatus).
+    // QUOTE_APPROVED no descuenta stock — el pedido está aceptado pero el pago aún no está confirmado.
 
     // Para cotizaciones: guardar clientSnapshot con los items iniciales.
     // El cliente siempre verá esta copia hasta que el admin presione "Actualizar cotización".
@@ -403,19 +466,35 @@ async function updateOrderStatus(req, res) {
     });
 
     // Devolver stock si una COTIZACION pasa a CANCELLED o REJECTED
-    // (el stock fue reservado al crear la cotización, hay que devolverlo)
+    // - Productos sin variantes: stock fue reservado al crear → devolverlo
+    // - Productos con variantes Y variantId asignado: stock fue descontado al confirmar → devolverlo
+    // - Productos con variantes SIN variantId: nunca se reservó stock → nada que devolver
     const wasCotizacion = existing.paymentMethod === "COTIZACION";
     const wasResolved   = ["APPROVED", "CANCELLED", "REJECTED"].includes(existing.status);
     if ((status === "CANCELLED" || status === "REJECTED") && wasCotizacion && !wasResolved) {
-      for (const item of existing.items) {
+      // Recargar items frescos para capturar variantIds asignados en approveCotizacion
+      const freshItems = await prisma.orderItem.findMany({ where: { orderId: existing.id } });
+      for (const item of freshItems) {
+        if (item.variantId) {
+          // Variante asignada en confirmación → devolver stock a la variante
+          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+          if (!variant || variant.stockUnlimited) continue;
+          await prisma.productVariant.update({
+            where: { id: item.variantId },
+            data:  { stock: variant.stock + item.quantity },
+          });
+          await syncProductVisibility(item.productId);
+          continue;
+        }
+        // Sin variantId: verificar si el producto tiene variantes
+        const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
+        if (variantCount > 0) continue; // variante sin asignar — nunca se reservó stock
+        // Producto sin variantes: stock fue reservado al crear → devolver
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
         await prisma.product.update({
           where: { id: item.productId },
-          data:  {
-            stock:  product.stock + item.quantity,
-            active: true, // re-publicar si estaba sin stock por esta cotización
-          },
+          data:  { stock: product.stock + item.quantity, active: true },
         });
       }
     }
@@ -425,6 +504,19 @@ async function updateOrderStatus(req, res) {
     // (evita doble descuento)
     if (status === "APPROVED" && existing.status !== "APPROVED" && !wasCotizacion) {
       for (const item of existing.items) {
+        // Si el item tiene variante, descontar stock de la variante; si no, del producto base.
+        if (item.variantId) {
+          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+          if (!variant || variant.stockUnlimited) continue;
+          const newVariantStock = Math.max(0, variant.stock - item.quantity);
+          await prisma.productVariant.update({
+            where: { id: item.variantId },
+            data:  { stock: newVariantStock },
+          });
+          await syncProductVisibility(item.productId);
+          continue;
+        }
+
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
 
@@ -437,6 +529,7 @@ async function updateOrderStatus(req, res) {
             ...(newStock === 0 && !product.stockUnlimited ? { active: false } : {}),
           },
         });
+        await syncProductVisibility(item.productId);
 
         // Ajustar otras órdenes PENDING/QUOTE_APPROVED que tengan este producto.
         // Se excluyen las COTIZACIONES porque su stock ya está reservado por separado.
@@ -534,6 +627,12 @@ async function updateOrderStatus(req, res) {
       });
     }
 
+    // Notificar al cliente si el estado de pago cambió a APPROVED, REJECTED o CANCELLED.
+    // El email se envía de forma no bloqueante para no retrasar la respuesta al admin.
+    sendOrderPaymentStatusEmail({ ...existing, ...order }, status).catch((e) =>
+      console.error("[EMAIL] sendOrderPaymentStatusEmail falló:", e.message)
+    );
+
     res.json(order);
   } catch (err) {
     console.error("updateOrderStatus error:", err);
@@ -616,17 +715,18 @@ async function deleteOrder(req, res) {
   }
 }
 
-// GET /api/orders/my - Historial de pedidos del cliente logueado (APPROVED)
+// GET /api/orders/my - Historial de pedidos del cliente logueado (PENDING + APPROVED)
 async function getMyOrders(req, res) {
   try {
     const customerId = req.user.id;
 
     // Filtramos por customerId (cuenta del cliente) en lugar de email,
     // para que aparezcan sin importar qué email ingresó en el formulario de checkout.
+    // Se incluyen PENDING (recién hecho, sin pagar) y APPROVED (aprobado/pagado).
     const orders = await prisma.order.findMany({
       where: {
         customerId,
-        status: "APPROVED", // Solo pedidos pagados/aprobados
+        status: { in: ["PENDING", "APPROVED"] },
       },
       include: {
         items: {
@@ -825,15 +925,86 @@ async function publishCotizacion(req, res) {
 }
 
 // POST /api/orders/:id/approve - Admin: aprueba la cotización
+// Body: { adminNotes?, variantAssignments?: [{ itemId, variantId, quantity }] }
+// variantAssignments: para items de productos con variantes, el admin indica qué variante
+// se va a enviar (y en qué cantidad). El stock se descuenta de esas variantes.
 async function approveCotizacion(req, res) {
   try {
-    const orderId    = parseInt(req.params.id);
-    const { adminNotes } = req.body;
+    const orderId = parseInt(req.params.id);
+    const { adminNotes, variantAssignments = [] } = req.body;
 
-    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: { include: { product: { select: { id: true, name: true } } } } },
+    });
     if (!order) return res.status(404).json({ error: "Orden no encontrada" });
 
-    // Publicar snapshot con el estado actual y marcar como APPROVED
+    // Procesar asignaciones de variantes: validar y descontar stock
+    if (variantAssignments.length > 0) {
+      // Agrupar por itemId para validar que el total asignado coincida con lo pedido
+      const byItem = {};
+      for (const a of variantAssignments) {
+        const key = String(a.itemId);
+        if (!byItem[key]) byItem[key] = [];
+        byItem[key].push(a);
+      }
+
+      for (const [itemIdStr, assignments] of Object.entries(byItem)) {
+        const itemId = parseInt(itemIdStr);
+        const orderItem = order.items.find((i) => i.id === itemId);
+        if (!orderItem) continue;
+
+        const totalAssigned = assignments.reduce((sum, a) => sum + parseInt(a.quantity), 0);
+        if (totalAssigned !== orderItem.quantity) {
+          return res.status(400).json({
+            error: `La cantidad asignada para "${orderItem.product?.name}" (${totalAssigned}) no coincide con lo pedido (${orderItem.quantity})`,
+          });
+        }
+
+        // Descontar stock de cada variante asignada
+        for (const a of assignments) {
+          const variant = await prisma.productVariant.findUnique({ where: { id: parseInt(a.variantId) } });
+          if (!variant) return res.status(400).json({ error: `Variante ${a.variantId} no encontrada` });
+          const qty = parseInt(a.quantity);
+          if (!variant.stockUnlimited && variant.stock < qty) {
+            const combo = Array.isArray(variant.combination)
+              ? variant.combination.map((c) => c.value).join(" / ")
+              : String(a.variantId);
+            return res.status(400).json({
+              error: `Stock insuficiente en "${combo}" para "${orderItem.product?.name}". Disponible: ${variant.stock}, requerido: ${qty}`,
+            });
+          }
+          if (!variant.stockUnlimited) {
+            await prisma.productVariant.update({
+              where: { id: variant.id },
+              data:  { stock: Math.max(0, variant.stock - qty) },
+            });
+            await syncProductVisibility(variant.productId);
+          }
+        }
+
+        // Actualizar el OrderItem con la variante asignada (o label de surtido si hay varias)
+        let newVariantId = null;
+        let newVariantLabel = null;
+        if (assignments.length === 1) {
+          newVariantId = parseInt(assignments[0].variantId);
+          const v = await prisma.productVariant.findUnique({ where: { id: newVariantId }, select: { combination: true } });
+          if (v) {
+            const combo = Array.isArray(v.combination) ? v.combination : JSON.parse(String(v.combination));
+            newVariantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
+          }
+        } else {
+          // Surtido: múltiples variantes → label descriptivo
+          newVariantLabel = `Surtido (${assignments.map((a) => `${a.quantity}u`).join(" + ")})`;
+        }
+        await prisma.orderItem.update({
+          where: { id: itemId },
+          data:  { variantId: newVariantId, variantLabel: newVariantLabel },
+        });
+      }
+    }
+
+    // Publicar snapshot con el estado actual y marcar como QUOTE_APPROVED
     const snapshot = await buildSnapshot(orderId);
     const total    = snapshot.reduce((s, i) => s + i.price * i.quantity, 0);
 
@@ -1256,10 +1427,20 @@ async function updateOrderFields(req, res) {
       return res.status(400).json({ error: "No se envió ningún campo para actualizar" });
     }
 
+    // Obtener la orden antes de actualizar para tener customerEmail y shippingMethod
+    const existing = await prisma.order.findUnique({ where: { id: parseInt(id) } });
+
     const order = await prisma.order.update({
       where: { id: parseInt(id) },
       data,
     });
+
+    // Notificar al cliente si cambió el estado logístico (no bloquea la respuesta)
+    if (fulfillmentStatus && existing) {
+      sendOrderFulfillmentEmail({ ...existing, ...order }, fulfillmentStatus).catch((e) =>
+        console.error("[EMAIL] sendOrderFulfillmentEmail falló:", e.message)
+      );
+    }
 
     res.json(order);
   } catch (err) {
@@ -1268,10 +1449,40 @@ async function updateOrderFields(req, res) {
   }
 }
 
+// GET /api/orders/badge-counts — contadores NO leídos para el sidebar del admin
+async function getBadgeCounts(req, res) {
+  try {
+    const [cotizaciones, devoluciones, clientes, solicitudesMayorista] = await Promise.all([
+      // Cotizaciones no vistas por el admin (activas, no aprobadas/canceladas)
+      prisma.order.count({
+        where: { paymentMethod: "COTIZACION", status: { notIn: ["APPROVED", "CANCELLED", "REJECTED"] }, seenByAdmin: false },
+      }),
+      // Devoluciones no vistas por el admin
+      prisma.returnRequest.count({ where: { seenByAdmin: false } }),
+      // Clientes pendientes no vistos
+      prisma.customer.count({ where: { status: "PENDING", seenByAdmin: false } }),
+      // Solicitudes mayorista pendientes
+      prisma.mayoristaRequest.count({ where: { status: "PENDING" } }),
+    ]);
+    res.json({ cotizaciones, devoluciones, clientes, solicitudesMayorista });
+  } catch (err) {
+    console.error("getBadgeCounts error:", err);
+    res.status(500).json({ error: "Error al obtener contadores" });
+  }
+}
+
+// PATCH /api/orders/:id/seen — marcar cotización como vista por el admin
+async function markOrderSeen(req, res) {
+  try {
+    await prisma.order.update({ where: { id: parseInt(req.params.id) }, data: { seenByAdmin: true } });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Error al marcar como visto" }); }
+}
+
 module.exports = {
   getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
   getMyOrders, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
-  applyCouponToOrder, createManualOrder,
+  applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,
 };

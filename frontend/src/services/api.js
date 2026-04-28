@@ -47,6 +47,7 @@ api.interceptors.response.use(
 // ─── Productos ────────────────────────────────────────────────────────────────
 export const productsApi = {
   getAll: (params) => api.get("/products", { params }),
+  getFacets: (params) => api.get("/products/facets", { params }),
   getAllAdmin: (params) => api.get("/products/admin/all", { params }),
   getById: (id) => api.get(`/products/${id}`),
   create: (formData) =>
@@ -60,6 +61,7 @@ export const productsApi = {
   // Edición rápida: actualiza precio, stock, precios especiales y estado sin multipart
   // Soporta: price, salePrice, wholesalePrice, wholesaleSalePrice, stock, stockUnlimited, minQuantity, active
   quickUpdate: (id, data) => api.patch(`/products/${id}/quick`, data),
+  bulkPriceAdjust: (data) => api.post("/products/bulk-price-adjust", data),
   delete: (id) => api.delete(`/products/${id}`),
 };
 
@@ -81,8 +83,10 @@ export const ordersApi = {
   updateStatus: (id, status) => api.patch(`/orders/${id}/status`, { status }),
   // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
   updateFields: (id, fields) => api.patch(`/orders/${id}/fields`, fields),
-  getStats:   (params) => api.get("/orders/stats",   { params: params || {} }),
-  getMetrics: (params) => api.get("/orders/metrics", { params: params || {} }),
+  getStats:      (params) => api.get("/orders/stats",        { params: params || {} }),
+  getMetrics:    (params) => api.get("/orders/metrics",      { params: params || {} }),
+  getBadgeCounts: ()     => api.get("/orders/badge-counts"),
+  markSeen:      (id)    => api.patch(`/orders/${id}/seen`),
   delete: (id) => api.delete(`/orders/${id}`),
   // Cliente: historial de pedidos propios (APPROVED)
   getMy: () => customerAuthApi.get("/orders/my"),
@@ -94,7 +98,7 @@ export const ordersApi = {
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
   publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
   // Admin: aprobar cotización
-  approveCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/approve`, { adminNotes }),
+  approveCotizacion: (orderId, adminNotes, variantAssignments = []) => api.post(`/orders/${orderId}/approve`, { adminNotes, variantAssignments }),
   // Cliente: cancelar su cotización con motivo
   cancelCotizacion: (orderId, reason) => customerAuthApi.post(`/orders/${orderId}/cancel-by-customer`, { reason }),
   // Cliente: obtener una cotización propia por ID (para la página de pago)
@@ -126,6 +130,7 @@ export const customersApi = {
   // Admin: crear cliente directamente (queda APPROVED)
   createAdmin: (data) => api.post("/customers/admin/create", data),
   updateStatus: (id, status, notes) => api.patch(`/customers/${id}/status`, { status, notes }),
+  markSeen: (id) => api.patch(`/customers/${id}/seen`),
   updateType: (id, type) => api.patch(`/customers/${id}/type`, { type }),
   update: (id, data) => api.put(`/customers/${id}`, data),
   delete: (id) => api.delete(`/customers/${id}`),
@@ -140,9 +145,9 @@ export const customersApi = {
   getAllEmailChangeRequests: () => api.get("/customers/email-change-requests"),
   approveEmailChangeRequest: (id) => api.patch(`/customers/email-change-requests/${id}/approve`),
   rejectEmailChangeRequest: (id, adminNotes) => api.patch(`/customers/email-change-requests/${id}/reject`, { adminNotes }),
-  uploadAvatar: (formData) => customerAuthApi.post("/customers/me/avatar", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  }),
+  // uploadAvatar: (formData) => customerAuthApi.post("/customers/me/avatar", formData, {  // Eliminado: feature de avatar removida
+  //   headers: { "Content-Type": "multipart/form-data" },
+  // }),
 };
 
 // ─── Solicitudes Mayorista ────────────────────────────────────────────────────
@@ -177,6 +182,9 @@ export const cartsApi = {
   updateItem: (itemId, quantity) => api.patch(`/carts/items/${itemId}`, { quantity }),
   // Admin: eliminar un item individual del carrito
   deleteItem: (itemId) => api.delete(`/carts/items/${itemId}`),
+  // Admin: enviar email de carrito abandonado (con cupón opcional)
+  sendReminder: (customerId, couponCode, couponDescription) =>
+    api.post(`/carts/${customerId}/remind`, { couponCode, couponDescription }),
 
   // [DEPRECADO] Sincronización por debounce — reemplazada por operaciones directas
   // sync: (items) => customerAuthApi.put("/carts/sync", { items }),
@@ -241,12 +249,35 @@ export const returnsApi = {
   getAll: (params) => api.get("/returns", { params }),
   // Admin: aprobar o rechazar
   updateStatus: (id, status, adminNotes) => api.patch(`/returns/${id}/status`, { status, adminNotes }),
+  // Admin: marcar como visto (descuenta del badge)
+  markSeen: (id) => api.patch(`/returns/${id}/seen`),
+};
+
+// ─── Variantes de producto ────────────────────────────────────────────────────
+export const variantsApi = {
+  // Atributos
+  getAttributes:    (productId)         => api.get(`/variants/product/${productId}/attributes`),
+  createAttribute:  (productId, data)   => api.post(`/variants/product/${productId}/attributes`, data),
+  updateAttribute:  (id, data)          => api.put(`/variants/attributes/${id}`, data),
+  deleteAttribute:  (id)                => api.delete(`/variants/attributes/${id}`),
+  // Variantes
+  getVariants:      (productId)         => api.get(`/variants/product/${productId}`),
+  generate:         (productId)         => api.post(`/variants/product/${productId}/generate`),
+  updateVariant:    (id, formData)      => api.put(`/variants/${id}`, formData),
+  deleteAll:        (productId)         => api.delete(`/variants/product/${productId}/all`),
 };
 
 // ─── Configuración del sitio ──────────────────────────────────────────────────
 export const settingsApi = {
   get:    ()     => api.get("/settings"),           // público
   update: (data) => api.put("/settings", data),     // admin
+};
+
+// ─── Wishlist / Favoritos ─────────────────────────────────────────────────────
+export const wishlistApi = {
+  getAll: ()          => customerAuthApi.get("/wishlist"),
+  add:    (productId) => customerAuthApi.post("/wishlist", { productId }),
+  remove: (productId) => customerAuthApi.delete(`/wishlist/${productId}`),
 };
 
 export const getImageUrl = (path) => {

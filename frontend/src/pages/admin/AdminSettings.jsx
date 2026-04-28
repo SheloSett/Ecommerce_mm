@@ -5,8 +5,10 @@ import { useSiteConfig } from "../../context/SiteConfigContext";
 import toast from "react-hot-toast";
 
 const SECTIONS = [
-  { id: "mantenimiento", label: "Modo mantenimiento", icon: "🔧" },
-  // Aquí se pueden agregar más secciones en el futuro
+  { id: "mantenimiento",  label: "Modo mantenimiento",  icon: "🔧" },
+  { id: "mayoristas",     label: "Reglas mayoristas",   icon: "🏭" },
+  // Sección "Banner de anuncio" movida a AdminCarousel.jsx donde tiene más sentido contextualmente
+  // { id: "announcement",   label: "Banner de anuncio",   icon: "📢" },
 ];
 
 // Convierte un Date a string compatible con <input type="datetime-local"> (YYYY-MM-DDTHH:MM)
@@ -28,6 +30,18 @@ export default function AdminSettings() {
   const [loading, setLoading]         = useState(true);
   const [saving, setSaving]           = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
+
+  // Banner de anuncio
+  const [annActive, setAnnActive]       = useState(false);
+  const [annText, setAnnText]           = useState("");
+  const [annLinkText, setAnnLinkText]   = useState("");
+  const [annUrl, setAnnUrl]             = useState("");
+  const [annBgColor, setAnnBgColor]     = useState("blue");
+  const [savingAnn, setSavingAnn]       = useState(false);
+
+  // Compra mínima mayorista
+  const [mayoristaMinimoInput, setMayoristaMinimo] = useState("0");
+  const [savingMinimo, setSavingMinimo]             = useState(false);
 
   useEffect(() => {
     settingsApi
@@ -54,6 +68,16 @@ export default function AdminSettings() {
           setScheduledSaved(raw);
           setScheduledInput(raw && !scheduleExpired ? toDatetimeLocal(scheduledDate) : "");
         }
+
+        // Cargar compra mínima mayorista
+        setMayoristaMinimo(res.data.mayoristaMinimoCompra || "0");
+
+        // Cargar datos del banner de anuncio
+        setAnnActive(res.data.announcementActive === "true");
+        setAnnText(res.data.announcementText || "");
+        setAnnLinkText(res.data.announcementLinkText || "");
+        setAnnUrl(res.data.announcementUrl || "");
+        setAnnBgColor(res.data.announcementBgColor || "blue");
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -98,6 +122,33 @@ export default function AdminSettings() {
     }
   };
 
+  const handleSaveAnnouncement = async () => {
+    if (annActive && !annText.trim()) {
+      toast.error("Escribí un texto para el banner");
+      return;
+    }
+    if (annLinkText && annText && !annText.includes(annLinkText)) {
+      toast.error(`La palabra "${annLinkText}" no aparece en el texto del banner`);
+      return;
+    }
+    setSavingAnn(true);
+    try {
+      await settingsApi.update({
+        announcementActive: annActive ? "true" : "false",
+        announcementText: annText.trim(),
+        announcementLinkText: annLinkText.trim(),
+        announcementUrl: annUrl.trim(),
+        announcementBgColor: annBgColor,
+      });
+      refetch();
+      toast.success("Banner guardado");
+    } catch {
+      toast.error("Error al guardar el banner");
+    } finally {
+      setSavingAnn(false);
+    }
+  };
+
   // Cancelar la programación
   const handleCancelSchedule = async () => {
     setSavingSchedule(true);
@@ -111,6 +162,24 @@ export default function AdminSettings() {
       toast.error("Error al cancelar");
     } finally {
       setSavingSchedule(false);
+    }
+  };
+
+  const handleSaveMinimo = async () => {
+    const valor = parseFloat(mayoristaMinimoInput);
+    if (isNaN(valor) || valor < 0) {
+      toast.error("Ingresá un monto válido (0 = sin mínimo)");
+      return;
+    }
+    setSavingMinimo(true);
+    try {
+      await settingsApi.update({ mayoristaMinimoCompra: String(valor) });
+      refetch();
+      toast.success(valor === 0 ? "Mínimo mayorista desactivado" : `Mínimo mayorista guardado: $${valor.toLocaleString("es-AR")}`);
+    } catch {
+      toast.error("Error al guardar");
+    } finally {
+      setSavingMinimo(false);
     }
   };
 
@@ -275,6 +344,205 @@ export default function AdminSettings() {
                   </div>
                 )}
               </>
+            )}
+
+            {activeSection === "mayoristas" && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+                <div>
+                  <h2 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                    <span>🏭</span> Reglas de compra mayorista
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1 max-w-sm">
+                    Configurá el monto mínimo que deben alcanzar los pedidos de clientes mayoristas.
+                    Si el carrito no llega a este valor, el cliente no puede confirmar la cotización.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">
+                    Monto mínimo de compra <span className="text-slate-400 font-normal">(en ARS)</span>
+                  </label>
+                  <div className="flex gap-3 items-center">
+                    <div className="relative flex-1 max-w-xs">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium text-sm">$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="100"
+                        value={mayoristaMinimoInput}
+                        onChange={(e) => setMayoristaMinimo(e.target.value)}
+                        className="input pl-7 text-sm"
+                        placeholder="0"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSaveMinimo}
+                      disabled={savingMinimo}
+                      className="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors text-sm whitespace-nowrap"
+                    >
+                      {savingMinimo ? "Guardando…" : "Guardar"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Ponelo en <strong>0</strong> para no aplicar ningún mínimo.
+                  </p>
+                </div>
+
+                {/* Estado actual */}
+                <div className={`rounded-xl px-4 py-3 text-sm flex items-center gap-2 ${
+                  parseFloat(mayoristaMinimoInput) > 0
+                    ? "bg-blue-50 border border-blue-200 text-blue-700"
+                    : "bg-slate-50 border border-slate-200 text-slate-500"
+                }`}>
+                  <span>{parseFloat(mayoristaMinimoInput) > 0 ? "🔒" : "🔓"}</span>
+                  {parseFloat(mayoristaMinimoInput) > 0
+                    ? `Los mayoristas deben superar $${parseFloat(mayoristaMinimoInput).toLocaleString("es-AR")} para poder cotizar.`
+                    : "Sin mínimo — los mayoristas pueden cotizar cualquier monto."}
+                </div>
+              </div>
+            )}
+
+            {activeSection === "announcement" && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="font-bold text-slate-800 text-base">Banner de anuncio</h2>
+                    <p className="text-sm text-slate-500 mt-1 max-w-sm">
+                      Barra fina que aparece debajo del navbar en todas las páginas de la tienda.
+                    </p>
+                  </div>
+                  {/* Toggle activo/inactivo */}
+                  <button
+                    type="button"
+                    onClick={() => setAnnActive((v) => !v)}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors duration-200 ${
+                      annActive ? "bg-blue-500" : "bg-slate-300"
+                    }`}
+                  >
+                    <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${annActive ? "translate-x-6" : "translate-x-1"}`} />
+                  </button>
+                </div>
+
+                {/* Texto del banner */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Texto del banner <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={annText}
+                    onChange={(e) => setAnnText(e.target.value)}
+                    placeholder='Ej: "Envío gratis en compras mayores a $50.000 — ver más"'
+                    className="input w-full"
+                  />
+                </div>
+
+                {/* Palabra con hipervínculo */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Palabra/frase con link
+                      <span className="ml-1 text-xs font-normal text-slate-400">— opcional</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={annLinkText}
+                      onChange={(e) => setAnnLinkText(e.target.value)}
+                      placeholder='Ej: "ver más"'
+                      className="input w-full"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Debe aparecer exactamente igual en el texto.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      URL del link
+                      <span className="ml-1 text-xs font-normal text-slate-400">— opcional</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={annUrl}
+                      onChange={(e) => setAnnUrl(e.target.value)}
+                      placeholder='Ej: "/envios" o "https://..."'
+                      className="input w-full"
+                    />
+                  </div>
+                </div>
+
+                {/* Color de fondo */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Color</label>
+                  <div className="flex gap-2">
+                    {[
+                      { key: "blue",  label: "Azul",    cls: "bg-blue-600" },
+                      { key: "green", label: "Verde",   cls: "bg-emerald-600" },
+                      { key: "amber", label: "Amarillo",cls: "bg-amber-400" },
+                      { key: "red",   label: "Rojo",    cls: "bg-red-600" },
+                      { key: "slate", label: "Oscuro",  cls: "bg-slate-800" },
+                    ].map((c) => (
+                      <button
+                        key={c.key}
+                        type="button"
+                        onClick={() => setAnnBgColor(c.key)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all ${
+                          annBgColor === c.key ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded-full ${c.cls}`} />
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Preview */}
+                {annText && (() => {
+                  const previewColors = {
+                    blue:  "bg-blue-600 text-white",
+                    green: "bg-emerald-600 text-white",
+                    amber: "bg-amber-400 text-amber-900",
+                    red:   "bg-red-600 text-white",
+                    slate: "bg-slate-800 text-slate-100",
+                  };
+                  const linkColors = {
+                    blue: "text-blue-100 underline", green: "text-emerald-100 underline",
+                    amber: "text-amber-800 underline font-bold", red: "text-red-100 underline",
+                    slate: "text-slate-300 underline",
+                  };
+                  const cls = previewColors[annBgColor] || previewColors.blue;
+                  const lCls = linkColors[annBgColor] || linkColors.blue;
+
+                  const renderPreview = () => {
+                    if (!annLinkText || !annText.includes(annLinkText)) return annText;
+                    const idx = annText.indexOf(annLinkText);
+                    return (
+                      <>
+                        {annText.slice(0, idx)}
+                        <span className={lCls}>{annLinkText}</span>
+                        {annText.slice(idx + annLinkText.length)}
+                      </>
+                    );
+                  };
+
+                  return (
+                    <div>
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Vista previa</p>
+                      <div className={`${cls} text-sm py-2 px-4 rounded-xl text-center`}>
+                        {renderPreview()}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveAnnouncement}
+                    disabled={savingAnn}
+                    className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {savingAnn ? "Guardando…" : "Guardar banner"}
+                  </button>
+                </div>
+              </div>
             )}
 
           </div>

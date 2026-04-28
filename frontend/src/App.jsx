@@ -1,9 +1,12 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import { HelmetProvider } from "react-helmet-async";
 import { CartProvider } from "./context/CartContext";
 import { AuthProvider } from "./context/AuthContext";
 import { CustomerAuthProvider } from "./context/CustomerAuthContext";
 import { NotificationProvider } from "./context/NotificationContext";
 import { SiteConfigProvider, useSiteConfig } from "./context/SiteConfigContext";
+import { WishlistProvider } from "./context/WishlistContext";
+import { BadgeProvider } from "./context/BadgeContext";
 
 // Páginas públicas
 import Home from "./pages/Home";
@@ -22,6 +25,8 @@ import Terms from "./pages/Terms";
 import AboutUs from "./pages/AboutUs";
 import HowToBuy from "./pages/HowToBuy";
 import ReturnRequest from "./pages/ReturnRequest";
+import Wishlist from "./pages/Wishlist";
+import Cart from "./pages/Cart";
 
 // Panel de administración
 import AdminLogin from "./pages/admin/AdminLogin";
@@ -37,6 +42,7 @@ import AdminFlyer from "./pages/admin/AdminFlyer";
 import AdminCoupons from "./pages/admin/AdminCoupons";
 import AdminPurchases from "./pages/admin/AdminPurchases";
 import AdminCarousel from "./pages/admin/AdminCarousel";
+import AdminAnnouncementBanner from "./pages/admin/AdminAnnouncementBanner";
 import AdminSettings from "./pages/admin/AdminSettings";
 import AdminReturns from "./pages/admin/AdminReturns";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -62,7 +68,6 @@ function PublicRoute({ children }) {
   if (maintenance) return <Navigate to="/mantenimiento" replace />;
   return (
     <div className="storefront">
-      {/* Banner con countdown — se muestra solo si hay un mantenimiento programado futuro */}
       <MaintenanceBanner />
       {children}
     </div>
@@ -71,10 +76,12 @@ function PublicRoute({ children }) {
 
 export default function App() {
   return (
+    <HelmetProvider>
     <SiteConfigProvider>
     <AuthProvider>
       <CustomerAuthProvider>
       <NotificationProvider>
+      <WishlistProvider>
       <CartProvider>
         <ScrollToTop />
         <WhatsAppButton />
@@ -86,6 +93,7 @@ export default function App() {
           <Route path="/" element={<PublicRoute><Home /></PublicRoute>} />
           <Route path="/catalogo" element={<PublicRoute><Catalog /></PublicRoute>} />
           <Route path="/producto/:id" element={<PublicRoute><ProductDetail /></PublicRoute>} />
+          <Route path="/carrito" element={<PublicRoute><Cart /></PublicRoute>} />
           <Route path="/checkout" element={<PublicRoute><Checkout /></PublicRoute>} />
           <Route path="/pago/exitoso" element={<PublicRoute><PaymentResult type="success" /></PublicRoute>} />
           <Route path="/pago/fallido" element={<PublicRoute><PaymentResult type="failure" /></PublicRoute>} />
@@ -101,9 +109,11 @@ export default function App() {
           <Route path="/sobre-nosotros" element={<PublicRoute><AboutUs /></PublicRoute>} />
           <Route path="/como-comprar" element={<PublicRoute><HowToBuy /></PublicRoute>} />
           <Route path="/arrepentimiento" element={<PublicRoute><ReturnRequest /></PublicRoute>} />
+          <Route path="/favoritos"      element={<PublicRoute><Wishlist /></PublicRoute>} />
 
           {/* ── Admin ── */}
           <Route path="/admin/login" element={<AdminLogin />} />
+          {/* BadgeProvider envuelve solo las rutas admin para que los badges sean compartidos entre páginas */}
           <Route
             path="/admin"
             element={
@@ -204,6 +214,14 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/admin/carrusel/banner"
+            element={
+              <ProtectedRoute>
+                <AdminAnnouncementBanner />
+              </ProtectedRoute>
+            }
+          />
 
           <Route
             path="/admin/configuracion"
@@ -227,9 +245,11 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </CartProvider>
+      </WishlistProvider>
       </NotificationProvider>
       </CustomerAuthProvider>
     </AuthProvider>
     </SiteConfigProvider>
+    </HelmetProvider>
   );
 }

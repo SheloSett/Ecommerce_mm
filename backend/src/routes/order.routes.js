@@ -4,7 +4,7 @@ const {
   getMyOrders, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
-  applyCouponToOrder, createManualOrder,
+  applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,
 } = require("../controllers/order.controller");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 const { validateOrder } = require("../middleware/validate.middleware");
@@ -29,11 +29,15 @@ router.get("/my-quotes/:id", authMiddleware, customerMiddleware, getMyQuoteById)
 // IMPORTANTE: va antes de /:id para que /admin/manual no sea interpretado como un ID
 router.post("/admin/manual", authMiddleware, adminMiddleware, createManualOrder);
 
+// Admin: contadores de pendientes para badges del sidebar
+router.get("/badge-counts", authMiddleware, adminMiddleware, getBadgeCounts);
+
 // Admin: ver y gestionar órdenes
 router.get("/stats", authMiddleware, adminMiddleware, getStats);
 router.get("/metrics", authMiddleware, adminMiddleware, getMetrics);
 router.get("/", authMiddleware, adminMiddleware, getOrders);
 router.get("/:id", authMiddleware, adminMiddleware, getOrder);
+router.patch("/:id/seen", authMiddleware, adminMiddleware, markOrderSeen);
 router.patch("/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
 // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
 router.patch("/:id/fields", authMiddleware, adminMiddleware, updateOrderFields);

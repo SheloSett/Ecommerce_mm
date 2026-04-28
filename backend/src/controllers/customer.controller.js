@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // Registro público: cualquier visitante puede solicitar alta
 async function register(req, res) {
   try {
-    const { name, email, password, phone, cuit, documentType, company } = req.body;
+    const { name, email, password, phone, cuit, documentType } = req.body;
 
     if (!name || !email || !password || !phone || !cuit) {
       return res.status(400).json({ error: "Nombre, email, contraseña, teléfono y número de documento son requeridos" });
@@ -33,7 +33,7 @@ async function register(req, res) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const customer = await prisma.customer.create({
-      data: { name, email, password: hashedPassword, phone, cuit, documentType: documentType || null, company },
+      data: { name, email, password: hashedPassword, phone, cuit, documentType: documentType || null },
     });
 
     res.status(201).json({
@@ -86,8 +86,7 @@ async function customerLogin(req, res) {
         id: customer.id,
         name: customer.name,
         email: customer.email,
-        phone: customer.phone,   // incluido para que persista en localStorage al reloguearse
-        avatar: customer.avatar, // incluido para que persista en localStorage al reloguearse
+        phone: customer.phone,
         type: customer.type,
       },
     });
@@ -185,7 +184,7 @@ async function updateType(req, res) {
 async function updateCustomer(req, res) {
   try {
     const { id } = req.params;
-    const { name, phone, company, type, status, notes } = req.body;
+    const { email, name, phone, /* company, */ type, status, notes, password } = req.body; // company eliminado
 
     const customer = await prisma.customer.findUnique({ where: { id: parseInt(id) } });
     if (!customer) return res.status(404).json({ error: "Cliente no encontrado" });
@@ -196,15 +195,32 @@ async function updateCustomer(req, res) {
     if (type   && !validTypes.includes(type))     return res.status(400).json({ error: "Tipo inválido" });
     if (status && !validStatuses.includes(status)) return res.status(400).json({ error: "Estado inválido" });
 
+    // Si el admin cambia el email, verificar que no esté en uso por otro cliente
+    if (email && email.trim() && email.trim() !== customer.email) {
+      const taken = await prisma.customer.findUnique({ where: { email: email.trim() } });
+      if (taken) return res.status(409).json({ error: "Ese email ya está en uso por otro cliente" });
+    }
+
+    // Hashear la nueva contraseña solo si se proporcionó y tiene al menos 6 caracteres
+    let hashedPassword;
+    if (password && password.trim()) {
+      if (password.trim().length < 6) {
+        return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+      }
+      hashedPassword = await bcrypt.hash(password.trim(), 10);
+    }
+
     const updated = await prisma.customer.update({
       where: { id: parseInt(id) },
       data: {
-        ...(name    !== undefined && { name }),
-        ...(phone   !== undefined && { phone }),
-        ...(company !== undefined && { company }),
-        ...(type    !== undefined && { type }),
-        ...(status  !== undefined && { status }),
-        ...(notes   !== undefined && { notes }),
+        ...(email            !== undefined && email.trim() && { email: email.trim() }),
+        ...(name             !== undefined && { name }),
+        ...(phone            !== undefined && { phone }),
+        // ...(company          !== undefined && { company }),  // Eliminado
+        ...(type             !== undefined && { type }),
+        ...(status           !== undefined && { status }),
+        ...(notes            !== undefined && { notes }),
+        ...(hashedPassword   !== undefined && { password: hashedPassword }),
       },
     });
 
@@ -230,9 +246,7 @@ async function getMe(req, res) {
       email: customer.email,
       phone: customer.phone,
       cuit: customer.cuit,
-      company: customer.company,
       type: customer.type,
-      avatar: customer.avatar,
     });
   } catch (err) {
     console.error("GetMe error:", err);
@@ -270,7 +284,6 @@ async function updateMe(req, res) {
       cuit:         updated.cuit,
       documentType: updated.documentType,
       type:         updated.type,
-      avatar:       updated.avatar,
     });
   } catch (err) {
     console.error("UpdateMe error:", err);
@@ -329,29 +342,6 @@ async function changeEmail(req, res) {
   } catch (err) {
     console.error("ChangeEmail error:", err);
     res.status(500).json({ error: "Error al cambiar el email" });
-  }
-}
-
-// POST /api/customers/me/avatar - subir foto de perfil
-async function uploadAvatar(req, res) {
-  try {
-    const { id } = req.user;
-
-    if (!req.file) {
-      return res.status(400).json({ error: "No se proporcionó ninguna imagen" });
-    }
-
-    const avatarUrl = `/uploads/${req.file.filename}`;
-
-    const updated = await prisma.customer.update({
-      where: { id },
-      data: { avatar: avatarUrl },
-    });
-
-    res.json({ avatar: updated.avatar });
-  } catch (err) {
-    console.error("UploadAvatar error:", err);
-    res.status(500).json({ error: "Error al subir la imagen" });
   }
 }
 
@@ -510,7 +500,7 @@ async function rejectEmailChangeRequest(req, res) {
 // A diferencia del registro público, el cliente queda APPROVED inmediatamente.
 async function createCustomerAdmin(req, res) {
   try {
-    const { name, email, password, phone, cuit, documentType, company, type } = req.body;
+    const { name, email, password, phone, cuit, documentType, type } = req.body;
 
     if (!name || !email) {
       return res.status(400).json({ error: "Nombre y email son requeridos" });
@@ -539,7 +529,6 @@ async function createCustomerAdmin(req, res) {
         phone:        phone        || null,
         cuit:         cuit         || null,
         documentType: documentType && validDocTypes.includes(documentType) ? documentType : null,
-        company:      company      || null,
         type:         customerType,
         status:       "APPROVED", // El admin crea clientes ya aprobados
       },
@@ -560,12 +549,18 @@ async function createCustomerAdmin(req, res) {
   }
 }
 
+// PATCH /api/customers/:id/seen — marcar cliente como visto por el admin
+async function markCustomerSeen(req, res) {
+  try {
+    await prisma.customer.update({ where: { id: parseInt(req.params.id) }, data: { seenByAdmin: true } });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Error al marcar como visto" }); }
+}
+
 module.exports = {
   register, customerLogin, getAll, updateStatus, updateType, updateCustomer, deleteCustomer,
   getMe, updateMe,
-  // changeEmail, // REEMPLAZADO: el cambio de email ahora pasa por solicitud al admin
-  uploadAvatar,
   requestEmailChange, getMyEmailChangeRequest,
   getAllEmailChangeRequests, approveEmailChangeRequest, rejectEmailChangeRequest,
-  createCustomerAdmin,
+  createCustomerAdmin, markCustomerSeen,
 };

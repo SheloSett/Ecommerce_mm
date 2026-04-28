@@ -7,6 +7,19 @@ const DEFAULTS = {
   maintenance: "false",
   // maintenanceScheduledAt: ISO string de la fecha/hora programada (vacío = sin programar)
   maintenanceScheduledAt: "",
+  // Mini banner de anuncio que aparece debajo del navbar en todas las páginas públicas
+  announcementActive: "false",
+  announcementText: "",
+  announcementLinkText: "",
+  announcementUrl: "",
+  announcementBgColor: "blue",
+  announcementTextColor: "white",
+  // "none" = estático, "ltr" = izquierda→derecha, "rtl" = derecha→izquierda
+  announcementScrollDir: "ltr",
+  // Nuevo formato multi-banner: JSON array de objetos banner
+  announcementBanners: "",
+  // Compra mínima para clientes MAYORISTA (en ARS). "0" = sin mínimo
+  mayoristaMinimoCompra: "0",
 };
 
 // GET /api/settings — obtener toda la configuración (público, lo necesita el frontend)

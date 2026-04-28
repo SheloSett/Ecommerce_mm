@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { productsApi, getImageUrl } from "../../services/api";
+import * as XLSX from "xlsx";
 
 const formatPrice = (v) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v ?? 0);
@@ -12,10 +13,13 @@ export default function AdminFlyer() {
   const [search, setSearch]       = useState("");
   const [showModal, setShowModal] = useState(false);
   const [priceType, setPriceType] = useState("MINORISTA"); // MINORISTA | MAYORISTA
+  // "pdf" | "excel" — indica qué acción confirmar al cerrar el modal de precio
+  const [pendingAction, setPendingAction] = useState("pdf");
 
   useEffect(() => {
+    // getAllAdmin en vez de getAll para incluir atributos en el Excel
     productsApi
-      .getAll({ limit: 200 })
+      .getAllAdmin({ limit: 200 })
       .then((res) => setProducts(res.data.products || res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -270,10 +274,64 @@ export default function AdminFlyer() {
     setShowModal(false);
   };
 
+  const handleExcelExport = () => {
+    const selectedProducts = products.filter((p) => selected.has(p.id));
+    const isMayorista = priceType === "MAYORISTA";
+    const fmtPrice = (v) =>
+      v != null
+        ? "$ " + new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)
+        : "";
+
+    // Nombre del atributo en MAYÚSCULAS para que resalte; separados por " | "
+    const fmtAttrs = (p) =>
+      (p.attributes || [])
+        .map((a) => `${a.name.toUpperCase()}: ${(a.values || []).map((v) => v.value).join(" / ")}`)
+        .join("  |  ");
+
+    const rows = selectedProducts.map((p) => {
+      const price = isMayorista
+        ? (p.wholesaleSalePrice && p.wholesaleSalePrice < p.wholesalePrice ? p.wholesaleSalePrice : p.wholesalePrice) ?? p.price
+        : (p.salePrice && p.salePrice < p.price ? p.salePrice : p.price);
+      return {
+        Foto:       p.images?.[0] ? getImageUrl(p.images[0]) : "",
+        Título:     p.name,
+        SKU:        p.sku || "",
+        Precio:     fmtPrice(price),
+        Atributos:  fmtAttrs(p),
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    selectedProducts.forEach((p, i) => {
+      const url = p.images?.[0] ? getImageUrl(p.images[0]) : null;
+      if (!url) return;
+      const cellRef = `A${i + 2}`;
+      ws[cellRef] = { v: url, t: "s", l: { Target: url, Tooltip: "Ver imagen" } };
+    });
+
+    ws["!cols"] = [{ wch: 65 }, { wch: 40 }, { wch: 20 }, { wch: 18 }, { wch: 50 }];
+
+    // wrapText en columna E (Atributos) para que cada atributo se vea en su propia línea
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    for (let R = range.s.r + 1; R <= range.e.r; R++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: 4 })];
+      if (cell) cell.s = { alignment: { wrapText: true, vertical: "top" } };
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Productos");
+
+    const fecha = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `flyer_${priceType.toLowerCase()}_${fecha}.xlsx`, { cellStyles: true });
+
+    setShowModal(false);
+  };
+
   const allFilteredSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
 
   return (
-    <AdminLayout title="Generar flyer">
+    <AdminLayout title="Generar Flyer o Excel">
       <div className="space-y-4">
 
         {/* Barra superior */}
@@ -287,10 +345,18 @@ export default function AdminFlyer() {
           />
           {selected.size > 0 && (
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => { setPendingAction("pdf"); setShowModal(true); }}
               className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
             >
               🖨 Generar PDF ({selected.size} producto{selected.size !== 1 ? "s" : ""})
+            </button>
+          )}
+          {selected.size > 0 && (
+            <button
+              onClick={() => { setPendingAction("excel"); setShowModal(true); }}
+              className="px-5 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
+            >
+              📥 Exportar Excel
             </button>
           )}
           {selected.size > 0 && (
@@ -418,10 +484,14 @@ export default function AdminFlyer() {
                 Cancelar
               </button>
               <button
-                onClick={generatePDF}
-                className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700"
+                onClick={pendingAction === "excel" ? handleExcelExport : generatePDF}
+                className={`flex-1 py-2.5 text-white rounded-xl text-sm font-semibold ${
+                  pendingAction === "excel"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
               >
-                Generar PDF
+                {pendingAction === "excel" ? "📥 Exportar Excel" : "🖨 Generar PDF"}
               </button>
             </div>
           </div>

@@ -1,7 +1,9 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { BadgeProvider } from "../context/BadgeContext";
 
-// Redirige al login si el usuario no está autenticado
+// Redirige al login si el usuario no está autenticado.
+// Envuelve con BadgeProvider para que el contador de badges sea compartido entre todas las páginas admin.
 export default function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
 
@@ -17,5 +19,5 @@ export default function ProtectedRoute({ children }) {
     return <Navigate to="/admin/login" replace />;
   }
 
-  return children;
+  return <BadgeProvider>{children}</BadgeProvider>;
 }

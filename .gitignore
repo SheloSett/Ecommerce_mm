@@ -5,8 +5,4 @@
 node_modules
 .claude
 # Backups de base de datos (no versionar, pueden ser grandes)
-backups/*.sql
-backups/*.sql.gz
-backups/daily/
-backups/weekly/
-backups/monthly/
+backups/

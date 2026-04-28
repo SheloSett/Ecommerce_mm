@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
+import ProductCard from "../components/ProductCard";
+import SiteMeta from "../components/SiteMeta";
 import { productsApi, getImageUrl } from "../services/api";
+import { saveRecent } from "../utils/recentlyViewed";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import toast from "react-hot-toast";
@@ -26,8 +29,13 @@ export default function ProductDetail() {
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [selectedTier, setSelectedTier] = useState(null); // tier de descuento seleccionado
+  // Variantes: { [attrName]: value } — combinación seleccionada por el cliente
+  const [selectedAttrs, setSelectedAttrs] = useState({});
   const [videoOpen, setVideoOpen] = useState(false);
   const [slideDir, setSlideDir] = useState("next"); // "next" | "prev"
+  const [relatedProducts, setRelatedProducts] = useState([]);
+  const [zoom, setZoom] = useState(false);
+  const [zoomPos, setZoomPos] = useState({ x: 50, y: 50 });
   const { addItem, items } = useCart();
   const { customer } = useCustomerAuth();
   const autoplayRef = useRef(null);
@@ -78,25 +86,124 @@ export default function ProductDetail() {
   };
 
   useEffect(() => {
+    // Flag para cancelar actualizaciones de estado si el componente se desmonta o el id cambia
+    let cancelled = false;
+
+    setLoading(true);
+    setProduct(null);
+    setRelatedProducts([]);
+    setSelectedImage(0);
+    setSelectedAttrs({});
+    setQuantity(1);
+    setSelectedTier(null);
+
     productsApi
       .getById(id)
       .then((res) => {
+        if (cancelled) return;
         setProduct(res.data);
+        saveRecent(res.data);
+        // Cargar productos relacionados con jerarquía de categorías:
+        // 1) misma subcategoría → 2) categoría padre → 3) cualquier producto
+        const currentId = res.data.id;
+        const firstCat = res.data.categories?.[0];
+        const leafSlug   = firstCat?.slug;
+        const parentSlug = firstCat?.parent?.slug;
+        const visibleFor = customer?.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
+        const exclude = (list) => list.filter((p) => p.id !== currentId);
+        const merge   = (base, extra) => {
+          const ids = new Set(base.map((p) => p.id));
+          return [...base, ...extra.filter((p) => !ids.has(p.id))];
+        };
+
+        const fetchRelated = async () => {
+          let results = [];
+          // 1) Misma subcategoría (ej: "teclados")
+          if (leafSlug) {
+            const r = await productsApi.getAll({ limit: 5, visibleFor, category: leafSlug });
+            if (cancelled) return;
+            results = exclude(r.data.products ?? r.data ?? []);
+          }
+          // 2) Categoría padre (ej: "perifericos") — ya incluye todos los hijos en el backend
+          if (results.length < 4 && parentSlug) {
+            const r = await productsApi.getAll({ limit: 8, visibleFor, category: parentSlug });
+            if (cancelled) return;
+            results = merge(results, exclude(r.data.products ?? r.data ?? []));
+          }
+          // 3) Todo el catálogo como último recurso
+          if (results.length < 4) {
+            const r = await productsApi.getAll({ limit: 9, visibleFor });
+            if (cancelled) return;
+            results = merge(results, exclude(r.data.products ?? r.data ?? []));
+          }
+          if (!cancelled) setRelatedProducts(results.slice(0, 4));
+        };
+        fetchRelated().catch(() => {});
       })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      .catch((err) => { if (!cancelled) console.error(err); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [id]);
+
+  const navigate = useNavigate();
 
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 
-  // Cantidad ya en el carrito para este producto
-  const cartQty = items.find((i) => i.id === product?.id)?.quantity || 0;
-  // Los mayoristas no tienen límite de cantidad: pueden pedir más del stock disponible (cotización)
-  // Los minoristas están limitados al stock real restante
   const isMayorista = customer?.type === "MAYORISTA";
-  const availableStock = product?.stockUnlimited || isMayorista ? Infinity : Math.max(0, (product?.stock || 0) - cartQty);
-  const outOfStock = !product?.stockUnlimited && !isMayorista && availableStock === 0;
+
+  // Devuelve la variante cuya combination coincide con los atributos seleccionados
+  const hasVariants = product?.attributes?.length > 0;
+  const allAttrsSelected = hasVariants &&
+    product.attributes.every((a) => selectedAttrs[a.name]);
+
+  const activeVariant = (() => {
+    if (!hasVariants || !allAttrsSelected) return null;
+    return (product.variants || []).find((v) => {
+      // combination puede llegar como array o como string JSON (dependiendo del driver de Prisma)
+      const combo = Array.isArray(v.combination)
+        ? v.combination
+        : (typeof v.combination === "string" ? JSON.parse(v.combination) : null);
+      if (!combo) return false;
+      return combo.every((c) => selectedAttrs[c.name] === c.value);
+    }) || null;
+  })();
+
+  // Imagen de la variante activa — sobreescribe la galería del producto cuando existe
+  const variantImageUrl = activeVariant?.image ? getImageUrl(`/uploads/${activeVariant.image}`) : null;
+
+  // Precio efectivo: variante > precio base según tipo de cliente
+  const effectivePrice = (() => {
+    if (activeVariant?.price != null) return activeVariant.price;
+    if (!product) return 0;
+    if (isMayorista && product.wholesalePrice) {
+      if (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice)
+        return product.wholesaleSalePrice;
+      return product.wholesalePrice;
+    }
+    if (product.salePrice && product.salePrice < product.price) return product.salePrice;
+    return product.price;
+  })();
+
+  // Cantidad ya en el carrito para este producto/variante
+  // Con variantes: buscar por variantId para no bloquear otras variantes del mismo producto
+  const cartQty = (() => {
+    if (!product) return 0;
+    if (hasVariants && activeVariant) {
+      return items.find((i) => i.id === product.id && i.variantId === activeVariant.id)?.quantity || 0;
+    }
+    return items.find((i) => i.id === product.id)?.quantity || 0;
+  })();
+
+  // Si el producto tiene variantes, el stock lo maneja la variante activa
+  const activeStock     = activeVariant ? activeVariant.stock          : product?.stock;
+  const activeUnlimited = activeVariant ? activeVariant.stockUnlimited : product?.stockUnlimited;
+  const availableStock  = activeUnlimited || isMayorista ? Infinity : Math.max(0, (activeStock || 0) - cartQty);
+  // Sin stock si: tiene variantes pero ninguna seleccionada → no bloquear; si está seleccionada y sin stock → sí
+  const outOfStock = hasVariants
+    ? (allAttrsSelected && !activeUnlimited && !isMayorista && availableStock === 0)
+    : (!activeUnlimited && !isMayorista && availableStock === 0);
 
   // Devuelve el tier que corresponde a una cantidad dada (el de mayor minQty que no la supere)
   // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
@@ -119,15 +226,26 @@ export default function ProductDetail() {
 
   const handleAddToCart = async () => {
     if (!product) return;
+    if (!customer) {
+      navigate("/login");
+      return;
+    }
+    // MAYORISTA no ve variantes → no se les exige seleccionarlas
+    if (hasVariants && !isMayorista && !allAttrsSelected) {
+      toast.error("Seleccioná todas las opciones del producto");
+      return;
+    }
     if (outOfStock) return;
     const safeQty = isMayorista ? quantity : Math.min(quantity, availableStock);
-    // Solo aplicar precio del tier si la cantidad final sigue cumpliendo el mínimo requerido.
-    // Si el stock cap redujo la cantidad por debajo del minQty del tier, no aplicar el precio.
     const tierPrice = (selectedTier && safeQty >= parseInt(selectedTier.minQty))
       ? selectedTier.price
       : null;
-    await addItem(product, safeQty, tierPrice);
-    toast.success(`${safeQty}x "${product.name}" agregado al carrito`);
+    // Pasar la variante seleccionada al carrito para mostrarla en el resumen
+    const variantLabel = activeVariant
+      ? activeVariant.combination.map((c) => `${c.name}: ${c.value}`).join(" / ")
+      : null;
+    await addItem(product, safeQty, tierPrice, activeVariant?.id || null, variantLabel);
+    toast.success(`${safeQty}x "${product.name}"${variantLabel ? ` (${variantLabel})` : ""} agregado al carrito`);
   };
 
   if (loading) {
@@ -156,8 +274,17 @@ export default function ProductDetail() {
     );
   }
 
+  const SITE_URL = import.meta.env.VITE_SITE_URL || "https://igwtstore.com.ar";
+  const metaTitle = `${product.name} | IGWT Store`;
+  const metaDesc  = product.description
+    ? product.description.replace(/<[^>]+>/g, "").slice(0, 160)
+    : `Comprá ${product.name} en IGWT Store. Envíos a todo Argentina.`;
+  const metaImage = product.images?.[0] ? getImageUrl(product.images[0]) : undefined;
+  const metaUrl   = `${SITE_URL}/producto/${product.id}`;
+
   return (
     <div className="min-h-screen flex flex-col">
+      <SiteMeta title={metaTitle} description={metaDesc} image={metaImage} url={metaUrl} />
       <Navbar />
       <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
         {/* Breadcrumb */}
@@ -186,13 +313,43 @@ export default function ProductDetail() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
           {/* Galería de imágenes */}
           <div>
-            <div className="relative aspect-square rounded-2xl overflow-hidden bg-slate-100 mb-4 group">
-              {product.images?.[selectedImage] ? (
+            <div
+              className="relative aspect-square rounded-2xl overflow-hidden mb-4 group"
+              style={{ backgroundColor: "#ffffff", cursor: zoom ? "zoom-out" : "zoom-in" }}
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                setZoomPos({ x, y });
+                setZoom(true);
+              }}
+              onMouseLeave={() => setZoom(false)}
+            >
+              {/* Fondo blanco — el bg-white del contenedor padre cubre el espacio vacío */}
+              {variantImageUrl ? (
+                // Imagen específica de la variante seleccionada
+                <img
+                  key={variantImageUrl}
+                  src={variantImageUrl}
+                  alt={product.name}
+                  className="relative w-full h-full object-contain carousel-slide-next"
+                  style={{
+                    transform: zoom ? "scale(2.5)" : "scale(1)",
+                    transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
+                    transition: zoom ? "transform 0.08s ease-out" : "transform 0.25s ease-out",
+                  }}
+                />
+              ) : product.images?.[selectedImage] ? (
                 <img
                   key={selectedImage}
                   src={getImageUrl(product.images[selectedImage])}
                   alt={product.name}
-                  className={`w-full h-full object-cover ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
+                  className={`relative w-full h-full object-contain ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
+                  style={{
+                    transform: zoom ? "scale(2.5)" : "scale(1)",
+                    transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
+                    transition: zoom ? "transform 0.08s ease-out" : "transform 0.25s ease-out",
+                  }}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-7xl text-slate-300">
@@ -200,8 +357,8 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* Flechas — solo si hay más de 1 imagen */}
-              {totalImages > 1 && (
+              {/* Flechas — solo si hay más de 1 imagen Y no hay imagen de variante activa */}
+              {totalImages > 1 && !variantImageUrl && (
                 <>
                   <button
                     onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 15000); }}
@@ -236,7 +393,7 @@ export default function ProductDetail() {
                       selectedImage === i ? "border-blue-500" : "border-slate-200"
                     }`}
                   >
-                    <img src={getImageUrl(img)} alt="" className="w-full h-full object-cover" />
+                    <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain p-1" style={{ backgroundColor: "#ffffff" }} />
                   </button>
                 ))}
               </div>
@@ -409,12 +566,68 @@ export default function ProductDetail() {
             })()}
 
             {product.description && (
-              <p className="text-slate-600 leading-relaxed mb-6">{product.description}</p>
+              // dangerouslySetInnerHTML: la descripción puede contener HTML del editor rich text (TipTap)
+              // El contenido lo genera el admin autenticado, no usuarios externos — no hay riesgo XSS externo
+              <div
+                className="text-slate-600 leading-relaxed mb-6 prose prose-sm max-w-none"
+                dangerouslySetInnerHTML={{ __html: product.description }}
+              />
+            )}
+
+            {/* Selectores de variante — solo visibles para MINORISTA */}
+            {hasVariants && !isMayorista && (
+              <div className="space-y-4 mb-6">
+                {product.attributes.map((attr) => (
+                  <div key={attr.id}>
+                    <p className="text-sm font-semibold text-slate-700 mb-2">
+                      {attr.name}
+                      {selectedAttrs[attr.name] && (
+                        <span className="ml-2 text-blue-600 font-normal">{selectedAttrs[attr.name]}</span>
+                      )}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {attr.values.map((v) => {
+                        // Verificar si esta opción tiene stock (combinación disponible)
+                        const isSelected = selectedAttrs[attr.name] === v.value;
+                        // Una opción está agotada si todas las variantes que la incluyen están sin stock
+                        const relevantVariants = (product.variants || []).filter((pv) => {
+                          const combo = Array.isArray(pv.combination)
+                            ? pv.combination
+                            : (typeof pv.combination === "string" ? JSON.parse(pv.combination) : null);
+                          return combo?.some((c) => c.name === attr.name && c.value === v.value);
+                        });
+                        const soldOut = relevantVariants.length > 0 &&
+                          relevantVariants.every((pv) => !pv.stockUnlimited && pv.stock === 0);
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() => !soldOut && setSelectedAttrs((prev) => ({ ...prev, [attr.name]: v.value }))}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                              isSelected
+                                ? "border-blue-600 bg-blue-50 text-blue-700"
+                                : soldOut
+                                  ? "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed line-through"
+                                  : "border-slate-200 hover:border-blue-400 text-slate-700"
+                            }`}
+                          >
+                            {v.value}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {!allAttrsSelected && (
+                  <p className="text-xs text-amber-600 font-medium">⚠ Seleccioná todas las opciones para agregar al carrito</p>
+                )}
+              </div>
             )}
 
             {/* Stock */}
             <div className="flex items-center gap-2 mb-6">
-              {product.stock > 0 ? (
+              {/* Para variantes: el backend garantiza stock si aparece; para sin variantes: chequear product.stock */}
+              {(product.stockUnlimited || hasVariants || product.stock > 0) ? (
                 <>
                   <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
                   <span className="text-sm text-green-700 font-medium">
@@ -475,10 +688,10 @@ export default function ProductDetail() {
               disabled={outOfStock}
               className="btn-primary w-full text-base py-4 disabled:opacity-50"
             >
-              {product.stock === 0
-                ? "Sin stock disponible"
+              {!customer
+                ? "Iniciar sesión para comprar"
                 : outOfStock
-                  ? "Máximo agregado al carrito"
+                  ? "Sin stock disponible"
                   : "🛒 Agregar al carrito"}
             </button>
 
@@ -500,6 +713,18 @@ export default function ProductDetail() {
           </div>
         </div>
       </main>
+
+      {/* Productos relacionados */}
+      {relatedProducts.length > 0 && (
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+          <h2 className="text-xl font-bold text-slate-800 mb-5">También te puede interesar</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {relatedProducts.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Modal de video de YouTube */}
       {videoOpen && (

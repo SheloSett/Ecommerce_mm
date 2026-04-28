@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import AdminLayout from "../../components/AdminLayout";
-import { customersApi, mayoristaRequestsApi, cartsApi } from "../../services/api";
+import { customersApi, mayoristaRequestsApi, cartsApi, couponsApi } from "../../services/api";
+import { useBadges } from "../../context/BadgeContext";
 
 // Badges de estado
 const STATUS_BADGE = {
@@ -26,6 +27,7 @@ const CUSTOMER_TABS = [
 ];
 
 export default function AdminCustomers() {
+  const { decrementBadge } = useBadges();
   const [searchParams] = useSearchParams();
   // El tab activo viene de la URL (?tab=mayorista | ?tab=carts | vacío = lista clientes)
   const mainTab = searchParams.get("tab") || "";
@@ -93,6 +95,14 @@ export default function AdminCustomers() {
   const [loadingCarts, setLoadingCarts] = useState(false);
   const [expandedCart, setExpandedCart] = useState(null);    // id del carrito expandido
   const [confirmClear, setConfirmClear] = useState(null);    // id del carrito pendiente de confirmar limpiar
+
+  // Modal de recordatorio de carrito abandonado
+  const [reminderModal, setReminderModal] = useState(null); // null | { cart }
+  const [reminderSending, setReminderSending] = useState(false);
+  const [couponEnabled, setCouponEnabled] = useState(false);
+  const [couponType, setCouponType] = useState("PERCENTAGE");
+  const [couponValue, setCouponValue] = useState("");
+  const [couponDays, setCouponDays] = useState("7");
 
   // Modal para crear cliente manualmente
   const [newCustomerModal, setNewCustomerModal] = useState(false);
@@ -219,6 +229,55 @@ export default function AdminCustomers() {
     }
   };
 
+  const handleSendReminder = async () => {
+    if (!reminderModal) return;
+    const { cart } = reminderModal;
+    setReminderSending(true);
+    try {
+      let couponCode = null;
+      let couponDescription = null;
+
+      if (couponEnabled) {
+        if (!couponValue || parseFloat(couponValue) <= 0) {
+          toast.error("Ingresá un valor de descuento válido");
+          setReminderSending(false);
+          return;
+        }
+        const code = `CART-${cart.customer.id}-${Date.now().toString(36).toUpperCase()}`;
+        const expiresAt = couponDays
+          ? new Date(Date.now() + parseInt(couponDays) * 24 * 60 * 60 * 1000).toISOString()
+          : null;
+        const discountVal = parseFloat(couponValue);
+        await couponsApi.create({
+          code,
+          discountType: couponType,
+          discountValue: discountVal,
+          customerId: cart.customer.id,
+          expiresAt,
+          active: true,
+          maxUses: 1,
+          maxUsesPerCustomer: 1,
+          description: `Descuento carrito abandonado — ${couponType === "PERCENTAGE" ? `${discountVal}%` : `$${discountVal.toLocaleString("es-AR")}`}`,
+        });
+        couponCode = code;
+        couponDescription = couponType === "PERCENTAGE"
+          ? `${discountVal}% de descuento en tu próxima compra${couponDays ? ` (válido por ${couponDays} días)` : ""}`
+          : `$${discountVal.toLocaleString("es-AR")} de descuento en tu próxima compra${couponDays ? ` (válido por ${couponDays} días)` : ""}`;
+      }
+
+      await cartsApi.sendReminder(cart.customer.id, couponCode, couponDescription);
+      toast.success(`Recordatorio enviado a ${cart.customer.email}`);
+      setReminderModal(null);
+      setCouponEnabled(false);
+      setCouponValue("");
+      setCouponDays("7");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al enviar recordatorio");
+    } finally {
+      setReminderSending(false);
+    }
+  };
+
   const handleApproveRequest = async (req) => {
     try {
       await mayoristaRequestsApi.approve(req.id);
@@ -248,6 +307,10 @@ export default function AdminCustomers() {
   const handleApprove = async (customer) => {
     try {
       await customersApi.updateStatus(customer.id, "APPROVED");
+      if (!customer.seenByAdmin) {
+        customersApi.markSeen(customer.id).catch(() => {});
+        decrementBadge("clientes");
+      }
       toast.success(`${customer.name} aprobado`);
       fetchCustomers();
     } catch {
@@ -259,6 +322,10 @@ export default function AdminCustomers() {
   const openRejectModal = (customer) => {
     setNotesModal({ customer });
     setNotesText("");
+    if (!customer.seenByAdmin) {
+      customersApi.markSeen(customer.id).catch(() => {});
+      decrementBadge("clientes");
+    }
   };
 
   // Confirmar rechazo con nota opcional
@@ -277,13 +344,16 @@ export default function AdminCustomers() {
   // Abrir modal de edición (para APPROVED / REJECTED)
   const openEditModal = (customer) => {
     setEditModal({
-      id:      customer.id,
-      name:    customer.name,
-      phone:   customer.phone    || "",
-      company: customer.company  || "",
-      type:    customer.type,
-      status:  customer.status,
-      notes:   customer.notes    || "",
+      id:           customer.id,
+      email:        customer.email,       // solo lectura, para mostrar al admin
+      name:         customer.name,
+      phone:        customer.phone    || "",
+      // company:      customer.company  || "",  // Eliminado: campo removido del schema
+      type:         customer.type,
+      status:       customer.status,
+      notes:        customer.notes    || "",
+      password:     "",          // nueva contraseña (vacío = no cambiar)
+      showPassword: false,       // toggle mostrar/ocultar
     });
   };
 
@@ -291,19 +361,25 @@ export default function AdminCustomers() {
   const handleSaveEdit = async () => {
     if (!editModal) return;
     try {
-      await customersApi.update(editModal.id, {
+      const payload = {
+        email:   editModal.email,
         name:    editModal.name,
         phone:   editModal.phone,
-        company: editModal.company,
+        // company: editModal.company,  // Eliminado
         type:    editModal.type,
         status:  editModal.status,
         notes:   editModal.notes,
-      });
+      };
+      // Solo enviar password si el admin escribió algo
+      if (editModal.password && editModal.password.trim()) {
+        payload.password = editModal.password.trim();
+      }
+      await customersApi.update(editModal.id, payload);
       toast.success("Cliente actualizado");
       setEditModal(null);
       fetchCustomers();
-    } catch {
-      toast.error("Error al actualizar cliente");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al actualizar cliente");
     }
   };
 
@@ -457,14 +533,14 @@ export default function AdminCustomers() {
         />
         <button
           type="submit"
-          className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors"
+          className="bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors"
         >
           Buscar
         </button>
         <button
           type="button"
           onClick={() => setNewCustomerModal(true)}
-          className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-emerald-700 transition-colors whitespace-nowrap"
+          className="bg-secondary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-secondary-700 transition-colors whitespace-nowrap"
         >
           + Nuevo cliente
         </button>
@@ -482,7 +558,7 @@ export default function AdminCustomers() {
               <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-500 text-xs uppercase tracking-wide">
                 <th className="px-5 py-3.5">Cliente</th>
                 <th className="px-5 py-3.5">Teléfono</th>
-                <th className="px-5 py-3.5">Empresa</th>
+                {/* <th className="px-5 py-3.5">Empresa</th> — Eliminada: campo removido del schema */}
                 <th className="px-5 py-3.5">Tipo</th>
                 <th className="px-5 py-3.5">Estado</th>
                 <th className="px-5 py-3.5">Fecha</th>
@@ -507,8 +583,8 @@ export default function AdminCustomers() {
                     {/* Teléfono */}
                     <td className="px-5 py-4 text-slate-600">{c.phone || "—"}</td>
 
-                    {/* Empresa */}
-                    <td className="px-5 py-4 text-slate-600">{c.company || "—"}</td>
+                    {/* Empresa — Eliminada: campo removido del schema */}
+                    {/* <td className="px-5 py-4 text-slate-600">{c.company || "—"}</td> */}
 
                     {/* Tipo: solo badge estático, editable desde el modal */}
                     <td className="px-5 py-4">
@@ -612,13 +688,14 @@ export default function AdminCustomers() {
             <h3 className="text-lg font-bold text-slate-800 mb-4">Editar cliente</h3>
 
             <div className="grid grid-cols-2 gap-4 mb-4">
-              {/* Nombre */}
+              {/* Email — campo principal, editable por el admin directamente */}
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-slate-600 mb-1">Nombre</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
                 <input
-                  type="text"
-                  value={editModal.name}
-                  onChange={(e) => setEditModal({ ...editModal, name: e.target.value })}
+                  type="email"
+                  value={editModal.email}
+                  onChange={(e) => setEditModal({ ...editModal, email: e.target.value })}
+                  autoComplete="off"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -630,32 +707,21 @@ export default function AdminCustomers() {
                   type="text"
                   value={editModal.phone}
                   onChange={(e) => setEditModal({ ...editModal, phone: e.target.value })}
+                  autoComplete="off"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              {/* Empresa */}
+              {/* Nombre — campo secundario */}
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Empresa</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Nombre</label>
                 <input
                   type="text"
-                  value={editModal.company}
-                  onChange={(e) => setEditModal({ ...editModal, company: e.target.value })}
+                  value={editModal.name}
+                  onChange={(e) => setEditModal({ ...editModal, name: e.target.value })}
+                  autoComplete="off"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-              </div>
-
-              {/* Tipo */}
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Tipo</label>
-                <select
-                  value={editModal.type}
-                  onChange={(e) => setEditModal({ ...editModal, type: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="MAYORISTA">Mayorista</option>
-                  <option value="MINORISTA">Minorista</option>
-                </select>
               </div>
 
               {/* Estado */}
@@ -672,6 +738,19 @@ export default function AdminCustomers() {
                 </select>
               </div>
 
+              {/* Tipo */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Tipo</label>
+                <select
+                  value={editModal.type}
+                  onChange={(e) => setEditModal({ ...editModal, type: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="MAYORISTA">Mayorista</option>
+                  <option value="MINORISTA">Minorista</option>
+                </select>
+              </div>
+
               {/* Notas internas */}
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-slate-600 mb-1">Notas internas</label>
@@ -680,8 +759,45 @@ export default function AdminCustomers() {
                   onChange={(e) => setEditModal({ ...editModal, notes: e.target.value })}
                   rows={2}
                   placeholder="Notas internas (opcional)..."
+                  autoComplete="off"
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+              </div>
+
+              {/* Contraseña — bcrypt es un hash de un solo sentido, no se puede mostrar la original.
+                  El campo arranca vacío (••••••••): si escribís algo lo reemplaza, si lo dejás vacío no cambia. */}
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Contraseña
+                  <span className="ml-1 font-normal text-slate-400">(escribí para cambiarla, dejá vacío para mantenerla)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={editModal.showPassword ? "text" : "password"}
+                    value={editModal.password}
+                    onChange={(e) => setEditModal({ ...editModal, password: e.target.value })}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 pr-10 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEditModal({ ...editModal, showPassword: !editModal.showPassword })}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    tabIndex={-1}
+                  >
+                    {editModal.showPassword ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -885,12 +1001,26 @@ export default function AdminCustomers() {
                         </div>
                       </div>
 
-                      <div className="flex gap-2 flex-shrink-0 items-center">
+                      <div className="flex gap-2 flex-shrink-0 items-center flex-wrap justify-end">
                         <button
                           onClick={() => setExpandedCart(isExpanded ? null : cart.id)}
                           className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors"
                         >
                           {isExpanded ? "Ocultar" : "Ver items"}
+                        </button>
+
+                        {/* Botón recordatorio de carrito abandonado */}
+                        <button
+                          onClick={() => {
+                            setReminderModal({ cart });
+                            setCouponEnabled(false);
+                            setCouponValue("");
+                            setCouponDays("7");
+                            setCouponType("PERCENTAGE");
+                          }}
+                          className="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-200 transition-colors"
+                        >
+                          💌 Recordar carrito
                         </button>
 
                         {/* Confirmación inline sin confirm() del browser */}
@@ -996,6 +1126,112 @@ export default function AdminCustomers() {
             </div>
           )}
         </>
+      )}
+
+      {/* ══ Modal: Recordatorio de carrito abandonado ══ */}
+      {reminderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <h2 className="font-bold text-slate-800 text-lg">💌 Recordatorio de carrito</h2>
+              <button onClick={() => setReminderModal(null)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              {/* Info del cliente */}
+              <div className="bg-slate-50 rounded-xl p-4">
+                <p className="font-semibold text-slate-800">{reminderModal.cart.customer.name}</p>
+                <p className="text-sm text-slate-500">{reminderModal.cart.customer.email}</p>
+                <div className="flex items-center gap-3 mt-2 text-sm text-slate-600">
+                  <span>🛒 {reminderModal.cart.items.reduce((s, i) => s + i.quantity, 0)} productos</span>
+                  <span className="font-semibold">
+                    $ {reminderModal.cart.items.reduce((s, i) => s + i.price * i.quantity, 0).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Toggle cupón */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setCouponEnabled((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
+                >
+                  <span className="text-sm font-medium text-slate-700">🎁 Incluir cupón de descuento</span>
+                  <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${couponEnabled ? "bg-indigo-500" : "bg-slate-300"}`}>
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${couponEnabled ? "translate-x-4" : "translate-x-1"}`} />
+                  </span>
+                </button>
+
+                {couponEnabled && (
+                  <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-3 bg-slate-50">
+                    {/* Tipo de descuento */}
+                    <div className="flex gap-2">
+                      {[
+                        { key: "PERCENTAGE", label: "% Porcentaje" },
+                        { key: "FIXED",      label: "$ Monto fijo" },
+                      ].map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => setCouponType(t.key)}
+                          className={`flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-all ${couponType === t.key ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-600"}`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                    {/* Valor y días */}
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-500 mb-1">
+                          {couponType === "PERCENTAGE" ? "Porcentaje (%)" : "Monto ($)"}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step={couponType === "PERCENTAGE" ? "1" : "100"}
+                          value={couponValue}
+                          onChange={(e) => setCouponValue(e.target.value)}
+                          placeholder={couponType === "PERCENTAGE" ? "ej: 10" : "ej: 2000"}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-500 mb-1">Vence en (días)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={couponDays}
+                          onChange={(e) => setCouponDays(e.target.value)}
+                          placeholder="ej: 7"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-3 px-6 pb-5">
+              <button
+                type="button"
+                onClick={() => setReminderModal(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSendReminder}
+                disabled={reminderSending}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {reminderSending ? "Enviando…" : "Enviar recordatorio"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ══ Modal: Nuevo Cliente ══ */}

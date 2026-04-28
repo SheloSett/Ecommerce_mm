@@ -63,35 +63,60 @@ const createPurchase = async (req, res) => {
 
       let productId = null;
 
-      // Si se ingresó un SKU, buscar si ya existe un producto con ese SKU
+      // Si se ingresó un SKU, buscar primero en productos y luego en variantes
       if (sku && sku.trim()) {
-        const existing = await prisma.product.findFirst({
-          where: { sku: sku.trim() },
+        const skuTrim = sku.trim();
+
+        // 1. Buscar por SKU de producto
+        const existingProduct = await prisma.product.findFirst({
+          where: { sku: skuTrim },
         });
 
-        if (existing) {
-          // Sumar el stock ingresado al stock actual
-          const oldStock = existing.stock;
+        if (existingProduct) {
+          // Sumar el stock del producto y recalcular costo promedio ponderado
+          const oldStock = existingProduct.stock;
           const newStock = oldStock + itemQty;
-
-          // Costo promedio ponderado:
-          // nuevoCosto = (costoAnterior * stockAnterior + costoNuevo * cantidadNueva) / stockTotal
-          const oldCost = existing.cost || 0;
-          const rawCost = newStock > 0
-            ? (oldCost * oldStock + itemCost * itemQty) / newStock
-            : itemCost;
-          // Redondear hacia arriba con 2 decimales
-          const newCost = Math.ceil(rawCost * 100) / 100;
+          const oldCost  = existingProduct.cost || 0;
+          const rawCost  = newStock > 0 ? (oldCost * oldStock + itemCost * itemQty) / newStock : itemCost;
+          const newCost  = Math.ceil(rawCost * 100) / 100;
 
           await prisma.product.update({
-            where: { id: existing.id },
-            data: {
-              stock: newStock,
-              cost:  newCost,
-            },
+            where: { id: existingProduct.id },
+            data: { stock: newStock, cost: newCost },
           });
 
-          productId = existing.id;
+          productId = existingProduct.id;
+        } else {
+          // 2. Buscar por SKU de variante
+          const existingVariant = await prisma.productVariant.findFirst({
+            where: { sku: skuTrim },
+            include: { product: { select: { id: true, cost: true } } },
+          });
+
+          if (existingVariant) {
+            // Sumar stock a la variante específica
+            const oldVariantStock = existingVariant.stock;
+            const newVariantStock = oldVariantStock + itemQty;
+
+            await prisma.productVariant.update({
+              where: { id: existingVariant.id },
+              data: { stock: newVariantStock },
+            });
+
+            // Actualizar costo promedio ponderado del producto padre
+            const oldCost = existingVariant.product.cost || 0;
+            const rawCost = newVariantStock > 0
+              ? (oldCost * oldVariantStock + itemCost * itemQty) / newVariantStock
+              : itemCost;
+            const newCost = Math.ceil(rawCost * 100) / 100;
+
+            await prisma.product.update({
+              where: { id: existingVariant.product.id },
+              data: { cost: newCost },
+            });
+
+            productId = existingVariant.product.id;
+          }
         }
       }
 

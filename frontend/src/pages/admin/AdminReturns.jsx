@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { returnsApi } from "../../services/api";
+import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 
 function formatARS(n) {
@@ -31,6 +32,7 @@ function StatusPill({ status }) {
 }
 
 export default function AdminReturns() {
+  const { decrementBadge } = useBadges();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [filterStatus, setFilterStatus] = useState(""); // "" = todos
@@ -170,7 +172,16 @@ export default function AdminReturns() {
                     <td className="px-5 py-3"><StatusPill status={r.status} /></td>
                     <td className="px-5 py-3 text-right">
                       <button
-                        onClick={() => { setSelected(r); setResolving(false); setAdminNotes(""); }}
+                        onClick={() => {
+                          setSelected(r);
+                          setResolving(false);
+                          setAdminNotes("");
+                          // Marcar como visto al abrir el detalle → actualiza badge instantáneo
+                          if (!r.seenByAdmin) {
+                            returnsApi.markSeen(r.id).catch(() => {});
+                            decrementBadge("devoluciones");
+                          }
+                        }}
                         className="text-blue-600 hover:underline text-xs font-medium"
                       >
                         Ver detalle

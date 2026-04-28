@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, attrs } = req.query;
 
     const where = {};
 
@@ -25,6 +25,23 @@ async function getProducts(req, res) {
       where.visibility = { in: ["AMBOS", visibleFor] };
     }
     // Si no se envía visibleFor, no se filtra (admin o legacy)
+
+    // Filtrado automático por stock: stock físico es único — mismo filtro para ambos canales.
+    // Sin variantes: requiere product.stock > 0. Con variantes: requiere alguna variante con stock.
+    if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { stockUnlimited: true },
+            // Sin variantes activas: verificar product.stock directo
+            { AND: [{ variants: { none: { active: true } } }, { stock: { gt: 0 } }] },
+            // Con variantes: al menos una variante activa con stock
+            { variants: { some: { active: true, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
+          ],
+        },
+      ];
+    }
 
     if (category) {
       // Buscar la categoría por slug e incluir sus subcategorías
@@ -47,7 +64,7 @@ async function getProducts(req, res) {
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
+        { sku:  { contains: search, mode: "insensitive" } },
       ];
     }
 
@@ -78,13 +95,36 @@ async function getProducts(req, res) {
       where.stock = { gt: 0, lte: 5 };
     }
 
+    // Filtrar por atributos de variante: attrs = JSON { "Color": ["Negro", "Rojo"], "Longitud": ["2m"] }
+    // AND entre atributos distintos, OR entre valores del mismo atributo
+    if (attrs) {
+      try {
+        const attrsObj = JSON.parse(attrs);
+        const attrConditions = Object.entries(attrsObj)
+          .filter(([, values]) => Array.isArray(values) && values.length > 0)
+          .map(([name, values]) => ({
+            attributes: { some: { name, values: { some: { value: { in: values } } } } },
+          }));
+        if (attrConditions.length > 0) {
+          where.AND = [...(where.AND || []), ...attrConditions];
+        }
+      } catch (e) {
+        // JSON inválido, se ignora
+      }
+    }
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
         // Antes: include: { category: { select: { id, name, slug } } }
-        include: { categories: { select: { id: true, name: true, slug: true } } },
+        include: {
+          categories: { select: { id: true, name: true, slug: true } },
+          // _count.variants: cuántas variantes activas tiene, para que el frontend
+          // muestre modal "seleccioná variantes" en lugar de agregar directo desde la card
+          _count: { select: { variants: { where: { active: true } } } },
+        },
         orderBy: { createdAt: "desc" },
         skip,
         take: parseInt(limit),
@@ -164,6 +204,16 @@ async function getProductsAdmin(req, res) {
           categories: {
             include: { parent: { select: { id: true, name: true } } },
           },
+          _count: { select: { variants: { where: { active: true } } } },
+          attributes: {
+            include: { values: { orderBy: { position: "asc" } } },
+            orderBy: { position: "asc" },
+          },
+          // Variantes con SKU: solo las que tienen SKU definido, para búsqueda en registro de compras
+          variants: {
+            where: { sku: { not: null } },
+            select: { id: true, sku: true, stock: true, stockUnlimited: true, combination: true },
+          },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -172,8 +222,43 @@ async function getProductsAdmin(req, res) {
       prisma.product.count({ where }),
     ]);
 
+    // Unidades vendidas por producto (solo órdenes APPROVED)
+    const productIds = products.map((p) => p.id);
+    let soldMap = {};
+    let variantStockMap = {};
+    if (productIds.length > 0) {
+      // Prisma no tiene @map en orderId/productId → columnas en DB son camelCase
+      const soldStats = await prisma.$queryRaw`
+        SELECT oi."productId", COALESCE(SUM(oi.quantity), 0)::int AS "totalSold"
+        FROM order_items oi
+        JOIN orders o ON oi."orderId" = o.id
+        WHERE o.status = 'APPROVED'
+          AND oi."productId" = ANY(${productIds})
+        GROUP BY oi."productId"
+      `;
+      soldStats.forEach((r) => { soldMap[r.productId] = r.totalSold; });
+
+      // Stock efectivo de variantes: si alguna es ilimitada → -1 (ilimitado), sino suma de stocks activos
+      const variantStockStats = await prisma.$queryRaw`
+        SELECT "productId",
+          CASE WHEN bool_or("stockUnlimited") THEN -1
+               ELSE COALESCE(SUM(stock), 0)::int
+          END AS "variantStock"
+        FROM product_variants
+        WHERE active = true
+          AND "productId" = ANY(${productIds})
+        GROUP BY "productId"
+      `;
+      variantStockStats.forEach((r) => { variantStockMap[r.productId] = r.variantStock; });
+    }
+
     res.json({
-      products,
+      products: products.map((p) => ({
+        ...p,
+        totalSold: soldMap[p.id] || 0,
+        // variantStockTotal: -1 = ilimitado, número = suma de stocks de variantes activas, null = sin variantes
+        variantStockTotal: variantStockMap[p.id] !== undefined ? variantStockMap[p.id] : null,
+      })),
       pagination: {
         total,
         page: parseInt(page),
@@ -195,7 +280,11 @@ async function getProduct(req, res) {
     const product = await prisma.product.findUnique({
       where: { id: parseInt(id) },
       // Antes: include: { category: true }
-      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
+      include: {
+        categories: { include: { parent: { select: { id: true, name: true, slug: true } } } },
+        attributes: { include: { values: { orderBy: { position: "asc" } } }, orderBy: { position: "asc" } },
+        variants:   { where: { active: true }, orderBy: { createdAt: "asc" } },
+      },
     });
 
     if (!product) {
@@ -259,7 +348,7 @@ async function enforceCarouselLimit(field, excludeId = null) {
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, weight, length, width, height, visibility } = req.body;
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, weight, length, width, height, visibility } = req.body;
     const priceTiers = parseTiers(priceTiersRaw);
     const wholesalePriceTiers = parseTiers(wholesalePriceTiersRaw);
     // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
@@ -319,6 +408,9 @@ async function createProduct(req, res) {
         featured: featured === "true" || featured === true,
         // onSale: marca el producto para la sección "Ofertas" de la home
         onSale: onSale === "true" || onSale === true,
+        hotSeller: hotSeller === "true" || hotSeller === true,
+        // En creación totalSold=0 → el threshold nunca se cumple de entrada
+        hotSellerThreshold: hotSellerThreshold ? parseInt(hotSellerThreshold) : null,
         visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : "AMBOS",
         priceTiers: priceTiers || undefined,
         wholesalePriceTiers: wholesalePriceTiers || undefined,
@@ -338,7 +430,7 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, active, keepImages, weight, length, width, height, visibility } = req.body;
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility } = req.body;
     // undefined → no tocar (allowUndefined=true); null/[] → borrar tiers
     const priceTiersUpdate = parseTiers(priceTiersRaw, true);
     const wholesalePriceTiersUpdate = parseTiers(wholesalePriceTiersRaw, true);
@@ -354,6 +446,11 @@ async function updateProduct(req, res) {
     if (!existing) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
+
+    // Para productos con variantes el stock es la suma de las variantes — no se edita directamente
+    const productHasActiveVariants = await prisma.productVariant.count({
+      where: { productId: parseInt(id), active: true },
+    }) > 0;
 
     // Validar que el costo no se borre si ya tenía uno (campo obligatorio)
     if (cost !== undefined && cost === "") {
@@ -414,8 +511,9 @@ async function updateProduct(req, res) {
         wholesalePrice: wholesalePrice !== undefined ? (wholesalePrice ? parseFloat(wholesalePrice) : null) : existing.wholesalePrice,
         wholesaleSalePrice: wholesaleSalePrice !== undefined ? (wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null) : existing.wholesaleSalePrice,
         minQuantity: minQuantity !== undefined ? parseInt(minQuantity) : existing.minQuantity,
-        stock: stock !== undefined ? parseInt(stock) : existing.stock,
-        stockUnlimited: stockUnlimited !== undefined ? (stockUnlimited === "true" || stockUnlimited === true) : existing.stockUnlimited,
+        // Si tiene variantes activas, el stock es la suma de las variantes — ignorar el campo stock del body
+        stock: (!productHasActiveVariants && stock !== undefined) ? parseInt(stock) : existing.stock,
+        stockUnlimited: (!productHasActiveVariants && stockUnlimited !== undefined) ? (stockUnlimited === "true" || stockUnlimited === true) : existing.stockUnlimited,
         stockBreak: stockBreak !== undefined ? (stockBreak ? parseInt(stockBreak) : null) : existing.stockBreak,
         sku: sku !== undefined ? (sku || null) : existing.sku,
         youtubeUrl: youtubeUrl !== undefined ? (youtubeUrl || null) : existing.youtubeUrl,
@@ -429,6 +527,27 @@ async function updateProduct(req, res) {
         featured: featured !== undefined ? (featured === "true" || featured === true) : existing.featured,
         // onSale: si viene en el body lo actualiza, sino conserva el valor actual
         onSale: onSale !== undefined ? (onSale === "true" || onSale === true) : existing.onSale,
+        // hotSellerThreshold: umbral de unidades vendidas para activar automáticamente el badge de fuego
+        hotSellerThreshold: hotSellerThreshold !== undefined
+          ? (hotSellerThreshold ? parseInt(hotSellerThreshold) : null)
+          : existing.hotSellerThreshold,
+        // hotSeller: manual override O auto-activado si totalSold >= hotSellerThreshold al guardar
+        hotSeller: await (async () => {
+          const newThreshold = hotSellerThreshold !== undefined
+            ? (hotSellerThreshold ? parseInt(hotSellerThreshold) : null)
+            : existing.hotSellerThreshold;
+          if (newThreshold != null) {
+            // Calcular totalSold actual para evaluar si ya supera el umbral
+            const [{ totalSold }] = await prisma.$queryRaw`
+              SELECT COALESCE(SUM(oi.quantity), 0)::int AS "totalSold"
+              FROM order_items oi JOIN orders o ON oi."orderId" = o.id
+              WHERE o.status = 'APPROVED' AND oi."productId" = ${parseInt(id)}
+            `;
+            return totalSold >= newThreshold;
+          }
+          // Sin threshold: usar el valor manual enviado o el existente
+          return hotSeller !== undefined ? (hotSeller === "true" || hotSeller === true) : existing.hotSeller;
+        })(),
         active: active !== undefined ? (active === "true" || active === true) : existing.active,
         visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : existing.visibility,
         ...(priceTiersUpdate !== undefined ? { priceTiers: priceTiersUpdate } : {}),
@@ -456,6 +575,11 @@ async function quickUpdateProduct(req, res) {
     if (!existing) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
+
+    // Para productos con variantes el stock es la suma de las variantes — no se edita directamente
+    const qHasActiveVariants = await prisma.productVariant.count({
+      where: { productId: parseInt(id), active: true },
+    }) > 0;
 
     const updateData = {};
 
@@ -485,7 +609,8 @@ async function quickUpdateProduct(req, res) {
     if (wholesalePrice !== undefined) updateData.wholesalePrice = wholesalePrice ? parseFloat(wholesalePrice) : null;
     if (wholesaleSalePrice !== undefined) updateData.wholesaleSalePrice = wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null;
     if (minQuantity !== undefined) updateData.minQuantity = parseInt(minQuantity) || 1;
-    if (stock !== undefined) {
+    // Para productos con variantes, el stock es la suma de las variantes — no se actualiza directamente
+    if (stock !== undefined && !qHasActiveVariants) {
       const newStock = parseInt(stock) || 0;
       updateData.stock = newStock;
       const isUnlimited = stockUnlimited !== undefined ? Boolean(stockUnlimited) : existing.stockUnlimited;
@@ -499,7 +624,7 @@ async function quickUpdateProduct(req, res) {
         }
       }
     }
-    if (stockUnlimited !== undefined) updateData.stockUnlimited = Boolean(stockUnlimited);
+    if (stockUnlimited !== undefined && !qHasActiveVariants) updateData.stockUnlimited = Boolean(stockUnlimited);
     if (active !== undefined) updateData.active = Boolean(active);
 
     const product = await prisma.product.update({
@@ -512,6 +637,10 @@ async function quickUpdateProduct(req, res) {
         },
       },
     });
+
+    if (stock !== undefined || stockUnlimited !== undefined) {
+      await syncProductVisibility(parseInt(id));
+    }
 
     res.json(product);
   } catch (err) {
@@ -547,6 +676,172 @@ async function deleteProduct(req, res) {
   }
 }
 
+// POST /api/products/bulk-price-adjust
+// Aplica un ajuste porcentual a los precios de todos los productos activos.
+// Body: { type: "MINORISTA" | "MAYORISTA" | "AMBOS", percent: number }
+// percent positivo = aumento, negativo = reducción. Ej: 10 = +10%, -5 = -5%.
+async function bulkPriceAdjust(req, res) {
+  try {
+    const { type, percent } = req.body;
+
+    if (!["MINORISTA", "MAYORISTA", "AMBOS"].includes(type)) {
+      return res.status(400).json({ error: "type debe ser MINORISTA, MAYORISTA o AMBOS" });
+    }
+    const pct = parseFloat(percent);
+    if (isNaN(pct) || pct === 0) {
+      return res.status(400).json({ error: "percent debe ser un número distinto de 0" });
+    }
+
+    const factor = 1 + pct / 100;
+    const round2 = (v) => Math.round(v * factor * 100) / 100;
+    const adjustTiers = (tiers) =>
+      Array.isArray(tiers)
+        ? tiers.map((t) => ({ ...t, price: Math.round(parseFloat(t.price) * factor * 100) / 100 }))
+        : tiers;
+
+    const products = await prisma.product.findMany({
+      select: {
+        id: true,
+        price: true,
+        salePrice: true,
+        wholesalePrice: true,
+        wholesaleSalePrice: true,
+        priceTiers: true,
+        wholesalePriceTiers: true,
+      },
+    });
+
+    const updates = products.map((p) => {
+      const data = {};
+      const applyMinorista = type === "MINORISTA" || type === "AMBOS";
+      const applyMayorista = type === "MAYORISTA" || type === "AMBOS";
+
+      if (applyMinorista) {
+        data.price     = round2(p.price);
+        if (p.salePrice != null)  data.salePrice  = round2(p.salePrice);
+        if (p.priceTiers)         data.priceTiers = adjustTiers(p.priceTiers);
+      }
+      if (applyMayorista) {
+        if (p.wholesalePrice != null)     data.wholesalePrice     = round2(p.wholesalePrice);
+        if (p.wholesaleSalePrice != null) data.wholesaleSalePrice = round2(p.wholesaleSalePrice);
+        if (p.wholesalePriceTiers)        data.wholesalePriceTiers = adjustTiers(p.wholesalePriceTiers);
+      }
+
+      return prisma.product.update({ where: { id: p.id }, data });
+    });
+
+    await prisma.$transaction(updates);
+
+    res.json({ ok: true, updated: products.length });
+  } catch (err) {
+    console.error("bulkPriceAdjust error:", err);
+    res.status(500).json({ error: "Error al ajustar precios" });
+  }
+}
+
+// GET /api/products/facets - Atributos únicos de los productos del conjunto actual (para filtros dinámicos)
+// Acepta los mismos filtros que getProducts (category, search, visibleFor, onSale, lowStock) pero devuelve
+// los atributos agregados en lugar de productos paginados.
+async function getProductFacets(req, res) {
+  try {
+    const { category, search, visibleFor, onSale, lowStock } = req.query;
+
+    const where = { active: true };
+
+    if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
+      where.visibility = { in: ["AMBOS", visibleFor] };
+    }
+
+    if (category) {
+      const cat = await prisma.category.findUnique({
+        where: { slug: category },
+        include: { children: { select: { id: true } } },
+      });
+      if (cat) {
+        const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
+        where.categories = { some: { id: { in: categoryIds } } };
+      } else {
+        where.categories = { every: { id: -1 }, some: {} };
+      }
+    }
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: "insensitive" } },
+        { sku:  { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    if (onSale === "true") {
+      if (visibleFor === "MAYORISTA") {
+        where.wholesaleSalePrice = { not: null };
+      } else {
+        where.salePrice = { not: null };
+      }
+    }
+
+    if (lowStock === "true") {
+      where.stockUnlimited = false;
+      where.stock = { gt: 0, lte: 5 };
+    }
+
+    const products = await prisma.product.findMany({
+      where,
+      select: {
+        attributes: {
+          select: {
+            name: true,
+            position: true,
+            values: { select: { value: true }, orderBy: { position: "asc" } },
+          },
+          orderBy: { position: "asc" },
+        },
+      },
+    });
+
+    // Agregar atributos únicos a través de todos los productos del conjunto
+    const facetMap = new Map(); // name -> { values: Set, position: number }
+    for (const product of products) {
+      for (const attr of product.attributes) {
+        if (!facetMap.has(attr.name)) {
+          facetMap.set(attr.name, { values: new Set(), position: attr.position });
+        }
+        for (const val of attr.values) {
+          facetMap.get(attr.name).values.add(val.value);
+        }
+      }
+    }
+
+    const facets = Array.from(facetMap.entries())
+      .sort((a, b) => a[1].position - b[1].position)
+      .map(([name, { values }]) => ({ name, values: Array.from(values) }));
+
+    res.json({ facets });
+  } catch (err) {
+    console.error("getProductFacets error:", err);
+    res.status(500).json({ error: "Error al obtener facetas" });
+  }
+}
+
+// ── Visibilidad automática según stock ───────────────────────────────────────
+// Para productos con variantes: activa/desactiva el producto según si hay stock en alguna variante.
+// Para productos sin variantes: el active lo gestiona directamente el cambio de product.stock.
+// Ya no toca el campo visibility (MAYORISTA/MINORISTA/AMBOS) — ese lo controla el admin.
+async function syncProductVisibility(productId, tx = prisma) {
+  const product = await tx.product.findUnique({
+    where: { id: productId },
+    include: { variants: { where: { active: true }, select: { stock: true, stockUnlimited: true } } },
+  });
+  if (!product || product.variants.length === 0) return;
+
+  const hasStock = product.variants.some((v) => v.stockUnlimited || v.stock > 0);
+  if (!hasStock && product.active) {
+    await tx.product.update({ where: { id: productId }, data: { active: false } });
+  } else if (hasStock && !product.active) {
+    await tx.product.update({ where: { id: productId }, data: { active: true } });
+  }
+}
+
 module.exports = {
   getProducts,
   getProductsAdmin,
@@ -555,4 +850,7 @@ module.exports = {
   updateProduct,
   quickUpdateProduct,
   deleteProduct,
+  bulkPriceAdjust,
+  getProductFacets,
+  syncProductVisibility,
 };

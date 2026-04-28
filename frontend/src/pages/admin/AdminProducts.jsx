@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { productsApi, categoriesApi, getImageUrl } from "../../services/api";
+import { productsApi, categoriesApi, variantsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
+import RichTextEditor from "../../components/RichTextEditor";
+import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
+import TierEditor from "../../components/admin/TierEditor";
+import * as XLSX from "xlsx";
 
 const EMPTY_FORM = {
   name: "",
@@ -32,6 +36,8 @@ const EMPTY_FORM = {
   featured: false,
   // onSale: marca el producto para la sección "Ofertas" de la home
   onSale: false,
+  hotSeller: false,
+  hotSellerThreshold: "",
   active: true,
   visibility: "AMBOS",
 };
@@ -61,8 +67,8 @@ function nameToSku(name) {
     .substring(0, 30);
 }
 
-// Editor de niveles de precio por cantidad (reutilizable para minoristas y mayoristas)
-function TierEditor({ label, tiers, fieldKey, setForm }) {
+// TierEditor movido a components/admin/TierEditor.jsx para compartirlo con AdminProductCreate
+/* function TierEditor({ label, tiers, fieldKey, setForm }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -156,7 +162,7 @@ function TierEditor({ label, tiers, fieldKey, setForm }) {
       </p>
     </div>
   );
-}
+} */
 
 export default function AdminProducts() {
   const navigate = useNavigate();
@@ -169,11 +175,18 @@ export default function AdminProducts() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportType, setExportType] = useState("MINORISTA");
+
+  const [showPriceModal, setShowPriceModal] = useState(false);
+  const [priceAdjust, setPriceAdjust] = useState({ type: "MINORISTA", direction: "aumento", percent: "" });
+  const [applyingPrice, setApplyingPrice] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [newImages, setNewImages] = useState([]);
   const [keepImages, setKeepImages] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [showVariants, setShowVariants] = useState(false);
   const [search, setSearch] = useState("");
 
   // Tab activa via searchParams: "" = todos, "sinstock" = sin stock
@@ -191,11 +204,20 @@ export default function AdminProducts() {
   const [quickEditValues, setQuickEditValues] = useState({});
   // IDs de productos guardando en edición rápida
   const [quickEditSaving, setQuickEditSaving] = useState(new Set());
+  // Variantes cargadas para quick edit { [productId]: [...variants] }
+  const [quickEditVariants, setQuickEditVariants] = useState({});
+  // Valores editados de variantes { [variantId]: { stock, stockUnlimited, price, sku } }
+  const [variantEditValues, setVariantEditValues] = useState({});
+  // IDs de variantes guardando
+  const [variantSaving, setVariantSaving] = useState(new Set());
   // ID del producto con el menú de tres puntos abierto
   const [openMenuId, setOpenMenuId] = useState(null);
 
   const fileInputRef = useRef();
   const menuRef = useRef();
+  // Guarda el precio antes de que el usuario empiece a editar el campo,
+  // para calcular el ratio de ajuste proporcional sobre los tiers al salir del campo.
+  const priceBeforeEditRef = useRef({});
 
   const fetchProducts = (searchTerm = "") => {
     setLoading(true);
@@ -267,10 +289,12 @@ export default function AdminProducts() {
     setForm(EMPTY_FORM);
     setNewImages([]);
     setKeepImages([]);
+    setShowVariants(false);
     setShowModal(true);
   };
 
   const openEdit = (product) => {
+    setShowVariants(false);
     setEditingProduct(product);
     setForm({
       name: product.name,
@@ -297,6 +321,8 @@ export default function AdminProducts() {
       categoryIds: product.categories?.map((c) => c.id.toString()) || [],
       featured: product.featured,
       onSale: product.onSale ?? false,
+      hotSeller: product.hotSeller ?? false,
+      hotSellerThreshold: product.hotSellerThreshold?.toString() || "",
       active: product.active,
       visibility: product.visibility || "AMBOS",
     });
@@ -355,6 +381,8 @@ export default function AdminProducts() {
       form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       formData.append("featured", form.featured);
       formData.append("onSale", form.onSale);
+      formData.append("hotSeller", form.hotSeller ?? false);
+      if (form.hotSellerThreshold) formData.append("hotSellerThreshold", form.hotSellerThreshold);
       formData.append("active", form.active);
       formData.append("visibility", form.visibility || "AMBOS");
 
@@ -379,6 +407,90 @@ export default function AdminProducts() {
     }
   };
 
+  const handleExport = () => {
+    const isMayorista = exportType === "MAYORISTA";
+    const fmtPrice = (v) =>
+      v != null
+        ? "$ " + new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)
+        : "";
+
+    // Nombre del atributo en MAYÚSCULAS para que resalte; separados por " | "
+    const fmtAttrs = (p) =>
+      (p.attributes || [])
+        .map((a) => `${a.name.toUpperCase()}: ${(a.values || []).map((v) => v.value).join(" / ")}`)
+        .join("  |  ");
+
+    // Construir filas sin la columna Foto (se agrega como hipervínculo manualmente)
+    const rows = products.map((p) => {
+      const price = isMayorista
+        ? (p.wholesaleSalePrice && p.wholesaleSalePrice < p.wholesalePrice ? p.wholesaleSalePrice : p.wholesalePrice) ?? p.price
+        : (p.salePrice && p.salePrice < p.price ? p.salePrice : p.price);
+
+      return {
+        Foto:      p.images?.[0] ? getImageUrl(p.images[0]) : "",
+        Título:    p.name,
+        SKU:       p.sku || "",
+        Precio:    fmtPrice(price),
+        Atributos: fmtAttrs(p),
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    // Convertir celdas de la columna Foto en hipervínculos clickeables
+    products.forEach((p, i) => {
+      const url = p.images?.[0] ? getImageUrl(p.images[0]) : null;
+      if (!url) return;
+      const cellRef = `A${i + 2}`; // fila 1 = encabezado
+      ws[cellRef] = { v: url, t: "s", l: { Target: url, Tooltip: "Ver imagen" } };
+    });
+
+    ws["!cols"] = [
+      { wch: 65 }, // Foto
+      { wch: 40 }, // Título
+      { wch: 20 }, // SKU
+      { wch: 18 }, // Precio
+      { wch: 50 }, // Atributos
+    ];
+
+    // wrapText en columna E (Atributos) para que cada atributo se vea en su propia línea
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    for (let R = range.s.r + 1; R <= range.e.r; R++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: 4 })];
+      if (cell) cell.s = { alignment: { wrapText: true, vertical: "top" } };
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Productos");
+
+    const fecha = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `productos_${exportType.toLowerCase()}_${fecha}.xlsx`, { cellStyles: true });
+
+    setShowExportModal(false);
+    toast.success("Excel exportado");
+  };
+
+  const handleBulkPriceAdjust = async () => {
+    const pct = parseFloat(priceAdjust.percent);
+    if (!pct || pct <= 0) { toast.error("Ingresá un porcentaje válido mayor a 0"); return; }
+    const finalPct = priceAdjust.direction === "reduccion" ? -pct : pct;
+    const label = priceAdjust.direction === "reduccion" ? `reducción del ${pct}%` : `aumento del ${pct}%`;
+    if (!confirm(`¿Aplicar ${label} a precios ${priceAdjust.type}? Esta acción modifica todos los productos.`)) return;
+
+    setApplyingPrice(true);
+    try {
+      const res = await productsApi.bulkPriceAdjust({ type: priceAdjust.type, percent: finalPct });
+      toast.success(`${label} aplicado a ${res.data.updated} productos`);
+      setShowPriceModal(false);
+      setPriceAdjust({ type: "MINORISTA", direction: "aumento", percent: "" });
+      fetchProducts(search);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al ajustar precios");
+    } finally {
+      setApplyingPrice(false);
+    }
+  };
+
   const handleDelete = async (product) => {
     setOpenMenuId(null);
     if (!confirm(`¿Eliminar "${product.name}"? Esta acción no se puede deshacer.`)) return;
@@ -394,14 +506,15 @@ export default function AdminProducts() {
   // Toggle del switch "Publicado" — actualiza el estado activo directamente.
   // Si el producto está sin stock (y no es ilimitado) no se puede publicar.
   const handleToggleActive = async (product) => {
-    const sinStock = !product.stockUnlimited && product.stock <= 0;
+    const { stock: es, unlimited: eu } = effectiveStock(product);
+    const sinStock = !eu && es <= 0;
     if (!product.active && sinStock) {
       toast.error("No se puede publicar un producto sin stock. Primero agregá stock.");
       return;
     }
     try {
       const updated = await productsApi.quickUpdate(product.id, { active: !product.active });
-      setProducts((prev) => prev.map((p) => (p.id === product.id ? updated.data : p)));
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, ...updated.data, variantStockTotal: p.variantStockTotal, _count: p._count } : p)));
       toast.success(updated.data.active ? "Producto publicado" : "Producto despublicado");
     } catch (err) {
       toast.error("Error al cambiar el estado del producto");
@@ -427,8 +540,29 @@ export default function AdminProducts() {
             minQuantity: product.minQuantity?.toString() || "1",
             stock: product.stock?.toString() || "0",
             stockUnlimited: product.stockUnlimited || false,
+            cost: product.cost?.toString() || "",
+            sku: product.sku || "",
           },
         }));
+        // Si el producto tiene variantes activas, cargarlas para mostrar una fila por variante
+        if ((product._count?.variants ?? 0) > 0 && !quickEditVariants[product.id]) {
+          variantsApi.getVariants(product.id).then((res) => {
+            const variants = res.data || [];
+            setQuickEditVariants((prev) => ({ ...prev, [product.id]: variants }));
+            // Inicializar valores editables por variante
+            const initVals = {};
+            variants.forEach((v) => {
+              initVals[v.id] = {
+                stock: v.stock?.toString() || "0",
+                stockUnlimited: v.stockUnlimited || false,
+                price: v.price?.toString() || "",
+                cost: v.cost?.toString() || "",
+                sku: v.sku || "",
+              };
+            });
+            setVariantEditValues((prev) => ({ ...prev, ...initVals }));
+          }).catch(() => {});
+        }
       }
       return next;
     });
@@ -473,8 +607,10 @@ export default function AdminProducts() {
         minQuantity: vals.minQuantity,
         stock: vals.stockUnlimited ? 0 : vals.stock,
         stockUnlimited: vals.stockUnlimited,
+        ...(vals.cost !== undefined && vals.cost !== "" ? { cost: vals.cost } : {}),
+        ...(vals.sku !== undefined && vals.sku !== "" ? { sku: vals.sku } : {}),
       });
-      setProducts((prev) => prev.map((p) => (p.id === product.id ? updated.data : p)));
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, ...updated.data, variantStockTotal: p.variantStockTotal, _count: p._count } : p)));
       toast.success("Cambios guardados");
     } catch (err) {
       toast.error("Error al guardar los cambios");
@@ -487,8 +623,52 @@ export default function AdminProducts() {
     }
   };
 
+  // Guardar una variante individual desde la edición rápida
+  const handleVariantQuickSave = async (variantId) => {
+    const vals = variantEditValues[variantId];
+    if (!vals) return;
+    setVariantSaving((prev) => new Set(prev).add(variantId));
+    try {
+      const fd = new FormData();
+      fd.append("stock", vals.stockUnlimited ? 0 : (vals.stock || 0));
+      fd.append("stockUnlimited", vals.stockUnlimited);
+      if (vals.price) fd.append("price", vals.price);
+      if (vals.sku)   fd.append("sku",   vals.sku);
+      if (vals.cost !== undefined && vals.cost !== "") fd.append("cost", vals.cost);
+      const res = await variantsApi.updateVariant(variantId, fd);
+      // Actualizar en cache local
+      setQuickEditVariants((prev) => {
+        const updated = {};
+        for (const pid in prev) {
+          updated[pid] = prev[pid].map((v) => v.id === variantId ? res.data : v);
+        }
+        return updated;
+      });
+      toast.success("Variante actualizada");
+    } catch {
+      toast.error("Error al guardar la variante");
+    } finally {
+      setVariantSaving((prev) => { const n = new Set(prev); n.delete(variantId); return n; });
+    }
+  };
+
+  const setVariantField = (variantId, field, value) =>
+    setVariantEditValues((prev) => ({ ...prev, [variantId]: { ...prev[variantId], [field]: value } }));
+
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+
+  // Stock efectivo para mostrar en la lista y decidir si está sin stock.
+  // Stock físico es uno solo: para productos sin variantes es product.stock,
+  // para productos con variantes es la suma de los stocks de las variantes (variantStockTotal).
+  const effectiveStock = (p) => {
+    const hasVariants = (p._count?.variants ?? 0) > 0 || p.variantStockTotal !== null;
+    if (!hasVariants) return { stock: p.stock, unlimited: p.stockUnlimited };
+    // Con variantes: usar variantStockTotal (suma de variant.stock)
+    const unlimited = p.variantStockTotal === -1;
+    const stock     = unlimited ? 0 : (p.variantStockTotal ?? 0);
+    return { stock, unlimited };
+  };
 
   return (
     <AdminLayout title="Productos">
@@ -539,9 +719,27 @@ export default function AdminProducts() {
             />
             <button type="submit" className="btn-secondary px-4">🔍</button>
           </form>
-          <button onClick={() => navigate("/admin/productos/nuevo")} className="btn-primary">
-            + Nuevo producto
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowPriceModal(true)}
+              className="btn-secondary flex items-center gap-2"
+              title="Ajuste masivo de precios"
+            >
+              💲 Ajustar precios
+            </button>
+            {/* Botón "Exportar Excel" movido a la vista de Generar Flyer (AdminFlyer.jsx)
+                donde el admin selecciona productos específicos antes de exportar */}
+            {/* <button
+              onClick={() => setShowExportModal(true)}
+              className="btn-secondary flex items-center gap-2"
+              title="Exportar productos a Excel"
+            >
+              📥 Exportar Excel
+            </button> */}
+            <button onClick={() => navigate("/admin/productos/nuevo")} className="btn-primary">
+              + Nuevo producto
+            </button>
+          </div>
         </div>
 
         {/* Pestañas de filtro */}
@@ -551,7 +749,7 @@ export default function AdminProducts() {
             { key: "sinstock",     label: "Sin stock" },
             { key: "quiebrestock", label: "Quiebre de stock" },
           ];
-          const lowStockCount = products.filter(p => p.stockBreak != null && !p.stockUnlimited && p.stock <= p.stockBreak).length;
+          const lowStockCount = products.filter(p => { const { stock: es, unlimited: eu } = effectiveStock(p); return p.stockBreak != null && !eu && es <= p.stockBreak; }).length;
           return (
             <div className="flex gap-2 flex-wrap">
               {tabs.map(t => (
@@ -586,11 +784,12 @@ export default function AdminProducts() {
           </div>
         ) : (
           <div className="space-y-3">
-            {products.filter(p =>
-              isSinStock     ? (!p.stockUnlimited && p.stock <= 0) :
-              isQuiebreStock ? (p.stockBreak !== null && !p.stockUnlimited && p.stock <= p.stockBreak) :
-              true
-            ).map((p) => {
+            {products.filter(p => {
+              const { stock: es, unlimited: eu } = effectiveStock(p);
+              if (isSinStock)     return !eu && es <= 0;
+              if (isQuiebreStock) return p.stockBreak !== null && !eu && es <= p.stockBreak;
+              return true;
+            }).map((p) => {
               const img = p.images?.[0];
               // Antes: getCategoryBreadcrumb(p.category) — ahora M2M array
               const breadcrumb = getProductCategoryLabels(p.categories);
@@ -624,18 +823,33 @@ export default function AdminProducts() {
                         {p.sku && (
                           <span className="text-xs text-slate-400 font-mono">SKU: {p.sku}</span>
                         )}
-                        <span className="text-xs text-slate-500">
-                          Stock: {p.stockUnlimited ? "Ilimitado" : (p.stock === 0 ? (
-                            <span className="text-red-500">Sin stock</span>
-                          ) : p.stock <= 5 ? (
-                            <span className="text-orange-500">{p.stock} unid.</span>
-                          ) : (
-                            <span className="text-green-600">{p.stock} unid.</span>
-                          ))}
-                        </span>
-                        <span className="text-xs text-slate-400">
-                          Tenés 1 variante en este producto.
-                        </span>
+                        {(() => {
+                          const es = effectiveStock(p);
+                          const hasVariants = (p._count?.variants ?? 0) > 0;
+                          const stockNode = es.unlimited
+                            ? "Ilimitado"
+                            : es.stock === 0
+                              ? <span className="text-red-500">Sin stock</span>
+                              : es.stock <= 5
+                                ? <span className="text-orange-500">{es.stock} unid.</span>
+                                : <span className="text-green-600">{es.stock} unid.</span>;
+                          return (
+                            <span className="text-xs text-slate-500">
+                              Stock: {stockNode}
+                              {hasVariants && !es.unlimited && <span className="text-slate-400 ml-1">(variantes)</span>}
+                            </span>
+                          );
+                        })()}
+                        {(p._count?.variants ?? 0) > 0 && (
+                          <span className="text-xs text-slate-400">
+                            {p._count.variants} variante{p._count.variants !== 1 ? "s" : ""} activa{p._count.variants !== 1 ? "s" : ""}.
+                          </span>
+                        )}
+                        {p.totalSold > 0 && (
+                          <span className="text-xs text-emerald-600 font-medium">
+                            🛒 {p.totalSold} vendida{p.totalSold !== 1 ? "s" : ""}
+                          </span>
+                        )}
                         {p.featured && (
                           <span className="text-xs text-blue-600 font-medium">⭐ Destacado</span>
                         )}
@@ -646,7 +860,8 @@ export default function AdminProducts() {
                     <div className="flex items-center gap-3 flex-shrink-0">
                       {/* Toggle Publicado */}
                       {(() => {
-                        const sinStock = !p.stockUnlimited && p.stock <= 0;
+                        const { stock: es, unlimited: eu } = effectiveStock(p);
+                        const sinStock = !eu && es <= 0;
                         return (
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-500 hidden sm:block">
@@ -671,12 +886,27 @@ export default function AdminProducts() {
                       </div>
 
                       {/* Botón Editar producto (abre modal completo) */}
-                      <button
-                        onClick={() => openEdit(p)}
-                        className="px-4 py-2 rounded-lg bg-green-500 hover:bg-green-600 text-white text-sm font-semibold transition-colors hidden sm:block"
-                      >
-                        Editar producto
-                      </button>
+                      <div className="hidden sm:flex flex-col gap-1">
+                        <button
+                          onClick={() => openEdit(p)}
+                          className="px-4 py-2 rounded-lg bg-green-500 hover:bg-green-600 text-white text-sm font-semibold transition-colors"
+                        >
+                          Editar producto
+                        </button>
+                        {/* Guardar todo: aparece solo cuando la edición rápida está abierta */}
+                        {isQuickOpen && (
+                          <button
+                            onClick={async () => {
+                              const variants = quickEditVariants[p.id] || [];
+                              await Promise.all(variants.map((v) => handleVariantQuickSave(v.id)));
+                            }}
+                            disabled={isSaving}
+                            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                          >
+                            Guardar
+                          </button>
+                        )}
+                      </div>
 
                       {/* Menú tres puntos */}
                       <div className="relative" ref={openMenuId === p.id ? menuRef : null}>
@@ -727,16 +957,93 @@ export default function AdminProducts() {
                             <tr className="text-left text-xs text-slate-500 font-semibold uppercase tracking-wide border-b border-slate-200">
                               <th className="px-5 py-3 w-56">Variantes</th>
                               <th className="px-4 py-3 w-32">Stock</th>
+                              <th className="px-4 py-3 w-32">Costo</th>
                               <th className="px-4 py-3 w-36">Precio minorista</th>
-                              <th className="px-4 py-3 w-36">Oferta minorista</th>
-                              <th className="px-4 py-3 w-36">Precio mayorista</th>
-                              <th className="px-4 py-3 w-36">Oferta mayorista</th>
-                              <th className="px-4 py-3 w-28">Cantidad mín.</th>
-                              <th className="px-4 py-3"></th>
+                              {/* Para productos sin variantes se muestran columnas de precio adicionales */}
+                              {(p._count?.variants ?? 0) === 0 && <>
+                                <th className="px-4 py-3 w-36">Oferta minorista</th>
+                                <th className="px-4 py-3 w-36">Precio mayorista</th>
+                                <th className="px-4 py-3 w-36">Oferta mayorista</th>
+                              </>}
+                              <th className="px-4 py-3 w-32">SKU</th>
                             </tr>
                           </thead>
                           <tbody>
-                            <tr>
+                            {/* Si tiene variantes activas: una fila por variante */}
+                            {(p._count?.variants ?? 0) > 0 ? (
+                              quickEditVariants[p.id]
+                                ? quickEditVariants[p.id].map((v) => {
+                                    const vv = variantEditValues[v.id] || {};
+                                    const vSaving = variantSaving.has(v.id);
+                                    const variantImg = v.image || img;
+                                    const combinationLabel = Array.isArray(v.combination)
+                                      ? v.combination.map((c) => c.value).join(" / ")
+                                      : "—";
+                                    return (
+                                      <tr key={v.id} className="border-t border-slate-100">
+                                        {/* Variante: imagen + combinación + SKU */}
+                                        <td className="px-5 py-3">
+                                          <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 flex-shrink-0">
+                                              {variantImg
+                                                ? <img src={getImageUrl(variantImg)} alt={combinationLabel} className="w-full h-full object-cover" />
+                                                : <div className="w-full h-full flex items-center justify-center text-base">📦</div>}
+                                            </div>
+                                            <div>
+                                              <p className="text-slate-700 font-semibold text-xs">{combinationLabel}</p>
+                                              <p className="text-slate-400 text-xs">SKU: {vv.sku || "—"}</p>
+                                            </div>
+                                          </div>
+                                        </td>
+
+                                        {/* Stock variante */}
+                                        <td className="px-4 py-3">
+                                          {vv.stockUnlimited ? (
+                                            <div className="flex items-center gap-1">
+                                              <input type="text" value="∞" readOnly className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-400 text-center text-sm cursor-not-allowed" />
+                                              <button type="button" onClick={() => setVariantField(v.id, "stockUnlimited", false)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Limitar</button>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center gap-1">
+                                              <input type="number" min="0" value={vv.stock ?? ""} onChange={(e) => setVariantField(v.id, "stock", e.target.value)} className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-center" />
+                                              <button type="button" onClick={() => setVariantField(v.id, "stockUnlimited", true)} className="text-xs text-blue-600 hover:underline whitespace-nowrap" title="Stock ilimitado">∞</button>
+                                            </div>
+                                          )}
+                                        </td>
+
+                                        {/* Costo variante */}
+                                        <td className="px-4 py-3">
+                                          <div className="flex items-center gap-1">
+                                            <span className="text-slate-400 text-sm">$</span>
+                                            <input type="number" step="0.01" min="0" value={vv.cost ?? ""} onChange={(e) => setVariantField(v.id, "cost", e.target.value)} placeholder="Base" className="w-24 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                          </div>
+                                        </td>
+
+                                        {/* Precio override de variante (vacío = usa precio base del producto) */}
+                                        <td className="px-4 py-3">
+                                          <div className="flex items-center gap-1">
+                                            <span className="text-slate-400 text-sm">$</span>
+                                            <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                          </div>
+                                        </td>
+
+                                        {/* SKU variante */}
+                                        <td className="px-4 py-3">
+                                          <input type="text" value={vv.sku ?? ""} onChange={(e) => setVariantField(v.id, "sku", e.target.value)} placeholder="SKU" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                : (
+                                  <tr>
+                                    <td colSpan={8} className="px-5 py-4 text-center text-slate-400 text-sm">
+                                      Cargando variantes...
+                                    </td>
+                                  </tr>
+                                )
+                            ) : (
+                              /* Sin variantes: fila base del producto */
+                              <tr>
                               {/* Columna: variante (imagen + nombre + SKU) */}
                               <td className="px-5 py-4">
                                 <div className="flex items-center gap-3">
@@ -758,127 +1065,35 @@ export default function AdminProducts() {
                               <td className="px-4 py-4">
                                 {qv.stockUnlimited ? (
                                   <div className="flex items-center gap-1">
-                                    <input
-                                      type="text"
-                                      value="∞"
-                                      readOnly
-                                      className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-400 text-center text-sm cursor-not-allowed"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setQuickField(p.id, "stockUnlimited", false)}
-                                      className="text-xs text-blue-600 hover:underline whitespace-nowrap"
-                                      title="Activar stock limitado"
-                                    >
-                                      Limitar
-                                    </button>
+                                    <input type="text" value="∞" readOnly className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-400 text-center text-sm cursor-not-allowed" />
+                                    <button type="button" onClick={() => setQuickField(p.id, "stockUnlimited", false)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">Limitar</button>
                                   </div>
                                 ) : (
                                   <div className="flex items-center gap-1">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={qv.stock ?? ""}
-                                      onChange={(e) => setQuickField(p.id, "stock", e.target.value)}
-                                      className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-center"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setQuickField(p.id, "stockUnlimited", true)}
-                                      className="text-xs text-blue-600 hover:underline whitespace-nowrap"
-                                      title="Hacer stock ilimitado"
-                                    >
-                                      ∞
-                                    </button>
+                                    <input type="number" min="0" value={qv.stock ?? ""} onChange={(e) => setQuickField(p.id, "stock", e.target.value)} className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-center" />
+                                    <button type="button" onClick={() => setQuickField(p.id, "stockUnlimited", true)} className="text-xs text-blue-600 hover:underline whitespace-nowrap">∞</button>
                                   </div>
                                 )}
                               </td>
-
-                              {/* Columna: Precio */}
+                              {/* Costo base del producto */}
+                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {/* Precio minorista base del producto */}
+                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
+                              {/* Oferta minorista */}
+                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {/* Precio mayorista */}
+                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {/* Oferta mayorista */}
+                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {/* SKU base del producto */}
+                              <td className="px-4 py-4"><input type="text" value={qv.sku ?? ""} onChange={(e) => setQuickField(p.id, "sku", e.target.value)} placeholder="SKU" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></td>
                               <td className="px-4 py-4">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-500 text-sm">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={qv.price ?? ""}
-                                    onChange={(e) => setQuickField(p.id, "price", e.target.value)}
-                                    className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Columna: Oferta minorista (debe ser < precio minorista) */}
-                              <td className="px-4 py-4">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-500 text-sm">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={qv.salePrice ?? ""}
-                                    onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)}
-                                    placeholder="—"
-                                    className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300"
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Columna: Precio mayorista */}
-                              <td className="px-4 py-4">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-500 text-sm">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={qv.wholesalePrice ?? ""}
-                                    onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)}
-                                    placeholder="—"
-                                    className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300"
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Columna: Oferta mayorista (debe ser < precio mayorista) */}
-                              <td className="px-4 py-4">
-                                <div className="flex items-center gap-1">
-                                  <span className="text-slate-500 text-sm">$</span>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={qv.wholesaleSalePrice ?? ""}
-                                    onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)}
-                                    placeholder="—"
-                                    className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300"
-                                  />
-                                </div>
-                              </td>
-
-                              {/* Columna: Cantidad mínima */}
-                              <td className="px-4 py-4">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={qv.minQuantity ?? "1"}
-                                  onChange={(e) => setQuickField(p.id, "minQuantity", e.target.value)}
-                                  className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm text-center"
-                                />
-                              </td>
-
-                              {/* Botón Guardar */}
-                              <td className="px-4 py-4">
-                                <button
-                                  onClick={() => handleQuickSave(p)}
-                                  disabled={isSaving}
-                                  className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold transition-colors disabled:opacity-50 whitespace-nowrap"
-                                >
+                                <button onClick={() => handleQuickSave(p)} disabled={isSaving} className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold transition-colors disabled:opacity-50 whitespace-nowrap">
                                   {isSaving ? "..." : "Guardar"}
                                 </button>
                               </td>
                             </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
@@ -891,10 +1106,160 @@ export default function AdminProducts() {
         )}
       </div>
 
+      {/* Modal ajuste masivo de precios */}
+      {showPriceModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5">
+            <h2 className="text-lg font-bold text-slate-900">Ajuste masivo de precios</h2>
+            <p className="text-sm text-slate-500">Se aplicará a todos los productos, incluyendo precios de oferta y tiers.</p>
+
+            {/* Lista de precios */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Lista de precios</p>
+              <div className="flex gap-2">
+                {["MINORISTA", "MAYORISTA", "AMBOS"].map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setPriceAdjust((p) => ({ ...p, type: t }))}
+                    className={`flex-1 py-2 rounded-xl border-2 text-xs font-semibold transition-all ${
+                      priceAdjust.type === t
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-slate-200 text-slate-500 hover:border-slate-300"
+                    }`}
+                  >
+                    {t === "MINORISTA" ? "🛍 Minorista" : t === "MAYORISTA" ? "🏭 Mayorista" : "↕ Ambos"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tipo de ajuste */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Tipo de ajuste</p>
+              <div className="flex gap-2">
+                {[{ key: "aumento", label: "📈 Aumento" }, { key: "reduccion", label: "📉 Reducción" }].map((d) => (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => setPriceAdjust((p) => ({ ...p, direction: d.key }))}
+                    className={`flex-1 py-2 rounded-xl border-2 text-xs font-semibold transition-all ${
+                      priceAdjust.direction === d.key
+                        ? d.key === "aumento"
+                          ? "border-green-600 bg-green-50 text-green-700"
+                          : "border-red-500 bg-red-50 text-red-600"
+                        : "border-slate-200 text-slate-500 hover:border-slate-300"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Porcentaje */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Porcentaje</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  placeholder="Ej: 10"
+                  value={priceAdjust.percent}
+                  onChange={(e) => setPriceAdjust((p) => ({ ...p, percent: e.target.value }))}
+                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <span className="text-slate-500 font-semibold">%</span>
+              </div>
+              {priceAdjust.percent > 0 && (
+                <p className="text-xs mt-2 text-slate-500">
+                  Se aplicará un{" "}
+                  <span className={priceAdjust.direction === "aumento" ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
+                    {priceAdjust.direction} del {priceAdjust.percent}%
+                  </span>{" "}
+                  a todos los precios <strong>{priceAdjust.type.toLowerCase()}</strong>.
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowPriceModal(false)} className="btn-secondary flex-1">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkPriceAdjust}
+                disabled={applyingPrice || !priceAdjust.percent}
+                className={`flex-1 py-2 rounded-xl font-semibold text-sm text-white transition-all disabled:opacity-50 ${
+                  priceAdjust.direction === "aumento"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-red-500 hover:bg-red-600"
+                }`}
+              >
+                {applyingPrice ? "Aplicando…" : "Aplicar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal exportar Excel — movido a AdminFlyer.jsx junto con el botón de exportar.
+          Ahora el admin selecciona productos específicos en la vista de Generar Flyer
+          y desde ahí puede exportar a Excel o generar PDF. */}
+      {/* {showExportModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5">
+            <h2 className="text-lg font-bold text-slate-900">Exportar productos a Excel</h2>
+            <p className="text-sm text-slate-600">
+              Seleccioná qué lista de precios querés incluir en el archivo.
+            </p>
+
+            <div className="flex gap-3">
+              {["MINORISTA", "MAYORISTA"].map((tipo) => (
+                <button
+                  key={tipo}
+                  type="button"
+                  onClick={() => setExportType(tipo)}
+                  className={`flex-1 py-3 rounded-xl border-2 text-sm font-semibold transition-all ${
+                    exportType === tipo
+                      ? "border-blue-600 bg-blue-50 text-blue-700"
+                      : "border-slate-200 text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  {tipo === "MINORISTA" ? "🛍 Minorista" : "🏭 Mayorista"}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-xs text-slate-400">
+              El archivo incluirá: Foto (URL), Título, SKU y Precio {exportType.toLowerCase()}.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="btn-secondary flex-1"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="btn-primary flex-1"
+              >
+                📥 Descargar
+              </button>
+            </div>
+          </div>
+        </div>
+      )} */}
+
       {/* Modal editar producto (crear va a /admin/productos/nuevo) */}
       {showModal && editingProduct && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">
                 Editar producto
@@ -908,28 +1273,28 @@ export default function AdminProducts() {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              {/* Nombre */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Nombre *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="input"
-                  required
-                />
-              </div>
-
-              {/* SKU */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
-                <input
-                  type="text"
-                  value={form.sku}
-                  onChange={(e) => setForm({ ...form, sku: e.target.value })}
-                  placeholder={form.name ? nameToSku(form.name) : "Código interno del producto"}
-                  className="input"
-                />
+              {/* Nombre + SKU en la misma fila */}
+              <div className="grid grid-cols-[2fr_1fr] gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Título *</label>
+                  <input
+                    type="text"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    className="input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
+                  <input
+                    type="text"
+                    value={form.sku}
+                    onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                    placeholder={form.name ? nameToSku(form.name) : "Código interno"}
+                    className="input"
+                  />
+                </div>
               </div>
 
               {/* Video de YouTube */}
@@ -973,57 +1338,53 @@ export default function AdminProducts() {
                 </div>
               </div>
 
-              {/* Descripción */}
+              {/* Descripción — editor rich text */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Descripción</label>
-                <textarea
+                <RichTextEditor
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  className="input resize-none"
-                  rows={3}
-                  placeholder="Descripción del producto..."
+                  onChange={(html) => setForm((f) => ({ ...f, description: html }))}
                 />
               </div>
 
-              {/* Costo (interno) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Costo *
-                  <span className="ml-1 normal-case font-normal text-slate-400">— solo visible para el admin</span>
-                </label>
-                <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400">
-                  <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={form.cost}
-                    onChange={(e) => setForm({ ...form, cost: e.target.value })}
-                    placeholder="0.00"
-                    required
-                    className="flex-1 px-3 py-2 text-sm focus:outline-none"
-                  />
+              {/* Costo (interno) + Alícuota IVA en la misma fila */}
+              <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                    Costo * <span className="normal-case font-normal text-slate-400">— solo visible para el admin</span>
+                  </label>
+                  <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 h-9">
+                    <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.cost}
+                      onChange={(e) => setForm({ ...form, cost: e.target.value })}
+                      placeholder="0.00"
+                      required
+                      className="flex-1 px-3 py-2 text-sm focus:outline-none"
+                    />
+                  </div>
                 </div>
-              </div>
-
-              {/* Alícuota IVA del producto */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Alícuota IVA</label>
-                <div className="flex gap-3">
-                  {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setForm({ ...form, ivaRate: opt.value })}
-                      className={`flex-1 py-2 rounded-xl border-2 text-sm font-semibold transition-colors ${
-                        form.ivaRate === opt.value
-                          ? "border-blue-500 bg-blue-50 text-blue-700"
-                          : "border-slate-200 text-slate-600 hover:border-slate-300"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">IVA</label>
+                  <div className="flex gap-2">
+                    {[{ value: "21", label: "21%" }, { value: "10.5", label: "10,5%" }].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm({ ...form, ivaRate: opt.value })}
+                        className={`px-3 h-9 rounded-lg border-2 text-sm font-semibold transition-colors whitespace-nowrap ${
+                          form.ivaRate === opt.value
+                            ? "border-blue-500 bg-blue-50 text-blue-700"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1047,6 +1408,43 @@ export default function AdminProducts() {
                         min="0"
                         value={form[key]}
                         onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                        onFocus={() => {
+                          // Guardar el precio actual antes de que el usuario empiece a escribir
+                          if (key === "price" || key === "wholesalePrice") {
+                            priceBeforeEditRef.current[key] = form[key];
+                          }
+                        }}
+                        onBlur={() => {
+                          // Al salir del campo, ajustar los tiers proporcionalmente al cambio de precio
+                          if (key === "price") {
+                            const oldPrice = parseFloat(priceBeforeEditRef.current.price);
+                            const newPrice = parseFloat(form.price);
+                            if (oldPrice > 0 && newPrice > 0 && !isNaN(oldPrice) && !isNaN(newPrice) && oldPrice !== newPrice && form.priceTiers.length > 0) {
+                              const ratio = newPrice / oldPrice;
+                              setForm((f) => ({
+                                ...f,
+                                priceTiers: f.priceTiers.map((t) => ({
+                                  ...t,
+                                  price: t.price ? String(Math.round(parseFloat(t.price) * ratio * 100) / 100) : t.price,
+                                })),
+                              }));
+                            }
+                          }
+                          if (key === "wholesalePrice") {
+                            const oldPrice = parseFloat(priceBeforeEditRef.current.wholesalePrice);
+                            const newPrice = parseFloat(form.wholesalePrice);
+                            if (oldPrice > 0 && newPrice > 0 && !isNaN(oldPrice) && !isNaN(newPrice) && oldPrice !== newPrice && form.wholesalePriceTiers.length > 0) {
+                              const ratio = newPrice / oldPrice;
+                              setForm((f) => ({
+                                ...f,
+                                wholesalePriceTiers: f.wholesalePriceTiers.map((t) => ({
+                                  ...t,
+                                  price: t.price ? String(Math.round(parseFloat(t.price) * ratio * 100) / 100) : t.price,
+                                })),
+                              }));
+                            }
+                          }
+                        }}
                         placeholder="—"
                         required={required}
                         className="flex-1 px-2 py-2 text-sm focus:outline-none w-0"
@@ -1056,11 +1454,26 @@ export default function AdminProducts() {
                 ))}
               </div>
 
-              {/* Stock, Quiebre de stock y Cantidad mínima */}
+              {/* Stock:
+                  - Sin variantes → stock único editable para todos los clientes
+                  - Con variantes → read-only mostrando la suma de stocks de las variantes */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Stock</label>
-                  {form.stockUnlimited ? (
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Stock
+                  </label>
+                  {(editingProduct?._count?.variants ?? 0) > 0 ? (
+                    // Producto con variantes: stock es la suma de las variantes, no editable
+                    <>
+                      <div className="input bg-slate-100 text-slate-500 flex items-center gap-1 cursor-not-allowed select-none" title="Calculado automáticamente como suma de las variantes">
+                        {editingProduct.variantStockTotal === -1
+                          ? "∞ Ilimitado"
+                          : (editingProduct.variantStockTotal ?? 0)}
+                        <span className="text-slate-400 text-xs ml-1">unid.</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">Suma automática de las variantes — editá el stock por variante abajo.</p>
+                    </>
+                  ) : form.stockUnlimited ? (
                     <div className="input bg-slate-50 text-slate-400 flex items-center">∞ Ilimitado</div>
                   ) : (
                     <input
@@ -1071,15 +1484,17 @@ export default function AdminProducts() {
                       className="input"
                     />
                   )}
-                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.stockUnlimited}
-                      onChange={(e) => setForm({ ...form, stockUnlimited: e.target.checked })}
-                      className="w-4 h-4 accent-blue-600"
-                    />
-                    <span className="text-xs text-slate-500">Stock ilimitado</span>
-                  </label>
+                  {(editingProduct?._count?.variants ?? 0) === 0 && (
+                    <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.stockUnlimited}
+                        onChange={(e) => setForm({ ...form, stockUnlimited: e.target.checked })}
+                        className="w-4 h-4 accent-blue-600"
+                      />
+                      <span className="text-xs text-slate-500">Stock ilimitado</span>
+                    </label>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Quiebre de stock</label>
@@ -1104,6 +1519,22 @@ export default function AdminProducts() {
                   />
                 </div>
               </div>
+
+              {/* Descuentos por cantidad — movidos aquí para quedar junto a stock/precios */}
+              <TierEditor
+                label="Descuentos por cantidad — Minoristas"
+                tiers={form.priceTiers}
+                fieldKey="priceTiers"
+                setForm={setForm}
+              />
+
+              {/* Descuentos por cantidad — Mayoristas */}
+              <TierEditor
+                label="Descuentos por cantidad — Mayoristas"
+                tiers={form.wholesalePriceTiers}
+                fieldKey="wholesalePriceTiers"
+                setForm={setForm}
+              />
 
               {/* Categorías (M2M — múltiple selección con checkboxes) */}
               <div>
@@ -1227,6 +1658,45 @@ export default function AdminProducts() {
                     )}
                   </div>
                 </label>
+                {/* Más vendido con threshold */}
+                <div className={`flex flex-col gap-2 px-3 py-2.5 rounded-xl border-2 transition-colors ${form.hotSeller ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.hotSeller ?? false}
+                      onChange={(e) => setForm({ ...form, hotSeller: e.target.checked })}
+                      className="w-4 h-4 accent-red-500"
+                    />
+                    <span className="text-sm font-semibold text-slate-700">🔥 Más vendido</span>
+                  </label>
+                  {/* Input de threshold: si se define, el backend auto-activa hotSeller cuando totalSold >= threshold */}
+                  <div className="flex items-center gap-2 pl-6">
+                    <span className="text-xs text-slate-500 whitespace-nowrap">Auto-activar desde</span>
+                    <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-red-400 bg-white">
+                      <input
+                        type="number"
+                        min="1"
+                        value={form.hotSellerThreshold}
+                        onChange={(e) => setForm({ ...form, hotSellerThreshold: e.target.value })}
+                        placeholder="—"
+                        className="w-16 px-2 py-1 text-sm focus:outline-none text-center"
+                      />
+                      <span className="px-2 py-1 text-xs text-slate-400 border-l border-slate-200 bg-slate-50">unid.</span>
+                    </div>
+                    {form.hotSellerThreshold && (
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, hotSellerThreshold: "" })}
+                        className="text-slate-400 hover:text-slate-600 text-sm leading-none"
+                      >✕</button>
+                    )}
+                  </div>
+                  {form.hotSellerThreshold && (
+                    <p className="text-xs text-red-500 pl-6">
+                      🔥 se activa al llegar a {form.hotSellerThreshold}+ unidades vendidas
+                    </p>
+                  )}
+                </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1264,21 +1734,7 @@ export default function AdminProducts() {
                 </div>
               </div>
 
-              {/* Descuentos por cantidad — Minoristas (priceTiers) */}
-              <TierEditor
-                label="Descuentos por cantidad — Minoristas"
-                tiers={form.priceTiers}
-                fieldKey="priceTiers"
-                setForm={setForm}
-              />
-
-              {/* Descuentos por cantidad — Mayoristas (wholesalePriceTiers) */}
-              <TierEditor
-                label="Descuentos por cantidad — Mayoristas"
-                tiers={form.wholesalePriceTiers}
-                fieldKey="wholesalePriceTiers"
-                setForm={setForm}
-              />
+              {/* TierEditors movidos arriba, junto a stock/precios */}
 
               {/* Imágenes existentes (al editar) */}
               {keepImages.length > 0 && (
@@ -1329,6 +1785,40 @@ export default function AdminProducts() {
                   </p>
                 )}
               </div>
+
+              {/* Variantes — solo en modo edición (el producto ya tiene ID) */}
+              {editingProduct && (
+                <>
+                  {/* Aviso prominente: las variantes solo aplican a clientes MINORISTA */}
+                  <div className="flex items-start gap-3 bg-amber-50 border-2 border-amber-400 rounded-xl px-4 py-3">
+                    <span className="text-2xl flex-shrink-0">⚠️</span>
+                    <div>
+                      <p className="font-bold text-amber-800 text-sm uppercase tracking-wide">Solo para clientes MINORISTA</p>
+                      <p className="text-amber-700 text-xs mt-0.5">
+                        Las variantes (color, talla, etc.) <strong>solo son visibles para clientes minoristas</strong>. Los clientes mayoristas agregan el producto directo al carrito sin seleccionar variantes.
+                      </p>
+                    </div>
+                  </div>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowVariants((v) => !v)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-semibold text-slate-700"
+                  >
+                    <span>🎨 Variantes del producto</span>
+                    <span className="text-slate-400">{showVariants ? "▲" : "▼"}</span>
+                  </button>
+                  {showVariants && (
+                    <div className="p-4 border-t border-slate-200">
+                      <ProductVariantsEditor
+                        productId={editingProduct.id}
+                        basePrice={editingProduct.price}
+                      />
+                    </div>
+                  )}
+                </div>
+                </>
+              )}
 
               {/* Botones */}
               <div className="flex gap-3 pt-2">

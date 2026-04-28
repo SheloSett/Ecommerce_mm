@@ -899,6 +899,358 @@ async function sendReturnRequestRejected(toEmail, customerName, returnRequest) {
   }
 }
 
+// ─── Notificaciones de cambio de estado de pedido ───────────────────────────
+
+// Helper que genera el HTML base para notificaciones de estado (sin tabla de productos)
+function buildStatusNotifHtml({ orderId, title, subtitle, bodyHtml, footerNote }) {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#1e293b;padding:28px 40px;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;letter-spacing:2px;text-transform:uppercase;">IGWT Store</p>
+            <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;font-weight:700;">${title}</h1>
+            <p style="margin:4px 0 0;color:#64748b;font-size:13px;">Pedido #${orderId}</p>
+          </td>
+        </tr>
+
+        <!-- Subtitulo -->
+        <tr>
+          <td style="padding:24px 40px 0;text-align:center;">
+            <p style="margin:0;color:#475569;font-size:15px;line-height:1.6;">${subtitle}</p>
+          </td>
+        </tr>
+
+        <!-- Cuerpo -->
+        <tr>
+          <td style="padding:20px 40px;">
+            ${bodyHtml}
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:0 40px 32px;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.6;">${footerNote}</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+// Notificación de cambio de estado de PAGO (APPROVED / REJECTED / CANCELLED)
+// No se envía para cotizaciones — esas tienen su propio flujo de emails.
+async function sendOrderPaymentStatusEmail(order, newStatus) {
+  if (!order.customerEmail) return;
+  // Cotizaciones tienen emails propios (approveCotizacion / publishCotizacion)
+  if (order.paymentMethod === "COTIZACION") return;
+
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Estado pago pedido #${order.id} → ${newStatus}`);
+    return;
+  }
+
+  const configs = {
+    APPROVED: {
+      subject: `✅ Pago confirmado — Pedido #${order.id}`,
+      title:   "¡Pago confirmado!",
+      subtitle: `Hola ${order.customerName}, confirmamos el pago de tu pedido.`,
+      color:   "#16a34a",
+      icon:    "✅",
+      message: "Tu pedido está confirmado y en breve comenzamos a prepararlo. Te avisaremos cuando esté listo.",
+    },
+    REJECTED: {
+      subject: `❌ Pedido rechazado — #${order.id}`,
+      title:   "Pedido rechazado",
+      subtitle: `Hola ${order.customerName}, lamentamos informarte que tu pedido fue rechazado.`,
+      color:   "#dc2626",
+      icon:    "❌",
+      message: "Si tenés alguna consulta o creés que se trata de un error, por favor contactanos respondiendo este email.",
+    },
+    CANCELLED: {
+      subject: `🚫 Pedido cancelado — #${order.id}`,
+      title:   "Pedido cancelado",
+      subtitle: `Hola ${order.customerName}, tu pedido fue cancelado.`,
+      color:   "#64748b",
+      icon:    "🚫",
+      message: "Si cancelaste por error o necesitás hacer un nuevo pedido, podés volver a la tienda en cualquier momento.",
+    },
+  };
+
+  const cfg = configs[newStatus];
+  if (!cfg) return; // PENDING y QUOTE_APPROVED no generan email desde acá
+
+  const bodyHtml = `
+    <div style="background:${cfg.color}10;border:1px solid ${cfg.color}30;border-radius:12px;padding:20px;text-align:center;">
+      <p style="margin:0 0 8px;font-size:28px;">${cfg.icon}</p>
+      <p style="margin:0;color:#1e293b;font-size:15px;line-height:1.6;">${cfg.message}</p>
+    </div>`;
+
+  const footerNote = `Podés consultar el estado de tus pedidos iniciando sesión en la tienda.<br>
+    Si tenés alguna duda, escribinos a <a href="mailto:info@lsmarket.com.ar" style="color:#3b82f6;">info@lsmarket.com.ar</a>`;
+
+  const html = buildStatusNotifHtml({
+    orderId:  order.id,
+    title:    cfg.title,
+    subtitle: cfg.subtitle,
+    bodyHtml,
+    footerNote,
+  });
+
+  try {
+    await transporter.sendMail({
+      from:    `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to:      order.customerEmail,
+      subject: cfg.subject,
+      html,
+    });
+    console.log(`[EMAIL] Estado pago ${newStatus} enviado a ${order.customerEmail} (pedido #${order.id})`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendOrderPaymentStatusEmail:", err.message);
+  }
+}
+
+// Notificación de cambio de estado logístico (EN_PREPARACION / ENVIADO / ENTREGADO)
+// shippingMethod determina si mostrar "listo para retirar" o "en camino"
+async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
+  if (!order.customerEmail) return;
+
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Fulfillment pedido #${order.id} → ${newFulfillmentStatus}`);
+    return;
+  }
+
+  const isRetiro = order.shippingMethod !== "ENVIO";
+
+  const configs = {
+    EN_PREPARACION: {
+      subject: `🔧 Tu pedido está en preparación — #${order.id}`,
+      title:   "En preparación",
+      subtitle: `Hola ${order.customerName}, tu pedido ya está siendo preparado.`,
+      color:   "#d97706",
+      icon:    "🔧",
+      message: "Estamos preparando tu pedido con cuidado. Te avisaremos cuando esté " + (isRetiro ? "listo para retirar." : "en camino."),
+    },
+    ENVIADO: isRetiro ? {
+      subject: `📦 Tu pedido está listo para retirar — #${order.id}`,
+      title:   "¡Pedido listo!",
+      subtitle: `Hola ${order.customerName}, tu pedido está listo para retirar.`,
+      color:   "#2563eb",
+      icon:    "📦",
+      message: "Podés pasar a retirar tu pedido por nuestro local: <strong>Av. La Plata 744 Timbre 3, CABA</strong>.<br>Coordinamos el horario por WhatsApp al <strong>+54 11 5039-5166</strong>.",
+    } : {
+      subject: `🚚 Tu pedido está en camino — #${order.id}`,
+      title:   "¡En camino!",
+      subtitle: `Hola ${order.customerName}, tu pedido fue despachado.`,
+      color:   "#2563eb",
+      icon:    "🚚",
+      message: "Tu pedido ya está en camino. Te contactaremos para coordinar la entrega.",
+    },
+    ENTREGADO: {
+      subject: `✅ Pedido entregado — #${order.id}`,
+      title:   "¡Pedido entregado!",
+      subtitle: `Hola ${order.customerName}, tu pedido fue entregado. ¡Gracias por tu compra!`,
+      color:   "#16a34a",
+      icon:    "✅",
+      message: "Esperamos que estés muy conforme con tu compra. Si tenés algún inconveniente con el producto, no dudes en contactarnos.",
+    },
+  };
+
+  const cfg = configs[newFulfillmentStatus];
+  if (!cfg) return; // PENDIENTE no genera email
+
+  const bodyHtml = `
+    <div style="background:${cfg.color}10;border:1px solid ${cfg.color}30;border-radius:12px;padding:20px;text-align:center;">
+      <p style="margin:0 0 8px;font-size:28px;">${cfg.icon}</p>
+      <p style="margin:0;color:#1e293b;font-size:15px;line-height:1.6;">${cfg.message}</p>
+    </div>`;
+
+  const footerNote = `Podés consultar el estado de tus pedidos iniciando sesión en la tienda.<br>
+    Si tenés alguna duda, escribinos a <a href="mailto:info@lsmarket.com.ar" style="color:#3b82f6;">info@lsmarket.com.ar</a>`;
+
+  const html = buildStatusNotifHtml({
+    orderId:  order.id,
+    title:    cfg.title,
+    subtitle: cfg.subtitle,
+    bodyHtml,
+    footerNote,
+  });
+
+  try {
+    await transporter.sendMail({
+      from:    `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to:      order.customerEmail,
+      subject: cfg.subject,
+      html,
+    });
+    console.log(`[EMAIL] Fulfillment ${newFulfillmentStatus} enviado a ${order.customerEmail} (pedido #${order.id})`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendOrderFulfillmentEmail:", err.message);
+  }
+}
+
+// ─── Email de carrito abandonado ────────────────────────────────────────────
+
+async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponDescription, storeUrl } = {}) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Carrito abandonado para ${customer.email}`);
+    return;
+  }
+
+  const baseUrl = storeUrl || process.env.FRONTEND_URL || "http://localhost:3000";
+  const url = `${baseUrl}/carrito`;
+  const attachments = [];
+
+  const rowsHtml = cartItems.map((item, idx) => {
+    const imgPath = item.image ? resolveImagePath(item.image) : null;
+    const bg = idx % 2 === 0 ? "#f8fafc" : "#ffffff";
+    let imgCell;
+    if (imgPath) {
+      const cid = `cart-img-${idx}@igwt`;
+      attachments.push({ filename: path.basename(imgPath), path: imgPath, cid, contentType: imageMime(imgPath) });
+      imgCell = `<img src="cid:${cid}" width="48" height="48" style="border-radius:6px;object-fit:cover;display:block;">`;
+    } else {
+      imgCell = `<div style="width:48px;height:48px;background:#e2e8f0;border-radius:6px;text-align:center;line-height:48px;font-size:20px;">📦</div>`;
+    }
+    const variantHtml = item.variantLabel
+      ? `<p style="margin:2px 0 0;font-size:11px;color:#94a3b8;">${item.variantLabel}</p>`
+      : "";
+    return `
+      <tr style="background:${bg};">
+        <td style="padding:8px 12px;">${imgCell}</td>
+        <td style="padding:10px 12px;">
+          <p style="margin:0;font-weight:600;color:#1e293b;font-size:13px;">${item.name}</p>
+          ${variantHtml}
+        </td>
+        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatARS(item.price)}</td>
+        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:center;">${item.quantity}</td>
+        <td style="padding:10px 12px;font-weight:700;color:#1e293b;font-size:13px;text-align:right;">${formatARS(item.price * item.quantity)}</td>
+      </tr>`;
+  }).join("");
+
+  const total = cartItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+  const couponBlock = couponCode ? `
+    <tr>
+      <td style="padding:0 40px 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0"
+               style="background:#fffbeb;border-radius:10px;border-left:4px solid #f59e0b;">
+          <tr><td style="padding:16px 20px;">
+            <p style="margin:0 0 6px;font-size:11px;color:#b45309;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
+              🎁 Tu cupón de descuento exclusivo
+            </p>
+            <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#92400e;letter-spacing:3px;font-family:monospace;">
+              ${couponCode}
+            </p>
+            ${couponDescription ? `<p style="margin:0;font-size:13px;color:#78350f;">${couponDescription}</p>` : ""}
+            <p style="margin:6px 0 0;font-size:12px;color:#b45309;">Usá este código al finalizar tu compra.</p>
+          </td></tr>
+        </table>
+      </td>
+    </tr>` : "";
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:#1e293b;padding:28px 40px;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:12px;letter-spacing:2px;text-transform:uppercase;">IGWT Store</p>
+            <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;font-weight:700;">¿Olvidaste algo? 🛒</h1>
+            <p style="margin:4px 0 0;color:#64748b;font-size:13px;">Tu carrito te está esperando</p>
+          </td>
+        </tr>
+
+        <!-- Saludo -->
+        <tr>
+          <td style="padding:28px 40px 16px;">
+            <p style="margin:0;color:#334155;font-size:15px;">Hola <strong>${customer.name}</strong>,</p>
+            <p style="margin:8px 0 0;color:#64748b;font-size:14px;">
+              Notamos que dejaste productos en tu carrito. ¡Todavía están disponibles para vos!
+            </p>
+          </td>
+        </tr>
+
+        <!-- Tabla de items -->
+        <tr>
+          <td style="padding:0 40px 8px;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-radius:10px;overflow:hidden;">
+              <thead>
+                <tr style="background:#1e293b;">
+                  <th style="padding:10px 12px;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;width:60px;"></th>
+                  <th style="padding:10px 12px;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:left;font-weight:600;">Producto</th>
+                  <th style="padding:10px 12px;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:right;font-weight:600;">Precio</th>
+                  <th style="padding:10px 12px;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:center;font-weight:600;">Cant.</th>
+                  <th style="padding:10px 12px;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:right;font-weight:600;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+              <tfoot>
+                <tr style="background:#3b82f6;">
+                  <td colspan="4" style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:14px;">TOTAL</td>
+                  <td style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:15px;text-align:right;">${formatARS(total)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </td>
+        </tr>
+
+        ${couponBlock}
+
+        <!-- CTA -->
+        <tr>
+          <td style="padding:${couponCode ? "8px" : "24px"} 40px 32px;text-align:center;">
+            <a href="${url}" style="display:inline-block;background:#22c55e;color:#ffffff;font-weight:700;font-size:15px;padding:14px 36px;border-radius:12px;text-decoration:none;letter-spacing:0.5px;">
+              Ir a mi carrito →
+            </a>
+          </td>
+        </tr>
+
+        <!-- Pie -->
+        <tr>
+          <td style="background:#f8fafc;padding:16px 40px;border-top:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;">© IGWT Store · Gracias por elegirnos</p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  try {
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: customer.email,
+      subject: `¿Olvidaste algo? Tu carrito te está esperando 🛒`,
+      html,
+      attachments,
+    });
+    console.log(`[EMAIL] Recordatorio carrito enviado a ${customer.email}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendAbandonedCartEmail:", err.message);
+  }
+}
+
 module.exports = {
   sendMayoristaRequestEmail,
   sendMayoristaApprovedEmail,
@@ -910,4 +1262,7 @@ module.exports = {
   sendReturnRequestConfirmation,
   sendReturnRequestApproved,
   sendReturnRequestRejected,
+  sendOrderPaymentStatusEmail,
+  sendOrderFulfillmentEmail,
+  sendAbandonedCartEmail,
 };

@@ -14,7 +14,8 @@ const emptyRow = () => ({
   productName: "",
   cost: "",
   quantity: "",
-  matched: null, // producto existente encontrado por SKU
+  matched: null,        // producto existente encontrado por SKU
+  matchedVariant: null, // variante encontrada por SKU (si el SKU es de variante)
 });
 
 export default function AdminPurchases() {
@@ -46,20 +47,41 @@ export default function AdminPurchases() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Al salir del campo SKU, buscar si existe un producto con ese SKU
+  // Al salir del campo SKU, buscar en productos Y en sus variantes
   const handleSkuBlur = (rowId, sku) => {
     if (!sku.trim()) return;
-    const matched = products.find(
-      (p) => p.sku && p.sku.toLowerCase() === sku.trim().toLowerCase()
-    );
+    const skuLower = sku.trim().toLowerCase();
+
+    // 1. Buscar por SKU del producto
+    let matched = products.find((p) => p.sku && p.sku.toLowerCase() === skuLower) || null;
+    let matchedVariant = null;
+
+    // 2. Si no hay match de producto, buscar por SKU de variante
+    if (!matched) {
+      for (const p of products) {
+        const variant = (p.variants || []).find((v) => v.sku && v.sku.toLowerCase() === skuLower);
+        if (variant) {
+          matched = p;
+          matchedVariant = variant;
+          break;
+        }
+      }
+    }
+
     setRows((prev) =>
       prev.map((r) =>
         r._id === rowId
           ? {
               ...r,
               matched: matched || null,
-              // Si se encontró un match y el nombre está vacío, auto-completar
-              productName: matched && !r.productName.trim() ? matched.name : r.productName,
+              matchedVariant: matchedVariant || null,
+              // Auto-completar nombre: producto + variante si corresponde
+              productName:
+                matched && !r.productName.trim()
+                  ? matchedVariant
+                    ? `${matched.name} (${matchedVariant.combination.map((c) => c.value).join(" / ")})`
+                    : matched.name
+                  : r.productName,
             }
           : r
       )
@@ -73,8 +95,8 @@ export default function AdminPurchases() {
           ? {
               ...r,
               [field]: value,
-              // Resetear el match cuando el SKU cambia
-              ...(field === "sku" ? { matched: null } : {}),
+              // Resetear match cuando el SKU cambia
+              ...(field === "sku" ? { matched: null, matchedVariant: null } : {}),
             }
           : r
       )
@@ -208,8 +230,8 @@ export default function AdminPurchases() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
-                      <th className="px-3 py-2 text-left w-28">SKU</th>
-                      <th className="px-3 py-2 text-left">Nombre del producto</th>
+                      <th className="px-3 py-2 text-left w-52">SKU</th>
+                      <th className="px-3 py-2 text-left w-40">Nombre del producto</th>
                       <th className="px-3 py-2 text-right w-36">Costo unitario</th>
                       <th className="px-3 py-2 text-right w-28">Cantidad</th>
                       <th className="px-3 py-2 w-8"></th>
@@ -227,14 +249,18 @@ export default function AdminPurchases() {
                             placeholder="SKU"
                             className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
-                          {/* Badge de producto existente */}
-                          {row.matched && (
+                          {/* Badge según tipo de match */}
+                          {row.matched && row.matchedVariant && (
+                            <p className="text-xs text-emerald-600 font-semibold mt-0.5">
+                              ✓ variante · stock: {row.matchedVariant.stock}
+                            </p>
+                          )}
+                          {row.matched && !row.matchedVariant && (
                             <p className="text-xs text-emerald-600 font-semibold mt-0.5">
                               ✓ actualiza stock
                             </p>
                           )}
-                          {/* Aviso si el SKU se escribió pero no matcheó nada */}
-                          {row.sku && !row.matched && row.sku === row.sku && (
+                          {row.sku && !row.matched && (
                             <p className="text-xs text-blue-500 mt-0.5">nuevo producto</p>
                           )}
                         </td>

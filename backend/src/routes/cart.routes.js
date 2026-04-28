@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const { sendAbandonedCartEmail } = require("../services/email.service");
 
 const prisma = new PrismaClient();
 
@@ -125,7 +126,7 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
 router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) => {
   try {
     const customerId = req.user.id;
-    const { productId, name, price, image } = req.body;
+    const { productId, name, price, image, variantId, variantLabel } = req.body;
     const quantity = parseInt(req.body.quantity) || 1;
 
     // Upsert del carrito: crea si no existe, actualiza updatedAt si ya existe
@@ -135,10 +136,17 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
       update: { updatedAt: new Date() },
     });
 
-    // Si el producto ya está en el carrito, incrementar cantidad; si no, crear item
-    const existing = await prisma.cartItem.findFirst({
-      where: { cartId: cart.id, productId },
-    });
+    // Deduplicación: mismo producto + misma variante = mismo ítem (incrementar cantidad).
+    // Prioridad: variantId (más preciso) → variantLabel (para órdenes sin variantId guardado) → solo productId.
+    const dedupWhere = { cartId: cart.id, productId };
+    if (variantId) {
+      dedupWhere.variantId = parseInt(variantId);
+    } else if (variantLabel) {
+      dedupWhere.variantLabel = variantLabel;
+    } else {
+      dedupWhere.variantId = null;
+    }
+    const existing = await prisma.cartItem.findFirst({ where: dedupWhere });
 
     if (existing) {
       const newQty = existing.quantity + quantity;
@@ -167,14 +175,20 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
       });
     } else {
       await prisma.cartItem.create({
-        data: { cartId: cart.id, productId, quantity, name, price: parseFloat(price), image },
+        data: {
+          cartId: cart.id, productId, quantity, name,
+          price:        parseFloat(price),
+          image:        image || null,
+          variantId:    variantId    ? parseInt(variantId)    : null,
+          variantLabel: variantLabel || null,
+        },
       });
     }
 
-    // Retornar carrito completo con stock del producto para validaciones en el frontend
+    // Retornar carrito completo con stock e ivaRate del producto para validaciones en el frontend
     const updatedCart = await prisma.cart.findUnique({
       where:   { customerId },
-      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
+      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true, ivaRate: true } } } } },
     });
 
     res.json(updatedCart);
@@ -274,6 +288,36 @@ router.delete("/my", authMiddleware, customerMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Error al limpiar carrito propio:", err);
     res.status(500).json({ error: "Error al limpiar carrito" });
+  }
+});
+
+// POST /api/carts/:customerId/remind - admin: enviar email de carrito abandonado
+// Body: { couponCode?, couponDescription? }
+// IMPORTANTE: va ANTES de GET "/" y de DELETE "/:customerId" para que Express no confunda rutas
+router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const customerId = parseInt(req.params.customerId);
+    const { couponCode, couponDescription } = req.body;
+
+    const cart = await prisma.cart.findUnique({
+      where: { customerId },
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+        items: true,
+      },
+    });
+
+    if (!cart || cart.items.length === 0) {
+      return res.status(404).json({ error: "Carrito no encontrado o vacío" });
+    }
+
+    const storeUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    await sendAbandonedCartEmail(cart.customer, cart.items, { couponCode, couponDescription, storeUrl });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error al enviar recordatorio de carrito:", err);
+    res.status(500).json({ error: "Error al enviar recordatorio" });
   }
 });
 

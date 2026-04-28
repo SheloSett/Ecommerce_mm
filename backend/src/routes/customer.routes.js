@@ -11,14 +11,13 @@ const {
   deleteCustomer,
   getMe,
   updateMe,
-  // changeEmail, // REEMPLAZADO por el sistema de solicitudes
-  uploadAvatar,
   requestEmailChange,
   getMyEmailChangeRequest,
   getAllEmailChangeRequests,
   approveEmailChangeRequest,
   rejectEmailChangeRequest,
   createCustomerAdmin,
+  markCustomerSeen,
 } = require("../controllers/customer.controller");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
@@ -43,8 +42,6 @@ router.post("/login", authLimiter, validateCustomerLogin, customerLogin);
 // IMPORTANTE: deben ir ANTES de /:id para que "/me" no sea interpretado como un id
 router.get("/me", authMiddleware, customerMiddleware, getMe);
 router.put("/me", authMiddleware, customerMiddleware, updateMe);
-// router.put("/me/email", authMiddleware, customerMiddleware, changeEmail); // REEMPLAZADO
-router.post("/me/avatar", authMiddleware, customerMiddleware, upload.single("avatar"), verifyImageBytes, uploadAvatar);
 
 // Solicitudes de cambio de email (cliente)
 router.post("/me/email-change-request", authMiddleware, customerMiddleware, requestEmailChange);
@@ -59,6 +56,7 @@ router.get("/", authMiddleware, adminMiddleware, getAll);
 router.get("/email-change-requests",                     authMiddleware, adminMiddleware, getAllEmailChangeRequests);
 router.patch("/email-change-requests/:id/approve",       authMiddleware, adminMiddleware, approveEmailChangeRequest);
 router.patch("/email-change-requests/:id/reject",        authMiddleware, adminMiddleware, rejectEmailChangeRequest);
+router.patch("/:id/seen", authMiddleware, adminMiddleware, markCustomerSeen);
 router.patch("/:id/status", authMiddleware, adminMiddleware, updateStatus);
 router.patch("/:id/type", authMiddleware, adminMiddleware, updateType);
 router.put("/:id", authMiddleware, adminMiddleware, updateCustomer);

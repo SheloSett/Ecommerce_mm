@@ -1,13 +1,18 @@
 import { useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { useSiteConfig } from "../context/SiteConfigContext";
 import { getImageUrl } from "../services/api";
 
 // Drawer lateral del carrito de compras
 export default function CartDrawer({ open, onClose }) {
   const { items, totalPrice, removeItem, updateQuantity } = useCart();
   const { customer } = useCustomerAuth();
+  const { mayoristaMinimoCompra } = useSiteConfig();
   const isMayorista = customer?.type === "MAYORISTA";
+  const minimoActivo = isMayorista && mayoristaMinimoCompra > 0;
+  const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;
+  const progreso = minimoActivo ? Math.min(100, (totalPrice / mayoristaMinimoCompra) * 100) : 100;
   const navigate = useNavigate();
 
   const handleCheckout = () => {
@@ -84,6 +89,9 @@ export default function CartDrawer({ open, onClose }) {
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-900 text-sm truncate">{item.name}</p>
+                      {item.variantLabel && (
+                        <p className="text-xs text-slate-600 mt-0.5">{item.variantLabel}</p>
+                      )}
                       <p className="text-blue-600 font-bold text-sm mt-1">
                         {formatPrice(item.price)}
                       </p>
@@ -142,7 +150,30 @@ export default function CartDrawer({ open, onClose }) {
                 <span className="text-slate-600 font-medium">Total</span>
                 <span className="text-xl font-bold text-slate-900">{formatPrice(totalPrice)}</span>
               </div>
-              <button onClick={handleCheckout} className="btn-primary w-full text-center text-base py-3">
+
+              {/* Indicador de compra mínima mayorista — solo si no llegó al mínimo */}
+              {minimoActivo && !llegaAlMinimo && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-medium">
+                    <span className="text-amber-600">
+                      {`Te faltan ${formatPrice(mayoristaMinimoCompra - totalPrice)} para el mínimo`}
+                    </span>
+                    <span className="text-slate-400">{formatPrice(mayoristaMinimoCompra)}</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300 bg-amber-400"
+                      style={{ width: `${progreso}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleCheckout}
+                disabled={minimoActivo && !llegaAlMinimo}
+                className="btn-primary w-full text-center text-base py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Ir al Checkout →
               </button>
             </div>
