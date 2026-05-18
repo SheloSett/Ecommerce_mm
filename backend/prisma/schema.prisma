@@ -3,8 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // directUrl: requerido por Supabase cuando DATABASE_URL apunta al pooler (pgbouncer).
+  // Prisma usa esta URL solo para correr migraciones (prisma migrate deploy),
+  // porque pgbouncer en modo transaction no soporta prepared statements de migrate.
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
