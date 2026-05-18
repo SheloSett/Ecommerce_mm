@@ -8,6 +8,15 @@ const SiteConfigContext = createContext({
   scheduledAt: null,
   announcement: null,  // { text, linkText, url, bgColor } | null
   mayoristaMinimoCompra: 0,
+  // Footer de contacto (editables desde admin > Configuración > Contenido)
+  footerEmail: "info@lsmarket.com.ar",
+  footerPhone: "1150395166",
+  footerAddress: "Av La Plata 744 Timbre 3",
+  // Páginas de contenido (null = mostrar layout predeterminado)
+  aboutUsContent: null,
+  howToBuyContent: null,
+  privacyContent: null,
+  termsContent: null,
   loading: true,
   refetch: () => {},
 });
@@ -19,6 +28,24 @@ export function SiteConfigProvider({ children }) {
   const [scheduledAt, setScheduledAt] = useState(null);
   const [announcement, setAnnouncement] = useState(null);
   const [mayoristaMinimoCompra, setMayoristaMinimo] = useState(0);
+  // Footer de contacto — editables desde el admin
+  const [footerEmail, setFooterEmail]     = useState("info@lsmarket.com.ar");
+  const [footerPhone, setFooterPhone]     = useState("1150395166");
+  const [footerAddress, setFooterAddress] = useState("Av La Plata 744 Timbre 3");
+  // Páginas de contenido enriquecido — null significa usar el layout predeterminado (viejo enfoque RTE)
+  const [aboutUsContent, setAboutUsContent]     = useState(null);
+  const [howToBuyContent, setHowToBuyContent]   = useState(null);
+  const [privacyContent, setPrivacyContent]     = useState(null);
+  const [termsContent, setTermsContent]         = useState(null);
+  // Contenido estructurado por sección — null = usar hardcoded defaults en la página
+  const [aboutUsHero, setAboutUsHero]         = useState(null);
+  const [aboutUsHistoria, setAboutUsHistoria] = useState(null);
+  const [aboutUsValores, setAboutUsValores]   = useState(null);
+  const [howToBuySteps, setHowToBuySteps]     = useState(null);
+  const [howToBuyPayments, setHowToBuyPayments] = useState(null);
+  const [howToBuyFaqs, setHowToBuyFaqs]       = useState(null);
+  const [privacySections, setPrivacySections] = useState(null);
+  const [termsSections, setTermsSections]     = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Tema se lee de localStorage (preferencia individual de cada usuario)
@@ -39,9 +66,12 @@ export function SiteConfigProvider({ children }) {
   };
 
   const fetchConfig = useCallback(() => {
+    // Si el backend no responde en 4s, desbloqueamos la UI igual (sin modo mantenimiento)
+    const timeout = setTimeout(() => setLoading(false), 4000);
     settingsApi
       .get()
       .then((res) => {
+        clearTimeout(timeout);
         setMaintenanceRaw(res.data.maintenance === "true");
         // Parsear la fecha programada (vacío o inválido → null)
         const raw = res.data.maintenanceScheduledAt;
@@ -74,10 +104,29 @@ export function SiteConfigProvider({ children }) {
           setAnnouncement(null);
         }
         setMayoristaMinimo(parseFloat(res.data.mayoristaMinimoCompra) || 0);
+        // Leer datos de contacto del footer
+        setFooterEmail(res.data.footerEmail || "info@lsmarket.com.ar");
+        setFooterPhone(res.data.footerPhone || "1150395166");
+        setFooterAddress(res.data.footerAddress || "Av La Plata 744 Timbre 3");
+        // Leer contenido de páginas — null cuando está vacío (para mostrar el layout predeterminado)
+        setAboutUsContent(res.data.aboutUsContent || null);
+        setHowToBuyContent(res.data.howToBuyContent || null);
+        setPrivacyContent(res.data.privacyContent || null);
+        setTermsContent(res.data.termsContent || null);
+        // Contenido estructurado — parsear JSON, null si está vacío o inválido
+        const parseJSON = (str) => { try { return str ? JSON.parse(str) : null; } catch { return null; } };
+        setAboutUsHero(parseJSON(res.data.aboutUsHero));
+        setAboutUsHistoria(parseJSON(res.data.aboutUsHistoria));
+        setAboutUsValores(parseJSON(res.data.aboutUsValores));
+        setHowToBuySteps(parseJSON(res.data.howToBuySteps));
+        setHowToBuyPayments(parseJSON(res.data.howToBuyPayments));
+        setHowToBuyFaqs(parseJSON(res.data.howToBuyFaqs));
+        setPrivacySections(parseJSON(res.data.privacySections));
+        setTermsSections(parseJSON(res.data.termsSections));
         // Ya no leemos theme del backend — viene de localStorage
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { clearTimeout(timeout); setLoading(false); });
   }, []);
 
   useEffect(() => {
@@ -126,6 +175,14 @@ export function SiteConfigProvider({ children }) {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
+  // Re-fetching cuando la pestaña vuelve a tener foco — garantiza que los cambios guardados
+  // en el admin (otra pestaña) se reflejen en la tienda sin necesidad de recargar manualmente.
+  useEffect(() => {
+    const handleFocus = () => fetchConfig();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [fetchConfig]);
+
   return (
     <SiteConfigContext.Provider
       value={{
@@ -135,6 +192,21 @@ export function SiteConfigProvider({ children }) {
         scheduledAt,
         announcement,
         mayoristaMinimoCompra,
+        footerEmail,
+        footerPhone,
+        footerAddress,
+        aboutUsContent,
+        howToBuyContent,
+        privacyContent,
+        termsContent,
+        aboutUsHero,
+        aboutUsHistoria,
+        aboutUsValores,
+        howToBuySteps,
+        howToBuyPayments,
+        howToBuyFaqs,
+        privacySections,
+        termsSections,
         loading,
         refetch: fetchConfig,
       }}

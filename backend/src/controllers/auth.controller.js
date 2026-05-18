@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const { loginLimiter } = require("../middleware/loginLimiter");
 
 const prisma = new PrismaClient();
 
@@ -24,14 +25,17 @@ async function login(req, res) {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, email: user.email, role: user.role, name: user.name, permissions: user.permissions },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
+    // Login exitoso: resetear el contador de intentos para esta IP
+    loginLimiter.resetKey(req.ip);
+
     res.json({
       token,
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, role: user.role, name: user.name, permissions: user.permissions },
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -72,9 +76,45 @@ async function changePassword(req, res) {
   }
 }
 
-// Devuelve info del usuario autenticado
+// Devuelve info del usuario autenticado (re-fetch para datos frescos)
 async function me(req, res) {
-  res.json({ id: req.user.id, email: req.user.email, role: req.user.role });
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+    res.json({ id: user.id, email: user.email, role: user.role, name: user.name, permissions: user.permissions });
+  } catch (err) {
+    console.error("Me error:", err);
+    res.status(500).json({ error: "Error al obtener datos del usuario" });
+  }
 }
 
-module.exports = { login, changePassword, me };
+// Actualiza el perfil del admin logueado (name y/o email)
+async function updateProfile(req, res) {
+  try {
+    const { name, email } = req.body;
+
+    if (email) {
+      const exists = await prisma.user.findFirst({
+        where: { email, NOT: { id: req.user.id } },
+      });
+      if (exists) {
+        return res.status(400).json({ error: "Ese email ya está en uso por otro usuario" });
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(email && { email }),
+      },
+    });
+
+    res.json({ id: updated.id, email: updated.email, role: updated.role, name: updated.name, permissions: updated.permissions });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    res.status(500).json({ error: "Error al actualizar perfil" });
+  }
+}
+
+module.exports = { login, changePassword, me, updateProfile };

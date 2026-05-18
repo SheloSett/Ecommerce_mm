@@ -16,8 +16,12 @@ import Checkout from "./pages/Checkout";
 import PaymentResult from "./pages/PaymentResult";
 import Register from "./pages/Register";
 import CustomerLogin from "./pages/CustomerLogin";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import UnsubscribeRestock from "./pages/UnsubscribeRestock";
 import EditProfile from "./pages/EditProfile";
 import OrderHistory from "./pages/OrderHistory";
+import OrderDetail from "./pages/OrderDetail";
 import QuotationHistory from "./pages/QuotationHistory";
 import PayQuotation from "./pages/PayQuotation";
 import Privacy from "./pages/Privacy";
@@ -41,11 +45,17 @@ import AdminCaja from "./pages/admin/AdminCaja";
 import AdminFlyer from "./pages/admin/AdminFlyer";
 import AdminCoupons from "./pages/admin/AdminCoupons";
 import AdminPurchases from "./pages/admin/AdminPurchases";
-import AdminCarousel from "./pages/admin/AdminCarousel";
-import AdminAnnouncementBanner from "./pages/admin/AdminAnnouncementBanner";
+// AdminCarousel: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
+// import AdminCarousel from "./pages/admin/AdminCarousel";
+// AdminAnnouncementBanner: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
+// import AdminAnnouncementBanner from "./pages/admin/AdminAnnouncementBanner";
 import AdminSettings from "./pages/admin/AdminSettings";
 import AdminReturns from "./pages/admin/AdminReturns";
+// AdminUsers: movido a UsersSectionContent embebido en AdminSettings — página standalone descartada
+// import AdminUsers from "./pages/admin/AdminUsers";
+import AdminOrderDetail from "./pages/admin/AdminOrderDetail";
 import ProtectedRoute from "./components/ProtectedRoute";
+import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
 import ScrollToTop from "./components/ScrollToTop";
 import MaintenancePage from "./pages/MaintenancePage";
@@ -100,8 +110,12 @@ export default function App() {
           <Route path="/pago/pendiente" element={<PublicRoute><PaymentResult type="pending" /></PublicRoute>} />
           <Route path="/registro" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><CustomerLogin /></PublicRoute>} />
+          <Route path="/olvide-mi-contrasena" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+          <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
+          <Route path="/unsubscribe/restock" element={<UnsubscribeRestock />} />
           <Route path="/perfil" element={<PublicRoute><EditProfile /></PublicRoute>} />
           <Route path="/pedidos" element={<PublicRoute><OrderHistory /></PublicRoute>} />
+          <Route path="/pedidos/:id" element={<PublicRoute><OrderDetail /></PublicRoute>} />
           <Route path="/cotizaciones" element={<PublicRoute><QuotationHistory /></PublicRoute>} />
           <Route path="/pagar-cotizacion/:id" element={<PublicRoute><PayQuotation /></PublicRoute>} />
           <Route path="/privacidad" element={<PublicRoute><Privacy /></PublicRoute>} />
@@ -126,7 +140,7 @@ export default function App() {
             path="/admin/productos"
             element={
               <ProtectedRoute>
-                <AdminProducts />
+                <RequirePermission permission="productos"><AdminProducts /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -134,7 +148,15 @@ export default function App() {
             path="/admin/ordenes"
             element={
               <ProtectedRoute>
-                <AdminOrders />
+                <RequirePermission permission="ordenes"><AdminOrders /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/ordenes/:id"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="ordenes"><AdminOrderDetail /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -142,7 +164,7 @@ export default function App() {
             path="/admin/categorias"
             element={
               <ProtectedRoute>
-                <AdminCategories />
+                <RequirePermission permission="categorias"><AdminCategories /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -150,7 +172,7 @@ export default function App() {
             path="/admin/clientes"
             element={
               <ProtectedRoute>
-                <AdminCustomers />
+                <RequirePermission permission="clientes"><AdminCustomers /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -158,7 +180,7 @@ export default function App() {
             path="/admin/metricas"
             element={
               <ProtectedRoute>
-                <AdminMetrics />
+                <RequirePermission permission="metricas"><AdminMetrics /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -166,7 +188,7 @@ export default function App() {
             path="/admin/productos/nuevo"
             element={
               <ProtectedRoute>
-                <AdminProductCreate />
+                <RequirePermission permission="productos"><AdminProductCreate /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -175,7 +197,7 @@ export default function App() {
             path="/admin/productos/flyer"
             element={
               <ProtectedRoute>
-                <AdminFlyer />
+                <RequirePermission permission="flyer"><AdminFlyer /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -183,7 +205,7 @@ export default function App() {
             path="/admin/caja"
             element={
               <ProtectedRoute>
-                <AdminCaja />
+                <RequirePermission permission="caja"><AdminCaja /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -192,7 +214,7 @@ export default function App() {
             path="/admin/compras"
             element={
               <ProtectedRoute>
-                <AdminPurchases />
+                <RequirePermission permission="compras"><AdminPurchases /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -201,33 +223,35 @@ export default function App() {
             path="/admin/cupones"
             element={
               <ProtectedRoute>
-                <AdminCoupons />
+                <RequirePermission permission="cupones"><AdminCoupons /></RequirePermission>
               </ProtectedRoute>
             }
           />
 
-          <Route
+          {/* /admin/carrusel — descartada: funcionalidad movida a CarouselSectionContent en /admin/configuracion */}
+          {/* <Route
             path="/admin/carrusel"
             element={
               <ProtectedRoute>
-                <AdminCarousel />
+                <RequirePermission permission="carrusel"><AdminCarousel /></RequirePermission>
               </ProtectedRoute>
             }
-          />
-          <Route
+          /> */}
+          {/* /admin/carrusel/banner — descartada: banner movido a CarouselSectionContent en /admin/configuracion */}
+          {/* <Route
             path="/admin/carrusel/banner"
             element={
               <ProtectedRoute>
-                <AdminAnnouncementBanner />
+                <RequirePermission permission="carrusel"><AdminAnnouncementBanner /></RequirePermission>
               </ProtectedRoute>
             }
-          />
+          /> */}
 
           <Route
             path="/admin/configuracion"
             element={
               <ProtectedRoute>
-                <AdminSettings />
+                <RequirePermission permission="configuracion"><AdminSettings /></RequirePermission>
               </ProtectedRoute>
             }
           />
@@ -236,10 +260,20 @@ export default function App() {
             path="/admin/devoluciones"
             element={
               <ProtectedRoute>
-                <AdminReturns />
+                <RequirePermission permission="devoluciones"><AdminReturns /></RequirePermission>
               </ProtectedRoute>
             }
           />
+
+          {/* /admin/usuarios — descartada: funcionalidad movida a UsersSectionContent en /admin/configuracion */}
+          {/* <Route
+            path="/admin/usuarios"
+            element={
+              <ProtectedRoute>
+                <AdminUsers />
+              </ProtectedRoute>
+            }
+          /> */}
 
           {/* Ruta no encontrada */}
           <Route path="*" element={<Navigate to="/" replace />} />

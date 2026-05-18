@@ -25,11 +25,18 @@
   }
 
   .input {
-    @apply border border-slate-300 rounded-lg px-3 py-2 w-full bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200;
+    @apply border border-slate-300 rounded-lg px-3 py-2 w-full text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200;
+    background-color: white; /* bg-white reemplazado con CSS directo para evitar dependencia circular con .storefront .card .bg-white */
   }
 
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-slate-200;
+    /* @apply reemplazado con CSS directo — evita dependencia circular con .storefront .card .border-slate-200 */
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    border-width: 1px;
+    border-style: solid;
+    border-color: #e2e8f0;
+    background-color: white;
   }
 }
 
@@ -94,6 +101,16 @@
 .admin-dark .bg-orange-50  { background-color: #1c1208 !important; }
 .admin-dark .bg-emerald-50 { background-color: #0a1f14 !important; }
 .admin-dark .bg-purple-50  { background-color: #150f1f !important; }
+
+/* Badges *-100: no estaban mapeados → fondo claro + texto claro = invisible.
+   Badges de tipo/estado en AdminCustomers y AdminCoupons usan bg-*-100. */
+.admin-dark .bg-green-100   { background-color: #14532d !important; }
+.admin-dark .bg-blue-100    { background-color: #1e3a5f !important; }
+.admin-dark .bg-purple-100  { background-color: #3b0764 !important; }
+.admin-dark .bg-yellow-100  { background-color: #422006 !important; }
+.admin-dark .bg-amber-100   { background-color: #3d1c02 !important; }
+.admin-dark .bg-red-100     { background-color: #450a0a !important; }
+.admin-dark .bg-emerald-100 { background-color: #064e3b !important; }
 
 /* Bordes de color */
 .admin-dark .border-blue-200   { border-color: #1e3a5f !important; }
@@ -216,6 +233,11 @@
 .admin-dark .text-emerald-700 { color: #6ee7b7 !important; }
 .admin-dark .text-purple-600  { color: #a78bfa !important; }
 .admin-dark .text-purple-700  { color: #c4b5fd !important; }
+.admin-dark .text-purple-800  { color: #ddd6fe !important; }
+
+/* text-yellow-* no estaba — badges de estado PENDING usan text-yellow-800/700 */
+.admin-dark .text-yellow-800  { color: #fde68a !important; }
+.admin-dark .text-yellow-700  { color: #fef08a !important; }
 
 /* Bordes */
 .admin-dark .border-slate-100 { border-color: #1e293b !important; }
@@ -278,6 +300,104 @@
    Solo afectan las paginas publicas (marcadas con la clase .storefront).
    El panel de admin y las paginas de perfil/pedidos no cambian.
    ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Tema Clásico: cards y sidebar usan la paleta del color primario ── */
+/* El fondo de página queda blanco; las cards/sidebar tienen fondo primario con texto claro */
+
+.storefront .card {
+  background-color: #32485c !important; /* primary-600 */
+  border-color:     #4d6e83 !important; /* primary-500 */
+  color: #e2e8f0 !important;
+}
+
+/* Textos dentro de las cards — se aclaran para contrastar con el fondo oscuro */
+.storefront .card .text-slate-900 { color: #f1f5f9 !important; }
+.storefront .card .text-slate-800 { color: #e2e8f0 !important; }
+.storefront .card .text-slate-700 { color: #cbd5e1 !important; }
+.storefront .card .text-slate-600 { color: #94a3b8 !important; }
+.storefront .card .text-slate-500 { color: #94a3b8 !important; }
+.storefront .card .text-slate-400 { color: #e2e8f0 !important; }
+
+/* Fondos blancos/grises dentro de cards */
+.storefront .card .bg-white     { background-color: #32485c !important; }
+.storefront .card .bg-slate-50  { background-color: #273d4d !important; }
+.storefront .card .bg-slate-100 { background-color: #3d566b !important; }
+.storefront .card .bg-slate-200 { background-color: #4d6e83 !important; color: #e2e8f0 !important; }
+
+/* Bordes dentro de cards */
+.storefront .card .border-slate-200 { border-color: #4d6e83 !important; }
+.storefront .card .border-slate-100 { border-color: #3d566b !important; }
+
+/* Texto legible dentro de labels seleccionados (bg-*-50) en modo clásico.
+   .storefront .card fuerza texto claro, pero sobre fondos claros (bg-*-50) eso genera
+   texto invisible — estas reglas más específicas restauran el contraste. */
+.storefront .card .bg-blue-50 .text-slate-900,
+.storefront .card .bg-blue-50 .text-slate-800,
+.storefront .card .bg-blue-50 .text-slate-700,
+.storefront .card .bg-blue-50 .text-slate-600,
+.storefront .card .bg-blue-50 .text-slate-500 { color: #1e3a8a !important; }
+
+.storefront .card .bg-orange-50 .text-slate-900,
+.storefront .card .bg-orange-50 .text-slate-800,
+.storefront .card .bg-orange-50 .text-slate-700,
+.storefront .card .bg-orange-50 .text-slate-600,
+.storefront .card .bg-orange-50 .text-slate-500 { color: #7c2d12 !important; }
+
+.storefront .card .bg-red-50 .text-slate-900,
+.storefront .card .bg-red-50 .text-slate-800,
+.storefront .card .bg-red-50 .text-slate-700,
+.storefront .card .bg-red-50 .text-slate-600,
+.storefront .card .bg-red-50 .text-slate-500 { color: #7f1d1d !important; }
+
+.storefront .card .bg-green-50 .text-slate-900,
+.storefront .card .bg-green-50 .text-slate-800,
+.storefront .card .bg-green-50 .text-slate-700,
+.storefront .card .bg-green-50 .text-slate-600,
+.storefront .card .bg-green-50 .text-slate-500 { color: #14532d !important; }
+
+.storefront .card .bg-indigo-50 .text-slate-900,
+.storefront .card .bg-indigo-50 .text-slate-800,
+.storefront .card .bg-indigo-50 .text-slate-700,
+.storefront .card .bg-indigo-50 .text-slate-600,
+.storefront .card .bg-indigo-50 .text-slate-500 { color: #312e81 !important; }
+
+/* Fondos claros de color dentro de .storefront .card — modo clásico */
+.storefront .card .bg-blue-50   { background-color: #eff6ff !important; }
+.storefront .card .bg-orange-50 { background-color: #fff7ed !important; }
+.storefront .card .bg-red-50    { background-color: #fff1f2 !important; }
+.storefront .card .bg-green-50  { background-color: #f0fdf4 !important; }
+.storefront .card .bg-indigo-50 { background-color: #eef2ff !important; }
+
+/* Formulario de dirección de Correo Argentino — bg-red-50/40 (semitransparente) mezclado con el
+   fondo oscuro del card genera un gris medio donde text-slate-600 (#94a3b8) queda invisible.
+   Se reemplaza por fondo sólido oscuro-rojo y texto rosado con contraste suficiente (~6:1). */
+.storefront .card .bg-red-50\/40 {
+  background-color: #2d1515 !important;
+}
+.storefront .card .bg-red-50\/40 .text-slate-900,
+.storefront .card .bg-red-50\/40 .text-slate-800,
+.storefront .card .bg-red-50\/40 .text-slate-700,
+.storefront .card .bg-red-50\/40 .text-slate-600,
+.storefront .card .bg-red-50\/40 .text-slate-500 { color: #fca5a5 !important; }
+
+/* Inputs dentro de cards (búsqueda en sidebar, etc.) */
+.storefront .card input:not([type="checkbox"]):not([type="radio"]),
+.storefront .card textarea,
+.storefront .card select {
+  background-color: #273d4d !important;
+  border-color: #4d6e83 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Botones blancos de paginación dentro de cards */
+.storefront .card button.bg-white {
+  background-color: #32485c !important;
+  border-color: #4d6e83 !important;
+  color: #e2e8f0 !important;
+}
+
+/* Heading dentro de cards (ej: "Filtros") */
+.storefront .card h2 { color: #f1f5f9 !important; }
 
 /* ── Tema Oscuro ──────────────────────────────────────────────────── */
 
@@ -447,6 +567,16 @@ html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-700,
 html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-600,
 html[data-theme="oscuro"] .storefront .bg-red-50 .text-slate-500 { color: #fca5a5 !important; }
 
+/* bg-red-50/40 (con modificador de opacidad) no es capturado por .bg-red-50 — regla separada */
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 {
+  background-color: #1f0f0f !important;
+}
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-900,
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-800,
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-700,
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-600,
+html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-500 { color: #fca5a5 !important; }
+
 /* Bordes */
 html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
 html[data-theme="oscuro"] .storefront .border-white\/30 { border-color: rgba(255,255,255,0.15) !important; }
@@ -475,6 +605,42 @@ html[data-theme="oscuro"] .storefront .htb-steps .border-orange-100 { border-col
 /* Tip boxes dentro de los steps (bg-white/70 -> fondo oscuro semitransparente) */
 html[data-theme="oscuro"] .storefront .htb-steps .bg-white\/70  { background-color: rgba(255,255,255,0.06) !important; }
 
+
+/* ── Prose (Tailwind Typography) en modo oscuro ─────────────────────────────
+   prose-slate aplica --tw-prose-bold, --tw-prose-headings, --tw-prose-body etc.
+   con valores oscuros (slate-900/800) que se vuelven invisibles sobre fondos oscuros.
+   Se fuerzan a heredar el color del contexto para adaptarse a cualquier fondo. */
+
+html[data-theme="oscuro"] .storefront .prose strong,
+html[data-theme="oscuro"] .storefront .prose b {
+  color: #f1f5f9 !important; /* blanco suave — mismo que h1/h2 en dark mode */
+}
+
+html[data-theme="oscuro"] .storefront .prose em,
+html[data-theme="oscuro"] .storefront .prose i {
+  color: inherit !important;
+}
+
+html[data-theme="oscuro"] .storefront .prose p,
+html[data-theme="oscuro"] .storefront .prose li {
+  color: #cbd5e1 !important; /* slate-300 — texto legible sobre fondo oscuro */
+}
+
+html[data-theme="oscuro"] .storefront .prose a {
+  color: #60a5fa !important; /* blue-400 — links visibles en dark mode */
+}
+
+html[data-theme="oscuro"] .storefront .prose code {
+  color: #94a3b8 !important;
+  background-color: #1e293b !important;
+}
+
+/* Tema clásico: prose dentro de .card (fondo oscuro) — mismos ajustes */
+.storefront .card .prose strong,
+.storefront .card .prose b { color: #f1f5f9 !important; }
+.storefront .card .prose p,
+.storefront .card .prose li { color: #cbd5e1 !important; }
+.storefront .card .prose a  { color: #60a5fa !important; }
 
 /* ── Tema Calido — REMOVIDO: ahora solo hay clásico y oscuro ─────── */
 /* Se eliminó el tema cálido por decisión del proyecto. Solo quedan

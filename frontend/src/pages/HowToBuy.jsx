@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import SiteMeta from "../components/SiteMeta";
+import { useSiteConfig } from "../context/SiteConfigContext";
 
 const STEPS = [
   {
@@ -81,7 +83,7 @@ const STEPS = [
 
 const PAYMENT_METHODS = [
   { icon: "💳", name: "MercadoPago", desc: "Tarjeta de crédito, débito o saldo MP" },
-  { icon: "🏦", name: "Transferencia bancaria", desc: "CVU / CBU · Alias: Shelosett20" },
+  { icon: "🏦", name: "Transferencia bancaria", desc: "CVU / CBU / Alias" },
   { icon: "💵", name: "Efectivo en mostrador", desc: "Av La Plata 744 Timbre 3, CABA" },
   { icon: "📋", name: "Cotización", desc: "Para pedidos mayoristas a medida" },
 ];
@@ -109,7 +111,32 @@ const FAQS = [
   },
 ];
 
+// Colores asignados por posición de paso — se repiten si hay más de 8 pasos
+const STEP_COLORS = [
+  { color: "from-violet-500 to-violet-600",  bg: "bg-violet-50",  border: "border-violet-100"  },
+  { color: "from-blue-500 to-blue-600",      bg: "bg-blue-50",    border: "border-blue-100"    },
+  { color: "from-indigo-500 to-indigo-600",  bg: "bg-indigo-50",  border: "border-indigo-100"  },
+  { color: "from-cyan-500 to-cyan-600",      bg: "bg-cyan-50",    border: "border-cyan-100"    },
+  { color: "from-emerald-500 to-emerald-600",bg: "bg-emerald-50", border: "border-emerald-100" },
+  { color: "from-orange-500 to-orange-600",  bg: "bg-orange-50",  border: "border-orange-100"  },
+  { color: "from-rose-500 to-rose-600",      bg: "bg-rose-50",    border: "border-rose-100"    },
+  { color: "from-amber-500 to-amber-600",    bg: "bg-amber-50",   border: "border-amber-100"   },
+];
+
 export default function HowToBuy() {
+  const [openFaq, setOpenFaq] = useState(null);
+
+  // howToBuyContent: viejo enfoque RTE — comentado porque fue reemplazado por secciones estructuradas
+  // const { howToBuyContent } = useSiteConfig();
+  // if (howToBuyContent) { return <RTE render>; }
+
+  const { howToBuySteps, howToBuyPayments, howToBuyFaqs } = useSiteConfig();
+
+  // Usar datos del admin si existen, si no usar los hardcodeados
+  const steps    = howToBuySteps    || STEPS;
+  const payments = howToBuyPayments || PAYMENT_METHODS;
+  const faqs     = howToBuyFaqs     || FAQS;
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
       <SiteMeta title="Cómo comprar — IGWT Store" description="Guía paso a paso para comprar en IGWT Store. Desde explorar el catálogo hasta recibir tu pedido." />
@@ -144,46 +171,45 @@ export default function HowToBuy() {
           <div className="hidden md:block absolute left-9 top-10 bottom-10 w-0.5 bg-gradient-to-b from-blue-200 via-indigo-200 to-orange-200" />
 
           <div className="space-y-6">
-            {STEPS.map((step, idx) => (
-              <div key={step.number} className="relative flex gap-6 items-start group">
+            {steps.map((step, idx) => {
+              const c = STEP_COLORS[idx % STEP_COLORS.length];
+              return (
+              <div key={idx} className="relative flex gap-6 items-start group">
                 {/* Número / ícono */}
-                <div className={`relative z-10 flex-shrink-0 w-[72px] h-[72px] rounded-2xl bg-gradient-to-br ${step.color} flex flex-col items-center justify-center shadow-lg`}>
-                  <span className="text-white/60 text-[10px] font-black leading-none">{step.number}</span>
+                <div className={`relative z-10 flex-shrink-0 w-[72px] h-[72px] rounded-2xl bg-gradient-to-br ${c.color} flex flex-col items-center justify-center shadow-lg`}>
+                  <span className="text-white/60 text-[10px] font-black leading-none">{String(idx + 1).padStart(2, "0")}</span>
                   <span className="text-2xl leading-none mt-0.5">{step.icon}</span>
                 </div>
 
                 {/* Contenido */}
-                <div className={`flex-1 ${step.bg} ${step.border} border rounded-2xl p-5 group-hover:shadow-md transition-shadow`}>
+                <div className={`flex-1 ${c.bg} ${c.border} border rounded-2xl p-5 group-hover:shadow-md transition-shadow`}>
                   <h3 className="font-black text-slate-900 text-lg mb-1">{step.title}</h3>
                   <p className="text-slate-600 text-sm leading-relaxed mb-3">{step.desc}</p>
-                  <div className="flex items-start gap-2 bg-white/70 rounded-xl px-3 py-2">
-                    <span className="text-sm mt-0.5 flex-shrink-0">💡</span>
-                    <div className="flex-1">
-                      <p className="text-slate-500 text-xs leading-relaxed">{step.tip}</p>
-                      {step.tipLink && (
-                        step.tipExternal ? (
-                          <a
-                            href={step.tipLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-block mt-1.5 text-xs font-semibold text-blue-600 hover:underline"
-                          >
-                            {step.tipLinkLabel}
-                          </a>
-                        ) : (
-                          <Link
-                            to={step.tipLink}
-                            className="inline-block mt-1.5 text-xs font-semibold text-blue-600 hover:underline"
-                          >
-                            {step.tipLinkLabel}
-                          </Link>
-                        )
-                      )}
+                  {step.tip && (
+                    <div className="flex items-start gap-2 bg-white/70 rounded-xl px-3 py-2">
+                      <span className="text-sm mt-0.5 flex-shrink-0">💡</span>
+                      <div className="flex-1">
+                        <p className="text-slate-500 text-xs leading-relaxed">{step.tip}</p>
+                        {step.tipLink && (
+                          step.tipExternal ? (
+                            <a href={step.tipLink} target="_blank" rel="noopener noreferrer"
+                              className="inline-block mt-1.5 text-xs font-semibold text-blue-600 hover:underline">
+                              {step.tipLinkLabel}
+                            </a>
+                          ) : (
+                            <Link to={step.tipLink}
+                              className="inline-block mt-1.5 text-xs font-semibold text-blue-600 hover:underline">
+                              {step.tipLinkLabel}
+                            </Link>
+                          )
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
@@ -195,10 +221,15 @@ export default function HowToBuy() {
             <h2 className="text-2xl md:text-3xl font-black text-slate-900">Métodos de pago</h2>
             <p className="text-slate-500 mt-2">Elegí el que más te convenga</p>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {PAYMENT_METHODS.map((m) => (
-              <div key={m.name} className="bg-white rounded-2xl border border-slate-200 p-5 text-center hover:border-blue-200 hover:shadow-sm transition-all">
-                <div className="text-3xl mb-3">{m.icon}</div>
+          <div className="flex flex-wrap justify-center gap-4">
+            {payments.map((m, i) => (
+              <div key={i} className="w-full sm:w-[calc(50%-8px)] lg:w-[calc(25%-12px)] min-w-[160px] bg-white rounded-2xl border border-slate-200 p-5 text-center hover:border-blue-200 hover:shadow-sm transition-all">
+                <div className="flex items-center justify-center mb-3">
+                  {m.image
+                    ? <img src={m.image} alt={m.name} className="w-12 h-12 object-contain rounded-xl" />
+                    : <span className="text-3xl">{m.icon}</span>
+                  }
+                </div>
                 <h3 className="font-bold text-slate-800 text-sm mb-1">{m.name}</h3>
                 <p className="text-slate-400 text-xs">{m.desc}</p>
               </div>
@@ -213,19 +244,34 @@ export default function HowToBuy() {
           <h2 className="text-2xl md:text-3xl font-black text-slate-900">Preguntas frecuentes</h2>
         </div>
         <div className="space-y-4">
-          {FAQS.map((faq) => (
-            <details key={faq.q} className="group bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden">
-              <summary className="flex items-center justify-between px-5 py-4 font-semibold text-slate-800 cursor-pointer list-none hover:bg-slate-100 transition-colors">
-                <span>{faq.q}</span>
-                <svg className="w-4 h-4 text-slate-400 transition-transform group-open:rotate-180 flex-shrink-0 ml-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </summary>
-              <div className="px-5 pb-4 text-slate-600 text-sm leading-relaxed border-t border-slate-200 pt-3">
-                {faq.a}
+          {faqs.map((faq, i) => {
+            const isOpen = openFaq === i;
+            return (
+              <div key={faq.q} className="rounded-2xl overflow-hidden border border-slate-700 bg-slate-800">
+                <button
+                  onClick={() => setOpenFaq(isOpen ? null : i)}
+                  className="w-full flex items-center justify-between px-5 py-4 font-semibold text-slate-100 text-left cursor-pointer transition-all duration-150 hover:bg-slate-700 active:scale-[0.99] active:brightness-90 select-none"
+                >
+                  <span>{faq.q}</span>
+                  <svg
+                    className={`w-4 h-4 text-slate-400 flex-shrink-0 ml-3 transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {/* Contenedor animado: max-height 0 → auto via transition */}
+                <div
+                  className="overflow-hidden transition-all duration-300 ease-in-out"
+                  style={{ maxHeight: isOpen ? "500px" : "0px" }}
+                >
+                  <div className="px-5 pb-4 pt-3 text-sm text-slate-300 leading-relaxed border-t border-slate-700">
+                    {faq.a}
+                  </div>
+                </div>
               </div>
-            </details>
-          ))}
+            );
+          })}
         </div>
       </section>
 

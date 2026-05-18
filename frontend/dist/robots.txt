@@ -1,0 +1,21 @@
+User-agent: *
+
+# Páginas públicas — permitidas
+Allow: /
+Allow: /catalogo
+Allow: /producto/
+Allow: /login
+Allow: /registro
+
+# Panel admin — bloqueado
+Disallow: /admin
+
+# Páginas privadas de cliente — no tiene sentido indexar
+Disallow: /checkout
+Disallow: /perfil
+Disallow: /pedidos
+Disallow: /cotizaciones
+Disallow: /pagar/
+Disallow: /pago/
+
+Sitemap: https://igwtstore.com.ar/sitemap.xml

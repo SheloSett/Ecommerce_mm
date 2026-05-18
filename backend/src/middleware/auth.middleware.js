@@ -25,12 +25,32 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// Verifica que el usuario sea ADMIN
+// Verifica que el usuario sea ADMIN o SUPERADMIN
 function adminMiddleware(req, res, next) {
-  if (req.user?.role !== "ADMIN") {
+  if (req.user?.role !== "ADMIN" && req.user?.role !== "SUPERADMIN") {
     return res.status(403).json({ error: "Acceso denegado: se requiere rol ADMIN" });
   }
   next();
+}
+
+// Verifica que el usuario sea SUPERADMIN (solo el dueño)
+function superAdminMiddleware(req, res, next) {
+  if (req.user?.role !== "SUPERADMIN") {
+    return res.status(403).json({ error: "Acceso denegado: se requiere rol SUPERADMIN" });
+  }
+  next();
+}
+
+// Factory: verifica que el usuario tenga un permiso específico.
+// SUPERADMIN siempre pasa. ADMIN necesita tener la key en su array de permisos.
+function requirePermission(key) {
+  return (req, res, next) => {
+    if (req.user?.role === "SUPERADMIN") return next();
+    if (!req.user?.permissions?.includes(key)) {
+      return res.status(403).json({ error: `Acceso denegado: se requiere permiso '${key}'` });
+    }
+    next();
+  };
 }
 
 // Verifica que el usuario sea CUSTOMER (cliente autenticado)
@@ -41,4 +61,4 @@ function customerMiddleware(req, res, next) {
   next();
 }
 
-module.exports = { authMiddleware, adminMiddleware, customerMiddleware };
+module.exports = { authMiddleware, adminMiddleware, superAdminMiddleware, requirePermission, customerMiddleware };

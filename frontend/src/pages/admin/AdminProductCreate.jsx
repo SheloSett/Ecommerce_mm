@@ -96,12 +96,16 @@ export default function AdminProductCreate() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.price || !form.cost) {
-      toast.error("Nombre, precio y costo son requeridos");
+    if (!form.name || !form.price || !form.cost || !form.wholesalePrice) {
+      toast.error("Nombre, precio minorista, precio mayorista y costo son requeridos");
       return;
     }
     if (form.salePrice && Number(form.salePrice) >= Number(form.price)) {
       toast.error("El precio de oferta debe ser menor al precio normal");
+      return;
+    }
+    if (form.wholesaleSalePrice && Number(form.wholesaleSalePrice) >= Number(form.wholesalePrice)) {
+      toast.error("La oferta mayorista debe ser menor al precio mayorista");
       return;
     }
 
@@ -321,7 +325,7 @@ export default function AdminProductCreate() {
             {[
               { label: "Precio minorista", key: "price", required: true },
               { label: "Oferta minorista", key: "salePrice" },
-              { label: "Precio mayorista", key: "wholesalePrice" },
+              { label: "Precio mayorista", key: "wholesalePrice", required: true },
               { label: "Oferta mayorista", key: "wholesaleSalePrice" },
             ].map(({ label, key, required }) => (
               <div key={key}>

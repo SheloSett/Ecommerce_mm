@@ -6,7 +6,7 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, getImageUrl } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
-import { getRecent } from "../utils/recentlyViewed";
+import { getRecentIds } from "../utils/recentlyViewed";
 
 const CAROUSEL_PAGE_SIZE = 4; // cards visibles a la vez en los carruseles de la home
 
@@ -15,7 +15,9 @@ export default function Home() {
   const [saleProducts, setSaleProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [recentProducts] = useState(() => getRecent().slice(0, 4));
+  const [recentProducts, setRecentProducts] = useState([]);
+  // IDs leídos una sola vez del localStorage (snapshot inmutable)
+  const recentIds = useState(() => getRecentIds(4))[0];
   const [slides, setSlides] = useState([]);
   const [currentSlide, setCurrentSlide] = useState(0);
   const timerRef = useRef(null);
@@ -41,6 +43,26 @@ export default function Home() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [customer?.type]);
+
+  // Re-fetchea los productos recientes desde la API para tener _count correcto y poder
+  // detectar variantes. No usamos el snapshot de localStorage porque puede carecer de _count.
+  useEffect(() => {
+    if (recentIds.length === 0) return;
+    const visibleFor = customer?.type || "MINORISTA";
+    Promise.all(recentIds.map((id) => productsApi.getById(id)))
+      .then((results) => {
+        const fresh = results
+          .map((r) => ({
+            ...r.data,
+            // getById devuelve variants[] pero no _count — lo calculamos del array
+            _count: { variants: (r.data.variants || []).length },
+          }))
+          .filter((p) => p.active !== false);
+        setRecentProducts(fresh);
+      })
+      .catch(console.error);
+  }, [recentIds, customer?.type]);
+
 
   // Auto-avance del carrusel
   const next = useCallback(() => {
@@ -409,6 +431,18 @@ export default function Home() {
           </section>
         )}
 
+        {/* Visitados recientemente — movido aquí para aparecer antes de las redes */}
+        {recentProducts.length > 0 && (
+          <section className="mt-14">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Visto recientemente</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {recentProducts.map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Banner Redes Sociales — 3 cards lado a lado, cada una con color de la red */}
         <section className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4">
 
@@ -469,17 +503,7 @@ export default function Home() {
 
         </section>
 
-        {/* Visitados recientemente */}
-        {recentProducts.length > 0 && (
-          <section className="mt-14">
-            <h2 className="text-2xl font-bold text-slate-900 mb-6">Visto recientemente</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {recentProducts.map((p) => (
-                <ProductCard key={p.id} product={p} />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Visitados recientemente — movido arriba del banner de redes, ver sección anterior */}
 
         {/* Banner MercadoPago */}
         <section className="mt-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-8 text-white text-center">

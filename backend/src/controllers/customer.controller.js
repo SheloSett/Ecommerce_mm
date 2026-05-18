@@ -1,6 +1,8 @@
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const { sendPasswordResetEmail } = require("../services/email.service");
 
 const prisma = new PrismaClient();
 
@@ -106,9 +108,9 @@ async function getAll(req, res) {
     if (type) where.type = type;
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
+        { name:  { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
-        { company: { contains: search, mode: "insensitive" } },
+        // company eliminado del schema — no incluir
       ];
     }
 
@@ -241,12 +243,14 @@ async function getMe(req, res) {
     if (!customer) return res.status(404).json({ error: "Cliente no encontrado" });
 
     res.json({
-      id: customer.id,
-      name: customer.name,
-      email: customer.email,
-      phone: customer.phone,
-      cuit: customer.cuit,
-      type: customer.type,
+      id:                 customer.id,
+      name:               customer.name,
+      email:              customer.email,
+      phone:              customer.phone,
+      cuit:               customer.cuit,
+      documentType:       customer.documentType,
+      type:               customer.type,
+      unsubscribeRestock: customer.unsubscribeRestock,
     });
   } catch (err) {
     console.error("GetMe error:", err);
@@ -258,7 +262,7 @@ async function getMe(req, res) {
 async function updateMe(req, res) {
   try {
     const { id } = req.user;
-    const { name, phone, cuit, documentType } = req.body;
+    const { name, phone, cuit, documentType, unsubscribeRestock } = req.body;
 
     if (name !== undefined && !name.trim()) {
       return res.status(400).json({ error: "El nombre no puede estar vacío" });
@@ -269,21 +273,23 @@ async function updateMe(req, res) {
     const updated = await prisma.customer.update({
       where: { id },
       data: {
-        ...(name         !== undefined && { name: name.trim() }),
-        ...(phone        !== undefined && { phone }),
-        ...(cuit         !== undefined && { cuit: cuit.trim() || null }),
-        ...(documentType !== undefined && validDocTypes.includes(documentType) && { documentType }),
+        ...(name               !== undefined && { name: name.trim() }),
+        ...(phone              !== undefined && { phone }),
+        ...(cuit               !== undefined && { cuit: cuit.trim() || null }),
+        ...(documentType       !== undefined && validDocTypes.includes(documentType) && { documentType }),
+        ...(unsubscribeRestock !== undefined && { unsubscribeRestock: Boolean(unsubscribeRestock) }),
       },
     });
 
     res.json({
-      id:           updated.id,
-      name:         updated.name,
-      email:        updated.email,
-      phone:        updated.phone,
-      cuit:         updated.cuit,
-      documentType: updated.documentType,
-      type:         updated.type,
+      id:                 updated.id,
+      name:               updated.name,
+      email:              updated.email,
+      phone:              updated.phone,
+      cuit:               updated.cuit,
+      documentType:       updated.documentType,
+      type:               updated.type,
+      unsubscribeRestock: updated.unsubscribeRestock,
     });
   } catch (err) {
     console.error("UpdateMe error:", err);
@@ -506,16 +512,19 @@ async function createCustomerAdmin(req, res) {
       return res.status(400).json({ error: "Nombre y email son requeridos" });
     }
 
+    // La contraseña ahora es obligatoria: el cliente debe poder loguearse desde
+    // el momento que el admin lo crea (antes era opcional pero el cliente quedaba
+    // sin poder ingresar hasta que pidiera reset por email).
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "La contraseña es requerida (mínimo 6 caracteres)" });
+    }
+
     const existing = await prisma.customer.findUnique({ where: { email } });
     if (existing) {
       return res.status(409).json({ error: "Ya existe un cliente con ese email" });
     }
 
-    // Hashear contraseña solo si se proporcionó; si no, el cliente no podrá loguearse
-    // hasta que establezca una contraseña (o el admin se la envíe)
-    const hashedPassword = password && password.length >= 6
-      ? await bcrypt.hash(password, 10)
-      : null;
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const validTypes = ["MINORISTA", "MAYORISTA"];
     const customerType = validTypes.includes(type) ? type : "MINORISTA";
@@ -557,10 +566,90 @@ async function markCustomerSeen(req, res) {
   } catch { res.status(500).json({ error: "Error al marcar como visto" }); }
 }
 
+// POST /api/customers/forgot-password — solicitar reset de contraseña por email
+async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email requerido" });
+
+    // Siempre responder 200 para no revelar si el email existe en el sistema
+    const customer = await prisma.customer.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (customer && customer.status === "APPROVED") {
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+      await prisma.customer.update({
+        where: { id: customer.id },
+        data: { resetToken: token, resetTokenExpiry: expiry },
+      });
+      const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+      const resetUrl = `${frontendUrl}/reset-password/${token}`;
+      sendPasswordResetEmail(customer, resetUrl).catch(() => {});
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("forgotPassword error:", err);
+    res.status(500).json({ error: "Error al procesar la solicitud" });
+  }
+}
+
+// POST /api/customers/reset-password — establecer nueva contraseña con token del email
+async function resetPassword(req, res) {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: "Datos incompletos" });
+    if (newPassword.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+
+    const customer = await prisma.customer.findFirst({
+      where: {
+        resetToken: token,
+        resetTokenExpiry: { gt: new Date() },
+      },
+    });
+    if (!customer) return res.status(400).json({ error: "El enlace expiró o no es válido. Solicitá uno nuevo." });
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: { password: hashed, resetToken: null, resetTokenExpiry: null },
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("resetPassword error:", err);
+    res.status(500).json({ error: "Error al restablecer la contraseña" });
+  }
+}
+
+// PUT /api/customers/me/password — cambiar contraseña estando logueado
+async function changePassword(req, res) {
+  try {
+    const customerId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: "Datos incompletos" });
+    if (newPassword.length < 6) return res.status(400).json({ error: "La nueva contraseña debe tener al menos 6 caracteres" });
+
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer || !customer.password) return res.status(400).json({ error: "No se pudo verificar la contraseña actual" });
+
+    const valid = await bcrypt.compare(currentPassword, customer.password);
+    if (!valid) return res.status(401).json({ error: "La contraseña actual es incorrecta" });
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await prisma.customer.update({ where: { id: customerId }, data: { password: hashed } });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("changePassword error:", err);
+    res.status(500).json({ error: "Error al cambiar la contraseña" });
+  }
+}
+
 module.exports = {
   register, customerLogin, getAll, updateStatus, updateType, updateCustomer, deleteCustomer,
   getMe, updateMe,
   requestEmailChange, getMyEmailChangeRequest,
   getAllEmailChangeRequests, approveEmailChangeRequest, rejectEmailChangeRequest,
   createCustomerAdmin, markCustomerSeen,
+  forgotPassword, resetPassword, changePassword,
 };

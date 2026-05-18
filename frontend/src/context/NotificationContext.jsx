@@ -1,8 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { notificationsApi } from "../services/api";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+
+// Rutas donde el cliente está mirando notificaciones (cotizaciones, pedidos): ahí abrimos SSE
+// para tener push en tiempo real. En el resto de la app polling cada 60s es suficiente.
+const REALTIME_NOTIF_PATHS = ["/cotizaciones", "/pedidos", "/cuenta"];
 
 const NotificationContext = createContext(null);
 
@@ -20,8 +25,9 @@ export function NotificationProvider({ children }) {
     }
   }
 
+  // Polling de fondo: fetch inicial + cada 60s + al volver a la pestaña.
+  // Cubre todas las páginas. En las rutas críticas, además, se abre SSE para push instantáneo.
   useEffect(() => {
-    // Sin cliente logueado: limpiar estado y cerrar SSE
     if (!customer) {
       setUnreadCount(0);
       setNotifications([]);
@@ -29,11 +35,39 @@ export function NotificationProvider({ children }) {
       return;
     }
 
+    const doFetch = async () => {
+      try {
+        const res = await notificationsApi.getMy();
+        setNotifications(res.data.notifications);
+        setUnreadCount(res.data.unreadCount);
+      } catch {
+        // Falla silenciosa
+      }
+    };
+
+    doFetch();
+    const interval = setInterval(doFetch, 60000);
+    const onFocus  = () => doFetch();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // SSE solo en rutas donde el usuario está mirando notificaciones — fuera de ahí se cierra
+  // para no ocupar un slot del pool HTTP/1.1 del browser (límite 6 por origen).
+  const location = useLocation();
+  const needsRealtimeNotif = REALTIME_NOTIF_PATHS.some((p) => location.pathname.startsWith(p));
+  useEffect(() => {
+    if (!customer || !needsRealtimeNotif) {
+      closeSSE();
+      return;
+    }
+
     const token = localStorage.getItem("customer_token");
     if (!token) return;
 
-    // Abrir conexión SSE — el servidor enviará las notificaciones existentes como primer evento
-    // y luego pusheará nuevas en tiempo real sin necesidad de polling
     const url = `${API_URL}/api/notifications/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     eventSourceRef.current = es;
@@ -43,11 +77,9 @@ export function NotificationProvider({ children }) {
         const data = JSON.parse(event.data);
 
         if (data.type === "init") {
-          // Primer evento: estado completo de notificaciones al conectar
           setNotifications(data.notifications);
           setUnreadCount(data.unreadCount);
         } else if (data.type === "notification") {
-          // Nueva notificación pusheada en tiempo real
           setNotifications((prev) => [data.notification, ...prev].slice(0, 50));
           setUnreadCount((prev) => prev + 1);
         }
@@ -57,14 +89,11 @@ export function NotificationProvider({ children }) {
     };
 
     es.onerror = () => {
-      // El EventSource tiene reconexión automática integrada en el browser.
-      // No hacemos nada manual; si el servidor cae, el browser reintentará solo.
+      // El browser reintenta automáticamente
     };
 
-    return () => {
-      closeSSE();
-    };
-  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => closeSSE();
+  }, [customer?.id, needsRealtimeNotif]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Marcar todas como leídas (llamado al abrir la página de cotizaciones)
   const markAllRead = useCallback(async () => {

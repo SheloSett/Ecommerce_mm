@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
+const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
 const prisma = new PrismaClient();
 
@@ -28,9 +29,11 @@ async function createSlide(req, res) {
       return res.status(400).json({ error: "La imagen es requerida" });
     }
 
+    const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides");
+
     const slide = await prisma.slide.create({
       data: {
-        image: req.file.filename,
+        image: uploaded.secure_url,
         title: title || null,
         subtitle: subtitle || null,
         url: url || null,
@@ -62,12 +65,17 @@ async function updateSlide(req, res) {
     if (order !== undefined) data.order = parseInt(order);
     if (active !== undefined) data.active = active === true || active === "true";
 
-    // Si se subió nueva imagen, reemplazar la anterior
+    // Si se subió nueva imagen, subir a Cloudinary y eliminar la anterior
     if (req.file) {
-      data.image = req.file.filename;
-      // Eliminar imagen antigua del filesystem
-      const oldPath = path.join(__dirname, "../../uploads", existing.image);
-      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides");
+      data.image = uploaded.secure_url;
+      // Eliminar imagen anterior: Cloudinary si es URL, disco si es path local (slide viejo)
+      if (existing.image?.startsWith("http")) {
+        await deleteByUrl(existing.image);
+      } else if (existing.image) {
+        const oldPath = path.join(__dirname, "../../uploads", existing.image);
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
     }
 
     const slide = await prisma.slide.update({
@@ -89,9 +97,13 @@ async function deleteSlide(req, res) {
     const slide = await prisma.slide.findUnique({ where: { id: parseInt(id) } });
     if (!slide) return res.status(404).json({ error: "Slide no encontrado" });
 
-    // Eliminar imagen del filesystem
-    const imgPath = path.join(__dirname, "../../uploads", slide.image);
-    if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    // Eliminar imagen: Cloudinary si es URL, disco si es path local (slide viejo)
+    if (slide.image?.startsWith("http")) {
+      await deleteByUrl(slide.image);
+    } else if (slide.image) {
+      const imgPath = path.join(__dirname, "../../uploads", slide.image);
+      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    }
 
     await prisma.slide.delete({ where: { id: parseInt(id) } });
     res.json({ ok: true });

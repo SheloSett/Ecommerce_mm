@@ -104,6 +104,8 @@ router.put("/sync", authMiddleware, customerMiddleware, async (req, res) => {
 });
 
 // GET /api/carts/me - cliente: obtiene su carrito con items y stock del producto
+// Devuelve además el flag `outOfStock` por item (considerando producto inactivo,
+// stock 0 sin ilimitado, y stock de la variante si el item tiene variantId).
 router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
   try {
     const customerId = req.user.id;
@@ -111,11 +113,42 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
       where: { customerId },
       include: {
         items: {
-          include: { product: { select: { stock: true, ivaRate: true } } },
+          orderBy: { id: "asc" },
+          // active y stockUnlimited son necesarios para distinguir "sin stock" de "stock ilimitado"
+          // o "producto despublicado" (regla de negocio: productos sin stock se ocultan en la web,
+          // PERO en el carrito mostramos un aviso porque el item ya estaba agregado)
+          include: { product: { select: { stock: true, stockUnlimited: true, active: true, ivaRate: true } } },
         },
       },
     });
-    res.json(cart || null);
+
+    if (!cart) return res.json(null);
+
+    // Para items con variante, consultamos el stock de la variante en un solo query
+    const variantIds = cart.items.map((i) => i.variantId).filter(Boolean);
+    const variants = variantIds.length > 0
+      ? await prisma.productVariant.findMany({
+          where:  { id: { in: variantIds } },
+          select: { id: true, stock: true, stockUnlimited: true, active: true },
+        })
+      : [];
+    const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
+
+    const itemsWithStock = cart.items.map((item) => {
+      let outOfStock = false;
+      if (!item.product || !item.product.active) {
+        outOfStock = true; // producto eliminado o despublicado
+      } else if (item.variantId) {
+        const v = variantMap[item.variantId];
+        if (!v || !v.active) outOfStock = true;
+        else if (!v.stockUnlimited && v.stock <= 0) outOfStock = true;
+      } else if (!item.product.stockUnlimited && item.product.stock <= 0) {
+        outOfStock = true;
+      }
+      return { ...item, outOfStock };
+    });
+
+    res.json({ ...cart, items: itemsWithStock });
   } catch (err) {
     console.error("Error al obtener carrito propio:", err);
     res.status(500).json({ error: "Error al obtener carrito" });
@@ -174,12 +207,18 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
         data:  { quantity: newQty, price: parseFloat(newPrice) },
       });
     } else {
+      const parsedPrice = parseFloat(price);
+      if (isNaN(parsedPrice)) {
+        return res.status(400).json({ error: "Precio inválido" });
+      }
       await prisma.cartItem.create({
         data: {
-          cartId: cart.id, productId, quantity, name,
-          price:        parseFloat(price),
+          cart:         { connect: { id: cart.id } },
+          product:      { connect: { id: parseInt(productId) } },
+          variantId:    variantId ? parseInt(variantId) : null,
+          quantity, name,
+          price:        parsedPrice,
           image:        image || null,
-          variantId:    variantId    ? parseInt(variantId)    : null,
           variantLabel: variantLabel || null,
         },
       });

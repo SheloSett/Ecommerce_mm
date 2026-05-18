@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import SiteMeta from "../components/SiteMeta";
+import { useSiteConfig } from "../context/SiteConfigContext";
 
 const VALUES = [
   {
@@ -33,7 +35,48 @@ const STATS = [
   { number: "98%", label: "Recomendarían IGWT" },
 ];
 
+// Defaults para cuando el admin no ha guardado contenido propio
+const HERO_DEFAULT = {
+  badge: "Conocenos",
+  title: "Tu tienda de",
+  titleHighlight: "tecnología de confianza",
+  text: "Somos IGWT Store, una tienda especializada en tecnología y accesorios electrónicos ubicada en Buenos Aires. Desde el primer día, nuestro objetivo fue simple: ofrecerte los mejores productos al mejor precio, con atención de verdad.",
+};
+
+const HISTORIA_DEFAULT = {
+  subtitle: "Nuestra historia",
+  title: "Empezamos de a poco, crecimos con vos",
+  paragraphs: [
+    "IGWT Store nació de la pasión por la tecnología y la frustración de ver cómo era difícil conseguir buenos productos sin pagar fortunas o sin saber si lo que te llegaba era original.",
+    "Arrancamos vendiendo en pequeña escala, aprendiendo de cada cliente, de cada pedido. Hoy somos una tienda con catálogo propio, clientes mayoristas de todo el país y un equipo comprometido con la calidad.",
+    "Cada producto que ofrecemos lo elegimos porque creemos en él. Si no lo usaríamos nosotros, no lo vendemos.",
+  ],
+  card: {
+    name: "IGWT Store",
+    location: "Buenos Aires, Argentina",
+    categories: ["Auriculares y audio", "Cargadores y cables", "Periféricos y accesorios", "Electrónica en general"],
+    address: "Av La Plata 744, CABA",
+    email: "info@igwtstore.com.ar",
+  },
+};
+
 export default function AboutUs() {
+  // aboutUsContent: viejo enfoque RTE — comentado porque fue reemplazado por secciones estructuradas
+  // const { aboutUsContent } = useSiteConfig();
+  // if (aboutUsContent) { return <RTE render>; }
+
+  const { aboutUsHero, aboutUsHistoria, aboutUsValores } = useSiteConfig();
+  const [showAllValores, setShowAllValores] = useState(false);
+
+  // Usar datos del admin si existen, si no usar los hardcodeados
+  const hero     = aboutUsHero     || HERO_DEFAULT;
+  const historia = aboutUsHistoria || HISTORIA_DEFAULT;
+  const valores  = aboutUsValores  || VALUES;
+
+  const MAX_VISIBLE_VALORES = 6;
+  const visibleValores = showAllValores ? valores : valores.slice(0, MAX_VISIBLE_VALORES);
+  const hasMoreValores  = valores.length > MAX_VISIBLE_VALORES;
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
       <SiteMeta title="Sobre nosotros — IGWT Store" description="Conocé quiénes somos, qué vendemos y por qué miles de clientes confían en IGWT Store para sus compras de tecnología." />
@@ -54,18 +97,16 @@ export default function AboutUs() {
         <div className="relative max-w-5xl mx-auto px-6 py-24 md:py-32">
           <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-semibold px-4 py-1.5 rounded-full mb-6 tracking-wider uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            Conocenos
+            {hero.badge}
           </div>
           <h1 className="text-4xl md:text-6xl font-black leading-tight mb-6">
-            Tu tienda de <br />
+            {hero.title} <br />
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300">
-              tecnología de confianza
+              {hero.titleHighlight}
             </span>
           </h1>
           <p className="text-slate-300 text-lg md:text-xl max-w-2xl leading-relaxed">
-            Somos IGWT Store, una tienda especializada en tecnología y accesorios electrónicos
-            ubicada en Buenos Aires. Desde el primer día, nuestro objetivo fue simple:
-            ofrecerte los mejores productos al mejor precio, con atención de verdad.
+            {hero.text}
           </p>
         </div>
       </section>
@@ -87,25 +128,12 @@ export default function AboutUs() {
       <section className="max-w-5xl mx-auto px-6 py-20">
         <div className="grid md:grid-cols-2 gap-12 items-center">
           <div>
-            <span className="text-blue-600 font-bold text-sm uppercase tracking-widest">Nuestra historia</span>
+            <span className="text-blue-600 font-bold text-sm uppercase tracking-widest">{historia.subtitle}</span>
             <h2 className="text-3xl md:text-4xl font-black text-slate-900 mt-3 mb-6 leading-tight">
-              Empezamos de a poco, <br /> crecimos con vos
+              {historia.title}
             </h2>
             <div className="space-y-4 text-slate-600 leading-relaxed">
-              <p>
-                IGWT Store nació de la pasión por la tecnología y la frustración de ver cómo
-                era difícil conseguir buenos productos sin pagar fortunas o sin saber si lo que
-                te llegaba era original.
-              </p>
-              <p>
-                Arrancamos vendiendo en pequeña escala, aprendiendo de cada cliente, de cada
-                pedido. Hoy somos una tienda con catálogo propio, clientes mayoristas de todo
-                el país y un equipo comprometido con la calidad.
-              </p>
-              <p>
-                Cada producto que ofrecemos lo elegimos porque creemos en él. Si no lo
-                usaríamos nosotros, no lo vendemos.
-              </p>
+              {historia.paragraphs.map((p, i) => <p key={i}>{p}</p>)}
             </div>
           </div>
 
@@ -114,10 +142,10 @@ export default function AboutUs() {
             <div className="bg-slate-900 rounded-2xl p-8 text-white relative overflow-hidden">
               <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-blue-600/30 blur-2xl" />
               <div className="text-5xl mb-4">⚡</div>
-              <h3 className="text-2xl font-black mb-2">IGWT Store</h3>
-              <p className="text-slate-400 text-sm mb-6">Buenos Aires, Argentina</p>
+              <h3 className="text-2xl font-black mb-2">{historia.card.name}</h3>
+              <p className="text-slate-400 text-sm mb-6">{historia.card.location}</p>
               <div className="space-y-3">
-                {["Auriculares y audio", "Cargadores y cables", "Periféricos y accesorios", "Electrónica en general"].map((cat) => (
+                {historia.card.categories.map((cat) => (
                   <div key={cat} className="flex items-center gap-3">
                     <div className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
                     <span className="text-slate-300 text-sm">{cat}</span>
@@ -125,8 +153,8 @@ export default function AboutUs() {
                 ))}
               </div>
               <div className="mt-6 pt-6 border-t border-slate-700">
-                <p className="text-xs text-slate-500">📍 Av La Plata 744, CABA</p>
-                <p className="text-xs text-slate-500 mt-1">📧 info@igwtstore.com.ar</p>
+                <p className="text-xs text-slate-500">📍 {historia.card.address}</p>
+                <p className="text-xs text-slate-500 mt-1">📧 {historia.card.email}</p>
               </div>
             </div>
           </div>
@@ -140,15 +168,35 @@ export default function AboutUs() {
             <span className="text-blue-600 font-bold text-sm uppercase tracking-widest">Lo que nos define</span>
             <h2 className="text-3xl md:text-4xl font-black text-slate-900 mt-3">Nuestros valores</h2>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {VALUES.map((v) => (
-              <div key={v.title} className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+          {/* Flex-wrap + justify-center: cualquier número de tarjetas queda centrado automáticamente */}
+          <div className="flex flex-wrap justify-center gap-6">
+            {visibleValores.map((v, i) => (
+              <div key={i} className="w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)] bg-white rounded-2xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
                 <div className="text-3xl mb-4">{v.icon}</div>
                 <h3 className="font-bold text-slate-900 mb-2">{v.title}</h3>
                 <p className="text-slate-500 text-sm leading-relaxed">{v.desc}</p>
               </div>
             ))}
           </div>
+
+          {/* Botón "ver más / ver menos" — solo si hay más de 6 valores */}
+          {hasMoreValores && (
+            <div className="flex justify-center mt-8">
+              <button
+                onClick={() => setShowAllValores(v => !v)}
+                className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-blue-500 transition-colors group"
+                aria-label={showAllValores ? "Ver menos" : "Ver más valores"}
+              >
+                <div className="w-20 h-0.5 bg-slate-300 group-hover:bg-blue-400 transition-colors rounded-full" />
+                <svg
+                  className={`w-5 h-5 transition-transform duration-300 ${showAllValores ? "rotate-180" : ""}`}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
       </section>
 

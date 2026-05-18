@@ -1,11 +1,39 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
-import { ordersApi, paymentsApi, couponsApi, getImageUrl } from "../services/api";
+import { ordersApi, paymentsApi, couponsApi, shippingApi, getImageUrl } from "../services/api";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
+
+// Provincias argentinas con sus códigos para el selector de Correo Argentino
+const PROVINCES = [
+  { code: "C", name: "CABA" },
+  { code: "B", name: "Buenos Aires" },
+  { code: "X", name: "Córdoba" },
+  { code: "S", name: "Santa Fe" },
+  { code: "M", name: "Mendoza" },
+  { code: "T", name: "Tucumán" },
+  { code: "E", name: "Entre Ríos" },
+  { code: "A", name: "Salta" },
+  { code: "N", name: "Misiones" },
+  { code: "W", name: "Corrientes" },
+  { code: "H", name: "Chaco" },
+  { code: "G", name: "Santiago del Estero" },
+  { code: "K", name: "Catamarca" },
+  { code: "J", name: "San Juan" },
+  { code: "D", name: "San Luis" },
+  { code: "P", name: "Formosa" },
+  { code: "R", name: "Río Negro" },
+  { code: "Q", name: "Neuquén" },
+  { code: "F", name: "La Rioja" },
+  { code: "L", name: "La Pampa" },
+  { code: "Y", name: "Jujuy" },
+  { code: "U", name: "Chubut" },
+  { code: "Z", name: "Santa Cruz" },
+  { code: "V", name: "Tierra del Fuego" },
+];
 
 // Íconos de métodos de pago como SVG inline para no depender de librerías externas
 function IconMP() {
@@ -39,6 +67,18 @@ export default function Checkout() {
   const navigate = useNavigate();
 
   const isMayorista = customer?.type === "MAYORISTA";
+  // Items sin stock: bloquea el checkout aunque el cliente entre por URL directa
+  const hasOutOfStock = items.some((i) => i.outOfStock);
+
+  // Si el cliente entra a /checkout con items sin stock en su carrito,
+  // lo mandamos de vuelta a /carrito (que es donde se ven los items y el aviso)
+  useEffect(() => {
+    if (items.length === 0) return; // si el carrito está vacío, otro return ya lo maneja
+    if (hasOutOfStock) {
+      toast.error("Tenés productos sin stock. Eliminalos antes de finalizar la compra.");
+      navigate("/carrito");
+    }
+  }, [hasOutOfStock, items.length, navigate]);
 
   const [loading, setLoading] = useState(false);
   // Estado de éxito: null = en progreso, objeto = orden creada exitosamente (para no-MP)
@@ -70,8 +110,17 @@ export default function Checkout() {
     isMayorista ? "COTIZACION" : "MERCADOPAGO"
   );
 
-  // Método de envío: "RETIRO" = retirar en el local, "ENVIO" = acordar envío
+  // Método de envío: "RETIRO" = retirar en el local, "ENVIO" = acordar envío, "CORREO_ARGENTINO" = Correo Argentino
   const [shippingMethod, setShippingMethod] = useState("RETIRO");
+
+  // Datos de dirección para CORREO_ARGENTINO
+  const [shippingAddress, setShippingAddress] = useState({
+    streetName: "", streetNumber: "", floor: "", apartment: "",
+    city: "", provinceCode: "C", postalCode: "",
+  });
+  // Tarifa de envío cotizada en tiempo real (null = no cotizada aún)
+  const [shippingRate, setShippingRate] = useState(null);
+  const [rateLoading, setRateLoading] = useState(false);
 
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
@@ -87,7 +136,34 @@ export default function Checkout() {
         return acc + item.price * item.quantity * rate;
       }, 0)
     : 0;
-  const finalTotal = baseTotal + ivaAmount;
+  // Costo de envío: solo aplica si el método es CORREO_ARGENTINO y ya se cotizó
+  const shippingCost = shippingMethod === "CORREO_ARGENTINO" ? (shippingRate?.price || 0) : 0;
+  const finalTotal = baseTotal + ivaAmount + shippingCost;
+
+  // Actualizar handler de dirección de envío
+  const handleShippingAddressChange = (e) => {
+    setShippingAddress((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  // Cotizar automáticamente cuando cambia el CP destino (debounce 800ms)
+  useEffect(() => {
+    if (shippingMethod !== "CORREO_ARGENTINO") return;
+    if (shippingAddress.postalCode.length < 4) { setShippingRate(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setRateLoading(true);
+      try {
+        const res = await shippingApi.getRates(shippingAddress.postalCode);
+        if (!cancelled) setShippingRate(res.data);
+      } catch {
+        if (!cancelled) setShippingRate(null);
+      } finally {
+        if (!cancelled) setRateLoading(false);
+      }
+    }, 800);
+    return () => { cancelled = true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shippingAddress.postalCode, shippingMethod]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -124,9 +200,27 @@ export default function Checkout() {
       toast.error("Tu carrito está vacío");
       return;
     }
+    if (hasOutOfStock) {
+      toast.error("Hay productos sin stock en tu carrito. Eliminalos para continuar.");
+      navigate("/carrito");
+      return;
+    }
     if (!form.customerName || !form.customerEmail || !form.customerPhone || !form.customerCuit) {
       toast.error("Por favor completá los campos requeridos");
       return;
+    }
+    // Validar dirección y cotización si se eligió Correo Argentino
+    if (shippingMethod === "CORREO_ARGENTINO") {
+      const { streetName, streetNumber, city, provinceCode, postalCode } = shippingAddress;
+      if (!streetName || !streetNumber || !city || !provinceCode || !postalCode) {
+        toast.error("Completá todos los campos de dirección de envío");
+        return;
+      }
+      // No permitir continuar sin cotización confirmada
+      if (!shippingRate || shippingCost === 0) {
+        toast.error("Ingresá el código postal para cotizar el envío antes de continuar");
+        return;
+      }
     }
     if (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra) {
       toast.error(`El pedido mínimo mayorista es ${formatPrice(mayoristaMinimoCompra)}`);
@@ -151,6 +245,11 @@ export default function Checkout() {
         })),
         paymentMethod: isMayorista ? "COTIZACION" : paymentMethod,
         shippingMethod,
+        // Incluir dirección y costo si el método es Correo Argentino
+        ...(shippingMethod === "CORREO_ARGENTINO" ? {
+          shippingAddress,
+          shippingCost,
+        } : {}),
         wantsInvoice: isMayorista ? wantsInvoice : false,
         ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
         ...(form.customerNote.trim() ? { customerNote: form.customerNote.trim() } : {}),
@@ -207,8 +306,9 @@ export default function Checkout() {
                 <div key={item.id} className="flex justify-between text-sm gap-2">
                   <div>
                     <span className="text-slate-700">{item.product?.name || "Producto"} x{item.quantity}</span>
-                    {item.variantLabel && (
-                      <p className="text-xs text-slate-500">{item.variantLabel}</p>
+                    {/* Variante seleccionada — solo MINORISTAS la ven */}
+                    {!isMayorista && item.variantLabel && (
+                      <span className="text-xs text-blue-600 ml-1">({item.variantLabel})</span>
                     )}
                   </div>
                   <span className="font-medium text-slate-900 shrink-0">{formatPrice(item.price * item.quantity)}</span>
@@ -241,9 +341,14 @@ export default function Checkout() {
 
             {/* Método de entrega confirmado */}
             <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700">
-              <span className="text-lg">{successOrder.shippingMethod === "ENVIO" ? "🚚" : "🏪"}</span>
+              <span className="text-lg">
+                {successOrder.shippingMethod === "CORREO_ARGENTINO" ? "📮"
+                  : successOrder.shippingMethod === "ENVIO" ? "🚚" : "🏪"}
+              </span>
               <span>
-                {successOrder.shippingMethod === "ENVIO"
+                {successOrder.shippingMethod === "CORREO_ARGENTINO"
+                  ? "Tu pedido se enviará por Correo Argentino. Te informaremos el número de seguimiento cuando el envío esté listo."
+                  : successOrder.shippingMethod === "ENVIO"
                   ? "Acordamos el envío por WhatsApp una vez confirmado el pedido."
                   : "Retiro en el local — Av. La Plata 744 Timbre 3, CABA."}
               </span>
@@ -523,6 +628,150 @@ export default function Checkout() {
                   <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "ENVIO" ? "border-orange-500 bg-orange-500" : "border-slate-300"}`} />
                 </label>
 
+                {/* Correo Argentino */}
+                <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-colors ${shippingMethod === "CORREO_ARGENTINO" ? "border-red-500 bg-red-50" : "border-slate-200 hover:border-slate-300"}`}>
+                  <input
+                    type="radio"
+                    name="shippingMethod"
+                    value="CORREO_ARGENTINO"
+                    checked={shippingMethod === "CORREO_ARGENTINO"}
+                    onChange={() => setShippingMethod("CORREO_ARGENTINO")}
+                    className="sr-only"
+                  />
+                  <span className="text-2xl flex-shrink-0">📮</span>
+                  <div className="flex-1">
+                    <p className="font-semibold text-slate-800">Correo Argentino</p>
+                    <p className="text-xs text-slate-500">Envío a domicilio — ingresá tu dirección para ver el costo</p>
+                  </div>
+                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "CORREO_ARGENTINO" ? "border-red-500 bg-red-500" : "border-slate-300"}`} />
+                </label>
+
+                {/* Formulario de dirección — solo visible cuando se elige Correo Argentino */}
+                {shippingMethod === "CORREO_ARGENTINO" && (
+                  <div className="border border-red-200 rounded-xl p-4 space-y-3 bg-red-50/40">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Dirección de entrega</p>
+
+                    {/* Calle + Número */}
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-600 mb-1">Calle *</label>
+                        <input
+                          type="text"
+                          name="streetName"
+                          value={shippingAddress.streetName}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                          placeholder="Av. Corrientes"
+                          required
+                        />
+                      </div>
+                      <div className="w-24">
+                        <label className="block text-xs text-slate-600 mb-1">Número *</label>
+                        <input
+                          type="text"
+                          name="streetNumber"
+                          value={shippingAddress.streetNumber}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                          placeholder="1234"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {/* Piso + Dpto */}
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-600 mb-1">Piso</label>
+                        <input
+                          type="text"
+                          name="floor"
+                          value={shippingAddress.floor}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                          placeholder="2"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-600 mb-1">Depto</label>
+                        <input
+                          type="text"
+                          name="apartment"
+                          value={shippingAddress.apartment}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                          placeholder="B"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Ciudad */}
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Ciudad *</label>
+                      <input
+                        type="text"
+                        name="city"
+                        value={shippingAddress.city}
+                        onChange={handleShippingAddressChange}
+                        className="input text-sm"
+                        placeholder="Buenos Aires"
+                        required
+                      />
+                    </div>
+
+                    {/* Provincia + CP */}
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="block text-xs text-slate-600 mb-1">Provincia *</label>
+                        <select
+                          name="provinceCode"
+                          value={shippingAddress.provinceCode}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                        >
+                          {PROVINCES.map((p) => (
+                            <option key={p.code} value={p.code}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-28">
+                        <label className="block text-xs text-slate-600 mb-1">Código Postal *</label>
+                        <input
+                          type="text"
+                          name="postalCode"
+                          value={shippingAddress.postalCode}
+                          onChange={handleShippingAddressChange}
+                          className="input text-sm"
+                          placeholder="1425"
+                          maxLength={10}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {/* Resultado de la cotización */}
+                    {rateLoading && (
+                      <div className="flex items-center gap-2 text-xs text-slate-500 pt-1">
+                        <span className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin inline-block" />
+                        Cotizando envío...
+                      </div>
+                    )}
+                    {!rateLoading && shippingRate && (
+                      <div className="flex items-center justify-between text-sm bg-white border border-green-200 rounded-lg px-3 py-2">
+                        <span className="text-slate-600">
+                          📦 Correo Arg. Clásico · {shippingRate.deliveryTimeMin}–{shippingRate.deliveryTimeMax} días hábiles
+                        </span>
+                        <span className="font-bold text-green-700">{formatPrice(shippingRate.price)}</span>
+                      </div>
+                    )}
+                    {!rateLoading && !shippingRate && shippingAddress.postalCode.length >= 4 && (
+                      <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        ⚠️ No se encontró tarifa para ese código postal. Verificá que sea correcto, o elegí &quot;Acordar envío&quot; para coordinar por WhatsApp.
+                      </div>
+                    )}
+                  </div>
+                )}
+
               </div>
             </div>
 
@@ -541,9 +790,23 @@ export default function Checkout() {
             )}
 
             {/* Botón principal */}
+            {/* Aviso cuando Correo Argentino está seleccionado pero sin cotización */}
+            {shippingMethod === "CORREO_ARGENTINO" && !shippingRate && !rateLoading && (
+              <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                <span className="text-base">⚠️</span>
+                <span>Ingresá el código postal de destino para cotizar el envío y poder continuar.</span>
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={loading || (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)}
+              disabled={
+                loading ||
+                rateLoading ||
+                (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra) ||
+                // Bloquear si eligió Correo Argentino pero aún no hay cotización confirmada
+                (shippingMethod === "CORREO_ARGENTINO" && (!shippingRate || shippingCost === 0))
+              }
               className={`w-full py-4 text-lg font-bold rounded-xl transition-colors ${
                 isMayorista
                   ? "bg-green-600 hover:bg-green-700 text-white"
@@ -554,6 +817,11 @@ export default function Checkout() {
                 <span className="flex items-center justify-center gap-2">
                   <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                   Procesando...
+                </span>
+              ) : rateLoading && shippingMethod === "CORREO_ARGENTINO" ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
+                  Cotizando envío...
                 </span>
               ) : (
                 submitLabel()
@@ -585,10 +853,17 @@ export default function Checkout() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
-                        {item.variantLabel && (
-                          <p className="text-xs text-slate-600">{item.variantLabel}</p>
+                        {/* Variante seleccionada — visible SOLO para MINORISTAS.
+                            Los mayoristas no ven las variantes (las asigna el admin al confirmar). */}
+                        {!isMayorista && item.variantLabel && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {item.variantLabel.split(" / ").map((v, vi) => (
+                              <span key={vi} className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                                {v}
+                              </span>
+                            ))}
+                          </div>
                         )}
-
                         <p className="text-xs text-slate-500">x{item.quantity} · {formatPrice(price)} c/u</p>
                         <p className="text-sm font-bold text-slate-900">{formatPrice(price * item.quantity)}</p>
                       </div>
@@ -675,6 +950,17 @@ export default function Checkout() {
                     <span>IVA</span>
                     <span>+{formatPrice(ivaAmount)}</span>
                   </div>
+                )}
+
+                {/* Línea de envío — visible solo para Correo Argentino */}
+                {shippingCost > 0 && (
+                  <div className="flex justify-between text-sm text-slate-600">
+                    <span>📮 Envío (Correo Arg.)</span>
+                    <span>+{formatPrice(shippingCost)}</span>
+                  </div>
+                )}
+                {shippingMethod === "CORREO_ARGENTINO" && shippingCost === 0 && !rateLoading && (
+                  <div className="text-xs text-slate-400 italic">Costo de envío: ingresá el CP para cotizar</div>
                 )}
 
                 {isMayorista && (

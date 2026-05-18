@@ -556,13 +556,13 @@ export default function AdminCustomers() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-left text-slate-500 text-xs uppercase tracking-wide">
-                <th className="px-5 py-3.5">Cliente</th>
-                <th className="px-5 py-3.5">Teléfono</th>
+                <th className="px-4 py-3">Cliente</th>
+                <th className="px-4 py-3 hidden md:table-cell">Teléfono</th>
                 {/* <th className="px-5 py-3.5">Empresa</th> — Eliminada: campo removido del schema */}
-                <th className="px-5 py-3.5">Tipo</th>
-                <th className="px-5 py-3.5">Estado</th>
-                <th className="px-5 py-3.5">Fecha</th>
-                <th className="px-5 py-3.5">Acciones</th>
+                <th className="px-4 py-3">Tipo</th>
+                <th className="px-4 py-3 hidden sm:table-cell">Estado</th>
+                <th className="px-4 py-3 hidden lg:table-cell">Fecha</th>
+                <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -581,27 +581,27 @@ export default function AdminCustomers() {
                     </td>
 
                     {/* Teléfono */}
-                    <td className="px-5 py-4 text-slate-600">{c.phone || "—"}</td>
+                    <td className="px-4 py-4 text-slate-600 hidden md:table-cell">{c.phone || "—"}</td>
 
                     {/* Empresa — Eliminada: campo removido del schema */}
                     {/* <td className="px-5 py-4 text-slate-600">{c.company || "—"}</td> */}
 
                     {/* Tipo: solo badge estático, editable desde el modal */}
-                    <td className="px-5 py-4">
-                      <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${type.className}`}>
+                    <td className="px-4 py-4">
+                      <span className={`px-2 py-1 rounded-lg text-xs font-semibold ${type.className}`}>
                         {type.label}
                       </span>
                     </td>
 
                     {/* Estado */}
-                    <td className="px-5 py-4">
-                      <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${status.className}`}>
+                    <td className="px-4 py-4 hidden sm:table-cell">
+                      <span className={`px-2 py-1 rounded-lg text-xs font-semibold ${status.className}`}>
                         {status.label}
                       </span>
                     </td>
 
                     {/* Fecha */}
-                    <td className="px-5 py-4 text-slate-400 text-xs">
+                    <td className="px-4 py-4 text-slate-400 text-xs hidden lg:table-cell">
                       {new Date(c.createdAt).toLocaleDateString("es-AR")}
                     </td>
 
@@ -1266,9 +1266,11 @@ export default function AdminCustomers() {
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Contraseña <span className="text-slate-400">(opcional)</span></label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Contraseña *</label>
                   <input
                     type="password"
+                    required
+                    minLength={6}
                     value={newCustomerForm.password}
                     onChange={(e) => setNewCustomerForm((p) => ({ ...p, password: e.target.value }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

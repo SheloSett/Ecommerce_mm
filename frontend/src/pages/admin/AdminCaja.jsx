@@ -29,6 +29,10 @@ export default function AdminCaja() {
   const [loadingProds, setLoadingProds] = useState(false);
   // Producto seleccionado para RMA
   const [rmaProductId, setRmaProductId] = useState("");
+  // Variante seleccionada (si el producto tiene variantes)
+  const [rmaVariantId, setRmaVariantId] = useState("");
+  const [rmaVariants, setRmaVariants]   = useState([]);
+  const [loadingVariants, setLoadingVariants] = useState(false);
   // Cantidad para RMA (afecta el monto: costo × qty)
   const [rmaQty, setRmaQty] = useState(1);
 
@@ -58,12 +62,22 @@ export default function AdminCaja() {
       .finally(() => setLoadingProds(false));
   }, [subtype, products.length]);
 
-  // Al seleccionar un producto en RMA, auto-rellenar el monto con costo × cantidad
-  const handleRmaProduct = (id) => {
+  // Al seleccionar un producto en RMA, auto-rellenar el monto y cargar variantes si tiene
+  const handleRmaProduct = async (id) => {
     setRmaProductId(id);
+    setRmaVariantId("");
+    setRmaVariants([]);
     const product = products.find((p) => String(p.id) === String(id));
     if (product) {
       setForm((f) => ({ ...f, amount: String(product.cost * rmaQty) }));
+      if ((product._count?.variants ?? 0) > 0) {
+        setLoadingVariants(true);
+        try {
+          const res = await productsApi.getById(id);
+          setRmaVariants(res.data.variants || []);
+        } catch { setRmaVariants([]); }
+        finally { setLoadingVariants(false); }
+      }
     }
   };
 
@@ -83,6 +97,7 @@ export default function AdminCaja() {
     e.preventDefault();
     if (subtype === "RMA") {
       if (!rmaProductId) { toast.error("Seleccioná un producto"); return; }
+      if (rmaVariants.length > 0 && !rmaVariantId) { toast.error("Seleccioná la variante devuelta"); return; }
       if (!form.amount)  { toast.error("El monto es requerido"); return; }
     } else {
       if (!form.amount || !form.description) {
@@ -90,10 +105,19 @@ export default function AdminCaja() {
         return;
       }
     }
-    // Para RMA: descripción automática con nombre y cantidad del producto
+    // Para RMA: descripción automática con nombre, variante (si aplica) y cantidad
     const product = products.find((p) => String(p.id) === String(rmaProductId));
+    const selectedVariant = rmaVariants.find((v) => String(v.id) === String(rmaVariantId));
+    const variantLabel = selectedVariant
+      ? (() => {
+          const combo = Array.isArray(selectedVariant.combination)
+            ? selectedVariant.combination
+            : JSON.parse(selectedVariant.combination || "[]");
+          return combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
+        })()
+      : null;
     const description = subtype === "RMA"
-      ? `RMA: ${product?.name || "Producto"}${rmaQty > 1 ? ` (x${rmaQty})` : ""}`
+      ? `RMA: ${product?.name || "Producto"}${variantLabel ? ` [${variantLabel}]` : ""}${rmaQty > 1 ? ` (x${rmaQty})` : ""}`
       : form.description;
 
     setSaving(true);
@@ -103,11 +127,17 @@ export default function AdminCaja() {
         description,
         type: tab,
         subtype,
-        ...(subtype === "RMA" ? { productId: parseInt(rmaProductId) } : {}),
+        ...(subtype === "RMA" ? {
+          productId: parseInt(rmaProductId),
+          variantId: rmaVariantId ? parseInt(rmaVariantId) : undefined,
+          quantity:  rmaQty,
+        } : {}),
       });
-      toast.success(subtype === "RMA" ? "RMA registrado" : "Gasto registrado");
+      toast.success(subtype === "RMA" ? "RMA registrado y stock descontado" : "Gasto registrado");
       setForm(EMPTY_FORM);
       setRmaProductId("");
+      setRmaVariantId("");
+      setRmaVariants([]);
       setRmaQty(1);
       fetchGastos();
     } catch {
@@ -141,7 +171,7 @@ export default function AdminCaja() {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => { setTab(t.key); setSubtype("GASTO"); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(EMPTY_FORM); }}
               className={`px-5 py-2.5 text-sm font-semibold rounded-t-lg transition-colors ${
                 tab === t.key
                   ? t.color === "blue"
@@ -160,13 +190,13 @@ export default function AdminCaja() {
           <h2 className="text-base font-semibold text-slate-800 mb-4">Registrar gasto</h2>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
 
-            {/* Selector de tipo */}
+            {/* Selector de tipo — RMA solo aplica a Gastos del Negocio, no a Personales */}
             <div className="flex gap-2">
-              {["GASTO", "RMA"].map((s) => (
+              {(tab === "NEGOCIO" ? ["GASTO", "RMA"] : ["GASTO"]).map((s) => (
                 <button
                   key={s}
                   type="button"
-                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaQty(1); setForm(EMPTY_FORM); }}
+                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(EMPTY_FORM); }}
                   className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
                     subtype === s
                       ? s === "RMA"
@@ -240,6 +270,29 @@ export default function AdminCaja() {
                     ))}
                   </select>
                 </div>
+                {/* Variante — aparece solo si el producto tiene variantes */}
+                {rmaVariants.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-slate-500">Variante devuelta *</label>
+                    <select
+                      value={rmaVariantId}
+                      onChange={(e) => setRmaVariantId(e.target.value)}
+                      className="w-full px-3 py-2 border border-orange-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50"
+                      disabled={loadingVariants}
+                    >
+                      <option value="">{loadingVariants ? "Cargando variantes..." : "— Seleccioná la variante —"}</option>
+                      {rmaVariants.map((v) => {
+                        const combo = Array.isArray(v.combination) ? v.combination : JSON.parse(v.combination || "[]");
+                        const label = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
+                        return (
+                          <option key={v.id} value={v.id}>
+                            {label} (stock actual: {v.stockUnlimited ? "∞" : v.stock})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
                 {/* Fila 2: cantidad + monto + fecha + botón */}
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex flex-col gap-1">

@@ -8,11 +8,13 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  role      Role     @default(ADMIN)
-  createdAt DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  email       String   @unique
+  password    String
+  name        String?  // Nombre visible del admin (opcional)
+  role        Role     @default(ADMIN)
+  permissions String[] // Keys de permisos: ["productos", "ordenes", ...]. SUPERADMIN bypasea esta lista.
+  createdAt   DateTime @default(now())
 
   @@map("users")
 }
@@ -128,11 +130,24 @@ model Order {
   ivaAmount           Float         @default(0)
   // fulfillmentStatus: etapa logística del pedido (independiente del estado de pago)
   fulfillmentStatus   String        @default("PENDIENTE")  // PENDIENTE | EN_PREPARACION | ENVIADO | ENTREGADO
-  // shippingMethod: cómo el cliente quiere recibir su pedido. "RETIRO" = retiro en local, "ENVIO" = acordar envío.
-  // Extensible en el futuro para soportar correo argentino u otros carriers.
-  shippingMethod      String        @default("RETIRO")     // RETIRO | ENVIO
+  // shippingMethod: cómo el cliente quiere recibir su pedido.
+  // RETIRO = retiro en local, ENVIO = acordar envío, CORREO_ARGENTINO = envío por Correo Argentino via MiCorreo
+  shippingMethod      String        @default("RETIRO")     // RETIRO | ENVIO | CORREO_ARGENTINO
+  // shippingAddress: dirección de envío del cliente (solo para pedidos CORREO_ARGENTINO)
+  shippingAddress     Json?
+  // shippingCost: costo de envío calculado por MiCorreo al momento del checkout (0 para RETIRO/ENVIO)
+  shippingCost        Float         @default(0)
+  // shippingImported: true si el admin ya generó el envío en MiCorreo desde el panel
+  shippingImported    Boolean       @default(false)
+  // trackingNumber: número de seguimiento asignado por Correo Argentino
+  trackingNumber      String?
   returnRequests  ReturnRequest[]    // Solicitudes de arrepentimiento vinculadas a esta orden
   seenByAdmin     Boolean       @default(false) // true = el admin abrió el detalle de la cotización
+  // Modificación post-pago: isModified indica que el admin editó el pedido después de aprobado.
+  // originalSnapshot guarda el clientSnapshot previo a la primera modificación para que el cliente
+  // pueda ver el pedido original vs. el modificado.
+  isModified       Boolean       @default(false)
+  originalSnapshot Json?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -170,6 +185,7 @@ model OrderItem {
 }
 
 enum Role {
+  SUPERADMIN
   ADMIN
   USER
 }
@@ -177,6 +193,7 @@ enum Role {
 enum OrderStatus {
   PENDING        // Esperando revisión del admin
   QUOTE_APPROVED // Admin aprobó la cotización — cliente debe pagar
+  PAYMENT_REVIEW // Cliente confirmó método de pago — admin verifica antes de aprobar
   APPROVED       // Pago confirmado
   REJECTED
   CANCELLED
@@ -216,6 +233,12 @@ model Customer {
   coupons           Coupon[]           // Cupones personales asignados a este cliente
   returnRequests    ReturnRequest[]    // Solicitudes de arrepentimiento del cliente
   seenByAdmin       Boolean            @default(false) // true = el admin abrió el detalle del cliente
+  resetToken        String?            // Token de un solo uso para reset de contraseña (64 chars hex)
+  resetTokenExpiry  DateTime?          // Expiración del token (1 hora desde la solicitud)
+  restockEmailSentAt      DateTime?    // Último email de restock enviado (mayoristas)
+  restockEmailCount       Int          @default(0) // Emails de restock enviados desde el último pedido
+  unsubscribeRestock      Boolean      @default(false) // Opt-out de emails de restock
+  lastRecommendationEmail DateTime?    // Último email de recomendación semanal enviado (minoristas)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
@@ -343,6 +366,8 @@ model Gasto {
   subtype     String     @default("GASTO")
   // productId: referencia al producto devuelto (solo cuando subtype = "RMA")
   productId   Int?
+  // variantId: variante específica devuelta (solo cuando el producto tiene variantes)
+  variantId   Int?
   date        DateTime   @default(now())
   createdAt   DateTime   @default(now())
 

@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
+const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
 const prisma = new PrismaClient();
 
@@ -189,7 +190,10 @@ async function getProductsAdmin(req, res) {
         },
         orderBy: { stock: "asc" },
       });
-      const filtered = candidates.filter((p) => p.stockBreak !== null && p.stock <= p.stockBreak);
+      // Solo "Quiebre de stock": stock entre 1 y stockBreak. Si stock == 0 el producto
+      // aparece exclusivamente en la pestaña "Sin stock", no acá (antes p.stock <= p.stockBreak
+      // incluía los productos sin stock y duplicaba la información entre tabs).
+      const filtered = candidates.filter((p) => p.stockBreak !== null && p.stock > 0 && p.stock <= p.stockBreak);
       return res.json({
         products: filtered,
         pagination: { total: filtered.length, page: 1, limit: filtered.length, totalPages: 1 },
@@ -359,8 +363,8 @@ async function createProduct(req, res) {
           .map((id) => parseInt(id)).filter(Boolean)
       : [];
 
-    if (!name || !price || !cost) {
-      return res.status(400).json({ error: "Nombre, precio y costo son requeridos" });
+    if (!name || !price || !cost || !wholesalePrice) {
+      return res.status(400).json({ error: "Nombre, precio minorista, precio mayorista y costo son requeridos" });
     }
 
     // Validar que salePrice minorista sea menor al precio normal
@@ -373,9 +377,9 @@ async function createProduct(req, res) {
       return res.status(400).json({ error: "El precio de oferta mayorista debe ser menor al precio mayorista" });
     }
 
-    // Procesar imágenes subidas
-    const images = req.files
-      ? req.files.map((f) => `/uploads/${f.filename}`)
+    // Subir imágenes a Cloudinary y obtener las URLs
+    const images = req.files && req.files.length > 0
+      ? await Promise.all(req.files.map((f) => uploadBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url)))
       : [];
 
     // Si se activa featured u onSale, verificar que no se supere el límite del carrusel.
@@ -457,6 +461,11 @@ async function updateProduct(req, res) {
       return res.status(400).json({ error: "El costo es obligatorio" });
     }
 
+    // El precio mayorista es obligatorio: si se manda explícitamente vacío, rechazar
+    if (wholesalePrice !== undefined && (wholesalePrice === "" || wholesalePrice === null)) {
+      return res.status(400).json({ error: "El precio mayorista es obligatorio" });
+    }
+
     // Validar salePrice minorista contra el precio que quedará (el nuevo o el actual)
     const finalPrice = price ? parseFloat(price) : existing.price;
     if (salePrice && parseFloat(salePrice) >= finalPrice) {
@@ -474,11 +483,12 @@ async function updateProduct(req, res) {
     let images = existing.images;
 
     if (req.files && req.files.length > 0) {
-      const newImages = req.files.map((f) => `/uploads/${f.filename}`);
+      const newImages = await Promise.all(req.files.map((f) => uploadBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url)));
 
       // Si keepImages se envía, combinamos las que se quieren conservar con las nuevas
+      // Filtramos __NONE__ que es el marcador que envía el frontend cuando no hay imágenes a conservar
       if (keepImages) {
-        const toKeep = Array.isArray(keepImages) ? keepImages : [keepImages];
+        const toKeep = (Array.isArray(keepImages) ? keepImages : [keepImages]).filter((k) => k !== "__NONE__");
         images = [...toKeep, ...newImages];
       } else {
         // Si no se especifica keepImages, reemplazamos todas con las nuevas
@@ -486,7 +496,20 @@ async function updateProduct(req, res) {
       }
     } else if (keepImages !== undefined) {
       // Solo conservar las imágenes especificadas (sin nuevas imágenes subidas)
-      images = Array.isArray(keepImages) ? keepImages : [keepImages];
+      // __NONE__ es el marcador que envía el frontend cuando se borraron todas las imágenes
+      const keepArr = Array.isArray(keepImages) ? keepImages : [keepImages];
+      images = keepArr.filter((k) => k !== "__NONE__");
+    }
+
+    // Eliminar de Cloudinary las imágenes que ya no se van a usar
+    const removedImages = existing.images.filter((img) => !images.includes(img));
+    for (const img of removedImages) {
+      if (img.startsWith("http")) {
+        await deleteByUrl(img);
+      } else {
+        const fullPath = require("path").join(__dirname, "../../", img);
+        if (require("fs").existsSync(fullPath)) require("fs").unlinkSync(fullPath);
+      }
     }
 
     // Si se activa featured u onSale (y antes no lo estaba), verificar límite del carrusel.
@@ -659,11 +682,13 @@ async function deleteProduct(req, res) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
 
-    // Eliminar archivos de imagen del disco
+    // Eliminar imágenes: Cloudinary si es URL https, disco local si es path relativo (imágenes viejas)
     for (const imgPath of existing.images) {
-      const fullPath = path.join(__dirname, "../../", imgPath);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
+      if (imgPath.startsWith("http")) {
+        await deleteByUrl(imgPath);
+      } else {
+        const fullPath = path.join(__dirname, "../../", imgPath);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
       }
     }
 
@@ -832,9 +857,18 @@ async function syncProductVisibility(productId, tx = prisma) {
     where: { id: productId },
     include: { variants: { where: { active: true }, select: { stock: true, stockUnlimited: true } } },
   });
-  if (!product || product.variants.length === 0) return;
+  if (!product) return;
 
-  const hasStock = product.variants.some((v) => v.stockUnlimited || v.stock > 0);
+  let hasStock;
+  if (product.variants.length === 0) {
+    // Producto sin variantes: visibilidad basada en su propio stock
+    // Antes se salía con return acá y el producto nunca se ocultaba al quedarse sin stock
+    hasStock = product.stockUnlimited || product.stock > 0;
+  } else {
+    // Producto con variantes: visible si al menos una variante activa tiene stock
+    hasStock = product.variants.some((v) => v.stockUnlimited || v.stock > 0);
+  }
+
   if (!hasStock && product.active) {
     await tx.product.update({ where: { id: productId }, data: { active: false } });
   } else if (hasStock && !product.active) {

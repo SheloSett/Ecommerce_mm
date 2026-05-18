@@ -1,8 +1,45 @@
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import SiteMeta from "../components/SiteMeta";
+import { useSiteConfig } from "../context/SiteConfigContext";
+
+// Renderiza el contenido de una sección: soporta "- ítem" como lista con viñetas
+function renderContent(text) {
+  const lines = (text || "").split("\n");
+  const result = [];
+  let listItems = [];
+  lines.forEach((line, i) => {
+    if (line.startsWith("- ")) {
+      listItems.push(line.slice(2));
+    } else {
+      if (listItems.length > 0) {
+        result.push(
+          <ul key={`list-${i}`} className="list-disc pl-6 mt-2 space-y-1">
+            {listItems.map((item, j) => <li key={j}>{item}</li>)}
+          </ul>
+        );
+        listItems = [];
+      }
+      if (line.trim()) result.push(<p key={`p-${i}`} className="mt-2">{line}</p>);
+    }
+  });
+  if (listItems.length > 0) {
+    result.push(
+      <ul key="list-end" className="list-disc pl-6 mt-2 space-y-1">
+        {listItems.map((item, j) => <li key={j}>{item}</li>)}
+      </ul>
+    );
+  }
+  return result;
+}
 
 export default function Terms() {
+  // termsContent: viejo enfoque RTE — comentado porque fue reemplazado por secciones estructuradas
+  // const { termsContent } = useSiteConfig();
+  // if (termsContent) { return <RTE render>; }
+
+  const { termsSections } = useSiteConfig();
+
   return (
     <div className="min-h-screen flex flex-col">
       <SiteMeta
@@ -14,6 +51,17 @@ export default function Terms() {
         <h1 className="text-3xl font-extrabold text-slate-900 mb-2">Términos y Condiciones</h1>
         <p className="text-sm text-slate-400 mb-8">Última actualización: abril de 2026</p>
 
+        {/* Si el admin guardó secciones estructuradas, usarlas; si no, mostrar el contenido hardcodeado */}
+        {termsSections ? (
+          <div className="prose prose-slate max-w-none space-y-8 text-slate-700">
+            {termsSections.map((s, i) => (
+              <section key={i}>
+                <h2 className="text-xl font-bold text-slate-800 mb-3">{s.title}</h2>
+                {renderContent(s.content)}
+              </section>
+            ))}
+          </div>
+        ) : (
         <div className="prose prose-slate max-w-none space-y-8 text-slate-700">
 
           <section>
@@ -120,6 +168,7 @@ export default function Terms() {
           </section>
 
         </div>
+        )} {/* fin del bloque condicional termsSections */}
       </main>
       <Footer />
     </div>

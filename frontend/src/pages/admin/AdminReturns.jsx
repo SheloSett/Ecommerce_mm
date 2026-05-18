@@ -151,8 +151,15 @@ export default function AdminReturns() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {requests.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-3 font-mono text-slate-500">{r.id}</td>
+                  <tr key={r.id} className={`transition-colors ${!r.seenByAdmin && r.status === "PENDING" ? "bg-blue-50/60 hover:bg-blue-50" : "hover:bg-slate-50"}`}>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-slate-500">{r.id}</span>
+                        {!r.seenByAdmin && r.status === "PENDING" && (
+                          <span className="text-[10px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full leading-none">NUEVO</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-5 py-3">
                       <p className="font-medium text-slate-800">{r.customerName}</p>
                       <p className="text-xs text-slate-400">{r.customerEmail}</p>
@@ -179,7 +186,9 @@ export default function AdminReturns() {
                           // Marcar como visto al abrir el detalle → actualiza badge instantáneo
                           if (!r.seenByAdmin) {
                             returnsApi.markSeen(r.id).catch(() => {});
-                            decrementBadge("devoluciones");
+                            // Actualizar estado local para quitar el badge NUEVO de la fila inmediatamente
+                            setRequests((prev) => prev.map((x) => x.id === r.id ? { ...x, seenByAdmin: true } : x));
+                            if (r.status === "PENDING") decrementBadge("devoluciones");
                           }
                         }}
                         className="text-blue-600 hover:underline text-xs font-medium"
@@ -289,8 +298,9 @@ export default function AdminReturns() {
                 </div>
               )}
 
-              {/* ── Acciones: solo si está pendiente ── */}
-              {selected.status === "PENDING" && !resolving && (
+              {/* Botones Aprobar/Rechazar removidos: el admin contacta al cliente por WhatsApp
+                  y gestiona la devolución manualmente modificando el pedido desde Órdenes. */}
+              {/* {selected.status === "PENDING" && !resolving && (
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={() => openResolve("APPROVED")}
@@ -305,7 +315,7 @@ export default function AdminReturns() {
                     ❌ Rechazar
                   </button>
                 </div>
-              )}
+              )} */}
 
               {/* ── Formulario de resolución ── */}
               {selected.status === "PENDING" && resolving && (

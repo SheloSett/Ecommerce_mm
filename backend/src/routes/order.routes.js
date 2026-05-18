@@ -1,8 +1,8 @@
 const express = require("express");
 const {
   getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
-  getMyOrders, getMyCotizaciones, getMyQuoteById,
-  updateOrderItem, deleteOrderItem,
+  getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
+  updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
   applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,
 } = require("../controllers/order.controller");
@@ -17,6 +17,10 @@ router.post("/", validateOrder, createOrder);
 // Cliente: ver su propio historial de pedidos aprobados
 // IMPORTANTE: debe ir ANTES de /:id para que /my no sea interpretado como un ID
 router.get("/my", authMiddleware, customerMiddleware, getMyOrders);
+
+// Cliente: ver detalle completo de un pedido propio por ID
+// IMPORTANTE: debe ir ANTES de /:id
+router.get("/my/:id", authMiddleware, customerMiddleware, getMyOrderById);
 
 // Cliente MAYORISTA: ver sus cotizaciones enviadas
 // IMPORTANTE: también debe ir ANTES de /:id
@@ -41,9 +45,13 @@ router.patch("/:id/seen", authMiddleware, adminMiddleware, markOrderSeen);
 router.patch("/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
 // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
 router.patch("/:id/fields", authMiddleware, adminMiddleware, updateOrderFields);
-// Admin: editar/eliminar un item individual de una cotización
+// Admin: editar/eliminar un item individual de una orden
 router.patch("/:orderId/items/:itemId", authMiddleware, adminMiddleware, updateOrderItem);
 router.delete("/:orderId/items/:itemId", authMiddleware, adminMiddleware, deleteOrderItem);
+// Admin: agregar un único producto a un pedido existente
+router.post("/:id/items", authMiddleware, adminMiddleware, addItemToOrder);
+// Admin: modificación batch de un pedido (agrega/edita/elimina items en una sola llamada)
+router.post("/:id/modify", authMiddleware, adminMiddleware, modifyOrder);
 // Admin: publicar cambios al cliente (actualiza snapshot + notifica)
 router.post("/:id/publish", authMiddleware, adminMiddleware, publishCotizacion);
 // Admin: aprobar cotización

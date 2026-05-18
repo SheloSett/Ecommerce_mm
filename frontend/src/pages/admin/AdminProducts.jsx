@@ -389,7 +389,12 @@ export default function AdminProducts() {
       newImages.forEach((file) => formData.append("images", file));
 
       if (editingProduct) {
-        keepImages.forEach((img) => formData.append("keepImages", img));
+        if (keepImages.length > 0) {
+          keepImages.forEach((img) => formData.append("keepImages", img));
+        } else {
+          // Array vacío: señaliza al backend que se deben borrar todas las imágenes actuales
+          formData.append("keepImages", "__NONE__");
+        }
         await productsApi.update(editingProduct.id, formData);
         toast.success("Producto actualizado");
       } else {
@@ -749,7 +754,8 @@ export default function AdminProducts() {
             { key: "sinstock",     label: "Sin stock" },
             { key: "quiebrestock", label: "Quiebre de stock" },
           ];
-          const lowStockCount = products.filter(p => { const { stock: es, unlimited: eu } = effectiveStock(p); return p.stockBreak != null && !eu && es <= p.stockBreak; }).length;
+          // Quiebre de stock: stock entre 1 y stockBreak. Productos en 0 ya están en "Sin stock".
+          const lowStockCount = products.filter(p => { const { stock: es, unlimited: eu } = effectiveStock(p); return p.stockBreak != null && !eu && es > 0 && es <= p.stockBreak; }).length;
           return (
             <div className="flex gap-2 flex-wrap">
               {tabs.map(t => (
@@ -787,7 +793,7 @@ export default function AdminProducts() {
             {products.filter(p => {
               const { stock: es, unlimited: eu } = effectiveStock(p);
               if (isSinStock)     return !eu && es <= 0;
-              if (isQuiebreStock) return p.stockBreak !== null && !eu && es <= p.stockBreak;
+              if (isQuiebreStock) return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
               return true;
             }).map((p) => {
               const img = p.images?.[0];
@@ -819,7 +825,7 @@ export default function AdminProducts() {
                       <p className="font-bold text-slate-800 text-sm uppercase tracking-wide truncate">
                         {p.name}
                       </p>
-                      <div className="flex items-center gap-3 mt-0.5">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                         {p.sku && (
                           <span className="text-xs text-slate-400 font-mono">SKU: {p.sku}</span>
                         )}
@@ -841,7 +847,7 @@ export default function AdminProducts() {
                           );
                         })()}
                         {(p._count?.variants ?? 0) > 0 && (
-                          <span className="text-xs text-slate-400">
+                          <span className="text-xs text-slate-400 hidden sm:inline">
                             {p._count.variants} variante{p._count.variants !== 1 ? "s" : ""} activa{p._count.variants !== 1 ? "s" : ""}.
                           </span>
                         )}
@@ -851,7 +857,7 @@ export default function AdminProducts() {
                           </span>
                         )}
                         {p.featured && (
-                          <span className="text-xs text-blue-600 font-medium">⭐ Destacado</span>
+                          <span className="text-xs text-blue-600 font-medium hidden sm:inline">⭐ Destacado</span>
                         )}
                       </div>
                     </div>
@@ -1780,9 +1786,39 @@ export default function AdminProducts() {
                   className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
                 />
                 {newImages.length > 0 && (
-                  <p className="text-xs text-blue-600 mt-1">
-                    {newImages.length} imagen{newImages.length > 1 ? "es" : ""} seleccionada{newImages.length > 1 ? "s" : ""}
-                  </p>
+                  <>
+                    <p className="text-xs text-blue-600 mt-2">
+                      {newImages.length} imagen{newImages.length > 1 ? "es" : ""} seleccionada{newImages.length > 1 ? "s" : ""} (preview antes de guardar)
+                    </p>
+                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-2">
+                      {newImages.map((file, idx) => {
+                        // URL.createObjectURL crea una URL temporal del File en memoria.
+                        // No es necesario revokeObjectURL acá porque el navegador la libera
+                        // automáticamente al desmontar el modal/cerrar la pestaña.
+                        const previewUrl = URL.createObjectURL(file);
+                        return (
+                          <div key={`${file.name}-${idx}`} className="relative group aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                            <img
+                              src={previewUrl}
+                              alt={file.name}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setNewImages((prev) => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-700"
+                              title="Quitar imagen"
+                            >
+                              ✕
+                            </button>
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1 py-0.5 truncate">
+                              {file.name}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </div>
 

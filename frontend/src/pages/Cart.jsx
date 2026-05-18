@@ -21,6 +21,8 @@ export default function Cart() {
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
+  // Hay items sin stock = no se puede finalizar la compra
+  const hasOutOfStock = items.some((i) => i.outOfStock);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -80,13 +82,16 @@ export default function Cart() {
               {items.map((item) => {
                 const img = item.images?.[0];
                 const subtotal = item.price * item.quantity;
+                const isOut = item.outOfStock;
                 return (
                   <div
                     key={item.cartItemId}
-                    className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 grid grid-cols-[80px_1fr] md:grid-cols-[80px_1fr_120px_130px_40px] gap-4 items-center"
+                    className={`bg-white rounded-2xl shadow-sm p-4 grid grid-cols-[80px_1fr] md:grid-cols-[80px_1fr_120px_130px_40px] gap-4 items-center transition-colors ${
+                      isOut ? "border-2 border-red-300 bg-red-50/30" : "border border-slate-200"
+                    }`}
                   >
                     {/* Imagen */}
-                    <div className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0" style={{ backgroundColor: "#ffffff" }}>
+                    <div className={`w-20 h-20 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0 ${isOut ? "opacity-50" : ""}`} style={{ backgroundColor: "#ffffff" }}>
                       {img ? (
                         <img
                           src={getImageUrl(img)}
@@ -102,14 +107,38 @@ export default function Cart() {
                     <div className="min-w-0">
                       <Link
                         to={`/producto/${item.id}`}
-                        className="font-bold text-slate-900 text-sm hover:text-blue-600 transition-colors line-clamp-2 leading-tight"
+                        className={`font-bold text-sm transition-colors line-clamp-2 leading-tight ${
+                          isOut ? "text-slate-500" : "text-slate-900 hover:text-blue-600"
+                        }`}
                       >
                         {item.name}
                       </Link>
-                      {item.variantLabel && (
-                        <p className="text-xs text-slate-500 mt-0.5">{item.variantLabel}</p>
+                      {/* Badge "Sin stock" — excepción a la regla de ocultar productos sin stock,
+                          porque el cliente lo agregó al carrito antes de que se agotara */}
+                      {isOut && (
+                        <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-red-100 text-red-700 text-[11px] font-bold rounded-full border border-red-200">
+                          ⚠️ Sin stock disponible
+                        </div>
                       )}
-                      <p className="text-sm text-blue-600 font-semibold mt-1">
+                      {/* Variante seleccionada — visible SOLO para MINORISTAS.
+                          Los mayoristas no ven las variantes (las asigna el admin al confirmar la cotización). */}
+                      {!isMayorista && item.variantLabel && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {item.variantLabel.split(" / ").map((v, vi) => (
+                            <span
+                              key={vi}
+                              className={`inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                                isOut
+                                  ? "bg-slate-100 text-slate-400 border-slate-200"
+                                  : "bg-blue-50 text-blue-700 border-blue-100"
+                              }`}
+                            >
+                              {v}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className={`text-sm font-semibold mt-1 ${isOut ? "text-slate-400" : "text-blue-600"}`}>
                         {formatPrice(item.price)} <span className="text-slate-400 font-normal text-xs">c/u</span>
                       </p>
                       {/* Controles de cantidad en mobile */}
@@ -185,10 +214,17 @@ export default function Cart() {
                 </div>
               )}
 
+              {/* Aviso de items sin stock */}
+              {hasOutOfStock && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 font-medium">
+                  ⚠️ Tenés productos sin stock disponible. Eliminalos del carrito para poder finalizar la compra.
+                </div>
+              )}
+
               {/* CTA Checkout */}
               <button
                 onClick={() => navigate("/checkout")}
-                disabled={minimoActivo && !llegaAlMinimo}
+                disabled={(minimoActivo && !llegaAlMinimo) || hasOutOfStock}
                 className="btn-primary w-full py-4 text-base font-bold disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Finalizar compra →

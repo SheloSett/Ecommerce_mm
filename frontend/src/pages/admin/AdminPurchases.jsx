@@ -411,35 +411,38 @@ export default function AdminPurchases() {
 
                     {/* Detalle de items */}
                     {isOpen && (
-                      <div className="px-6 pb-5">
-                        <table className="w-full text-sm border border-slate-100 rounded-xl overflow-hidden">
+                      <div className="px-4 pb-5 overflow-x-auto">
+                        <table className="w-full min-w-[380px] text-sm border border-slate-100 rounded-xl overflow-hidden">
                           <thead>
                             <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
-                              <th className="px-4 py-2 text-left">SKU</th>
-                              <th className="px-4 py-2 text-left">Producto</th>
-                              <th className="px-4 py-2 text-right">Costo unit.</th>
-                              <th className="px-4 py-2 text-right">Cantidad</th>
-                              <th className="px-4 py-2 text-right">Subtotal</th>
+                              <th className="px-3 py-2 text-left hidden sm:table-cell">SKU</th>
+                              <th className="px-3 py-2 text-left">Producto</th>
+                              <th className="px-3 py-2 text-right">Costo unit.</th>
+                              <th className="px-3 py-2 text-right">Cant.</th>
+                              <th className="px-3 py-2 text-right">Subtotal</th>
                             </tr>
                           </thead>
                           <tbody>
                             {purchase.items.map((item) => (
                               <tr key={item.id} className="border-t border-slate-100">
-                                <td className="px-4 py-2 text-slate-400 text-xs">{item.sku || "—"}</td>
-                                <td className="px-4 py-2 font-medium text-slate-800">{item.productName}</td>
-                                <td className="px-4 py-2 text-right text-slate-600">{formatPrice(item.cost)}</td>
-                                <td className="px-4 py-2 text-right text-slate-600">{item.quantity}</td>
-                                <td className="px-4 py-2 text-right font-semibold text-slate-800">
+                                <td className="px-3 py-2 text-slate-400 text-xs hidden sm:table-cell">{item.sku || "—"}</td>
+                                <td className="px-3 py-2 font-medium text-slate-800">{item.productName}</td>
+                                <td className="px-3 py-2 text-right text-slate-600">{formatPrice(item.cost)}</td>
+                                <td className="px-3 py-2 text-right text-slate-600">{item.quantity}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-slate-800">
                                   {formatPrice(item.cost * item.quantity)}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                           <tfoot>
+                            {/* Una celda por columna para evitar conflictos entre colSpan y hidden en mobile */}
                             <tr className="border-t-2 border-slate-200 bg-slate-50">
-                              <td colSpan={3} className="px-4 py-2 text-xs text-slate-400">Total</td>
-                              <td className="px-4 py-2 text-right font-semibold text-slate-700">{totalUnits}</td>
-                              <td className="px-4 py-2 text-right font-bold text-slate-800">{formatPrice(totalCost)}</td>
+                              <td className="px-3 py-2 text-xs text-slate-400 hidden sm:table-cell">Total</td>
+                              <td className="px-3 py-2 text-xs text-slate-400">Total</td>
+                              <td className="px-3 py-2"></td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-700">{totalUnits}</td>
+                              <td className="px-3 py-2 text-right font-bold text-slate-800">{formatPrice(totalCost)}</td>
                             </tr>
                           </tfoot>
                         </table>

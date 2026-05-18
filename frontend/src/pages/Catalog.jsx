@@ -386,7 +386,7 @@ export default function Catalog() {
 
           {/* ─── Sidebar desktop ─────────────────────────────────────────── */}
           <aside className="hidden md:block w-56 flex-shrink-0">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sticky top-20">
+            <div className="card p-4 sticky top-20">
               <h2 className="font-bold text-slate-900 text-base mb-3 pb-2 border-b border-slate-200">
                 Filtros
               </h2>
@@ -540,12 +540,19 @@ export default function Catalog() {
               <div className={viewMode === "list" ? "space-y-3" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"}>
                 {[...Array(viewMode === "list" ? 6 : 12)].map((_, i) => (
                   viewMode === "list" ? (
-                    <div key={i} className="card animate-pulse flex gap-4 p-3">
-                      <div className="w-24 h-24 bg-slate-200 rounded-xl flex-shrink-0" />
-                      <div className="flex-1 space-y-2 py-1">
-                        <div className="h-4 bg-slate-200 rounded w-3/4" />
-                        <div className="h-3 bg-slate-200 rounded w-1/3" />
-                        <div className="h-4 bg-slate-200 rounded w-1/4" />
+                    <div key={i} className="card animate-pulse flex gap-5 p-4">
+                      <div className="w-40 h-40 bg-slate-200 rounded-2xl flex-shrink-0" />
+                      <div className="flex-1 flex flex-col justify-between py-1">
+                        <div className="space-y-2">
+                          <div className="h-3 bg-slate-200 rounded w-1/5" />
+                          <div className="h-5 bg-slate-200 rounded w-2/3" />
+                          <div className="h-3 bg-slate-200 rounded w-full" />
+                          <div className="h-3 bg-slate-200 rounded w-4/5" />
+                        </div>
+                        <div className="flex justify-between items-end">
+                          <div className="h-7 bg-slate-200 rounded w-1/4" />
+                          <div className="h-9 bg-slate-200 rounded w-24" />
+                        </div>
                       </div>
                     </div>
                   ) : (

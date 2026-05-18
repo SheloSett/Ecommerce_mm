@@ -1,6 +1,12 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { cartsApi } from "../services/api";
+
+// Rutas donde sí queremos real-time (SSE): el cliente está mirando o editando el carrito,
+// así que si el admin lo modifica/limpia debe verse al instante. En el resto de la app
+// usamos solo polling cada 30s para no ocupar slots del pool HTTP/1.1.
+const REALTIME_CART_PATHS = ["/carrito", "/checkout", "/pagar-cotizacion"];
 
 const CartContext = createContext(null);
 
@@ -20,6 +26,10 @@ const mapItem = (dbItem) => ({
   ivaRate:      dbItem.product?.ivaRate ?? 21,
   variantId:    dbItem.variantId    ?? null,
   variantLabel: dbItem.variantLabel ?? null,
+  // outOfStock viene del backend: true si el producto/variante no tiene stock
+  // o si el producto fue despublicado (active=false). Permite avisar al cliente
+  // que un item agregado previamente al carrito ya no se puede comprar.
+  outOfStock:   dbItem.outOfStock === true,
 });
 
 export function CartProvider({ children }) {
@@ -58,10 +68,26 @@ export function CartProvider({ children }) {
     fetchCart();
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Conexión SSE: recibir cambios del admin en tiempo real
-  // Cuando el admin modifica o limpia el carrito, re-fetcheamos desde el backend
+  // Polling de fondo: en cualquier página, refresca el carrito cada 30s y al volver a la pestaña.
+  // Esto cubre las páginas donde no abrimos SSE (home, catálogo, etc.).
   useEffect(() => {
     if (!customer) return;
+    const interval = setInterval(fetchCart, 30000);
+    const onFocus  = () => fetchCart();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // SSE: solo en las rutas críticas (carrito/checkout/pagar) para tener push instantáneo si el
+  // admin modifica/limpia el carrito durante el checkout. Fuera de esas rutas el SSE se cierra
+  // y libera el slot del pool HTTP/1.1.
+  const location = useLocation();
+  const needsRealtimeCart = REALTIME_CART_PATHS.some((p) => location.pathname.startsWith(p));
+  useEffect(() => {
+    if (!customer || !needsRealtimeCart) return;
     const token = localStorage.getItem("customer_token");
     if (!token) return;
 
@@ -72,7 +98,6 @@ export function CartProvider({ children }) {
       try {
         const data = JSON.parse(e.data);
         if (data.type === "cart_cleared" || data.type === "cart_updated") {
-          // Re-fetch en lugar de intentar reconstruir el estado desde el evento
           fetchCart();
         }
       } catch {
@@ -80,11 +105,10 @@ export function CartProvider({ children }) {
       }
     };
 
-    // Si la conexión SSE falla, falla silenciosamente
     es.onerror = () => es.close();
 
     return () => es.close();
-  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [customer?.id, needsRealtimeCart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Agrega un item al carrito — llama directo al backend sin localStorage
   // priceOverride: si se pasa, usa ese precio en vez del precio efectivo (para descuentos por cantidad)
@@ -151,7 +175,8 @@ export function CartProvider({ children }) {
         // Omitir productos que ya no existen o están desactivados
         if (!item.product?.active) continue;
 
-        const effectivePrice = getEffectivePrice(item.product);
+        // Precio efectivo según tipo de cliente; si es null/undefined, usa el precio histórico del pedido
+        const effectivePrice = getEffectivePrice(item.product) ?? item.price;
         await cartsApi.addItem({
           productId:    item.productId,
           quantity:     item.quantity,

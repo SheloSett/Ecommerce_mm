@@ -1,20 +1,11 @@
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-const { v4: uuidv4 } = require("uuid");
+// const path = require("path");  // Ya no se necesita: las imágenes van a Cloudinary, no al disco
+// const fs = require("fs");      // Idem
+// const { v4: uuidv4 } = require("uuid");  // Idem
 
-// Configuración del almacenamiento de imágenes
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, "../../uploads"));
-  },
-  filename: (req, file, cb) => {
-    // Nombre único para evitar colisiones
-    const ext = path.extname(file.originalname);
-    const filename = `${uuidv4()}${ext}`;
-    cb(null, filename);
-  },
-});
+// Cloudinary maneja el almacenamiento — los archivos se suben desde memoria (buffer)
+// diskStorage reemplazado por memoryStorage para no escribir archivos temporales al disco
+const storage = multer.memoryStorage();
 
 // Filtro: solo permite imágenes
 function fileFilter(req, file, cb) {
@@ -59,21 +50,18 @@ function matchesSignature(buf) {
   );
 }
 
-function checkMagicBytes(filePath) {
+// Con memoryStorage los archivos están en file.buffer (RAM), no en disco
+// checkMagicBytes ahora recibe el buffer directamente en vez de leer del filesystem
+function checkMagicBytes(buffer) {
   try {
-    const buf = Buffer.alloc(12);
-    const fd = fs.openSync(filePath, "r");
-    fs.readSync(fd, buf, 0, 12, 0);
-    fs.closeSync(fd);
-    return matchesSignature(buf);
+    return matchesSignature(buffer);
   } catch {
     return false;
   }
 }
 
 // Middleware: se usa DESPUÉS de upload.single() o upload.array() en las rutas.
-// Si algún archivo no pasa la verificación de magic bytes, lo elimina de disco
-// y responde 400 para evitar que se almacene contenido malicioso.
+// Verifica magic bytes sobre el buffer en RAM — no hay disco involucrado.
 function verifyImageBytes(req, res, next) {
   const files = req.files
     ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat())
@@ -82,9 +70,7 @@ function verifyImageBytes(req, res, next) {
     : [];
 
   for (const file of files) {
-    if (!checkMagicBytes(file.path)) {
-      // Eliminar el archivo inválido antes de responder
-      try { fs.unlinkSync(file.path); } catch { /* ya fue borrado o no existe */ }
+    if (!file.buffer || !checkMagicBytes(file.buffer)) {
       return res.status(400).json({
         error: `El archivo "${file.originalname}" no es una imagen válida.`,
       });

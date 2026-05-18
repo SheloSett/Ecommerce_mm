@@ -4,7 +4,17 @@ import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useWishlist } from "../context/WishlistContext";
 import { getImageUrl, productsApi } from "../services/api";
+import FitText from "./FitText";
 import toast from "react-hot-toast";
+
+// Convierte HTML del editor rico a texto plano para la card.
+// Usar el DOM en vez de regex para decodificar también entidades (&amp; → &, &nbsp; → espacio, etc.)
+function stripHtml(html) {
+  if (!html) return "";
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
+}
 
 export default function ProductCard({ product, viewMode = "grid" }) {
   const { addItem, items } = useCart();
@@ -247,73 +257,94 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           </div>
         </div>
       )}
-      <div className="card flex flex-row gap-4 p-3 hover:shadow-md transition-shadow duration-200">
-        {/* Imagen */}
-        <Link to={`/producto/${product.id}`} className="relative flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-slate-100" style={{ backgroundColor: "#ffffff" }}>
+      <div className="card flex flex-row gap-5 p-4 hover:shadow-md transition-shadow duration-200">
+        {/* Imagen grande */}
+        <Link
+          to={`/producto/${product.id}`}
+          className="relative flex-shrink-0 w-40 h-40 rounded-2xl overflow-hidden border border-slate-100"
+          style={{ backgroundColor: "#ffffff" }}
+        >
           {img ? (
-            <img src={getImageUrl(img)} alt={product.name} className="w-full h-full object-contain p-1" />
+            <img src={getImageUrl(img)} alt={product.name} className="w-full h-full object-contain p-2" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-3xl text-slate-300">📦</div>
+            <div className="w-full h-full flex items-center justify-center text-5xl text-slate-200">📦</div>
+          )}
+          {/* Badge oferta */}
+          {product.salePrice && product.salePrice < product.price && (
+            <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+              OFERTA
+            </span>
           )}
           {/* Botón favorito */}
           <button
             onClick={(e) => { e.preventDefault(); toggle(product); }}
             title={isInWishlist(product.id) ? "Quitar de favoritos" : "Guardar en favoritos"}
-            className="absolute top-1 right-1 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm shadow hover:bg-white transition-colors"
+            className="absolute top-2 right-2 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/90 backdrop-blur-sm shadow hover:bg-white transition-colors"
           >
             {isInWishlist(product.id)
-              ? <svg className="w-3.5 h-3.5 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-              : <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>}
+              ? <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+              : <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>}
           </button>
         </Link>
 
-        {/* Info */}
-        <div className="flex-1 flex items-center gap-3 min-w-0">
-          <div className="flex-1 min-w-0">
-            <Link to={`/producto/${product.id}`}>
-              <h3 className="font-semibold text-slate-800 text-sm leading-snug line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</h3>
-            </Link>
+        {/* Info — ocupa todo el espacio restante */}
+        <div className="flex-1 flex flex-col justify-between min-w-0 py-1">
+          {/* Arriba: nombre + categoría + descripción */}
+          <div>
             {product.categories?.[0] && (
-              <p className="text-xs text-slate-400 mt-0.5">{product.categories[0].name}</p>
+              <p className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">{product.categories[0].name}</p>
             )}
-            <div className="mt-1.5">
+            <Link to={`/producto/${product.id}`}>
+              <h3 className="font-bold text-slate-800 text-base leading-snug line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</h3>
+            </Link>
+            {product.description && (
+              <p className="text-sm text-slate-400 mt-1.5 line-clamp-2 leading-relaxed">{stripHtml(product.description)}</p>
+            )}
+          </div>
+
+          {/* Abajo: precio + botón */}
+          <div className="flex items-end justify-between gap-4 mt-3">
+            <div>
               {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
                 product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-xs text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
-                    <span className="font-bold text-green-700 text-sm">{formatPrice(product.wholesaleSalePrice)}</span>
-                    <span className="text-xs text-green-600">mayorista</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
+                    <span className="font-bold text-green-700 text-xl">{formatPrice(product.wholesaleSalePrice)}</span>
+                    <span className="text-xs text-green-600 font-medium">mayorista</span>
                   </div>
                 ) : (
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="font-bold text-green-700 text-sm">{formatPrice(product.wholesalePrice)}</span>
-                    <span className="text-xs text-green-600">mayorista</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-bold text-green-700 text-xl">{formatPrice(product.wholesalePrice)}</span>
+                    <span className="text-xs text-green-600 font-medium">mayorista</span>
                   </div>
                 )
               ) : product.salePrice && product.salePrice < product.price ? (
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-xs text-slate-400 line-through">{formatPrice(product.price)}</span>
-                  <span className="font-bold text-red-600 text-sm">{formatPrice(product.salePrice)}</span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm text-slate-400 line-through">{formatPrice(product.price)}</span>
+                  <span className="font-bold text-red-600 text-xl">{formatPrice(product.salePrice)}</span>
                 </div>
               ) : (
-                <span className="font-bold text-slate-900 text-sm">{formatPrice(product.price)}</span>
+                <span className="font-bold text-slate-900 text-xl">{formatPrice(product.price)}</span>
+              )}
+              {!outOfStock && product.stock != null && !product.stockUnlimited && product.stock <= 5 && (
+                <p className="text-xs text-amber-500 font-medium mt-0.5">⚠ Últimas {product.stock} unidades</p>
               )}
             </div>
-          </div>
 
-          {/* Botón agregar */}
-          <div className="flex-shrink-0">
-            {outOfStock ? (
-              <span className="text-xs text-slate-400 font-medium">Sin stock</span>
-            ) : customer ? (
-              <button onClick={handleAddToCart} className="btn-primary text-sm px-3 py-1.5 whitespace-nowrap">
-                + Agregar
-              </button>
-            ) : (
-              <button onClick={handleAddToCart} className="btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">
-                Iniciar sesión
-              </button>
-            )}
+            {/* Botón agregar */}
+            <div className="flex-shrink-0">
+              {outOfStock ? (
+                <span className="text-sm text-slate-400 font-medium">Sin stock</span>
+              ) : customer ? (
+                <button onClick={handleAddToCart} className="btn-primary px-5 py-2 text-sm whitespace-nowrap">
+                  + Agregar
+                </button>
+              ) : (
+                <button onClick={handleAddToCart} className="btn-secondary px-4 py-2 text-sm whitespace-nowrap">
+                  Iniciar sesión
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -512,14 +543,14 @@ export default function ProductCard({ product, viewMode = "grid" }) {
         <button
           onClick={(e) => { e.preventDefault(); toggle(product); }}
           title={isInWishlist(product.id) ? "Quitar de favoritos" : "Guardar en favoritos"}
-          className="absolute top-2 right-2 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/80 backdrop-blur-sm shadow hover:bg-white transition-colors"
+          className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white shadow-md hover:bg-red-50 hover:scale-110 transition-all duration-150"
         >
           {isInWishlist(product.id) ? (
             <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
             </svg>
           ) : (
-            <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
             </svg>
           )}
@@ -566,48 +597,48 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             ⚠️ Últimas {product.stock} unidades
           </p>
         )}
-        <div className="flex items-end justify-between gap-2">
-          {/* Mostrar precio según tipo de cliente:
-              - MAYORISTA: precio mayorista si está disponible
-              - MINORISTA: precio oferta si existe y es menor al precio normal */}
-          <div className="flex flex-col">
+        {/* Bloque precio + botón APILADO verticalmente.
+            Antes estaba en flex-row (precio izq / botón der) y en cards angostas (iPad Pro
+            con 4 columnas) el precio se truncaba o se montaba sobre el botón.
+            Ahora: precio ocupa todo el ancho con FitText (autoshrink) y el botón va abajo full width. */}
+        <div className="flex flex-col gap-2">
+          {/* Precio: ocupa todo el ancho del card y se achica si no entra */}
+          <div className="flex flex-col min-w-0">
             {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
-              // Cliente mayorista: mostrar precio oferta mayorista (si existe) o precio mayorista
               product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
                 <>
                   <span className="text-xs text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
-                  <span className="text-lg font-bold text-green-700">{formatPrice(product.wholesaleSalePrice)}</span>
-                  <span className="text-xs text-green-600 font-semibold">Precio mayorista</span>
+                  <FitText max={18} min={12} className="font-bold text-green-700">{formatPrice(product.wholesaleSalePrice)}</FitText>
+                  <span className="text-xs text-green-600 font-semibold">mayorista</span>
                 </>
               ) : (
                 <>
-                  <span className="text-lg font-bold text-green-700">{formatPrice(product.wholesalePrice)}</span>
-                  <span className="text-xs text-green-600 font-semibold">Precio mayorista</span>
+                  <FitText max={18} min={12} className="font-bold text-green-700">{formatPrice(product.wholesalePrice)}</FitText>
+                  <span className="text-xs text-green-600 font-semibold">mayorista</span>
                 </>
               )
             ) : product.salePrice && product.salePrice < product.price ? (
-              // Cliente minorista con precio de oferta
               <>
                 <span className="text-xs text-slate-400 line-through">{formatPrice(product.price)}</span>
-                <span className="text-lg font-bold text-red-600">{formatPrice(product.salePrice)}</span>
+                <FitText max={18} min={12} className="font-bold text-red-600">{formatPrice(product.salePrice)}</FitText>
               </>
             ) : (
-              <span className="text-lg font-bold text-slate-900">{formatPrice(product.price)}</span>
+              <FitText max={18} min={12} className="font-bold text-slate-900">{formatPrice(product.price)}</FitText>
             )}
           </div>
-          {/* Si no hay usuario logueado se muestra "Iniciar sesión" en lugar de "Agregar" */}
+          {/* Botón ocupa todo el ancho, así nunca compite por espacio con el precio */}
           {customer ? (
             <button
               onClick={handleAddToCart}
               disabled={outOfStock}
-              className="btn-primary text-sm px-3 py-1.5 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary w-full text-xs sm:text-sm px-3 py-1.5 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
             >
               + Agregar
             </button>
           ) : (
             <button
               onClick={handleAddToCart}
-              className="btn-secondary text-xs px-3 py-1.5"
+              className="btn-secondary w-full text-xs sm:text-sm px-3 py-1.5"
             >
               Iniciar sesión
             </button>

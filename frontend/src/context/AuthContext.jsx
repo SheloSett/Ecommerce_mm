@@ -1,11 +1,18 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { authApi } from "../services/api";
+import { authApi, setOnAdminUnauthorized } from "../services/api";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Registrar callback en el interceptor de axios para que los 401 hagan setUser(null)
+  // sin window.location.href (que causaba loops de recarga de página)
+  useEffect(() => {
+    setOnAdminUnauthorized(() => setUser(null));
+    return () => setOnAdminUnauthorized(null);
+  }, []);
 
   // Al montar, verificar si hay sesión guardada
   useEffect(() => {
@@ -20,18 +27,19 @@ export function AuthProvider({ children }) {
         .then((res) => setUser(res.data))
         .catch((err) => {
           // Solo limpiar sesión en 401 (token inválido/expirado).
-          // Errores como 429 (rate limit) o 5xx (backend caído) no deben desloguear al admin
-          // — el token sigue siendo válido, simplemente el servidor no pudo responder.
+          // Errores como 429 (rate limit), 5xx (backend caído) o ECONNABORTED (timeout 12s)
+          // no deben desloguear al admin — el token sigue siendo válido.
           const status = err?.response?.status;
+          const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
           if (status === 401) {
             localStorage.removeItem("admin_token");
             localStorage.removeItem("admin_user");
             setUser(null);
           } else {
-            // Mantener el usuario logueado con los datos guardados en localStorage
-            // para que no pierda la sesión por un error transitorio del servidor
-            const savedUser = localStorage.getItem("admin_user");
-            if (savedUser) setUser(JSON.parse(savedUser));
+            // Timeout o error transitorio: mantener sesión con datos del localStorage
+            if (isTimeout) console.warn("Auth check timeout — manteniendo sesión local");
+            const cached = localStorage.getItem("admin_user");
+            if (cached) setUser(JSON.parse(cached));
             else setUser(null);
           }
         })
@@ -56,8 +64,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const updateProfile = async (data) => {
+    const res = await authApi.updateProfile(data);
+    const updated = res.data;
+    localStorage.setItem("admin_user", JSON.stringify(updated));
+    setUser(updated);
+    return updated;
+  };
+
+  const isSuperAdmin = user?.role === "SUPERADMIN";
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, updateProfile, isSuperAdmin }}>
       {children}
     </AuthContext.Provider>
   );

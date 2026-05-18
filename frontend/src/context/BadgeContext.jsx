@@ -2,14 +2,14 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import { ordersApi } from "../services/api";
 
 const BadgeContext = createContext({
-  badges: { cotizaciones: 0, devoluciones: 0, clientes: 0, solicitudesMayorista: 0 },
+  badges: { cotizaciones: 0, devoluciones: 0, clientes: 0, solicitudesMayorista: 0, ordenesPendientes: 0 },
   fetchBadges: () => {},
   decrementBadge: () => {},
 });
 
 export function BadgeProvider({ children }) {
   const [badges, setBadges] = useState({
-    cotizaciones: 0, devoluciones: 0, clientes: 0, solicitudesMayorista: 0,
+    cotizaciones: 0, devoluciones: 0, clientes: 0, solicitudesMayorista: 0, ordenesPendientes: 0,
   });
 
   const fetchBadges = useCallback(() => {

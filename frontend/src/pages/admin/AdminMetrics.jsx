@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import AdminLayout from "../../components/AdminLayout";
+import FitText from "../../components/FitText";
 import { ordersApi, gastosApi, getImageUrl } from "../../services/api";
 
 const formatPrice = (v) =>
@@ -111,7 +112,7 @@ export default function AdminMetrics() {
                   <div className="absolute -top-4 -right-4 w-24 h-24 bg-white/10 rounded-full" />
                   <div className="absolute -bottom-6 -right-2 w-16 h-16 bg-white/10 rounded-full" />
                   <p className="text-[11px] font-bold text-emerald-100 uppercase tracking-widest mb-3">Ganancia bruta</p>
-                  <p className="text-2xl sm:text-3xl font-extrabold leading-none truncate">{formatPrice(stats.totalProfit)}</p>
+                  <FitText max={30} min={16} className="font-extrabold">{formatPrice(stats.totalProfit)}</FitText>
                   <div className="mt-4 pt-3 border-t border-white/20 flex flex-col gap-1">
                     <div className="flex justify-between text-xs text-emerald-100">
                       <span>Ventas</span>
@@ -129,15 +130,15 @@ export default function AdminMetrics() {
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Ganancia del local</p>
                   <div className="flex items-center justify-between text-sm gap-2">
                     <span className="text-slate-600 shrink-0">Ganancia bruta</span>
-                    <span className="font-semibold text-slate-800 truncate text-right">{formatPrice(stats.totalProfit)}</span>
+                    <FitText max={14} min={10} className="font-semibold text-slate-800 text-right flex-1">{formatPrice(stats.totalProfit)}</FitText>
                   </div>
                   <div className="flex items-center justify-between text-sm gap-2">
                     <span className="text-slate-600 shrink-0">🏢 Gastos negocio</span>
-                    <span className="font-semibold text-red-500 truncate text-right">−{formatPrice(gastosNegocio)}</span>
+                    <FitText max={14} min={10} className="font-semibold text-red-500 text-right flex-1">−{formatPrice(gastosNegocio)}</FitText>
                   </div>
                   <div className="flex items-center justify-between text-sm font-bold border-t border-slate-100 pt-2 gap-2">
                     <span className="text-slate-700 shrink-0">= Ganancia local</span>
-                    <span className={`truncate text-right ${gananciaLocal >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatPrice(gananciaLocal)}</span>
+                    <FitText max={16} min={11} className={`font-bold text-right flex-1 ${gananciaLocal >= 0 ? "text-emerald-600" : "text-red-500"}`}>{formatPrice(gananciaLocal)}</FitText>
                   </div>
                 </div>
 
@@ -146,17 +147,17 @@ export default function AdminMetrics() {
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Total ganancia</p>
                   <div className="flex items-center justify-between text-sm gap-2">
                     <span className="text-slate-600 shrink-0">Ganancia local</span>
-                    <span className="font-semibold text-slate-800 truncate text-right">{formatPrice(gananciaLocal)}</span>
+                    <FitText max={14} min={10} className="font-semibold text-slate-800 text-right flex-1">{formatPrice(gananciaLocal)}</FitText>
                   </div>
                   <div className="flex items-center justify-between text-sm gap-2">
                     <span className="text-slate-600 shrink-0">👤 Gastos personales</span>
-                    <span className="font-semibold text-red-500 truncate text-right">−{formatPrice(gastosPersonal)}</span>
+                    <FitText max={14} min={10} className="font-semibold text-red-500 text-right flex-1">−{formatPrice(gastosPersonal)}</FitText>
                   </div>
                   <div className="flex items-center justify-between font-bold border-t border-slate-200 pt-2 gap-2">
                     <span className="text-slate-700 text-sm shrink-0">= Total</span>
-                    <span className={`text-xl sm:text-2xl truncate text-right ${totalGanancia >= 0 ? "text-blue-700" : "text-red-600"}`}>
+                    <FitText max={24} min={14} className={`font-bold text-right flex-1 ${totalGanancia >= 0 ? "text-blue-700" : "text-red-600"}`}>
                       {formatPrice(totalGanancia)}
-                    </span>
+                    </FitText>
                   </div>
                 </div>
 

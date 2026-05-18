@@ -20,8 +20,11 @@ const couponRoutes   = require("./routes/coupon.routes");
 const slideRoutes    = require("./routes/slide.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const settingsRoutes = require("./routes/settings.routes");
-const returnRoutes   = require("./routes/return.routes");
-const wishlistRoutes = require("./routes/wishlist.routes");
+const returnRoutes     = require("./routes/return.routes");
+const wishlistRoutes   = require("./routes/wishlist.routes");
+const adminUsersRoutes = require("./routes/adminUsers.routes");
+const shippingRoutes   = require("./routes/shipping.routes");
+const adminTestRoutes  = require("./routes/admin-test.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -94,7 +97,10 @@ app.use("/api/purchases", purchaseRoutes);
 app.use("/api/settings",  settingsRoutes);
 app.use("/api/returns",   returnRoutes);
 app.use("/api/variants",  variantRoutes);
-app.use("/api/wishlist",  wishlistRoutes);
+app.use("/api/wishlist",     wishlistRoutes);
+app.use("/api/admin-users", adminUsersRoutes);
+app.use("/api/shipping",   shippingRoutes);
+app.use("/api/admin-test", adminTestRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -117,3 +123,7 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
+
+// Iniciar cron jobs de campañas de email (restock mayoristas + recomendaciones minoristas)
+const { startCronJobs } = require("./services/cron.service");
+startCronJobs();

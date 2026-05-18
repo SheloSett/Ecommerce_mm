@@ -5,6 +5,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
+  timeout: 12000, // 12 seg — evita que el spinner de auth quede colgado para siempre si el backend no responde
 });
 
 // Interceptor: adjunta el token JWT automáticamente si existe en localStorage
@@ -27,17 +28,38 @@ customerAuthApi.interceptors.request.use((config) => {
   }
   return config;
 });
+customerAuthApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("customer_token");
+      localStorage.removeItem("customer_user");
+      if (!window.location.pathname.startsWith("/admin")) {
+        window.location.href = "/login";
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
-// Interceptor de respuesta: si el token expiró, redirige al login
+// Callback registrado por AuthContext para manejar 401 sin recargar la página.
+// Esto evita el loop: interceptor → window.location.href → page reload → interceptor → loop.
+let _onAdminUnauthorized = null;
+export function setOnAdminUnauthorized(callback) {
+  _onAdminUnauthorized = callback;
+}
+
+// Interceptor de respuesta: si el token expiró, notifica al AuthContext (sin reload)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem("admin_token");
       localStorage.removeItem("admin_user");
-      // Solo redirige al login si estamos en una ruta de admin
-      if (window.location.pathname.startsWith("/admin")) {
-        window.location.href = "/admin/login";
+      // Usar callback de React (setUser(null)) en lugar de window.location.href.
+      // Esto permite que ProtectedRoute use <Navigate> sin full page reload ni loops.
+      if (_onAdminUnauthorized) {
+        _onAdminUnauthorized();
       }
     }
     return Promise.reject(error);
@@ -90,11 +112,14 @@ export const ordersApi = {
   delete: (id) => api.delete(`/orders/${id}`),
   // Cliente: historial de pedidos propios (APPROVED)
   getMy: () => customerAuthApi.get("/orders/my"),
+  getMyById: (id) => customerAuthApi.get(`/orders/my/${id}`),
   // Cliente MAYORISTA: cotizaciones enviadas (paymentMethod: COTIZACION)
   getMyCotizaciones: () => customerAuthApi.get("/orders/my-quotes"),
   // Admin: editar/eliminar un item de una cotización
   updateItem: (orderId, itemId, quantity, price) => api.patch(`/orders/${orderId}/items/${itemId}`, { quantity, ...(price !== undefined && { price }) }),
   deleteItem: (orderId, itemId) => api.delete(`/orders/${orderId}/items/${itemId}`),
+  addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
+  modifyOrder: (orderId, items) => api.post(`/orders/${orderId}/modify`, { items }),
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
   publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
   // Admin: aprobar cotización
@@ -109,6 +134,8 @@ export const ordersApi = {
   // Cliente MAYORISTA: aplicar cupón a una cotización aprobada antes de pagar
   applyCoupon: (orderId, couponCode, customerEmail) =>
     customerAuthApi.patch(`/orders/${orderId}/apply-coupon`, { couponCode, customerEmail }),
+  // Admin: modificar un pedido ya aprobado (post-pago)
+  modifyOrder: (orderId, items) => api.post(`/orders/${orderId}/modify`, { items }),
 };
 
 // ─── Pagos ────────────────────────────────────────────────────────────────────
@@ -148,6 +175,10 @@ export const customersApi = {
   // uploadAvatar: (formData) => customerAuthApi.post("/customers/me/avatar", formData, {  // Eliminado: feature de avatar removida
   //   headers: { "Content-Type": "multipart/form-data" },
   // }),
+  // Reset y cambio de contraseña
+  forgotPassword: (email) => api.post("/customers/forgot-password", { email }),
+  resetPassword: (token, newPassword) => api.post("/customers/reset-password", { token, newPassword }),
+  changePassword: (data) => customerAuthApi.put("/customers/me/password", data),
 };
 
 // ─── Solicitudes Mayorista ────────────────────────────────────────────────────
@@ -195,6 +226,16 @@ export const authApi = {
   login: (credentials) => api.post("/auth/login", credentials),
   me: () => api.get("/auth/me"),
   changePassword: (data) => api.put("/auth/change-password", data),
+  updateProfile: (data) => api.put("/auth/profile", data),
+};
+
+// ─── Admin Users (solo SUPERADMIN) ───────────────────────────────────────────
+export const adminUsersApi = {
+  getAll: () => api.get("/admin-users"),
+  create: (data) => api.post("/admin-users", data),
+  update: (id, data) => api.put(`/admin-users/${id}`, data),
+  remove: (id) => api.delete(`/admin-users/${id}`),
+  resetPassword: (id, newPassword) => api.patch(`/admin-users/${id}/reset-password`, { newPassword }),
 };
 
 // ─── Gastos / Caja ────────────────────────────────────────────────────────────
@@ -273,7 +314,29 @@ export const settingsApi = {
   update: (data) => api.put("/settings", data),     // admin
 };
 
+// ─── Testing de campañas de email (admin) ────────────────────────────────────
+// Disparar manualmente los emails que normalmente envía el cron, sin esperar
+// los thresholds reales (20 días mayoristas / semanal minoristas).
+export const emailTestApi = {
+  sendRestock:        (email) => api.post("/admin-test/email-restock", { email }),
+  sendRecommendation: (email) => api.post("/admin-test/email-recommendation", { email }),
+};
+
 // ─── Wishlist / Favoritos ─────────────────────────────────────────────────────
+// ─── Correo Argentino / MiCorreo ─────────────────────────────────────────────
+export const shippingApi = {
+  // Público: cotizar envío para un código postal destino
+  getRates: (postalCodeDestination, dimensions = {}) =>
+    api.post("/shipping/rates", { postalCodeDestination, dimensions }),
+  // Admin: generar envío en MiCorreo
+  generate: (orderId) => api.post(`/shipping/generate/${orderId}`),
+  // Admin: refrescar tracking desde MiCorreo
+  refreshTracking: (orderId) => api.get(`/shipping/tracking/${orderId}`),
+  // Admin: ingresar tracking manualmente
+  setTrackingManual: (orderId, trackingNumber) =>
+    api.patch(`/shipping/tracking/${orderId}`, { trackingNumber }),
+};
+
 export const wishlistApi = {
   getAll: ()          => customerAuthApi.get("/wishlist"),
   add:    (productId) => customerAuthApi.post("/wishlist", { productId }),

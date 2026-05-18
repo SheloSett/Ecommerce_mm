@@ -2,6 +2,9 @@ const nodemailer = require("nodemailer");
 const PDFDocument = require("pdfkit");
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
+const http  = require("http");
+const sharp = require("sharp");
 
 // Crea el transporte solo si las variables de entorno de SMTP están configuradas
 function createTransporter() {
@@ -28,6 +31,59 @@ function resolveImagePath(imageName) {
   const filename = path.basename(imageName); // extrae "filename.jpg" de "/uploads/filename.jpg"
   const p = path.join(__dirname, "../../uploads", filename);
   return fs.existsSync(p) ? p : null;
+}
+
+// Convierte una URL de Cloudinary a JPG compatible con pdfkit.
+// pdfkit solo soporta JPG y PNG. Cloudinary puede tener f_webp en las transformaciones
+// Y la extensión .webp — hay que limpiar ambas cosas para obtener un JPG válido.
+function cloudinaryToPdfCompatible(url) {
+  if (!url.includes("res.cloudinary.com")) return url;
+  // 1. Reemplazar f_webp/f_gif/f_avif por f_jpg en los parámetros de transformación
+  let result = url.replace(/\bf_(webp|gif|avif|bmp|tiff|svg)\b/gi, "f_jpg");
+  // 2. Reemplazar la extensión del archivo por .jpg
+  result = result.replace(/\.(webp|gif|avif|bmp|tiff|svg)(\?|$)/gi, ".jpg$2");
+  return result;
+}
+
+// Descarga una imagen desde una URL HTTP/HTTPS y retorna su Buffer (o null si falla).
+// Sigue redirects (Cloudinary puede redirigir) y loguea el error para diagnóstico.
+function fetchImageBuffer(url, redirectsLeft = 4) {
+  return new Promise((resolve) => {
+    try {
+      const isHttps = url.startsWith("https");
+      const client  = isHttps ? https : http;
+      // rejectUnauthorized:false solo para descarga de imágenes de CDN propio
+      const options = isHttps ? { rejectUnauthorized: false } : {};
+
+      const req = client.get(url, options, (res) => {
+        // Seguir redirects (301/302/307/308)
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectsLeft > 0) {
+          res.resume();
+          const next = res.headers.location.startsWith("http")
+            ? res.headers.location
+            : new URL(res.headers.location, url).href;
+          resolve(fetchImageBuffer(next, redirectsLeft - 1));
+          return;
+        }
+        if (res.statusCode !== 200) {
+          console.warn(`[PDF IMG] HTTP ${res.statusCode} — ${url}`);
+          res.resume();
+          resolve(null);
+          return;
+        }
+        const chunks = [];
+        res.on("data",  (c) => chunks.push(c));
+        res.on("end",   () => resolve(Buffer.concat(chunks)));
+        res.on("error", (e) => { console.warn(`[PDF IMG] Stream error: ${e.message}`); resolve(null); });
+      });
+
+      req.on("error",   (e) => { console.warn(`[PDF IMG] Request error: ${e.message} — ${url}`); resolve(null); });
+      req.setTimeout(15000, () => { console.warn(`[PDF IMG] Timeout — ${url}`); req.destroy(); resolve(null); });
+    } catch (e) {
+      console.warn(`[PDF IMG] Excepción: ${e.message}`);
+      resolve(null);
+    }
+  });
 }
 
 // Devuelve el mime type de un archivo de imagen según su extensión
@@ -65,6 +121,31 @@ function getBankDetails() {
 // type: "Pedido" | "Cotización"
 // showBankDetails: si true, agrega un bloque con los datos bancarios al final
 async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
+  // Pre-descarga de imágenes: Cloudinary no tiene archivos locales, hay que bajarlos.
+  // resolveImagePath retornaba null para URLs https:// → imágenes grises en el PDF.
+  const items = order.items || [];
+  const imageBuffers = await Promise.all(items.map(async (item) => {
+    const imgName = item.product?.images?.[0] || null;
+    if (!imgName) return null;
+    if (imgName.startsWith("http")) {
+      // URL de Cloudinary: limpiar f_webp y extensión para que pdfkit reciba un JPG
+      const url = cloudinaryToPdfCompatible(imgName);
+      return fetchImageBuffer(url);
+    }
+    // Imagen local: leer del disco y convertir a JPG si es WebP (pdfkit no soporta WebP)
+    const localPath = resolveImagePath(imgName);
+    if (!localPath) return null;
+    const buf = fs.readFileSync(localPath);
+    if (isPdfCompatible(imgName)) return buf;
+    // WebP u otro formato incompatible: convertir a JPEG con sharp
+    try {
+      return await sharp(buf).jpeg({ quality: 80 }).toBuffer();
+    } catch (e) {
+      console.warn(`[PDF IMG] Sharp error convirtiendo ${imgName}: ${e.message}`);
+      return null;
+    }
+  }));
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     const chunks = [];
@@ -141,18 +222,16 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
         .text(String(idx + 1), cx, rowY + rowH / 2 - 4, { width: cols.num });
       cx += cols.num;
 
-      // Imagen — pdfkit solo soporta JPG y PNG (no WebP)
-      const imgName = item.product?.images?.[0] || null;
-      const imgPath = imgName && isPdfCompatible(imgName) ? resolveImagePath(imgName) : null;
-      if (imgPath) {
+      // Imagen — usa el buffer pre-descargado (Cloudinary o local)
+      const imgBuffer = imageBuffers[idx];
+      if (imgBuffer) {
         try {
-          doc.image(imgPath, cx + 4, rowY + 6, { width: 40, height: 40, fit: [40, 40] });
+          doc.image(imgBuffer, cx + 4, rowY + 6, { width: 40, height: 40, fit: [40, 40] });
         } catch (_) {
-          // ignorar si la imagen no se puede cargar
+          // ignorar si el buffer no es una imagen válida para pdfkit
           doc.rect(cx + 4, rowY + 6, 40, 40).fill("#cbd5e1");
         }
       } else {
-        // Placeholder gris para WebP u otras imágenes no soportadas
         doc.rect(cx + 4, rowY + 6, 40, 40).fill("#e2e8f0");
       }
       cx += cols.img;
@@ -267,20 +346,24 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
 
   const rowsHtml = items.map((item, idx) => {
     const imgName = item.product?.images?.[0] || null;
-    const imgPath = imgName ? resolveImagePath(imgName) : null;
     const name    = item.product?.name || item.name || "Producto";
     const bg      = idx % 2 === 0 ? "#f8fafc" : "#ffffff";
 
     let imgCell;
-    if (imgPath) {
-      const cid = `img-${idx}@igwt`;
-      attachments.push({
-        filename:    path.basename(imgPath),
-        path:        imgPath,
-        cid,
-        contentType: imageMime(imgPath),
-      });
-      imgCell = `<img src="cid:${cid}" width="48" height="48" style="border-radius:6px;object-fit:cover;display:block;">`;
+    if (imgName && imgName.startsWith("http")) {
+      // URL de Cloudinary: usar directamente en el src — no necesita CID ni archivo local.
+      // Antes se intentaba resolveImagePath() que buscaba en disco → siempre null → sin imagen.
+      imgCell = `<img src="${imgName}" width="48" height="48" style="border-radius:6px;object-fit:cover;display:block;">`;
+    } else if (imgName) {
+      // Imagen local (fallback): usar CID attachment
+      const imgPath = resolveImagePath(imgName);
+      if (imgPath) {
+        const cid = `img-${idx}@igwt`;
+        attachments.push({ filename: path.basename(imgPath), path: imgPath, cid, contentType: imageMime(imgPath) });
+        imgCell = `<img src="cid:${cid}" width="48" height="48" style="border-radius:6px;object-fit:cover;display:block;">`;
+      } else {
+        imgCell = `<div style="width:48px;height:48px;background:#e2e8f0;border-radius:6px;text-align:center;line-height:48px;font-size:20px;">📦</div>`;
+      }
     } else {
       imgCell = `<div style="width:48px;height:48px;background:#e2e8f0;border-radius:6px;text-align:center;line-height:48px;font-size:20px;">📦</div>`;
     }
@@ -1251,6 +1334,263 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
   }
 }
 
+// ─── Email de reset de contraseña ────────────────────────────────────────────
+
+async function sendPasswordResetEmail(customer, resetUrl) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Reset password para ${customer.email}`);
+    return;
+  }
+  try {
+    const html = `
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 0">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#1e293b;border-radius:16px;overflow:hidden;max-width:560px;width:100%">
+        <tr><td style="background:#1e293b;padding:32px 40px 24px;border-bottom:1px solid #334155;text-align:center">
+          <span style="font-size:22px;font-weight:900;color:#ffffff">&#9889; IGWT Store</span>
+        </td></tr>
+        <tr><td style="padding:36px 40px">
+          <h2 style="color:#f1f5f9;font-size:20px;margin:0 0 12px">Restablecer contrase&#241;a</h2>
+          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 8px">Hola <strong style="color:#e2e8f0">${customer.name}</strong>,</p>
+          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 28px">Recibimos una solicitud para restablecer la contrase&#241;a de tu cuenta. Hac&#233; click en el bot&#243;n de abajo para crear una nueva:</p>
+          <table cellpadding="0" cellspacing="0" style="margin:0 auto 28px">
+            <tr><td align="center" style="background:#16a34a;border-radius:10px">
+              <a href="${resetUrl}" style="display:inline-block;padding:14px 36px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none">Resetear mi contrase&#241;a &#8594;</a>
+            </td></tr>
+          </table>
+          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0 0 8px">&#9200; Este enlace expira en <strong style="color:#94a3b8">1 hora</strong>.</p>
+          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0">Si no solicitaste este cambio, pod&#233;s ignorar este email. Tu contrase&#241;a actual sigue siendo la misma.</p>
+        </td></tr>
+        <tr><td style="background:#0f172a;padding:20px 40px;text-align:center">
+          <p style="color:#475569;font-size:12px;margin:0">&#169; ${new Date().getFullYear()} IGWT Store &#8212; Este es un email autom&#225;tico, no respond&#225;s a este mensaje.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: customer.email,
+      subject: "Restablecer contraseña — IGWT Store",
+      html,
+    });
+    console.log(`[EMAIL] Reset password enviado a ${customer.email}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendPasswordResetEmail:", err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// EMAIL DE RESTOCK PARA MAYORISTAS
+// Se envía desde el cron job cuando el cliente lleva X días sin comprar.
+// Incluye link de desuscripción (opt-out) al pie.
+// ---------------------------------------------------------------------------
+async function sendMayoristaRestockEmail(customer, unsubscribeUrl) {
+  try {
+    const transporter = createTransporter();
+    if (!transporter) return;
+
+    const storeName = process.env.STORE_NAME || "IGWT Store";
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const catalogUrl = `${frontendUrl}/catalogo`;
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Helvetica Neue',Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:40px 20px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#1e293b;border-radius:12px;overflow:hidden;max-width:600px;width:100%">
+        <!-- Header -->
+        <tr><td style="background:#1e293b;padding:32px 40px 20px;text-align:center;border-bottom:1px solid #334155">
+          <h1 style="color:#22c55e;margin:0;font-size:28px;letter-spacing:-0.5px">${storeName}</h1>
+        </td></tr>
+        <!-- Body -->
+        <tr><td style="padding:36px 40px">
+          <p style="color:#cbd5e1;font-size:16px;margin:0 0 12px">Hola <strong style="color:#f1f5f9">${customer.name}</strong>,</p>
+          <p style="color:#cbd5e1;font-size:16px;line-height:1.6;margin:0 0 24px">
+            Hace un tiempo que no hacés un pedido. ¡Tus clientes te están esperando!<br>
+            Es hora de reestockearte y tener todo listo.
+          </p>
+          <div style="text-align:center;margin:32px 0">
+            <a href="${catalogUrl}" style="display:inline-block;background:#22c55e;color:#fff;text-decoration:none;padding:14px 36px;border-radius:8px;font-weight:700;font-size:16px;letter-spacing:0.3px">Ver catálogo mayorista</a>
+          </div>
+          <p style="color:#94a3b8;font-size:14px;line-height:1.5;margin:0">
+            Si tenés alguna consulta o querés hacer un pedido especial, respondé este email o contactanos por WhatsApp.
+          </p>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td style="background:#0f172a;padding:20px 40px;text-align:center;border-top:1px solid #334155">
+          <p style="color:#475569;font-size:12px;margin:0 0 8px">&#169; ${new Date().getFullYear()} ${storeName} &#8212; Este es un email automático.</p>
+          <p style="color:#475569;font-size:11px;margin:0">
+            <a href="${unsubscribeUrl}" style="color:#64748b;text-decoration:underline">No quiero recibir más recordatorios de este tipo</a>
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+    await transporter.sendMail({
+      from: `"${storeName}" <${process.env.SMTP_USER}>`,
+      to: customer.email,
+      subject: `¡Es hora de reestockearte, ${customer.name}!`,
+      html,
+    });
+    console.log(`[EMAIL] Restock email enviado a ${customer.email}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendMayoristaRestockEmail:", err.message);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// EMAIL DE RECOMENDACIONES SEMANALES PARA MINORISTAS
+// Se envía cada lunes con 4 productos relacionados a la última compra.
+// ---------------------------------------------------------------------------
+async function sendMinoristaRecommendationEmail(customer, products) {
+  try {
+    const transporter = createTransporter();
+    if (!transporter) return;
+
+    const storeName = process.env.STORE_NAME || "IGWT Store";
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+
+    // Cada card: imagen, nombre, precio (con tachado si hay oferta), badge OFERTA, botón "Ver"
+    // Linkea a la página individual del producto, no al catálogo genérico
+    // Renderizado en grilla 2x2 (más legible en mobile que 1x4)
+    const buildCard = (p) => {
+      const hasSale = p.salePrice && p.salePrice < p.price;
+      const finalPrice = hasSale ? p.salePrice : (p.price ?? 0);
+      const imageUrl = p.images?.[0]
+        ? p.images[0].startsWith("http")
+          ? p.images[0]
+          : `${process.env.BACKEND_URL || "http://localhost:4000"}${p.images[0]}`
+        : null;
+      const productUrl = `${frontendUrl}/producto/${p.id}`;
+      const discountPct = hasSale ? Math.round(((p.price - p.salePrice) / p.price) * 100) : 0;
+
+      // HTML del bloque de precio: si hay oferta muestra ambos, si no muestra solo uno
+      // pero ocupando el mismo espacio visual. Va dentro de una celda de altura fija.
+      const priceBlockHtml = hasSale
+        ? `<div style="font-size:12px;line-height:1.4;color:#64748b;text-decoration:line-through">${formatARS(p.price)}</div>
+           <div style="font-size:16px;line-height:1.4;color:#ef4444;font-weight:800">${formatARS(finalPrice)}</div>`
+        : `<div style="font-size:16px;line-height:1.4;color:#22c55e;font-weight:800;padding-top:18px">${formatARS(finalPrice)}</div>`;
+
+      // Card con altura TOTAL fija (290px) usando el atributo HTML height en cada <td>.
+      // Estructura: imagen (140px) + contenido (150px). Dentro del contenido, una tabla anidada
+      // con dos filas: arriba título+precio (valign top), abajo botón (valign bottom).
+      // Resultado: el botón siempre queda anclado al fondo, sin importar cuánto contenido haya arriba.
+      return `
+        <td width="25%" valign="top" style="padding:5px">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0f172a;border:1px solid #334155;border-radius:10px;overflow:hidden">
+            <!-- Imagen 140px -->
+            <tr><td height="140" valign="top" style="height:140px;position:relative;padding:0;line-height:0">
+              <a href="${productUrl}" style="text-decoration:none;display:block">
+                ${imageUrl
+                  ? `<img src="${imageUrl}" alt="${p.name}" width="100%" height="140" style="display:block;width:100%;height:140px;object-fit:cover;background:#1e293b;border:0">`
+                  : `<div style="height:140px;background:#1e293b;text-align:center;line-height:140px;color:#475569;font-size:32px">📦</div>`}
+                ${hasSale ? `<div style="position:absolute;top:8px;left:8px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;letter-spacing:0.3px">-${discountPct}%</div>` : ""}
+              </a>
+            </td></tr>
+            <!-- Contenido con altura fija 150px — tabla anidada con título arriba y botón abajo -->
+            <tr><td height="150" valign="top" style="height:150px;padding:0">
+              <table width="100%" height="150" cellpadding="0" cellspacing="0" border="0" style="height:150px">
+                <!-- Fila superior: título + precio, alineado al tope -->
+                <tr><td valign="top" style="padding:10px 11px 0">
+                  <a href="${productUrl}" style="text-decoration:none">
+                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;line-height:1.3;height:34px;overflow:hidden;margin-bottom:6px">${p.name}</div>
+                  </a>
+                  ${priceBlockHtml}
+                </td></tr>
+                <!-- Fila inferior: botón anclado al fondo con valign bottom -->
+                <tr><td valign="bottom" height="40" style="padding:0 11px 11px;height:40px">
+                  <a href="${productUrl}" style="display:block;background:#22c55e;color:#fff;text-decoration:none;text-align:center;padding:7px 0;border-radius:6px;font-weight:700;font-size:12px;line-height:1.2">Ver</a>
+                </td></tr>
+              </table>
+            </td></tr>
+          </table>
+        </td>`;
+    };
+
+    // 4 cards en una sola fila (1×4) — ancho ajustado para que entren bien
+    const cards = products.slice(0, 4).map(buildCard);
+    // Padear con celdas vacías si hay menos de 4 productos
+    while (cards.length < 4) cards.push('<td width="25%"></td>');
+    const productCards = `<tr>${cards.join("")}</tr>`;
+
+    // Preheader: texto que aparece en la bandeja de entrada antes de abrir el email
+    const preheader = `Seleccionamos ${products.length} productos pensando en vos — entrá a verlos.`;
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${storeName}</title>
+</head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:'Helvetica Neue',Arial,sans-serif">
+  <!-- Preheader oculto: aparece en la bandeja antes de abrir -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all">${preheader}</div>
+
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:32px 16px">
+    <tr><td align="center">
+      <table width="800" cellpadding="0" cellspacing="0" style="background:#1e293b;border-radius:14px;overflow:hidden;max-width:800px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,0.3)">
+        <!-- Header con gradiente -->
+        <tr><td style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);padding:36px 40px 28px;text-align:center;border-bottom:2px solid #22c55e">
+          <h1 style="color:#22c55e;margin:0 0 6px;font-size:30px;font-weight:800;letter-spacing:-0.5px">${storeName}</h1>
+          <p style="color:#64748b;font-size:13px;margin:0;letter-spacing:0.5px;text-transform:uppercase;font-weight:600">Recomendaciones para vos</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:36px 32px 16px">
+          <p style="color:#f1f5f9;font-size:18px;font-weight:600;margin:0 0 6px">¡Hola ${customer.name}! 👋</p>
+          <p style="color:#cbd5e1;font-size:15px;line-height:1.6;margin:0 0 28px">
+            Seleccionamos estos productos para vos basados en tu última compra. Algunos están en oferta — ¡aprovechá!
+          </p>
+
+          <!-- Grilla de cards 2x2 -->
+          <table width="100%" cellpadding="0" cellspacing="0">
+            ${productCards}
+          </table>
+
+          <!-- CTA principal -->
+          <div style="text-align:center;margin:32px 0 8px">
+            <a href="${frontendUrl}/catalogo" style="display:inline-block;background:#22c55e;color:#fff;text-decoration:none;padding:15px 40px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px">Ver todo el catálogo →</a>
+          </div>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#0f172a;padding:24px 40px;text-align:center;border-top:1px solid #334155">
+          <p style="color:#64748b;font-size:12px;line-height:1.6;margin:0 0 4px">¿Tenés alguna pregunta? Respondé este email y te ayudamos.</p>
+          <p style="color:#475569;font-size:11px;margin:8px 0 0">&#169; ${new Date().getFullYear()} ${storeName} &#8212; Email automático, no respondas a este mensaje.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+    await transporter.sendMail({
+      from: `"${storeName}" <${process.env.SMTP_USER}>`,
+      to: customer.email,
+      subject: `Productos que te pueden interesar — ${storeName}`,
+      html,
+    });
+    console.log(`[EMAIL] Recomendaciones enviadas a ${customer.email}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR] sendMinoristaRecommendationEmail:", err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   sendMayoristaRequestEmail,
   sendMayoristaApprovedEmail,
@@ -1265,4 +1605,7 @@ module.exports = {
   sendOrderPaymentStatusEmail,
   sendOrderFulfillmentEmail,
   sendAbandonedCartEmail,
+  sendPasswordResetEmail,
+  sendMayoristaRestockEmail,
+  sendMinoristaRecommendationEmail,
 };

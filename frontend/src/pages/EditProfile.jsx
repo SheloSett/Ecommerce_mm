@@ -22,12 +22,61 @@ export default function EditProfile() {
   const [cuit, setCuit]               = useState(customer.cuit || "");
   const [savingProfile, setSavingProfile] = useState(false);
 
+  // ─── Estado suscripción emails de restock (solo MAYORISTA) ───────────────────
+  const [unsubscribeRestock, setUnsubscribeRestock] = useState(customer.unsubscribeRestock ?? false);
+  const [savingRestock, setSavingRestock]           = useState(false);
+
   // ─── Estado solicitud cambio de email ────────────────────────────────────────
   const [emailSection, setEmailSection]     = useState(false);
   const [newEmail, setNewEmail]             = useState("");
   const [emailReason, setEmailReason]       = useState("");
   const [savingEmail, setSavingEmail]       = useState(false);
   const [emailRequest, setEmailRequest]     = useState(null); // solicitud activa del cliente
+
+  // ─── Estado cambio de contraseña ────────────────────────────────────────────
+  const [pwdForm, setPwdForm]         = useState({ current: "", newPwd: "", confirm: "" });
+  const [savingPwd, setSavingPwd]     = useState(false);
+  const [pwdSection, setPwdSection]   = useState(false);
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (pwdForm.newPwd.length < 6) return toast.error("La contraseña debe tener al menos 6 caracteres");
+    if (pwdForm.newPwd !== pwdForm.confirm) return toast.error("Las contraseñas no coinciden");
+    setSavingPwd(true);
+    try {
+      await customersApi.changePassword({ currentPassword: pwdForm.current, newPassword: pwdForm.newPwd });
+      toast.success("Contraseña actualizada");
+      setPwdForm({ current: "", newPwd: "", confirm: "" });
+      setPwdSection(false);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al cambiar la contraseña");
+    } finally {
+      setSavingPwd(false);
+    }
+  };
+
+  const handleToggleRestock = async () => {
+    const newValue = !unsubscribeRestock;
+    setSavingRestock(true);
+    try {
+      await customersApi.updateMe({ unsubscribeRestock: newValue });
+      setUnsubscribeRestock(newValue);
+      toast.success(newValue ? "Ya no vas a recibir recordatorios de restock" : "Recordatorios de restock activados");
+    } catch {
+      toast.error("Error al actualizar la preferencia");
+    } finally {
+      setSavingRestock(false);
+    }
+  };
+
+  const handleSendResetLink = async () => {
+    try {
+      await customersApi.forgotPassword(customer.email);
+      toast.success("Te enviamos un link a " + customer.email);
+    } catch {
+      toast.error("Error al enviar el link");
+    }
+  };
 
   // ─── Estado solicitud mayorista ──────────────────────────────────────────────
   const [mayoristaRequest, setMayoristaRequest]       = useState(null); // solicitud actual
@@ -418,6 +467,105 @@ export default function EditProfile() {
               </form>
             )}
           </div>
+
+          {/* ── Cambiar contraseña ── */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Contraseña</h2>
+              <button
+                onClick={() => setPwdSection((v) => !v)}
+                className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              >
+                {pwdSection ? "Cancelar" : "Cambiar contraseña"}
+              </button>
+            </div>
+
+            {!pwdSection ? (
+              <p className="text-sm text-slate-400">••••••••</p>
+            ) : (
+              <form onSubmit={handleChangePassword} className="mt-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Contraseña actual</label>
+                  <input
+                    type="password"
+                    value={pwdForm.current}
+                    onChange={(e) => setPwdForm((p) => ({ ...p, current: e.target.value }))}
+                    placeholder="Tu contraseña actual"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Nueva contraseña</label>
+                  <input
+                    type="password"
+                    value={pwdForm.newPwd}
+                    onChange={(e) => setPwdForm((p) => ({ ...p, newPwd: e.target.value }))}
+                    placeholder="Mínimo 6 caracteres"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Confirmar nueva contraseña</label>
+                  <input
+                    type="password"
+                    value={pwdForm.confirm}
+                    onChange={(e) => setPwdForm((p) => ({ ...p, confirm: e.target.value }))}
+                    placeholder="Repetí la nueva contraseña"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                  {pwdForm.confirm && pwdForm.newPwd !== pwdForm.confirm && (
+                    <p className="text-xs text-red-500 mt-1">Las contraseñas no coinciden</p>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="submit"
+                    disabled={savingPwd}
+                    className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-60"
+                  >
+                    {savingPwd ? "Guardando..." : "Guardar contraseña"}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400 text-center">
+                  ¿No recordás tu contraseña actual?{" "}
+                  <button type="button" onClick={handleSendResetLink} className="text-blue-600 hover:text-blue-700 underline">
+                    Enviarme un link de reseteo
+                  </button>
+                </p>
+              </form>
+            )}
+          </div>
+
+          {/* ── Preferencias de email (solo MAYORISTA) ── */}
+          {customer.type === "MAYORISTA" && (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-semibold text-slate-800 text-sm">Recordatorios de restock</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {unsubscribeRestock
+                      ? "No estás recibiendo recordatorios de restock por email."
+                      : "Recibís un email cuando lleva tiempo sin hacerse un pedido."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleRestock}
+                  disabled={savingRestock}
+                  className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50 ${
+                    !unsubscribeRestock ? "bg-green-500" : "bg-slate-300"
+                  }`}
+                >
+                  <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
+                    !unsubscribeRestock ? "translate-x-6" : "translate-x-1"
+                  }`} />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── Cerrar sesión ── */}
           <button

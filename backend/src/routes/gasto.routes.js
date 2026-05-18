@@ -20,7 +20,7 @@ router.get("/", authMiddleware, async (req, res) => {
         where.date.lte = end;
       }
     }
-    const gastos = await prisma.gasto.findMany({ where, orderBy: { date: "desc" } });
+    const gastos = await prisma.gasto.findMany({ where, orderBy: [{ date: "desc" }, { createdAt: "desc" }] });
     res.json(gastos);
   } catch (err) {
     console.error("Error al listar gastos:", err);
@@ -31,26 +31,52 @@ router.get("/", authMiddleware, async (req, res) => {
 // POST /api/gastos - crear un gasto
 router.post("/", authMiddleware, async (req, res) => {
   try {
-    const { amount, description, type, date, subtype, productId } = req.body;
+    const { amount, description, type, date, subtype, productId, variantId, quantity } = req.body;
     if (!amount || !description || !type) {
       return res.status(400).json({ error: "Monto, descripción y tipo son requeridos" });
     }
     if (!["PERSONAL", "NEGOCIO"].includes(type)) {
       return res.status(400).json({ error: "Tipo inválido. Debe ser PERSONAL o NEGOCIO" });
     }
-    // subtype: "GASTO" (default) o "RMA"
     const validSubtype = subtype === "RMA" ? "RMA" : "GASTO";
+    const parsedProductId = validSubtype === "RMA" && productId ? parseInt(productId) : null;
+    const parsedVariantId = validSubtype === "RMA" && variantId ? parseInt(variantId) : null;
+
     const gasto = await prisma.gasto.create({
       data: {
-        amount: parseFloat(amount),
+        amount:      parseFloat(amount),
         description,
         type,
-        subtype: validSubtype,
-        // productId solo se guarda si es RMA y se envió un ID válido
-        productId: validSubtype === "RMA" && productId ? parseInt(productId) : null,
-        date: date ? new Date(date) : new Date(),
+        subtype:     validSubtype,
+        productId:   parsedProductId,
+        variantId:   parsedVariantId,
+        date:        date ? new Date(date) : new Date(),
       },
     });
+
+    // Descontar stock al registrar un RMA
+    if (validSubtype === "RMA" && quantity > 0) {
+      const qty = parseInt(quantity) || 1;
+      if (parsedVariantId) {
+        const variant = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
+        if (variant && !variant.stockUnlimited) {
+          await prisma.productVariant.update({
+            where: { id: parsedVariantId },
+            data:  { stock: Math.max(0, variant.stock - qty) },
+          });
+        }
+      } else if (parsedProductId) {
+        const product = await prisma.product.findUnique({ where: { id: parsedProductId } });
+        if (product && !product.stockUnlimited) {
+          const newStock = Math.max(0, product.stock - qty);
+          await prisma.product.update({
+            where: { id: parsedProductId },
+            data:  { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
+          });
+        }
+      }
+    }
+
     res.status(201).json(gasto);
   } catch (err) {
     console.error("Error al crear gasto:", err);

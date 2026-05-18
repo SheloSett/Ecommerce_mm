@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { useSiteConfig } from "../context/SiteConfigContext";
 
 /* SOCIAL comentado — el banner de redes se movió al componente Home.jsx
 const SOCIAL = [
@@ -13,6 +14,8 @@ export default function Footer() {
   const { customer } = useCustomerAuth();
   // Los clientes MAYORISTA no tienen derecho a arrepentimiento por ley (Ley 24.240 aplica solo a consumidores finales)
   const isMayorista = customer?.type === "MAYORISTA";
+  // Datos de contacto editables desde admin > Configuración > Contenido > Footer
+  const { footerEmail, footerPhone, footerAddress } = useSiteConfig();
 
   return (
     <footer className="bg-slate-900 text-slate-400 mt-16">
@@ -33,6 +36,9 @@ export default function Footer() {
             <ul className="space-y-2 text-sm">
               <li><Link to="/" className="hover:text-white transition-colors">Inicio</Link></li>
               <li><Link to="/catalogo" className="hover:text-white transition-colors">Catálogo</Link></li>
+              {!customer && (
+                <li><Link to="/registro" className="hover:text-white transition-colors">Registrarse</Link></li>
+              )}
             </ul>
           </div>
           <div>
@@ -133,15 +139,15 @@ export default function Footer() {
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-2">
                 <span>📧</span>
-                <a href="mailto:info@lsmarket.com.ar" className="hover:text-white transition-colors">info@lsmarket.com.ar</a>
+                <a href={`mailto:${footerEmail}`} className="hover:text-white transition-colors">{footerEmail}</a>
               </li>
               <li className="flex items-center gap-2">
                 <span>📞</span>
-                <a href="tel:1150395166" className="hover:text-white transition-colors">1150395166</a>
+                <a href={`tel:${footerPhone}`} className="hover:text-white transition-colors">{footerPhone}</a>
               </li>
               <li className="flex items-center gap-2">
                 <span>📍</span>
-                <span>Av La Plata 744 Timbre 3</span>
+                <span>{footerAddress}</span>
               </li>
             </ul>
           </div>

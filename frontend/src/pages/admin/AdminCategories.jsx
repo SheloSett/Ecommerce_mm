@@ -95,10 +95,10 @@ export default function AdminCategories() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200 bg-slate-50">
-                <th className="px-6 py-3">Nombre</th>
-                <th className="px-6 py-3">Slug</th>
-                <th className="px-6 py-3">Productos</th>
-                <th className="px-6 py-3 text-right">Acciones</th>
+                <th className="px-4 py-3">Nombre</th>
+                <th className="px-4 py-3 hidden sm:table-cell">Slug</th>
+                <th className="px-4 py-3 hidden xs:table-cell">Productos</th>
+                <th className="px-4 py-3 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -120,10 +120,10 @@ export default function AdminCategories() {
                   <>
                     {/* Fila de categoría principal */}
                     <tr key={cat.id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-6 py-3 font-semibold text-slate-800">{cat.name}</td>
-                      <td className="px-6 py-3 font-mono text-slate-500 text-xs">{cat.slug}</td>
-                      <td className="px-6 py-3 text-slate-600">{cat._count?.products || 0}</td>
-                      <td className="px-6 py-3">
+                      <td className="px-4 py-3 font-semibold text-slate-800">{cat.name}</td>
+                      <td className="px-4 py-3 font-mono text-slate-500 text-xs hidden sm:table-cell">{cat.slug}</td>
+                      <td className="px-4 py-3 text-slate-600 hidden xs:table-cell">{cat._count?.products || 0}</td>
+                      <td className="px-4 py-3">
                         <div className="flex gap-2 justify-end">
                           <button
                             onClick={() => openEdit(cat)}
@@ -144,15 +144,15 @@ export default function AdminCategories() {
                     {/* Filas de subcategorías: indentadas con borde izquierdo */}
                     {cat.children && cat.children.map((sub) => (
                       <tr key={sub.id} className="border-b border-slate-50 hover:bg-slate-50 bg-slate-50/50">
-                        <td className="px-6 py-2.5">
+                        <td className="px-4 py-2.5">
                           <div className="flex items-center gap-2 pl-4 border-l-2 border-blue-200">
                             <span className="text-blue-400 text-xs">↳</span>
                             <span className="text-slate-700 font-medium">{sub.name}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-2.5 font-mono text-slate-400 text-xs">{sub.slug}</td>
-                        <td className="px-6 py-2.5 text-slate-500">{sub._count?.products || 0}</td>
-                        <td className="px-6 py-2.5">
+                        <td className="px-4 py-2.5 font-mono text-slate-400 text-xs hidden sm:table-cell">{sub.slug}</td>
+                        <td className="px-4 py-2.5 text-slate-500 hidden xs:table-cell">{sub._count?.products || 0}</td>
+                        <td className="px-4 py-2.5">
                           <div className="flex gap-2 justify-end">
                             <button
                               onClick={() => openEdit({ ...sub, parentId: cat.id })}

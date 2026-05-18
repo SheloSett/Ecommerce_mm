@@ -20,6 +20,29 @@ const DEFAULTS = {
   announcementBanners: "",
   // Compra mínima para clientes MAYORISTA (en ARS). "0" = sin mínimo
   mayoristaMinimoCompra: "0",
+  // Campañas de email — recomendaciones semanales para MINORISTAS
+  emailMinoristaFrequencyDays: "7",       // cada cuántos días enviar el email
+  emailMinoristaHour: "9",               // hora de envío en horario Argentina (0-23)
+  emailMinoristaProductCount: "4",       // cantidad de productos a mostrar
+  emailMinoristaFeaturedProducts: "[]",  // JSON array de IDs de productos destacados por el admin
+  // Footer de contacto — editables desde admin > Configuración > Contenido > Footer
+  footerEmail: "info@lsmarket.com.ar",
+  footerPhone: "1150395166",
+  footerAddress: "Av La Plata 744 Timbre 3",
+  // Páginas de contenido enriquecido — vacío = mostrar layout predeterminado (viejo enfoque RTE)
+  aboutUsContent: "",
+  howToBuyContent: "",
+  privacyContent: "",
+  termsContent: "",
+  // Contenido estructurado por sección — JSON arrays/objects guardados como strings
+  aboutUsHero: "",
+  aboutUsHistoria: "",
+  aboutUsValores: "",
+  howToBuySteps: "",
+  howToBuyPayments: "",
+  howToBuyFaqs: "",
+  privacySections: "",
+  termsSections: "",
 };
 
 // GET /api/settings — obtener toda la configuración (público, lo necesita el frontend)

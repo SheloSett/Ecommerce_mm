@@ -201,10 +201,10 @@ export default function AdminCoupons() {
                   <tr className="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
                     <th className="px-4 py-3 text-left font-semibold">Código</th>
                     <th className="px-4 py-3 text-left font-semibold">Descuento</th>
-                    <th className="px-4 py-3 text-left font-semibold">Mín. compra</th>
-                    <th className="px-4 py-3 text-left font-semibold">Vencimiento</th>
-                    <th className="px-4 py-3 text-left font-semibold">Usos (total / por cliente)</th>
-                    <th className="px-4 py-3 text-left font-semibold">Cliente</th>
+                    <th className="px-4 py-3 text-left font-semibold hidden md:table-cell">Mín. compra</th>
+                    <th className="px-4 py-3 text-left font-semibold hidden md:table-cell">Vencimiento</th>
+                    <th className="px-4 py-3 text-left font-semibold hidden sm:table-cell">Usos</th>
+                    <th className="px-4 py-3 text-left font-semibold hidden sm:table-cell">Cliente</th>
                     <th className="px-4 py-3 text-left font-semibold">Estado</th>
                     <th className="px-4 py-3 w-24"></th>
                   </tr>
@@ -229,31 +229,31 @@ export default function AdminCoupons() {
                             ? `${coupon.discountValue}%`
                             : formatPrice(coupon.discountValue)}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">
+                        <td className="px-4 py-3 text-slate-600 hidden md:table-cell">
                           {coupon.minPurchase ? formatPrice(coupon.minPurchase) : "—"}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden md:table-cell">
                           {coupon.expiresAt ? (
                             <span className={expired ? "text-red-600 font-medium" : "text-slate-600"}>
                               {formatDate(coupon.expiresAt)}
                               {expired && " (vencido)"}
                             </span>
                           ) : (
-                            <span className="text-slate-400">Sin vencimiento</span>
+                            <span className="text-slate-400">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">
+                        <td className="px-4 py-3 text-slate-600 hidden sm:table-cell">
                           <span className="text-blue-700 font-semibold">{coupon._count?.usages ?? 0}</span>
                           {coupon.maxUses ? ` / ${coupon.maxUses}` : " / ∞"}
                           {coupon.maxUsesPerCustomer && (
                             <span className="text-xs text-slate-400 block">
-                              máx {coupon.maxUsesPerCustomer} por cliente
+                              máx {coupon.maxUsesPerCustomer} c/u
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden sm:table-cell">
                           {coupon.customer ? (
-                            <span className="text-xs bg-purple-100 text-purple-700 font-medium px-2 py-0.5 rounded-full">
+                            <span className="text-xs bg-purple-100 text-purple-700 font-medium px-2 py-0.5 rounded-full whitespace-nowrap max-w-[120px] truncate block">
                               {coupon.customer.name}
                             </span>
                           ) : (

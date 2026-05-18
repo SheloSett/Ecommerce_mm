@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 
 // Layout compartido para todas las páginas del panel de administración
 export default function AdminLayout({ children, title }) {
-  const { user, logout } = useAuth();
+  const { user, logout, isSuperAdmin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -38,48 +38,50 @@ export default function AdminLayout({ children, title }) {
 
   const { badges } = useBadges();
 
-  const navItems = [
-    { path: "/admin",            label: "Dashboard",  icon: "📊" },
+  const hasPermission = (key) => isSuperAdmin || user?.permissions?.includes(key);
+
+  const allNavItems = [
+    { path: "/admin",            label: "Dashboard",  icon: "📊", permission: "finanzas" },
     {
       path: "/admin/productos",
       label: "Productos",
       icon: "📦",
+      permission: "productos",
       subItems: [
         { label: "Todos los productos", tab: "" },
-        { label: "Sin stock",           tab: "sinstock" },
+        // Comentado: el filtro "Sin stock" ya está accesible desde la vista
+        // principal de productos (botón "Sin stock" arriba del listado), así
+        // que tenerlo también en el sidebar es redundante.
+        // { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
         { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },
-    { path: "/admin/categorias", label: "Categorías", icon: "🏷️" },
-    { path: "/admin/metricas",   label: "Métricas",   icon: "📈" },
+    { path: "/admin/categorias", label: "Categorías", icon: "🏷️",  permission: "categorias" },
+    { path: "/admin/metricas",   label: "Métricas",   icon: "📈",  permission: "metricas" },
     {
       path: "/admin/ordenes",
       label: "Órdenes",
       icon: "🛒",
+      permission: "ordenes",
+      // Cuando el sidebar está colapsado muestra la suma total de ambos contadores
+      badge: badges.cotizaciones + badges.ordenesPendientes,
       subItems: [
-        { label: "Todos los pedidos", tab: "" },
-        { label: "Cotizaciones", tab: "cotizaciones", badge: badges.cotizaciones },
+        { label: "Todos los pedidos", tab: "",             badge: badges.ordenesPendientes },
+        { label: "Cotizaciones",      tab: "cotizaciones", badge: badges.cotizaciones },
       ],
     },
-    { path: "/admin/caja",         label: "Caja",            icon: "💰" },
-    { path: "/admin/compras",      label: "Compras",         icon: "🛍️" },
-    { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️" },
-    {
-      path: "/admin/carrusel",
-      label: "Carrusel",
-      icon: "🖼️",
-      subItems: [
-        { label: "Slides",             href: "/admin/carrusel" },
-        { label: "📢 Banner de anuncio", href: "/admin/carrusel/banner" },
-      ],
-    },
-    { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones },
+    { path: "/admin/caja",         label: "Caja",            icon: "💰",  permission: "caja" },
+    { path: "/admin/compras",      label: "Compras",         icon: "🛍️", permission: "compras" },
+    { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
+    // Carrusel movido a Configuración → sección "Carrusel"
+    { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
     {
       path: "/admin/clientes",
       label: "Clientes",
       icon: "👥",
       badge: badges.clientes + badges.solicitudesMayorista,
+      permission: "clientes",
       subItems: [
         { label: "Lista de Clientes",      tab: "",          badge: badges.clientes },
         { label: "Solicitudes Mayorista",  tab: "mayorista", badge: badges.solicitudesMayorista },
@@ -87,7 +89,11 @@ export default function AdminLayout({ children, title }) {
         { label: "Cambios de Email",       tab: "emails" },
       ],
     },
+    // Usuarios movido a Configuración → sección "Usuarios"
   ];
+
+  // Solo mostrar ítems que el usuario tiene permiso de ver
+  const navItems = allNavItems.filter((item) => !item.permission || hasPermission(item.permission));
 
   const isActive = (path) =>
     path === "/admin" ? location.pathname === "/admin" : location.pathname.startsWith(path);
@@ -173,18 +179,23 @@ export default function AdminLayout({ children, title }) {
 
       {/* Configuracion + Usuario y logout */}
       <div className="px-4 py-4 border-t border-slate-800 space-y-1">
-        <Link
-          to="/admin/configuracion"
-          className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-            isActive("/admin/configuracion")
-              ? "bg-blue-600 text-white"
-              : "text-slate-400 hover:bg-slate-800 hover:text-white"
-          }`}
-        >
-          <span>⚙️</span>
-          Configuración
-        </Link>
-        <p className="text-xs text-slate-500 px-4 mt-2 mb-1 truncate">{user?.email}</p>
+        {hasPermission("configuracion") && (
+          <Link
+            to="/admin/configuracion"
+            className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+              isActive("/admin/configuracion")
+                ? "bg-blue-600 text-white"
+                : "text-slate-400 hover:bg-slate-800 hover:text-white"
+            }`}
+          >
+            <span>⚙️</span>
+            Configuración
+          </Link>
+        )}
+        {user?.name && (
+          <p className="text-xs text-slate-300 px-4 mt-2 truncate font-medium">{user.name}</p>
+        )}
+        <p className="text-xs text-slate-500 px-4 mb-1 truncate">{user?.email}</p>
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"

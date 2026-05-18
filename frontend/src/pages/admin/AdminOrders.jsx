@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { ordersApi, productsApi, getImageUrl } from "../../services/api";
+import { ordersApi, productsApi, customersApi, getImageUrl } from "../../services/api";
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",           color: "bg-yellow-500 text-white",  icon: "⏳" },
   QUOTE_APPROVED: { label: "Aprobada (sin pagar)", color: "bg-teal-600 text-white",   icon: "💳" },
+  PAYMENT_REVIEW: { label: "Revisión de pago",    color: "bg-blue-600 text-white",    icon: "🔍" },
   APPROVED:       { label: "Abonada",             color: "bg-green-600 text-white",   icon: "✅" },
   REJECTED:       { label: "Rechazada",           color: "bg-red-600 text-white",     icon: "❌" },
   CANCELLED:      { label: "Cancelada",           color: "bg-slate-500 text-white",   icon: "🚫" },
@@ -46,6 +47,7 @@ const SHIPPING_LABEL = {
 
 export default function AdminOrders() {
   const { decrementBadge } = useBadges();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "";
   const isCotizaciones = tab === "cotizaciones";
@@ -90,6 +92,7 @@ export default function AdminOrders() {
   const [manualModal, setManualModal] = useState(false);
   const [allProducts, setAllProducts] = useState([]);  // cache de productos para el selector
   const [manualForm, setManualForm] = useState({
+    customerId: null,
     customerName: "", customerEmail: "", customerPhone: "",
     // customerType: tipo de cliente para determinar qué precio cargar al seleccionar un producto
     customerType: "MINORISTA",
@@ -100,6 +103,62 @@ export default function AdminOrders() {
   });
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [savingManual, setSavingManual] = useState(false);
+
+  // ── Selector de modo de cliente en venta manual ──────────────────────────────
+  const [customerMode, setCustomerMode] = useState("new"); // "existing" | "street" | "new"
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerResults, setCustomerResults] = useState([]);
+  const [searchingCustomers, setSearchingCustomers] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+
+  const searchCustomers = async (q) => {
+    setCustomerSearch(q);
+    if (q.length < 2) { setCustomerResults([]); return; }
+    setSearchingCustomers(true);
+    try {
+      const res = await customersApi.getAll({ search: q, status: "APPROVED" });
+      setCustomerResults((res.data || []).slice(0, 8));
+    } catch { setCustomerResults([]); }
+    finally { setSearchingCustomers(false); }
+  };
+
+  const selectExistingCustomer = (cust) => {
+    setSelectedCustomer(cust);
+    setCustomerSearch("");
+    setCustomerResults([]);
+    setManualForm((prev) => {
+      const updatedItems = prev.items.map((item) => {
+        if (!item.productId) return item;
+        const prod = allProducts.find((p) => p.id === item.productId);
+        if (!prod) return item;
+        return { ...item, price: getPriceForType(prod, cust.type) };
+      });
+      return {
+        ...prev,
+        customerId: cust.id,
+        customerName: cust.name,
+        customerEmail: cust.email || "",
+        customerPhone: cust.phone || "",
+        customerType: cust.type,
+        items: updatedItems,
+      };
+    });
+  };
+
+  const handleCustomerModeChange = (mode) => {
+    setCustomerMode(mode);
+    setSelectedCustomer(null);
+    setCustomerSearch("");
+    setCustomerResults([]);
+    setManualForm((p) => ({
+      ...p,
+      customerId: null,
+      customerName: "",
+      customerEmail: "",
+      customerPhone: "",
+      customerType: "MINORISTA",
+    }));
+  };
 
   // Carga productos al abrir el modal (solo la primera vez)
   const openManualModal = async () => {
@@ -164,8 +223,12 @@ export default function AdminOrders() {
     }
     setSavingManual(true);
     try {
+      const nameToSend = customerMode === "street"
+        ? (manualForm.customerName.trim() || "Cliente de mostrador")
+        : manualForm.customerName;
       await ordersApi.createManual({
-        customerName:  manualForm.customerName,
+        customerId:    manualForm.customerId || undefined,
+        customerName:  nameToSend,
         customerEmail: manualForm.customerEmail,
         customerPhone: manualForm.customerPhone || undefined,
         paymentMethod: manualForm.paymentMethod,
@@ -181,7 +244,12 @@ export default function AdminOrders() {
       });
       toast.success("Venta registrada correctamente");
       setManualModal(false);
+      setCustomerMode("new");
+      setSelectedCustomer(null);
+      setCustomerSearch("");
+      setCustomerResults([]);
       setManualForm({
+        customerId: null,
         customerName: "", customerEmail: "", customerPhone: "",
         customerType: "MINORISTA",
         salesChannel: "MOSTRADOR",
@@ -208,6 +276,8 @@ export default function AdminOrders() {
         if (order && !order.seenByAdmin && order.paymentMethod === "COTIZACION") {
           ordersApi.markSeen(orderId).catch(() => {});
           decrementBadge("cotizaciones");
+          // Actualizar estado local para quitar el badge NUEVO del card inmediatamente
+          setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, seenByAdmin: true } : o));
         }
       }
       return next;
@@ -546,7 +616,7 @@ export default function AdminOrders() {
             ${imgHtml}
             <div>
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
-              ${item.variantLabel ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${item.variantLabel}</div>` : ""}
+              ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
@@ -589,10 +659,14 @@ export default function AdminOrders() {
     @media print {
       body { background: #fff; }
       .page { padding: 16px; max-width: 100%; }
+      .print-btn { display: none !important; }
     }
   </style>
 </head>
 <body>
+<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999">
+  <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
+</div>
 <div class="page">
 
   <div class="header">
@@ -642,7 +716,7 @@ export default function AdminOrders() {
     const blob = new Blob([html], { type: "text/html" });
     const url  = URL.createObjectURL(blob);
     const win  = window.open(url, "_blank", "width=820,height=760");
-    win.onload = () => { win.focus(); win.print(); URL.revokeObjectURL(url); };
+    win.onload = () => { win.focus(); URL.revokeObjectURL(url); };
   };
 
   const handleDelete = async (order) => {
@@ -707,7 +781,7 @@ export default function AdminOrders() {
           {orders.map((order) => {
             const isExpanded = expandedOrders.has(order.id);
             return (
-              <div key={order.id} className="card overflow-hidden">
+              <div key={order.id} className={`card overflow-hidden ${!order.seenByAdmin ? "border-l-4 border-l-blue-500" : ""}`}>
                 {/* ── Cabecera compacta (siempre visible) ── */}
                 <div className="flex items-center gap-3 px-5 py-4">
                   <div className="flex-1 min-w-0">
@@ -716,6 +790,9 @@ export default function AdminOrders() {
                       <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${STATUS_CONFIG[order.status]?.color}`}>
                         {STATUS_CONFIG[order.status]?.icon} {STATUS_CONFIG[order.status]?.label}
                       </span>
+                      {!order.seenByAdmin && (
+                        <span className="text-[10px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full leading-none">NUEVO</span>
+                      )}
                       {dirtyOrders.has(order.id) && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">
                           ● Cambios sin publicar
@@ -766,12 +843,17 @@ export default function AdminOrders() {
                         const displayPrice = isEditingPrice ? parseFloat(editingPrice[item.id]) || item.price : item.price;
 
                         // Mostrar panel de asignación solo en cotizaciones PENDING sin variante asignada
+                        // y únicamente si el producto realmente tiene variantes (undefined = aún cargando → mostrar por precaución)
+                        const _cachedVariants = variantOptionsCache[item.productId];
+                        const productHasVariants = _cachedVariants === undefined || _cachedVariants === null || _cachedVariants.length > 0;
                         const needsVariantAssign = order.paymentMethod === "COTIZACION"
                           && order.status === "PENDING"
-                          && !item.variantId;
+                          && !item.variantId
+                          && productHasVariants;
 
                         return (
                           <div key={item.id} className="bg-slate-50 rounded-xl p-3 space-y-2">
+                          {/* Fila 1: imagen + nombre */}
                           <div className="flex items-center gap-3">
                             {/* Imagen */}
                             <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0">
@@ -784,44 +866,58 @@ export default function AdminOrders() {
                             {/* Nombre y precio estático */}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-slate-800 truncate">{item.product?.name || "Producto"}</p>
-                              {item.variantLabel && (
-                                <p className="text-xs text-slate-500">{item.variantLabel}</p>
-                              )}
+                              {item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
+                                <p key={vi} className="text-xs text-slate-500">{v}</p>
+                              ))}
                               <p className="text-xs text-slate-400">{formatPrice(displayPrice)} c/u</p>
                             </div>
 
+                            {/* Eliminar item — siempre visible arriba a la derecha */}
+                            <button
+                              onClick={() => handleDeleteItem(order.id, item.id, item.product?.name || "Producto")}
+                              disabled={isSaving}
+                              className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
+                              title="Eliminar item"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {/* Fila 2: controles de cantidad, precio y subtotal — en fila separada para que entren en mobile */}
+                          <div className="flex items-center gap-2 flex-wrap">
                             {/* Control de cantidad */}
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <div className="flex items-center gap-1 flex-shrink-0">
                               <button
-                                onClick={() => setEditingQty((p) => ({ ...p, [item.id]: String((isEditing ? parseInt(p[item.id]) : item.quantity) - 1) }))}
-                                disabled={isSaving || (isEditing ? parseInt(editingQty[item.id]) <= 1 : item.quantity <= 1)}
+                                onClick={() => setEditingQty((p) => ({ ...p, [item.id]: String((editingQty[item.id] !== undefined ? parseInt(p[item.id]) : item.quantity) - 1) }))}
+                                disabled={isSaving || (editingQty[item.id] !== undefined ? parseInt(editingQty[item.id]) <= 1 : item.quantity <= 1)}
                                 className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 font-bold text-slate-700 disabled:opacity-40 transition-colors"
                               >−</button>
                               <input
                                 type="number"
                                 min="1"
-                                value={isEditing ? editingQty[item.id] : item.quantity}
+                                value={editingQty[item.id] !== undefined ? editingQty[item.id] : item.quantity}
                                 onChange={(e) => setEditingQty((p) => ({ ...p, [item.id]: e.target.value }))}
-                                className="w-12 text-center text-sm font-semibold border border-slate-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                className="w-11 text-center text-sm font-semibold border border-slate-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
                               />
                               <button
-                                onClick={() => setEditingQty((p) => ({ ...p, [item.id]: String((isEditing ? parseInt(p[item.id]) : item.quantity) + 1) }))}
+                                onClick={() => setEditingQty((p) => ({ ...p, [item.id]: String((p[item.id] !== undefined ? parseInt(p[item.id]) : item.quantity) + 1) }))}
                                 disabled={isSaving}
                                 className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 font-bold text-slate-700 disabled:opacity-40 transition-colors"
                               >+</button>
                             </div>
 
-                            {/* Input de precio unitario — siempre visible */}
+                            {/* Input de precio unitario */}
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <span className="text-xs text-slate-400">$</span>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={isEditingPrice ? editingPrice[item.id] : item.price}
+                                value={editingPrice[item.id] !== undefined ? editingPrice[item.id] : item.price}
                                 onChange={(e) => {
                                   setEditingPrice((p) => ({ ...p, [item.id]: e.target.value }));
-                                  // Inicializar cantidad si aún no está en edición
                                   if (editingQty[item.id] === undefined) {
                                     setEditingQty((p) => ({ ...p, [item.id]: String(item.quantity) }));
                                   }
@@ -832,12 +928,12 @@ export default function AdminOrders() {
                             </div>
 
                             {/* Subtotal */}
-                            <span className="text-sm font-bold text-slate-800 w-20 text-right flex-shrink-0">
-                              {formatPrice(displayPrice * (isEditing ? (parseInt(editingQty[item.id]) || 0) : item.quantity))}
+                            <span className="text-sm font-bold text-slate-800 flex-shrink-0">
+                              = {formatPrice(displayPrice * (editingQty[item.id] !== undefined ? (parseInt(editingQty[item.id]) || 0) : item.quantity))}
                             </span>
 
                             {/* Guardar / Cancelar edición */}
-                            {isEditing && (
+                            {(editingQty[item.id] !== undefined || editingPrice[item.id] !== undefined) && (
                               <>
                                 <button
                                   onClick={() => handleSaveQty(order.id, item.id)}
@@ -855,18 +951,6 @@ export default function AdminOrders() {
                                 >✕</button>
                               </>
                             )}
-
-                            {/* Eliminar item */}
-                            <button
-                              onClick={() => handleDeleteItem(order.id, item.id, item.product?.name || "Producto")}
-                              disabled={isSaving}
-                              className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40"
-                              title="Eliminar item"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
                           </div>
 
                           {/* Panel de asignación de variantes para cotizaciones mayoristas */}
@@ -1180,13 +1264,13 @@ export default function AdminOrders() {
                   </th>
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">Cliente</th>
-                  <th className="px-4 py-3">Tipo</th>
-                  <th className="px-4 py-3">Canal</th>
-                  <th className="px-4 py-3">Pago</th>
-                  <th className="px-4 py-3">Entrega</th>
+                  <th className="px-4 py-3 hidden lg:table-cell">Tipo</th>
+                  <th className="px-4 py-3 hidden lg:table-cell">Canal</th>
+                  <th className="px-4 py-3 hidden sm:table-cell">Pago</th>
+                  <th className="px-4 py-3 hidden lg:table-cell">Entrega</th>
                   <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Estado</th>
-                  <th className="px-4 py-3">Fecha</th>
+                  <th className="px-4 py-3 hidden sm:table-cell">Fecha</th>
                   <th className="px-4 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -1207,10 +1291,17 @@ export default function AdminOrders() {
                   orders.map((order) => {
                     const status = STATUS_CONFIG[order.status];
                     const isChecked = checkedIds.includes(order.id);
+                    // Solo PENDING no vistas — las históricas (APPROVED, CANCELLED, etc.) tienen seenByAdmin=false por defecto y no deben marcarse como nuevas.
+                    // Mostramos NUEVO también para cotizaciones porque aparecen en este listado y el admin quiere verlas destacadas acá también.
+                    const isNew = !order.seenByAdmin && order.status === "PENDING";
                     return (
                       <tr
                         key={order.id}
-                        className={`border-b border-slate-50 transition-colors ${isChecked ? "bg-red-50" : "hover:bg-slate-50"}`}
+                        className={`border-b transition-colors ${
+                          isChecked ? "bg-red-50 border-red-100"
+                          : isNew    ? "bg-blue-50/60 border-blue-100 hover:bg-blue-50"
+                          :            "border-slate-50 hover:bg-slate-50"
+                        }`}
                       >
                         <td className="px-4 py-3">
                           <input
@@ -1220,7 +1311,14 @@ export default function AdminOrders() {
                             className="w-4 h-4 accent-blue-600 cursor-pointer"
                           />
                         </td>
-                        <td className="px-4 py-3 font-mono font-bold text-slate-600">#{order.id}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-slate-600">#{order.id}</span>
+                            {isNew && (
+                              <span className="text-[10px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full leading-none">NUEVO</span>
+                            )}
+                          </div>
+                        </td>
                         {/* Columna Cliente: solo nombre y email */}
                         <td className="px-4 py-3">
                           <p className="font-semibold text-slate-800">{order.customerName}</p>
@@ -1229,7 +1327,7 @@ export default function AdminOrders() {
                           )}
                         </td>
                         {/* Columna Tipo: Minorista / Mayorista */}
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden lg:table-cell">
                           {(() => {
                             const t = TYPE_LABEL[order.customerType] || TYPE_LABEL.MINORISTA;
                             return (
@@ -1240,7 +1338,7 @@ export default function AdminOrders() {
                           })()}
                         </td>
                         {/* Columna Canal: Web, Mostrador, WhatsApp, etc. */}
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden lg:table-cell">
                           {(() => {
                             const ch = CHANNEL_LABEL[order.salesChannel] || CHANNEL_LABEL.WEB;
                             return (
@@ -1251,7 +1349,7 @@ export default function AdminOrders() {
                           })()}
                         </td>
                         {/* Columna Pago: Efectivo, Transferencia, MercadoPago */}
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden sm:table-cell">
                           {(() => {
                             const pm = PAYMENT_LABEL[order.paymentMethod] || PAYMENT_LABEL.EFECTIVO;
                             return (
@@ -1262,7 +1360,7 @@ export default function AdminOrders() {
                           })()}
                         </td>
                         {/* Columna Entrega: Retiro en local / Acordar envío */}
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 hidden lg:table-cell">
                           {(() => {
                             const sh = SHIPPING_LABEL[order.shippingMethod] || SHIPPING_LABEL.RETIRO;
                             return (
@@ -1274,11 +1372,13 @@ export default function AdminOrders() {
                         </td>
                         <td className="px-4 py-3 font-semibold">{formatPrice(order.total)}</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${status.color}`}>
-                            {status.icon} {status.label}
+                          {/* Badge de estado — en mobile solo muestra el icono para ahorrar espacio */}
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${status.color}`}>
+                            <span className="sm:hidden">{status.icon}</span>
+                            <span className="hidden sm:inline">{status.icon} {status.label}</span>
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-slate-500 text-xs">{formatDate(order.createdAt)}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs hidden sm:table-cell">{formatDate(order.createdAt)}</td>
                         <td className="px-4 py-3">
                           <div className="flex gap-2 justify-end">
                             <button
@@ -1294,9 +1394,15 @@ export default function AdminOrders() {
                             <button
                               onClick={() => {
                                 setSelectedOrder(order);
-                                if (!order.seenByAdmin && order.paymentMethod === "COTIZACION") {
+                                if (!order.seenByAdmin) {
                                   ordersApi.markSeen(order.id).catch(() => {});
-                                  decrementBadge("cotizaciones");
+                                  // Actualizar estado local para quitar el badge NUEVO de la fila inmediatamente
+                                  setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, seenByAdmin: true } : o));
+                                  if (order.paymentMethod === "COTIZACION") {
+                                    decrementBadge("cotizaciones");
+                                  } else if (order.status === "PENDING") {
+                                    decrementBadge("ordenesPendientes");
+                                  }
                                 }
                               }}
                               className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold"
@@ -1346,12 +1452,23 @@ export default function AdminOrders() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="font-bold text-slate-800">Orden #{selectedOrder.id}</h2>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="p-2 hover:bg-slate-100 rounded-lg"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setSelectedOrder(null); navigate(`/admin/ordenes/${selectedOrder.id}`); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Ver detalle completo
+                </button>
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  className="p-2 hover:bg-slate-100 rounded-lg"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div className="p-6 space-y-5">
@@ -1432,9 +1549,9 @@ export default function AdminOrders() {
                         </div>
                         <div className="flex-1 text-sm">
                           <p className="font-medium text-slate-800">{item.product?.name}</p>
-                          {item.variantLabel && (
-                            <p className="text-xs text-blue-600 font-medium">{item.variantLabel}</p>
-                          )}
+                          {item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
+                            <p key={vi} className="text-xs text-blue-600 font-medium">{v}</p>
+                          ))}
                           <p className="text-slate-500">x{item.quantity} × {formatPrice(item.price)}</p>
                         </div>
                         <span className="font-bold text-slate-800 text-sm">
@@ -1634,50 +1751,174 @@ export default function AdminOrders() {
               {/* Datos del cliente */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Datos del cliente</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2 sm:col-span-1">
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Nombre *</label>
-                    <input
-                      required
-                      value={manualForm.customerName}
-                      onChange={(e) => setManualForm((p) => ({ ...p, customerName: e.target.value }))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Juan García"
-                    />
-                  </div>
-                  <div className="col-span-2 sm:col-span-1">
-                    {/* Email es opcional en ventas manuales — el cliente puede no tener */}
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={manualForm.customerEmail}
-                      onChange={(e) => setManualForm((p) => ({ ...p, customerEmail: e.target.value }))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="juan@ejemplo.com (opcional)"
-                    />
-                  </div>
-                  <div className="col-span-2 sm:col-span-1">
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Teléfono</label>
-                    <input
-                      value={manualForm.customerPhone}
-                      onChange={(e) => setManualForm((p) => ({ ...p, customerPhone: e.target.value }))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="1150395166"
-                    />
-                  </div>
-                  <div className="col-span-2 sm:col-span-1">
-                    {/* Tipo de cliente: determina qué precio se carga al seleccionar un producto */}
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Tipo de cliente</label>
-                    <select
-                      value={manualForm.customerType}
-                      onChange={(e) => handleCustomerTypeChange(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+
+                {/* Selector de modo */}
+                <div className="flex rounded-xl border border-slate-200 overflow-hidden mb-4 text-xs font-semibold">
+                  {[
+                    { id: "existing", label: "👤 Cliente existente" },
+                    { id: "new",      label: "➕ Cliente nuevo" },
+                    { id: "street",   label: "🛒 De la calle" },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleCustomerModeChange(m.id)}
+                      className={`flex-1 py-2 transition-colors ${
+                        customerMode === m.id
+                          ? "bg-blue-600 text-white"
+                          : "bg-white text-slate-500 hover:bg-slate-50"
+                      }`}
                     >
-                      <option value="MINORISTA">Minorista</option>
-                      <option value="MAYORISTA">Mayorista</option>
-                    </select>
-                  </div>
+                      {m.label}
+                    </button>
+                  ))}
                 </div>
+
+                {/* Modo: cliente existente */}
+                {customerMode === "existing" && (
+                  <div className="space-y-3">
+                    {selectedCustomer ? (
+                      /* Cliente seleccionado — chip con opción de cambiar */
+                      <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
+                          {selectedCustomer.name[0].toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-slate-800 text-sm truncate">{selectedCustomer.name}</p>
+                          <p className="text-xs text-slate-500 truncate">{selectedCustomer.email} · {selectedCustomer.type}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedCustomer(null); setManualForm((p) => ({ ...p, customerId: null, customerName: "", customerEmail: "", customerPhone: "" })); }}
+                          className="text-slate-400 hover:text-red-500 text-xs font-medium transition-colors flex-shrink-0"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    ) : (
+                      /* Buscador de clientes */
+                      <div className="relative">
+                        <input
+                          value={customerSearch}
+                          onChange={(e) => searchCustomers(e.target.value)}
+                          placeholder="Nombre del cliente..."
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          autoFocus
+                        />
+                        {searchingCustomers && (
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                        {customerResults.length > 0 && (
+                          <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-20 mt-1 max-h-52 overflow-y-auto">
+                            {customerResults.map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => selectExistingCustomer(c)}
+                                className="w-full text-left px-4 py-2.5 hover:bg-blue-50 flex items-center gap-3 border-b border-slate-100 last:border-0"
+                              >
+                                <div className="w-7 h-7 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                  {c.name[0].toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-800 truncate">{c.name}</p>
+                                  <p className="text-xs text-slate-400 truncate">{c.email} · <span className={c.type === "MAYORISTA" ? "text-purple-600" : "text-blue-600"}>{c.type}</span></p>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {customerSearch.length >= 2 && !searchingCustomers && customerResults.length === 0 && (
+                          <p className="text-xs text-slate-400 mt-2 text-center">No se encontraron clientes con ese nombre o email.</p>
+                        )}
+                      </div>
+                    )}
+                    {/* Tipo se toma del perfil del cliente — no se edita desde acá */}
+                  </div>
+                )}
+
+                {/* Modo: cliente nuevo */}
+                {customerMode === "new" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Nombre *</label>
+                      <input
+                        required
+                        value={manualForm.customerName}
+                        onChange={(e) => setManualForm((p) => ({ ...p, customerName: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Juan García"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={manualForm.customerEmail}
+                        onChange={(e) => setManualForm((p) => ({ ...p, customerEmail: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="juan@ejemplo.com (opcional)"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Teléfono</label>
+                      <input
+                        value={manualForm.customerPhone}
+                        onChange={(e) => setManualForm((p) => ({ ...p, customerPhone: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="1150395166"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Tipo de cliente</label>
+                      <select
+                        value={manualForm.customerType}
+                        onChange={(e) => handleCustomerTypeChange(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="MINORISTA">Minorista</option>
+                        <option value="MAYORISTA">Mayorista</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {/* Modo: cliente de la calle */}
+                {customerMode === "street" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Nombre (opcional)</label>
+                      <input
+                        value={manualForm.customerName}
+                        onChange={(e) => setManualForm((p) => ({ ...p, customerName: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Cliente de mostrador"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Teléfono (opcional)</label>
+                      <input
+                        value={manualForm.customerPhone}
+                        onChange={(e) => setManualForm((p) => ({ ...p, customerPhone: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="1150395166"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Tipo de cliente</label>
+                      <select
+                        value={manualForm.customerType}
+                        onChange={(e) => handleCustomerTypeChange(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="MINORISTA">Minorista</option>
+                        <option value="MAYORISTA">Mayorista</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Productos */}
