@@ -259,9 +259,14 @@ export default function Checkout() {
 
       if (paymentMethod === "MERCADOPAGO" && !isMayorista) {
         // ── Flujo MercadoPago: redirigir al gateway (sin precios custom) ─────
-        // El carrito se limpia en PaymentResult solo si el pago es aprobado
+        // El carrito se limpia en PaymentResult solo si el pago es aprobado.
+        // IMPORTANTE: en dev usar sandboxInitPoint (test); en prod usar initPoint
+        // (real). Antes el OR siempre tomaba el sandbox, lo que en producción causa
+        // loops de redirect porque la auth de MP en sandbox es distinta a la real.
         const prefRes = await paymentsApi.createPreference(order.id);
-        const redirectUrl = prefRes.data.sandboxInitPoint || prefRes.data.initPoint;
+        const redirectUrl = import.meta.env.DEV
+          ? prefRes.data.sandboxInitPoint
+          : prefRes.data.initPoint;
         window.location.href = redirectUrl;
       } else {
         // ── Flujo manual (Efectivo, Transferencia, Cotización) ───────────────
