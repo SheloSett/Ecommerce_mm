@@ -142,8 +142,8 @@ export const ordersApi = {
 export const paymentsApi = {
   createPreference: (orderId) =>
     api.post("/payments/create-preference", { orderId }),
-  getOrderStatus: (orderId) =>
-    api.get(`/payments/order/${orderId}/status`),
+  getOrderStatus: (orderId, paymentId) =>
+    api.get(`/payments/order/${orderId}/status`, { params: paymentId ? { paymentId } : {} }),
   // Cliente: crear preferencia de MP para pagar una cotización aprobada
   createCotizacionPreference: (orderId) =>
     customerAuthApi.post("/payments/cotizacion-preference", { orderId }),

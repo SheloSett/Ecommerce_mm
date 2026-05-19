@@ -205,13 +205,16 @@ async function handleWebhook(req, res) {
 }
 
 // GET /api/payments/order/:orderId/status
-// Consultar el estado de pago de una orden (para la página de resultado)
+// Consultar el estado de pago de una orden (para la página de resultado).
+// Si la orden sigue PENDING y se recibe paymentId por query, hace una sincronización
+// activa con MP — esto cubre el caso de que el webhook nunca haya llegado.
 async function getOrderPaymentStatus(req, res) {
   try {
     const { orderId } = req.params;
+    const orderIdInt = parseInt(orderId);
 
     const order = await prisma.order.findUnique({
-      where: { id: parseInt(orderId) },
+      where: { id: orderIdInt },
       select: {
         id: true,
         status: true,
@@ -224,6 +227,79 @@ async function getOrderPaymentStatus(req, res) {
 
     if (!order) {
       return res.status(404).json({ error: "Orden no encontrada" });
+    }
+
+    // Si la orden todavía está PENDING, intentar sincronizar con MP por external_reference.
+    // El frontend manda ?paymentId=X cuando MP redirige a /pago/exitoso con ese param en la URL.
+    const needsSync = order.status === "PENDING" || order.status === "PAYMENT_REVIEW";
+    if (needsSync) {
+      try {
+        const queryPaymentId = req.query.paymentId;
+        const paymentClient  = new Payment(mp);
+        let payment = null;
+
+        if (queryPaymentId) {
+          // Caso A: el frontend nos pasó el payment_id desde la URL de redirect
+          payment = await paymentClient.get({ id: queryPaymentId });
+        } else {
+          // Caso B: buscar payments por external_reference (orderId) en MP
+          const search = await paymentClient.search({ options: { external_reference: orderId } });
+          const results = search?.results || [];
+          // Quedarse con el más reciente que tenga status definido
+          payment = results.sort((a, b) => new Date(b.date_created) - new Date(a.date_created))[0] || null;
+        }
+
+        if (payment && payment.external_reference === orderId.toString()) {
+          const statusMap = {
+            approved:   "APPROVED",
+            rejected:   "REJECTED",
+            cancelled:  "CANCELLED",
+            pending:    "PENDING",
+            in_process: "PENDING",
+          };
+          const newStatus = statusMap[payment.status] || order.status;
+
+          if (newStatus !== order.status) {
+            console.log(`[MP SYNC] Orden #${orderIdInt}: ${order.status} → ${newStatus} (payment ${payment.id})`);
+            await prisma.order.update({
+              where: { id: orderIdInt },
+              data:  {
+                status:      newStatus,
+                mpPaymentId: payment.id.toString(),
+                mpStatus:    payment.status,
+              },
+            });
+            // Si pasó a APPROVED, descontar stock una sola vez
+            if (newStatus === "APPROVED" && order.status !== "APPROVED") {
+              const fullOrder = await prisma.order.findUnique({
+                where:   { id: orderIdInt },
+                include: { items: true },
+              });
+              if (fullOrder) {
+                for (const item of fullOrder.items) {
+                  const updated = await prisma.product.update({
+                    where: { id: item.productId },
+                    data:  { stock: { decrement: item.quantity } },
+                  });
+                  if (!updated.stockUnlimited && updated.stock <= 0) {
+                    await prisma.product.update({
+                      where: { id: item.productId },
+                      data:  { stock: 0, active: false },
+                    });
+                  }
+                }
+              }
+            }
+            // Refrescar el objeto que devolvemos al frontend
+            order.status      = newStatus;
+            order.mpStatus    = payment.status;
+            order.mpPaymentId = payment.id.toString();
+          }
+        }
+      } catch (syncErr) {
+        // No fallar el endpoint si la sync falla — devolvemos el order con su estado actual
+        console.error("[MP SYNC] error:", syncErr.message);
+      }
     }
 
     res.json(order);

@@ -12,8 +12,11 @@ export default function PaymentResult({ type }) {
 
   useEffect(() => {
     if (orderId) {
+      // MP devuelve payment_id en la URL al redirigir — lo pasamos al backend para
+      // que sincronice el estado de la orden con MP en caso de que el webhook no haya llegado.
+      const paymentId = searchParams.get("payment_id") || searchParams.get("collection_id");
       paymentsApi
-        .getOrderStatus(orderId)
+        .getOrderStatus(orderId, paymentId)
         .then((res) => {
           setOrder(res.data);
           // Limpiar el carrito solo si el pago fue aprobado
