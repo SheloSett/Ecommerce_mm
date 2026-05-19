@@ -302,45 +302,45 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             )}
           </div>
 
-          {/* Abajo: precio + botón */}
-          <div className="flex items-end justify-between gap-4 mt-3">
-            <div>
+          {/* Abajo: precio + botón. min-w-0 en el contenedor de precio para que no fuerce overflow en mobile */}
+          <div className="flex items-end justify-between gap-2 sm:gap-4 mt-3">
+            <div className="min-w-0 flex-1">
               {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
                 product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-sm text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
-                    <span className="font-bold text-green-700 text-xl">{formatPrice(product.wholesaleSalePrice)}</span>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-xs sm:text-sm text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
+                    <span className="font-bold text-green-700 text-base sm:text-xl">{formatPrice(product.wholesaleSalePrice)}</span>
                     <span className="text-xs text-green-600 font-medium">mayorista</span>
                   </div>
                 ) : (
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-bold text-green-700 text-xl">{formatPrice(product.wholesalePrice)}</span>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="font-bold text-green-700 text-base sm:text-xl">{formatPrice(product.wholesalePrice)}</span>
                     <span className="text-xs text-green-600 font-medium">mayorista</span>
                   </div>
                 )
               ) : product.salePrice && product.salePrice < product.price ? (
-                <div className="flex items-baseline gap-2">
-                  <span className="text-sm text-slate-400 line-through">{formatPrice(product.price)}</span>
-                  <span className="font-bold text-red-600 text-xl">{formatPrice(product.salePrice)}</span>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="text-xs sm:text-sm text-slate-400 line-through">{formatPrice(product.price)}</span>
+                  <span className="font-bold text-red-600 text-base sm:text-xl">{formatPrice(product.salePrice)}</span>
                 </div>
               ) : (
-                <span className="font-bold text-slate-900 text-xl">{formatPrice(product.price)}</span>
+                <span className="font-bold text-slate-900 text-base sm:text-xl">{formatPrice(product.price)}</span>
               )}
               {!outOfStock && product.stock != null && !product.stockUnlimited && product.stock <= 5 && (
                 <p className="text-xs text-amber-500 font-medium mt-0.5">⚠ Últimas {product.stock} unidades</p>
               )}
             </div>
 
-            {/* Botón agregar */}
+            {/* Botón agregar — más compacto en mobile para no romper el layout */}
             <div className="flex-shrink-0">
               {outOfStock ? (
-                <span className="text-sm text-slate-400 font-medium">Sin stock</span>
+                <span className="text-xs sm:text-sm text-slate-400 font-medium">Sin stock</span>
               ) : customer ? (
-                <button onClick={handleAddToCart} className="btn-primary px-5 py-2 text-sm whitespace-nowrap">
+                <button onClick={handleAddToCart} className="btn-primary px-3 sm:px-5 py-2 text-xs sm:text-sm whitespace-nowrap">
                   + Agregar
                 </button>
               ) : (
-                <button onClick={handleAddToCart} className="btn-secondary px-4 py-2 text-sm whitespace-nowrap">
+                <button onClick={handleAddToCart} className="btn-secondary px-3 sm:px-4 py-2 text-xs sm:text-sm whitespace-nowrap">
                   Iniciar sesión
                 </button>
               )}

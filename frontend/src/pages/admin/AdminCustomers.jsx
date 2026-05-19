@@ -522,8 +522,8 @@ export default function AdminCustomers() {
         ))}
       </div>
 
-      {/* Buscador + botón nuevo cliente */}
-      <form onSubmit={handleSearch} className="flex gap-2 mb-6">
+      {/* Buscador + botón nuevo cliente — apila en mobile, fila desde sm */}
+      <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-2 mb-6">
         <input
           type="text"
           value={search}
@@ -531,19 +531,21 @@ export default function AdminCustomers() {
           placeholder="Buscar por nombre, email o empresa..."
           className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        <button
-          type="submit"
-          className="bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors"
-        >
-          Buscar
-        </button>
-        <button
-          type="button"
-          onClick={() => setNewCustomerModal(true)}
-          className="bg-secondary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-secondary-700 transition-colors whitespace-nowrap"
-        >
-          + Nuevo cliente
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            className="flex-1 sm:flex-none bg-primary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-primary-700 transition-colors"
+          >
+            Buscar
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewCustomerModal(true)}
+            className="flex-1 sm:flex-none bg-secondary-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-secondary-700 transition-colors whitespace-nowrap"
+          >
+            + Nuevo cliente
+          </button>
+        </div>
       </form>
 
       {/* Tabla */}
@@ -970,7 +972,8 @@ export default function AdminCustomers() {
                 return (
                   <div key={cart.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                     {/* Cabecera del carrito */}
-                    <div className="flex items-center justify-between gap-4 p-5">
+                    {/* Mobile: info arriba y acciones abajo (full width). Desde sm: side by side */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 p-5">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-semibold text-slate-800">{cart.customer.name}</p>
@@ -1001,7 +1004,7 @@ export default function AdminCustomers() {
                         </div>
                       </div>
 
-                      <div className="flex gap-2 flex-shrink-0 items-center flex-wrap justify-end">
+                      <div className="flex gap-2 flex-shrink-0 items-center flex-wrap justify-start sm:justify-end">
                         <button
                           onClick={() => setExpandedCart(isExpanded ? null : cart.id)}
                           className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors"

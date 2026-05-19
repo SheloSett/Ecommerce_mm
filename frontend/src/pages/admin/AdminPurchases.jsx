@@ -226,8 +226,10 @@ export default function AdminPurchases() {
               <label className="block text-xs font-semibold text-slate-600 mb-2">
                 Productos comprados
               </label>
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
+              {/* Wrapper con overflow-x-auto: en mobile la tabla se scrollea horizontal en vez
+                  de aplastar los inputs. min-width del table fuerza el scroll cuando no entra. */}
+              <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                <table className="w-full text-sm" style={{ minWidth: "640px" }}>
                   <thead>
                     <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide border-b border-slate-200">
                       <th className="px-3 py-2 text-left w-52">SKU</th>
@@ -247,7 +249,7 @@ export default function AdminPurchases() {
                             onChange={(e) => updateRow(row._id, "sku", e.target.value)}
                             onBlur={(e) => handleSkuBlur(row._id, e.target.value)}
                             placeholder="SKU"
-                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                           {/* Badge según tipo de match */}
                           {row.matched && row.matchedVariant && (
@@ -270,7 +272,7 @@ export default function AdminPurchases() {
                             value={row.productName}
                             onChange={(e) => updateRow(row._id, "productName", e.target.value)}
                             placeholder="Nombre del producto"
-                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                           {/* Mostrar stock actual si se actualizará */}
                           {row.matched && (
@@ -287,7 +289,7 @@ export default function AdminPurchases() {
                             placeholder="0"
                             min="0"
                             step="0.01"
-                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -297,7 +299,7 @@ export default function AdminPurchases() {
                             onChange={(e) => updateRow(row._id, "quantity", e.target.value)}
                             placeholder="0"
                             min="1"
-                            className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                         </td>
                         <td className="px-3 py-2 text-center">

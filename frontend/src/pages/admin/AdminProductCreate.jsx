@@ -279,8 +279,8 @@ export default function AdminProductCreate() {
             />
           </div>
 
-          {/* Costo + Alícuota IVA en la misma fila */}
-          <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+          {/* Costo + Alícuota IVA: apilados en mobile, en la misma fila desde sm */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
                 Costo * <span className="normal-case font-normal text-slate-400">— solo visible para el admin</span>
@@ -320,8 +320,8 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
-          {/* Precios */}
-          <div className="grid grid-cols-4 gap-3">
+          {/* Precios — 2 columnas en mobile, 4 desde md */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { label: "Precio minorista", key: "price", required: true },
               { label: "Oferta minorista", key: "salePrice" },
@@ -384,8 +384,8 @@ export default function AdminProductCreate() {
             ))}
           </div>
 
-          {/* Stock */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Stock — 1 columna en mobile chico, 3 desde sm para que no queden cramped */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Stock</label>
               {form.stockUnlimited ? (
@@ -608,10 +608,11 @@ export default function AdminProductCreate() {
             </label>
           </div>
 
-          {/* Visibilidad */}
+          {/* Visibilidad — grid de 3 columnas iguales que se adaptan al viewport.
+              Antes era flex con padding fijo y el botón Mayorista se cortaba en mobile. */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
-            <div className="flex gap-3">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {[
                 { value: "AMBOS", label: "Todos", icon: "👥" },
                 { value: "MINORISTA", label: "Minorista", icon: "🛒" },
@@ -621,14 +622,14 @@ export default function AdminProductCreate() {
                   key={opt.value}
                   type="button"
                   onClick={() => setForm({ ...form, visibility: opt.value })}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 text-sm font-medium transition-colors ${
+                  className={`flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2 rounded-xl border-2 text-xs sm:text-sm font-medium transition-colors ${
                     form.visibility === opt.value
                       ? "border-blue-500 bg-blue-50 text-blue-700"
                       : "border-slate-200 text-slate-600 hover:border-slate-300"
                   }`}
                 >
                   <span>{opt.icon}</span>
-                  {opt.label}
+                  <span className="truncate">{opt.label}</span>
                 </button>
               ))}
             </div>
