@@ -592,7 +592,7 @@ async function updateProduct(req, res) {
 async function quickUpdateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active } = req.body;
+    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active, cost, sku } = req.body;
 
     const existing = await prisma.product.findUnique({ where: { id: parseInt(id) } });
     if (!existing) {
@@ -649,6 +649,9 @@ async function quickUpdateProduct(req, res) {
     }
     if (stockUnlimited !== undefined && !qHasActiveVariants) updateData.stockUnlimited = Boolean(stockUnlimited);
     if (active !== undefined) updateData.active = Boolean(active);
+    // cost y sku faltaban — el frontend los manda en la edición rápida pero antes se ignoraban
+    if (cost !== undefined && cost !== "") updateData.cost = parseFloat(cost);
+    if (sku !== undefined) updateData.sku = sku || null;
 
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
