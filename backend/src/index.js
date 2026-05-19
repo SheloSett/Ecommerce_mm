@@ -29,6 +29,12 @@ const adminTestRoutes  = require("./routes/admin-test.routes");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Trust proxy: Render (y cualquier reverse proxy serio) agrega X-Forwarded-For con la IP
+// real del cliente. Sin esto, express-rate-limit ve la IP del proxy y rechaza las requests
+// con ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+// Valor "1" = confiar en 1 proxy delante (Render). En dev (sin proxy) este setting es inocuo.
+app.set("trust proxy", 1);
+
 // Middlewares globales
 
 // Helmet: headers HTTP de seguridad (oculta X-Powered-By, activa CSP, HSTS, etc.)
