@@ -734,7 +734,7 @@ async function getMyOrderById(req, res) {
     const orderId    = parseInt(req.params.id);
 
     const order = await prisma.order.findFirst({
-      where: { id: orderId, customerId, status: { in: ["PENDING", "APPROVED", "PAYMENT_REVIEW"] } },
+      where: { id: orderId, customerId, status: { in: ["PENDING", "QUOTE_APPROVED", "APPROVED", "PAYMENT_REVIEW"] } },
       include: {
         coupon: { select: { code: true } },
         items: {
@@ -768,11 +768,16 @@ async function getMyOrders(req, res) {
 
     // Filtramos por customerId (cuenta del cliente) en lugar de email,
     // para que aparezcan sin importar qué email ingresó en el formulario de checkout.
-    // Se incluyen PENDING (recién hecho, sin pagar) y APPROVED (aprobado/pagado).
+    // Estados incluidos:
+    //   PENDING         — recién hecho, sin pagar (ej. MercadoPago pendiente)
+    //   QUOTE_APPROVED  — minorista con efectivo/transferencia (aprobada sin pagar)
+    //                     o mayorista con cotización ya aprobada
+    //   PAYMENT_REVIEW  — pago en revisión (transferencia con comprobante subido)
+    //   APPROVED        — pagada/confirmada
     const orders = await prisma.order.findMany({
       where: {
         customerId,
-        status: { in: ["PENDING", "APPROVED", "PAYMENT_REVIEW"] },
+        status: { in: ["PENDING", "QUOTE_APPROVED", "APPROVED", "PAYMENT_REVIEW"] },
       },
       include: {
         coupon: { select: { code: true } },
