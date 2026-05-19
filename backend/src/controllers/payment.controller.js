@@ -102,17 +102,36 @@ async function createPreference(req, res) {
 // MercadoPago notifica aquí cuando cambia el estado de un pago
 async function handleWebhook(req, res) {
   try {
-    const { type, data } = req.query;
+    // Log para debug: MP envía la info en query, en body, o en ambos. Distintos
+    // formatos según la integración: viejo (topic+id), nuevo (type+data.id), v2 con body JSON.
+    console.log("[MP WEBHOOK] query:", JSON.stringify(req.query), "body:", JSON.stringify(req.body));
+
+    // Tipo: aceptar "type" (nuevo) o "topic" (viejo) de query o body
+    const type = req.query.type || req.query.topic || req.body?.type || req.body?.topic;
 
     // Solo procesamos notificaciones de pagos
     if (type !== "payment") {
       return res.sendStatus(200);
     }
 
-    const paymentId = data?.id;
+    // Payment ID: probar múltiples ubicaciones porque MP no es consistente.
+    // - req.query["data.id"]: cuando MP manda ?data.id=123 (Express no anida con dots)
+    // - req.query.data?.id:   cuando algún proxy anida el query
+    // - req.query.id:         formato viejo ?topic=payment&id=123
+    // - req.body?.data?.id:   cuando MP manda el JSON en el body POST
+    // - req.body?.id:         payload viejo en body
+    const paymentId = req.query["data.id"]
+                   || req.query.data?.id
+                   || req.query.id
+                   || req.body?.data?.id
+                   || req.body?.id;
+
     if (!paymentId) {
+      console.log("[MP WEBHOOK] paymentId no encontrado, ignorando");
       return res.sendStatus(200);
     }
+
+    console.log("[MP WEBHOOK] procesando paymentId:", paymentId);
 
     // Consultar el pago en MercadoPago para obtener el estado real
     const paymentClient = new Payment(mp);
