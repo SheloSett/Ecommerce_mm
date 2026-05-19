@@ -42,10 +42,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
 
   // Sin stock: si el producto tiene variantes, el backend garantiza que aparece solo si hay stock.
   // Para MAYORISTA con variantes: product.stock es 0 (suma vacía), pero hay stock por variante — no mostrar "Sin stock".
-  // Para productos sin variantes: usar product.stock directamente.
+  // Para productos sin variantes: si stockUnlimited es true nunca está sin stock; si no, chequear.
   const outOfStock = hasVariants
     ? false
-    : product.stock === 0 || (!product.stockUnlimited && cartQty >= product.stock);
+    : !product.stockUnlimited && (product.stock === 0 || cartQty >= product.stock);
 
   // Al abrir el modal: cargar datos completos del producto (attributes + variants)
   useEffect(() => {
@@ -592,7 +592,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           {product.name}
         </h3>
         {/* "Últimas unidades" va ANTES del bloque precio+botón para que el botón siempre quede al fondo */}
-        {!hasVariants && product.stock > 0 && product.stock <= 5 && (
+        {!hasVariants && !product.stockUnlimited && product.stock > 0 && product.stock <= 5 && (
           <p className="text-xs text-orange-500 font-medium mb-2">
             ⚠️ Últimas {product.stock} unidades
           </p>
