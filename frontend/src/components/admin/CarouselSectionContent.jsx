@@ -364,7 +364,7 @@ export default function CarouselSectionContent() {
               {sorted.map((slide, idx) => (
                 <div key={slide.id} className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-4 ${!slide.active ? "opacity-60" : ""}`}>
                   <div className="w-32 h-20 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0">
-                    <img src={getImageUrl(`/uploads/${slide.image}`)} alt="" className="w-full h-full object-cover" />
+                    <img src={getImageUrl(slide.image)} alt="" className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 truncate">
