@@ -1,5 +1,6 @@
 const { PrismaClient } = require("@prisma/client");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
+const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
 
 const prisma = new PrismaClient();
 
@@ -143,11 +144,11 @@ async function handleWebhook(req, res) {
       },
     });
 
-    // Si el pago fue aprobado, descontar el stock de los productos
+    // Si el pago fue aprobado: descontar stock + notificar al admin + email al cliente
     if (newStatus === "APPROVED") {
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        include: { items: true },
+        include: { items: { include: { product: true } }, coupon: true },
       });
 
       if (order) {
@@ -164,6 +165,15 @@ async function handleWebhook(req, res) {
             });
           }
         }
+
+        // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
+        // y enviar confirmación al cliente. No bloqueamos la respuesta del webhook si fallan.
+        try {
+          await sendOrderNotificationToAdmin({ ...order, mpPaymentId: paymentId.toString() });
+        } catch (err) { console.error("[WEBHOOK] Error enviando email al admin:", err.message); }
+        try {
+          await sendOrderConfirmationToCustomer({ ...order, mpPaymentId: paymentId.toString() });
+        } catch (err) { console.error("[WEBHOOK] Error enviando email al cliente:", err.message); }
       }
     }
 
