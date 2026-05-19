@@ -11,11 +11,18 @@ function createTransporter() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_USER || !SMTP_PASS) return null;
 
+  const port = parseInt(SMTP_PORT) || 587;
+
   return nodemailer.createTransport({
     host: SMTP_HOST || "smtp.gmail.com",
-    port: parseInt(SMTP_PORT) || 587,
-    secure: false,
+    port,
+    // 465 = SSL/TLS implícito (secure: true); 587 = STARTTLS (secure: false)
+    secure: port === 465,
     auth: { user: SMTP_USER, pass: SMTP_PASS },
+    // Timeouts cortos: si Render bloquea el puerto, mejor fallar rápido que colgar 60s
+    connectionTimeout: 10000,
+    greetingTimeout:   10000,
+    socketTimeout:     10000,
   });
 }
 
