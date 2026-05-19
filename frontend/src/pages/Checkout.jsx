@@ -363,13 +363,21 @@ export default function Checkout() {
               Se envió un email con los detalles a <strong>{successOrder.customerEmail}</strong>
             </p>
 
-            <div className="flex gap-3">
-              <Link to="/" className="btn-secondary flex-1 text-center">
-                Ir al inicio
+            <div className="flex flex-col gap-3">
+              <Link
+                to={isCotizacion ? "/cotizaciones" : "/pedidos"}
+                className="btn-primary text-center"
+              >
+                {isCotizacion ? "Ver mis cotizaciones" : "Ver mis pedidos"}
               </Link>
-              <Link to="/catalogo" className="btn-primary flex-1 text-center">
-                Seguir comprando
-              </Link>
+              <div className="flex gap-3">
+                <Link to="/" className="btn-secondary flex-1 text-center">
+                  Ir al inicio
+                </Link>
+                <Link to="/catalogo" className="btn-secondary flex-1 text-center">
+                  Seguir comprando
+                </Link>
+              </div>
             </div>
           </div>
         </main>

@@ -142,14 +142,14 @@ export default function Home() {
             >
               {/* Fondo desenfocado: rellena el espacio sin importar la proporción de la imagen */}
               <img
-                src={getImageUrl(`/uploads/${slide.image}`)}
+                src={getImageUrl(slide.image)}
                 alt=""
                 aria-hidden="true"
                 className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
               />
               {/* Imagen principal: se muestra completa sin recortar, debajo del texto */}
               <img
-                src={getImageUrl(`/uploads/${slide.image}`)}
+                src={getImageUrl(slide.image)}
                 alt={slide.title || ""}
                 className="absolute inset-0 w-full h-full object-contain z-10"
               />

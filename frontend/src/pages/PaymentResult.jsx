@@ -88,13 +88,20 @@ export default function PaymentResult({ type }) {
             </div>
           )}
 
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Link to="/" className="btn-primary flex-1 text-center">
-              Volver al inicio
-            </Link>
-            <Link to="/catalogo" className="btn-secondary flex-1 text-center">
-              Seguir comprando
-            </Link>
+          <div className="flex flex-col gap-3">
+            {(type === "success" || order?.status === "APPROVED") && (
+              <Link to="/pedidos" className="btn-primary text-center">
+                Ver mis pedidos
+              </Link>
+            )}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Link to="/" className="btn-secondary flex-1 text-center">
+                Volver al inicio
+              </Link>
+              <Link to="/catalogo" className="btn-secondary flex-1 text-center">
+                Seguir comprando
+              </Link>
+            </div>
           </div>
         </div>
       </div>

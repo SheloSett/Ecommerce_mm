@@ -1291,9 +1291,10 @@ export default function AdminOrders() {
                   orders.map((order) => {
                     const status = STATUS_CONFIG[order.status];
                     const isChecked = checkedIds.includes(order.id);
-                    // Solo PENDING no vistas — las históricas (APPROVED, CANCELLED, etc.) tienen seenByAdmin=false por defecto y no deben marcarse como nuevas.
-                    // Mostramos NUEVO también para cotizaciones porque aparecen en este listado y el admin quiere verlas destacadas acá también.
-                    const isNew = !order.seenByAdmin && order.status === "PENDING";
+                    // NUEVO se muestra para cualquier pedido "vigente" no visto: PENDING (sin pagar),
+                    // QUOTE_APPROVED (efectivo/transferencia/cotización aprobada), APPROVED (pagado por MP),
+                    // PAYMENT_REVIEW (revisión de pago). CANCELLED/REJECTED quedan afuera — ya no requieren atención.
+                    const isNew = !order.seenByAdmin && ["PENDING", "QUOTE_APPROVED", "APPROVED", "PAYMENT_REVIEW"].includes(order.status);
                     return (
                       <tr
                         key={order.id}
