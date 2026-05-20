@@ -433,22 +433,42 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
                                 Subí fotos al producto primero
                               </span>
                             )}
-                            {/* Picker: grid de thumbnails del producto */}
+                            {/* Picker: modal centrado en pantalla.
+                                Antes era un dropdown absolute que se salía de la celda y la
+                                tabla con overflow-x-auto lo recortaba (no se veía nada). */}
                             {e.pickerOpen && productImages.length > 0 && (
-                              <div className="absolute z-30 mt-12 bg-white border border-slate-200 rounded-lg shadow-lg p-2 grid grid-cols-3 gap-1.5 max-w-[260px]">
-                                {productImages.map((url, idx) => {
-                                  const isSelected = e.image === url;
-                                  return (
+                              <div
+                                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                                onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
+                              >
+                                <div
+                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto"
+                                  onClick={(ev) => ev.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-slate-800">Elegir foto para esta variante</h3>
                                     <button
-                                      key={idx}
                                       type="button"
-                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: url, pickerOpen: false } }))}
-                                      className={`w-14 h-14 rounded overflow-hidden border-2 transition-colors ${isSelected ? "border-blue-500" : "border-slate-200 hover:border-blue-300"}`}
-                                    >
-                                      <img src={getImageUrl(url)} alt="" className="w-full h-full object-cover" />
-                                    </button>
-                                  );
-                                })}
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
+                                      className="text-slate-400 hover:text-slate-700 text-xl leading-none"
+                                    >×</button>
+                                  </div>
+                                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                                    {productImages.map((url, idx) => {
+                                      const isSelected = e.image === url;
+                                      return (
+                                        <button
+                                          key={idx}
+                                          type="button"
+                                          onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: url, pickerOpen: false } }))}
+                                          className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${isSelected ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-blue-300"}`}
+                                        >
+                                          <img src={getImageUrl(url)} alt="" className="w-full h-full object-cover" />
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               </div>
                             )}
                           </div>

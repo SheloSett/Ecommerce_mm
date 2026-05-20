@@ -45,20 +45,22 @@ async function getProducts(req, res) {
     }
 
     if (category) {
-      // Buscar la categoría por slug e incluir sus subcategorías
-      const cat = await prisma.category.findUnique({
-        where: { slug: category },
-        include: { children: { select: { id: true } } },
-      });
-      if (cat) {
-        // Si la categoría tiene hijos, incluir productos de ella Y de sus subcategorías
-        const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
-        // Antes: where.categoryId = { in: categoryIds } — ahora M2M
-        where.categories = { some: { id: { in: categoryIds } } };
-      } else {
-        // Si no existe la categoría, devolver vacío forzando condición imposible
-        // Antes: where.categoryId = -1
-        where.categories = { every: { id: -1 }, some: {} };
+      // Soporta múltiples categorías separadas por "|" — ej. ?category=accesorios|cables.
+      // Para cada slug se incluyen también sus subcategorías (jerarquía).
+      const slugs = category.split("|").map((s) => s.trim()).filter(Boolean);
+      if (slugs.length > 0) {
+        const cats = await prisma.category.findMany({
+          where:   { slug: { in: slugs } },
+          include: { children: { select: { id: true } } },
+        });
+        if (cats.length > 0) {
+          // Unimos los IDs de cada categoría + sus hijos en una sola lista
+          const categoryIds = cats.flatMap((c) => [c.id, ...c.children.map((ch) => ch.id)]);
+          where.categories = { some: { id: { in: categoryIds } } };
+        } else {
+          // Si ninguno de los slugs existe, devolver vacío
+          where.categories = { every: { id: -1 }, some: {} };
+        }
       }
     }
 
@@ -287,7 +289,6 @@ async function getProduct(req, res) {
 
     const product = await prisma.product.findUnique({
       where: { id: parseInt(id) },
-      // Antes: include: { category: true }
       include: {
         categories: { include: { parent: { select: { id: true, name: true, slug: true } } } },
         attributes: { include: { values: { orderBy: { position: "asc" } } }, orderBy: { position: "asc" } },
@@ -297,6 +298,26 @@ async function getProduct(req, res) {
 
     if (!product) {
       return res.status(404).json({ error: "Producto no encontrado" });
+    }
+
+    // Si el producto está despublicado (sin stock, oculto), solo el admin puede verlo.
+    // El cliente que toquetea la URL e intenta entrar a /producto/X de un producto inactivo
+    // recibe un 404 como si no existiera.
+    if (!product.active) {
+      let isAdmin = false;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const jwt = require("jsonwebtoken");
+          const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
+          isAdmin = decoded.role === "ADMIN" || decoded.role === "SUPERADMIN";
+        } catch {
+          // Token inválido — tratamos como anónimo
+        }
+      }
+      if (!isAdmin) {
+        return res.status(404).json({ error: "Producto no encontrado" });
+      }
     }
 
     res.json(product);
