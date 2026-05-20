@@ -338,7 +338,7 @@ export default function EditProfile() {
                         <span className="text-lg">⏳</span>
                         <div>
                           <p className="font-medium text-yellow-800">Solicitud pendiente de revisión</p>
-                          <p className="text-xs text-slate-400 mt-0.5">El administrador revisará tu solicitud pronto.</p>
+                          <p className="text-xs text-yellow-700 mt-0.5">El administrador revisará tu solicitud pronto.</p>
                         </div>
                       </div>
                     )}

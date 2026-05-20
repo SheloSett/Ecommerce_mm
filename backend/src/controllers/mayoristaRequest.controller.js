@@ -73,7 +73,9 @@ async function getAll(req, res) {
       where,
       include: {
         customer: {
-          select: { id: true, name: true, email: true, phone: true, company: true, type: true },
+          // El campo 'company' fue removido del modelo Customer en algún momento.
+          // Pedirlo en el select tiraba PrismaClientValidationError → 500 al admin.
+          select: { id: true, name: true, email: true, phone: true, type: true },
         },
       },
       orderBy: { createdAt: "desc" },
