@@ -40,7 +40,30 @@ export default function ProductDetail() {
   const { customer } = useCustomerAuth();
   const autoplayRef = useRef(null);
 
-  const totalImages = product?.images?.length || 0;
+  // ── Variante activa + galería filtrada ──────────────────────────────────────
+  // Si la variante elegida tiene fotos asignadas, el carrusel se filtra a solo esas.
+  // Si no, muestra todas las fotos del producto.
+  const hasVariants = product?.attributes?.length > 0;
+  const allAttrsSelected = hasVariants &&
+    product.attributes.every((a) => selectedAttrs[a.name]);
+  const activeVariant = (() => {
+    if (!hasVariants || !allAttrsSelected) return null;
+    return (product.variants || []).find((v) => {
+      const combo = Array.isArray(v.combination)
+        ? v.combination
+        : (typeof v.combination === "string" ? JSON.parse(v.combination) : null);
+      if (!combo) return false;
+      return combo.every((c) => selectedAttrs[c.name] === c.value);
+    }) || null;
+  })();
+  const variantImages = (() => {
+    if (!activeVariant) return null;
+    if (Array.isArray(activeVariant.images) && activeVariant.images.length > 0) return activeVariant.images;
+    if (activeVariant.image) return [activeVariant.image]; // legacy single-image
+    return null;
+  })();
+  const galleryImages = variantImages && variantImages.length > 0 ? variantImages : (product?.images || []);
+  const totalImages = galleryImages.length;
 
   const resetTimer = useCallback((nextFn) => {
     clearInterval(autoplayRef.current);
@@ -153,33 +176,11 @@ export default function ProductDetail() {
 
   const isMayorista = customer?.type === "MAYORISTA";
 
-  // Devuelve la variante cuya combination coincide con los atributos seleccionados
-  const hasVariants = product?.attributes?.length > 0;
-  const allAttrsSelected = hasVariants &&
-    product.attributes.every((a) => selectedAttrs[a.name]);
-
-  const activeVariant = (() => {
-    if (!hasVariants || !allAttrsSelected) return null;
-    return (product.variants || []).find((v) => {
-      // combination puede llegar como array o como string JSON (dependiendo del driver de Prisma)
-      const combo = Array.isArray(v.combination)
-        ? v.combination
-        : (typeof v.combination === "string" ? JSON.parse(v.combination) : null);
-      if (!combo) return false;
-      return combo.every((c) => selectedAttrs[c.name] === c.value);
-    }) || null;
-  })();
-
-  // Cuando se elige una variante con foto asignada, el carrusel salta a esa foto.
-  // activeVariant.image es una URL de Cloudinary que coincide con alguna de product.images.
+  // Al cambiar de variante, resetear el índice al primero de la galería filtrada.
   useEffect(() => {
-    if (!activeVariant?.image || !product?.images) return;
-    const idx = product.images.indexOf(activeVariant.image);
-    if (idx >= 0 && idx !== selectedImage) {
-      setSlideDir(idx > selectedImage ? "next" : "prev");
-      setSelectedImage(idx);
-    }
-  }, [activeVariant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSelectedImage(0);
+    setSlideDir("next");
+  }, [activeVariant?.id]);
 
   // Precio efectivo: variante > precio base según tipo de cliente
   const effectivePrice = (() => {
@@ -337,10 +338,10 @@ export default function ProductDetail() {
                   Antes había una rama variantImageUrl que sobreescribía la galería; ahora la
                   variante solo cambia el índice (selectedImage), así el cliente sigue viendo
                   todo el carrusel y las flechas funcionan normal. */}
-              {product.images?.[selectedImage] ? (
+              {galleryImages[selectedImage] ? (
                 <img
-                  key={selectedImage}
-                  src={getImageUrl(product.images[selectedImage])}
+                  key={`${activeVariant?.id || "noVariant"}-${selectedImage}`}
+                  src={getImageUrl(galleryImages[selectedImage])}
                   alt={product.name}
                   className={`relative w-full h-full object-contain ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
                   style={{
@@ -372,7 +373,7 @@ export default function ProductDetail() {
                   </button>
                   {/* Indicador de posición */}
                   <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
-                    {product.images.map((_, i) => (
+                    {galleryImages.map((_, i) => (
                       <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedImage ? "bg-white" : "bg-white/40"}`} />
                     ))}
                   </div>
@@ -380,10 +381,10 @@ export default function ProductDetail() {
               )}
             </div>
 
-            {/* Miniaturas */}
+            {/* Miniaturas — filtradas a la galería de la variante activa si aplica */}
             {totalImages > 1 && (
               <div className="flex gap-2 overflow-x-auto pb-2">
-                {product.images.map((img, i) => (
+                {galleryImages.map((img, i) => (
                   <button
                     key={i}
                     onClick={() => handleSelectImage(i)}

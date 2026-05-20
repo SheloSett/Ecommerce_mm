@@ -150,9 +150,11 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
         price:          v.price != null ? String(v.price) : "",
         cost:           v.cost  != null ? String(v.cost)  : "",
         sku:            v.sku ?? "",
-        // image: URL (de las fotos del producto) que esta variante usa, o null
-        image:          v.image ?? null,
-        // pickerOpen: si está abierto el dropdown de selección de foto
+        // images: array de URLs de las fotos del producto asignadas a esta variante.
+        // Fallback al campo viejo 'image' (string único) para variantes anteriores a la migración.
+        images:         Array.isArray(v.images) && v.images.length > 0
+                          ? [...v.images]
+                          : (v.image ? [v.image] : []),
         pickerOpen:     false,
       },
     }));
@@ -166,14 +168,16 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
     const e = editing[id];
     setSavingVariant(id);
     try {
-      // Ahora el backend espera JSON, no FormData — image es una URL de las fotos del producto
+      // Ahora el backend espera JSON. images es array de URLs (subset de las fotos del producto).
+      // Para compatibilidad, también sincronizamos el campo legado 'image' con la primera de la lista.
       const payload = {
         stock:          parseInt(e.stock) || 0,
         stockUnlimited: e.stockUnlimited,
         price:          e.price === "" ? "" : (parseFloat(e.price) || ""),
         cost:           e.cost  === "" ? "" : (parseFloat(e.cost)  || ""),
         sku:            e.sku,
-        image:          e.image || null,
+        images:         e.images || [],
+        image:          e.images && e.images.length > 0 ? e.images[0] : null,
       };
       const res = await variantsApi.updateVariant(id, payload);
       setVariants((prev) => prev.map((v) => (v.id === id ? res.data : v)));
@@ -402,20 +406,18 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
 
                     {e ? (
                       <>
-                        {/* Foto — picker de las imágenes del producto. Click en una thumbnail
-                            la asigna a la variante. La cruz desvincula la foto.
-                            No se suben fotos nuevas acá — las imágenes son las del producto. */}
+                        {/* Foto — picker MULTI-SELECT de las imágenes del producto.
+                            Una variante puede tener varias fotos asignadas. */}
                         <td className="px-2 py-2 text-center">
                           <div className="flex flex-col items-center gap-1">
-                            {e.image ? (
-                              <div className="relative">
-                                <img src={getImageUrl(e.image)} alt="" className="w-10 h-10 object-cover rounded border border-blue-300" />
-                                <button
-                                  type="button"
-                                  onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: null } }))}
-                                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-none flex items-center justify-center hover:bg-red-600"
-                                  title="Quitar foto"
-                                >×</button>
+                            {e.images && e.images.length > 0 ? (
+                              <div className="flex items-center gap-1 flex-wrap justify-center max-w-[120px]">
+                                {e.images.slice(0, 3).map((url, idx) => (
+                                  <img key={idx} src={getImageUrl(url)} alt="" className="w-8 h-8 object-cover rounded border border-blue-300" />
+                                ))}
+                                {e.images.length > 3 && (
+                                  <span className="text-xs font-bold text-slate-600 ml-1">+{e.images.length - 3}</span>
+                                )}
                               </div>
                             ) : (
                               <div className="w-10 h-10 rounded border border-dashed border-slate-300 flex items-center justify-center text-slate-300 text-lg">📷</div>
@@ -426,16 +428,14 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
                                 onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: !e.pickerOpen } }))}
                                 className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
                               >
-                                {e.image ? "Cambiar" : "Elegir"}
+                                {e.images?.length > 0 ? `Editar (${e.images.length})` : "Elegir"}
                               </button>
                             ) : (
                               <span className="text-[10px] text-slate-400 leading-tight text-center max-w-[80px]">
                                 Subí fotos al producto primero
                               </span>
                             )}
-                            {/* Picker: modal centrado en pantalla.
-                                Antes era un dropdown absolute que se salía de la celda y la
-                                tabla con overflow-x-auto lo recortaba (no se veía nada). */}
+                            {/* Picker MULTI-SELECT: modal centrado. Cada thumbnail es un toggle. */}
                             {e.pickerOpen && productImages.length > 0 && (
                               <div
                                 className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -445,28 +445,54 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
                                   className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto"
                                   onClick={(ev) => ev.stopPropagation()}
                                 >
-                                  <div className="flex items-center justify-between mb-4">
-                                    <h3 className="font-bold text-slate-800">Elegir foto para esta variante</h3>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <h3 className="font-bold text-slate-800">Elegir fotos para esta variante</h3>
                                     <button
                                       type="button"
                                       onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
                                       className="text-slate-400 hover:text-slate-700 text-xl leading-none"
                                     >×</button>
                                   </div>
+                                  <p className="text-xs text-slate-500 mb-4">Tocá cada foto para agregar o quitar. Se mostrarán todas en el carrusel cuando el cliente elija esta variante.</p>
                                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                                     {productImages.map((url, idx) => {
-                                      const isSelected = e.image === url;
+                                      const isSelected = (e.images || []).includes(url);
                                       return (
                                         <button
                                           key={idx}
                                           type="button"
-                                          onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: url, pickerOpen: false } }))}
-                                          className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${isSelected ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-blue-300"}`}
+                                          onClick={() => setEditing((p) => {
+                                            const current = e.images || [];
+                                            const next = current.includes(url)
+                                              ? current.filter((u) => u !== url)
+                                              : [...current, url];
+                                            return { ...p, [v.id]: { ...e, images: next } };
+                                          })}
+                                          className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${isSelected ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-blue-300"}`}
                                         >
                                           <img src={getImageUrl(url)} alt="" className="w-full h-full object-cover" />
+                                          {isSelected && (
+                                            <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-blue-500 text-white text-xs font-bold flex items-center justify-center shadow">✓</div>
+                                          )}
                                         </button>
                                       );
                                     })}
+                                  </div>
+                                  <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, images: [] } }))}
+                                      className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700"
+                                    >
+                                      Limpiar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
+                                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg"
+                                    >
+                                      Listo
+                                    </button>
                                   </div>
                                 </div>
                               </div>
@@ -543,17 +569,24 @@ export default function ProductVariantsEditor({ productId, basePrice, productIma
                       </>
                     ) : (
                       <>
-                        {/* Foto — view. v.image es ahora una URL de Cloudinary (foto del producto). */}
+                        {/* Foto — view. Muestra hasta 3 thumbnails de v.images + contador "+N". */}
                         <td className="px-2 py-3 text-center">
-                          {v.image ? (
-                            <img
-                              src={getImageUrl(v.image)}
-                              alt=""
-                              className="w-10 h-10 object-cover rounded border border-slate-200 mx-auto"
-                            />
-                          ) : (
-                            <span className="text-slate-300 text-lg">—</span>
-                          )}
+                          {(() => {
+                            const imgs = Array.isArray(v.images) && v.images.length > 0
+                              ? v.images
+                              : (v.image ? [v.image] : []);
+                            if (imgs.length === 0) return <span className="text-slate-300 text-lg">—</span>;
+                            return (
+                              <div className="flex items-center gap-0.5 flex-wrap justify-center max-w-[120px] mx-auto">
+                                {imgs.slice(0, 3).map((url, idx) => (
+                                  <img key={idx} src={getImageUrl(url)} alt="" className="w-8 h-8 object-cover rounded border border-slate-200" />
+                                ))}
+                                {imgs.length > 3 && (
+                                  <span className="text-xs font-bold text-slate-600 ml-1">+{imgs.length - 3}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         {/* Stock — view */}
                         <td className="px-4 py-3 text-center text-slate-600">

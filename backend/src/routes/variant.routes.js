@@ -183,7 +183,7 @@ router.post("/product/:productId/generate", authMiddleware, async (req, res) => 
 router.put("/:id", authMiddleware, async (req, res) => {
   try {
     const id   = parseInt(req.params.id);
-    const { stock, stockUnlimited, price, cost, sku, active, image } = req.body;
+    const { stock, stockUnlimited, price, cost, sku, active, image, images } = req.body;
 
     const data = {};
     if (stock          !== undefined) data.stock          = parseInt(stock);
@@ -192,8 +192,9 @@ router.put("/:id", authMiddleware, async (req, res) => {
     if (cost           !== undefined) data.cost           = cost  === "" || cost  === null ? null : parseFloat(cost);
     if (sku            !== undefined) data.sku            = sku || null;
     if (active         !== undefined) data.active         = active === "true" || active === true;
-    // image: URL de una foto del producto principal (o null para desvincular)
+    // image (legado, una sola foto) y images (array, múltiples). El admin nuevo manda images.
     if (image          !== undefined) data.image          = image || null;
+    if (images         !== undefined) data.images         = Array.isArray(images) ? images.filter(Boolean) : [];
 
     const variant = await prisma.productVariant.update({ where: { id }, data });
     if (stock !== undefined || stockUnlimited !== undefined) {

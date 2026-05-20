@@ -517,7 +517,8 @@ model ProductVariant {
   stockUnlimited Boolean  @default(false)
   price          Float?   // null = usar precio base del producto
   cost           Float?   // costo de la variante (sobrescribe el costo del producto padre)
-  image          String?  // imagen específica de esta variante (nombre de archivo en /uploads)
+  image          String?     // LEGADO — antes era una sola foto. Se mantiene por compatibilidad y migración de datos viejos.
+  images         String[]    // URLs de Cloudinary (subset de las fotos del producto) asociadas a esta variante
   active         Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
