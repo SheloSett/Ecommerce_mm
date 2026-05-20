@@ -899,17 +899,22 @@ export default function AdminProducts() {
                         >
                           Editar producto
                         </button>
-                        {/* Guardar todo: aparece solo cuando la edición rápida está abierta */}
-                        {isQuickOpen && (
+                        {/* "Guardar todo" — solo aparece cuando hay 2+ variantes y la edición rápida está abierta.
+                            Guarda el producto Y todas las variantes en un único click. */}
+                        {isQuickOpen && (quickEditVariants[p.id]?.length ?? 0) >= 2 && (
                           <button
                             onClick={async () => {
                               const variants = quickEditVariants[p.id] || [];
-                              await Promise.all(variants.map((v) => handleVariantQuickSave(v.id)));
+                              // Guarda el producto (precios, costo, etc.) + todas las variantes en paralelo
+                              await Promise.all([
+                                handleQuickSave(p),
+                                ...variants.map((v) => handleVariantQuickSave(v.id)),
+                              ]);
                             }}
                             disabled={isSaving}
                             className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
                           >
-                            Guardar
+                            Guardar todo
                           </button>
                         )}
                       </div>
@@ -960,18 +965,20 @@ export default function AdminProducts() {
                       <div className="border-t border-slate-100 bg-slate-50 overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
+                            {/* Anchos compactos en md, más generosos desde xl — antes el botón Guardar
+                                quedaba fuera de pantalla en laptops de ~1024-1366px y había que scrollear */}
                             <tr className="text-left text-xs text-slate-500 font-semibold uppercase tracking-wide border-b border-slate-200">
-                              <th className="px-5 py-3 w-56">Variantes</th>
-                              <th className="px-4 py-3 w-32">Stock</th>
-                              <th className="px-4 py-3 w-32">Costo</th>
-                              <th className="px-4 py-3 w-36">Precio minorista</th>
+                              <th className="px-3 py-3 w-44 xl:w-56">Variantes</th>
+                              <th className="px-2 py-3 w-24 xl:w-32">Stock</th>
+                              <th className="px-2 py-3 w-24 xl:w-32">Costo</th>
+                              <th className="px-2 py-3 w-28 xl:w-36">Precio minorista</th>
                               {/* Para productos sin variantes se muestran columnas de precio adicionales */}
                               {(p._count?.variants ?? 0) === 0 && <>
-                                <th className="px-4 py-3 w-36">Oferta minorista</th>
-                                <th className="px-4 py-3 w-36">Precio mayorista</th>
-                                <th className="px-4 py-3 w-36">Oferta mayorista</th>
+                                <th className="px-2 py-3 w-28 xl:w-36">Oferta minorista</th>
+                                <th className="px-2 py-3 w-28 xl:w-36">Precio mayorista</th>
+                                <th className="px-2 py-3 w-28 xl:w-36">Oferta mayorista</th>
                               </>}
-                              <th className="px-4 py-3 w-32">SKU</th>
+                              <th className="px-2 py-3 w-24 xl:w-32">SKU</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1029,13 +1036,13 @@ export default function AdminProducts() {
                                         <td className="px-4 py-3">
                                           <div className="flex items-center gap-1">
                                             <span className="text-slate-400 text-sm">$</span>
-                                            <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                            <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
                                           </div>
                                         </td>
 
                                         {/* SKU variante */}
                                         <td className="px-4 py-3">
-                                          <input type="text" value={vv.sku ?? ""} onChange={(e) => setVariantField(v.id, "sku", e.target.value)} placeholder="SKU" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                          <input type="text" value={vv.sku ?? ""} onChange={(e) => setVariantField(v.id, "sku", e.target.value)} placeholder="SKU" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
                                         </td>
                                       </tr>
                                     );
@@ -1068,7 +1075,7 @@ export default function AdminProducts() {
                               </td>
 
                               {/* Columna: Stock */}
-                              <td className="px-4 py-4">
+                              <td className="px-2 xl:px-4 py-4">
                                 {qv.stockUnlimited ? (
                                   <div className="flex items-center gap-1">
                                     <input type="text" value="∞" readOnly className="w-20 px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-400 text-center text-sm cursor-not-allowed" />
@@ -1082,19 +1089,19 @@ export default function AdminProducts() {
                                 )}
                               </td>
                               {/* Costo base del producto */}
-                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Precio minorista base del producto */}
-                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
                               {/* Oferta minorista */}
-                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Precio mayorista */}
-                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Oferta mayorista */}
-                              <td className="px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* SKU base del producto */}
-                              <td className="px-4 py-4"><input type="text" value={qv.sku ?? ""} onChange={(e) => setQuickField(p.id, "sku", e.target.value)} placeholder="SKU" className="w-28 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></td>
-                              <td className="px-4 py-4">
-                                <button onClick={() => handleQuickSave(p)} disabled={isSaving} className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold transition-colors disabled:opacity-50 whitespace-nowrap">
+                              <td className="px-2 xl:px-4 py-4"><input type="text" value={qv.sku ?? ""} onChange={(e) => setQuickField(p.id, "sku", e.target.value)} placeholder="SKU" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></td>
+                              <td className="px-2 xl:px-4 py-4">
+                                <button onClick={() => handleQuickSave(p)} disabled={isSaving} className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors disabled:opacity-50 whitespace-nowrap">
                                   {isSaving ? "..." : "Guardar"}
                                 </button>
                               </td>
@@ -1849,6 +1856,7 @@ export default function AdminProducts() {
                       <ProductVariantsEditor
                         productId={editingProduct.id}
                         basePrice={editingProduct.price}
+                        productImages={editingProduct.images || []}
                       />
                     </div>
                   )}

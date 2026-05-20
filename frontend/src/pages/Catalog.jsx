@@ -115,6 +115,8 @@ export default function Catalog() {
   };
 
   const currentCategory  = searchParams.get("category") || "";
+  // Array de slugs seleccionados (soporta multi-select). Ej. ?category=accesorios|cables
+  const selectedCategorySlugs = currentCategory ? currentCategory.split("|").filter(Boolean) : [];
   const currentSearch    = searchParams.get("search") || "";
   const currentPage      = parseInt(searchParams.get("page") || "1");
   const currentOnSale    = searchParams.get("onSale") === "true";
@@ -192,6 +194,14 @@ export default function Catalog() {
     setSearchParams(newParams);
   };
 
+  // Toggle de slug en el array de categorías — agrega o quita según ya esté.
+  const toggleCategory = (slug) => {
+    const next = selectedCategorySlugs.includes(slug)
+      ? selectedCategorySlugs.filter((s) => s !== slug)
+      : [...selectedCategorySlugs, slug];
+    setFilter("category", next.join("|"));
+  };
+
   const toggleAttrValue = (attrName, value) => {
     const current = selectedAttrs[attrName] || [];
     const newValues = current.includes(value)
@@ -233,8 +243,8 @@ export default function Catalog() {
   };
 
   const isParentActive = (cat) =>
-    currentCategory === cat.slug ||
-    (cat.children && cat.children.some((s) => s.slug === currentCategory));
+    selectedCategorySlugs.includes(cat.slug) ||
+    (cat.children && cat.children.some((s) => selectedCategorySlugs.includes(s.slug)));
 
   const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || totalAttrFilters > 0;
 
@@ -302,8 +312,8 @@ export default function Catalog() {
               <CategoryItem
                 label={cat.name}
                 count={parentTotal(cat)}
-                checked={currentCategory === cat.slug}
-                onClick={() => setFilter("category", currentCategory === cat.slug ? "" : cat.slug)}
+                checked={selectedCategorySlugs.includes(cat.slug)}
+                onClick={() => toggleCategory(cat.slug)}
               />
               {cat.children && cat.children.length > 0 && isParentActive(cat) && (
                 <div className="mt-0.5 space-y-0.5 ml-2 pl-2 border-l-2 border-blue-100">
@@ -312,9 +322,9 @@ export default function Catalog() {
                       key={sub.id}
                       label={sub.name}
                       count={sub._count?.products || 0}
-                      checked={currentCategory === sub.slug}
+                      checked={selectedCategorySlugs.includes(sub.slug)}
                       indent
-                      onClick={() => setFilter("category", currentCategory === sub.slug ? "" : sub.slug)}
+                      onClick={() => toggleCategory(sub.slug)}
                     />
                   ))}
                 </div>
@@ -406,7 +416,7 @@ export default function Catalog() {
               Filtros
               {(hasAnyFilter) && (
                 <span className="bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">
-                  {(currentCategory ? 1 : 0) + (currentOnSale ? 1 : 0) + (currentLowStock ? 1 : 0) + totalAttrFilters}
+                  {selectedCategorySlugs.length + (currentOnSale ? 1 : 0) + (currentLowStock ? 1 : 0) + totalAttrFilters}
                 </span>
               )}
             </button>
@@ -444,8 +454,10 @@ export default function Catalog() {
                     ? "🏷️ Productos en oferta"
                     : currentLowStock
                     ? "⚡ Pocas unidades"
-                    : currentCategory
-                    ? findCategoryName(currentCategory)
+                    : selectedCategorySlugs.length === 1
+                    ? findCategoryName(selectedCategorySlugs[0])
+                    : selectedCategorySlugs.length > 1
+                    ? `${selectedCategorySlugs.length} categorías seleccionadas`
                     : "Catálogo completo"}
                 </h1>
                 {pagination && (

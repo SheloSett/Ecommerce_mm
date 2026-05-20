@@ -49,7 +49,7 @@ export default function ProductDetail() {
       autoplayRef.current = setInterval(() => {
         setSlideDir("next");
         setSelectedImage((i) => (i + 1) % totalImages);
-      }, 15000);
+      }, 5000);
     }
   }, [totalImages]);
 
@@ -67,13 +67,13 @@ export default function ProductDetail() {
     });
   }, [totalImages, resetTimer]);
 
-  // Autoplay: avanza cada 15 segundos si hay más de 1 imagen
+  // Autoplay: avanza cada 5 segundos si hay más de 1 imagen
   useEffect(() => {
     if (totalImages <= 1) return;
     autoplayRef.current = setInterval(() => {
       setSlideDir("next");
       setSelectedImage((i) => (i + 1) % totalImages);
-    }, 15000);
+    }, 5000);
     return () => clearInterval(autoplayRef.current);
   }, [totalImages]);
 
@@ -170,8 +170,16 @@ export default function ProductDetail() {
     }) || null;
   })();
 
-  // Imagen de la variante activa — sobreescribe la galería del producto cuando existe
-  const variantImageUrl = activeVariant?.image ? getImageUrl(`/uploads/${activeVariant.image}`) : null;
+  // Cuando se elige una variante con foto asignada, el carrusel salta a esa foto.
+  // activeVariant.image es una URL de Cloudinary que coincide con alguna de product.images.
+  useEffect(() => {
+    if (!activeVariant?.image || !product?.images) return;
+    const idx = product.images.indexOf(activeVariant.image);
+    if (idx >= 0 && idx !== selectedImage) {
+      setSlideDir(idx > selectedImage ? "next" : "prev");
+      setSelectedImage(idx);
+    }
+  }, [activeVariant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Precio efectivo: variante > precio base según tipo de cliente
   const effectivePrice = (() => {
@@ -325,21 +333,11 @@ export default function ProductDetail() {
               }}
               onMouseLeave={() => setZoom(false)}
             >
-              {/* Fondo blanco — el bg-white del contenedor padre cubre el espacio vacío */}
-              {variantImageUrl ? (
-                // Imagen específica de la variante seleccionada
-                <img
-                  key={variantImageUrl}
-                  src={variantImageUrl}
-                  alt={product.name}
-                  className="relative w-full h-full object-contain carousel-slide-next"
-                  style={{
-                    transform: zoom ? "scale(2.5)" : "scale(1)",
-                    transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
-                    transition: zoom ? "transform 0.08s ease-out" : "transform 0.25s ease-out",
-                  }}
-                />
-              ) : product.images?.[selectedImage] ? (
+              {/* Fondo blanco — el bg-white del contenedor padre cubre el espacio vacío.
+                  Antes había una rama variantImageUrl que sobreescribía la galería; ahora la
+                  variante solo cambia el índice (selectedImage), así el cliente sigue viendo
+                  todo el carrusel y las flechas funcionan normal. */}
+              {product.images?.[selectedImage] ? (
                 <img
                   key={selectedImage}
                   src={getImageUrl(product.images[selectedImage])}
@@ -357,17 +355,17 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* Flechas — solo si hay más de 1 imagen Y no hay imagen de variante activa */}
-              {totalImages > 1 && !variantImageUrl && (
+              {/* Flechas — solo si hay más de 1 imagen */}
+              {totalImages > 1 && (
                 <>
                   <button
-                    onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 15000); }}
+                    onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
                     className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
                   >
                     ‹
                   </button>
                   <button
-                    onClick={() => { goNext(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 15000); }}
+                    onClick={() => { goNext(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
                     className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
                   >
                     ›

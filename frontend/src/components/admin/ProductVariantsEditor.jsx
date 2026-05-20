@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 const formatPrice = (n) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
 
-export default function ProductVariantsEditor({ productId, basePrice }) {
+export default function ProductVariantsEditor({ productId, basePrice, productImages = [] }) {
   const [attributes, setAttributes] = useState([]);
   const [variants,   setVariants]   = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -150,8 +150,10 @@ export default function ProductVariantsEditor({ productId, basePrice }) {
         price:          v.price != null ? String(v.price) : "",
         cost:           v.cost  != null ? String(v.cost)  : "",
         sku:            v.sku ?? "",
-        imageFile:      null,
-        imagePreview:   v.image ? getImageUrl(`/uploads/${v.image}`) : null,
+        // image: URL (de las fotos del producto) que esta variante usa, o null
+        image:          v.image ?? null,
+        // pickerOpen: si está abierto el dropdown de selección de foto
+        pickerOpen:     false,
       },
     }));
   };
@@ -164,14 +166,16 @@ export default function ProductVariantsEditor({ productId, basePrice }) {
     const e = editing[id];
     setSavingVariant(id);
     try {
-      const formData = new FormData();
-      formData.append("stock",          parseInt(e.stock) || 0);
-      formData.append("stockUnlimited", e.stockUnlimited);
-      formData.append("price",          e.price === "" ? "" : parseFloat(e.price) || "");
-      formData.append("cost",           e.cost  === "" ? "" : parseFloat(e.cost)  || "");
-      formData.append("sku",            e.sku);
-      if (e.imageFile) formData.append("image", e.imageFile);
-      const res = await variantsApi.updateVariant(id, formData);
+      // Ahora el backend espera JSON, no FormData — image es una URL de las fotos del producto
+      const payload = {
+        stock:          parseInt(e.stock) || 0,
+        stockUnlimited: e.stockUnlimited,
+        price:          e.price === "" ? "" : (parseFloat(e.price) || ""),
+        cost:           e.cost  === "" ? "" : (parseFloat(e.cost)  || ""),
+        sku:            e.sku,
+        image:          e.image || null,
+      };
+      const res = await variantsApi.updateVariant(id, payload);
       setVariants((prev) => prev.map((v) => (v.id === id ? res.data : v)));
       cancelEdit(id);
       toast.success("Variante guardada");
@@ -398,31 +402,55 @@ export default function ProductVariantsEditor({ productId, basePrice }) {
 
                     {e ? (
                       <>
-                        {/* Foto — edit */}
+                        {/* Foto — picker de las imágenes del producto. Click en una thumbnail
+                            la asigna a la variante. La cruz desvincula la foto.
+                            No se suben fotos nuevas acá — las imágenes son las del producto. */}
                         <td className="px-2 py-2 text-center">
                           <div className="flex flex-col items-center gap-1">
-                            {e.imagePreview && (
-                              <img src={e.imagePreview} alt="" className="w-10 h-10 object-cover rounded border border-slate-200" />
+                            {e.image ? (
+                              <div className="relative">
+                                <img src={getImageUrl(e.image)} alt="" className="w-10 h-10 object-cover rounded border border-blue-300" />
+                                <button
+                                  type="button"
+                                  onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: null } }))}
+                                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-none flex items-center justify-center hover:bg-red-600"
+                                  title="Quitar foto"
+                                >×</button>
+                              </div>
+                            ) : (
+                              <div className="w-10 h-10 rounded border border-dashed border-slate-300 flex items-center justify-center text-slate-300 text-lg">📷</div>
                             )}
-                            <input
-                              ref={(el) => { imageInputRefs.current[v.id] = el; }}
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(ev) => {
-                                const file = ev.target.files?.[0];
-                                if (!file) return;
-                                const preview = URL.createObjectURL(file);
-                                setEditing((p) => ({ ...p, [v.id]: { ...e, imageFile: file, imagePreview: preview } }));
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => imageInputRefs.current[v.id]?.click()}
-                              className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
-                            >
-                              {e.imagePreview ? "Cambiar" : "+ Foto"}
-                            </button>
+                            {productImages.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: !e.pickerOpen } }))}
+                                className="text-xs text-blue-500 hover:text-blue-700 underline whitespace-nowrap"
+                              >
+                                {e.image ? "Cambiar" : "Elegir"}
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 leading-tight text-center max-w-[80px]">
+                                Subí fotos al producto primero
+                              </span>
+                            )}
+                            {/* Picker: grid de thumbnails del producto */}
+                            {e.pickerOpen && productImages.length > 0 && (
+                              <div className="absolute z-30 mt-12 bg-white border border-slate-200 rounded-lg shadow-lg p-2 grid grid-cols-3 gap-1.5 max-w-[260px]">
+                                {productImages.map((url, idx) => {
+                                  const isSelected = e.image === url;
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, image: url, pickerOpen: false } }))}
+                                      className={`w-14 h-14 rounded overflow-hidden border-2 transition-colors ${isSelected ? "border-blue-500" : "border-slate-200 hover:border-blue-300"}`}
+                                    >
+                                      <img src={getImageUrl(url)} alt="" className="w-full h-full object-cover" />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </td>
                         {/* Stock — edit */}
@@ -495,11 +523,11 @@ export default function ProductVariantsEditor({ productId, basePrice }) {
                       </>
                     ) : (
                       <>
-                        {/* Foto — view */}
+                        {/* Foto — view. v.image es ahora una URL de Cloudinary (foto del producto). */}
                         <td className="px-2 py-3 text-center">
                           {v.image ? (
                             <img
-                              src={getImageUrl(`/uploads/${v.image}`)}
+                              src={getImageUrl(v.image)}
                               alt=""
                               className="w-10 h-10 object-cover rounded border border-slate-200 mx-auto"
                             />

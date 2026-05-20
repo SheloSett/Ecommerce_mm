@@ -85,7 +85,7 @@ function exportExcel(order, customer) {
   const subtotal = order.total + (order.couponDiscount || 0) - (order.ivaAmount || 0);
   const header = [
     ["Pedido #", order.id], ["Fecha", formatDate(order.createdAt)],
-    ["Estado", order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : "Aprobado"],
+    ["Estado", order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada"],
     ["Método de pago", PAYMENT_LABEL[order.paymentMethod] || order.paymentMethod],
     ["Método de entrega", SHIPPING_LABEL[order.shippingMethod] || order.shippingMethod],
     ...(order.customerNote ? [["Nota", order.customerNote]] : []),
@@ -164,7 +164,7 @@ function exportPDF(order, customer) {
   <div style="display:flex;gap:10px;margin-bottom:14px">
     <div style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px">
       <div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;font-weight:800;margin-bottom:8px">Pedido</div>
-      <div style="margin-bottom:4px"><span style="font-size:10px;color:#94a3b8;min-width:72px;display:inline-block">Estado</span><span style="font-size:12px;font-weight:600">${order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : "Aprobado"}</span></div>
+      <div style="margin-bottom:4px"><span style="font-size:10px;color:#94a3b8;min-width:72px;display:inline-block">Estado</span><span style="font-size:12px;font-weight:600">${order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada"}</span></div>
       <div style="margin-bottom:4px"><span style="font-size:10px;color:#94a3b8;min-width:72px;display:inline-block">Pago</span><span style="font-size:12px;font-weight:600">${PAYMENT_LABEL[order.paymentMethod] || order.paymentMethod}</span></div>
       <div><span style="font-size:10px;color:#94a3b8;min-width:72px;display:inline-block">Entrega</span><span style="font-size:12px;font-weight:600">${SHIPPING_LABEL[order.shippingMethod] || order.shippingMethod}</span></div>
     </div>
@@ -286,8 +286,10 @@ export default function OrderDetail() {
                 <span className="text-xs px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full font-semibold">Pendiente de pago</span>
               ) : order.status === "PAYMENT_REVIEW" ? (
                 <span className="text-xs px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full font-semibold">Revisión de pago</span>
+              ) : order.status === "QUOTE_APPROVED" ? (
+                <span className="text-xs px-2.5 py-1 bg-teal-100 text-teal-700 rounded-full font-semibold">Aprobada (sin pagar)</span>
               ) : (
-                <span className="text-xs px-2.5 py-1 bg-green-100 text-green-700 rounded-full font-semibold">Aprobado</span>
+                <span className="text-xs px-2.5 py-1 bg-green-100 text-green-700 rounded-full font-semibold">Abonada</span>
               )}
             </div>
           </div>

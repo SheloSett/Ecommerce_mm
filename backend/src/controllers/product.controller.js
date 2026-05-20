@@ -164,8 +164,12 @@ async function getProductsAdmin(req, res) {
     }
 
     if (category) {
-      // Antes: where.category = { slug: category }
-      where.categories = { some: { slug: category } };
+      // Soporta múltiples categorías separadas por "|" — ej. ?category=accesorios|cables|cargadores
+      // Las relaciones M2M usan "some" con "in" para hacer OR.
+      const slugs = category.split("|").map((s) => s.trim()).filter(Boolean);
+      if (slugs.length > 0) {
+        where.categories = { some: { slug: { in: slugs } } };
+      }
     }
 
     if (search) {

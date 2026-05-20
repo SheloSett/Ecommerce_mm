@@ -641,7 +641,11 @@ export default function Checkout() {
                   <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "ENVIO" ? "border-orange-500 bg-orange-500" : "border-slate-300"}`} />
                 </label>
 
-                {/* Correo Argentino */}
+                {/* Correo Argentino — COMENTADO temporalmente. Todavía no tenemos las APIs
+                    integradas con Correo Argentino para cotizar/generar etiquetas, así que la
+                    opción queda oculta del flujo de checkout. El backend igual sigue aceptando
+                    el valor CORREO_ARGENTINO por si hay órdenes históricas o se reactiva. */}
+                {/*
                 <label className={`flex items-center gap-4 p-4 rounded-xl border-2 cursor-pointer transition-colors ${shippingMethod === "CORREO_ARGENTINO" ? "border-red-500 bg-red-50" : "border-slate-200 hover:border-slate-300"}`}>
                   <input
                     type="radio"
@@ -658,6 +662,7 @@ export default function Checkout() {
                   </div>
                   <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${shippingMethod === "CORREO_ARGENTINO" ? "border-red-500 bg-red-500" : "border-slate-300"}`} />
                 </label>
+                */}
 
                 {/* Formulario de dirección — solo visible cuando se elige Correo Argentino */}
                 {shippingMethod === "CORREO_ARGENTINO" && (

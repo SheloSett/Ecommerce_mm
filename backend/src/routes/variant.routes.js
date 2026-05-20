@@ -3,26 +3,13 @@ const router  = express.Router();
 const { PrismaClient } = require("@prisma/client");
 const { authMiddleware } = require("../middleware/auth.middleware");
 const { syncProductVisibility } = require("../controllers/product.controller");
-const multer  = require("multer");
-const path    = require("path");
-const fs      = require("fs");
 
 const prisma = new PrismaClient();
 
-// Multer para imagen de variante
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, "../../uploads");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const ext  = path.extname(file.originalname);
-    const name = `variant-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-    cb(null, name);
-  },
-});
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+// Nota: ya no usamos multer para variantes — las imágenes de variantes son referencias a las
+// fotos del producto principal (Cloudinary URLs). El admin elige cuál de las fotos del producto
+// corresponde a cada variante. Esto evita duplicar imágenes en Cloudinary y permite que el
+// carrusel del producto salte a la foto correcta cuando el cliente elige una variante.
 
 // ── Atributos ─────────────────────────────────────────────────────────────────
 
@@ -191,11 +178,12 @@ router.post("/product/:productId/generate", authMiddleware, async (req, res) => 
   }
 });
 
-// PUT /api/variants/:id  — actualizar stock, precio, sku, imagen de una variante
-router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
+// PUT /api/variants/:id  — actualizar stock, precio, sku, imagen de una variante.
+// La imagen es una URL (de las fotos del producto principal) o null para limpiarla.
+router.put("/:id", authMiddleware, async (req, res) => {
   try {
     const id   = parseInt(req.params.id);
-    const { stock, stockUnlimited, price, cost, sku, active } = req.body;
+    const { stock, stockUnlimited, price, cost, sku, active, image } = req.body;
 
     const data = {};
     if (stock          !== undefined) data.stock          = parseInt(stock);
@@ -204,7 +192,8 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
     if (cost           !== undefined) data.cost           = cost  === "" || cost  === null ? null : parseFloat(cost);
     if (sku            !== undefined) data.sku            = sku || null;
     if (active         !== undefined) data.active         = active === "true" || active === true;
-    if (req.file)                     data.image          = req.file.filename;
+    // image: URL de una foto del producto principal (o null para desvincular)
+    if (image          !== undefined) data.image          = image || null;
 
     const variant = await prisma.productVariant.update({ where: { id }, data });
     if (stock !== undefined || stockUnlimited !== undefined) {

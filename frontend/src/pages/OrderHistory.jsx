@@ -100,7 +100,7 @@ function exportOrderExcel(order, customer) {
   const headerRows = [
     ["Pedido #", order.id],
     ["Fecha", formatDate(order.createdAt)],
-    ["Estado", order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : "Aprobado"],
+    ["Estado", order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada"],
     ["Cliente", order.customerName],
     ["Email", order.customerEmail],
     ...(order.customerPhone ? [["Teléfono", order.customerPhone]] : []),
@@ -179,7 +179,7 @@ function exportOrderPDF(order, customer) {
     `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`,
   ].join("");
 
-  const statusLabel  = order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : "Aprobado";
+  const statusLabel  = order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada";
   const paymentLabel = PAYMENT_LABEL[order.paymentMethod] || order.paymentMethod;
   const shippingLabel = SHIPPING_LABEL[order.shippingMethod] || order.shippingMethod;
   const tipoLabel    = isMayorista ? "Mayorista" : "Minorista";
@@ -388,9 +388,14 @@ export default function OrderHistory() {
                             <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
                               Revisión de pago
                             </span>
+                          ) : order.status === "QUOTE_APPROVED" ? (
+                            // Aprobada pero todavía no pagada (efectivo/transferencia pendiente de cobro)
+                            <span className="text-xs px-2 py-0.5 bg-teal-100 text-teal-700 rounded-full font-medium">
+                              Aprobada (sin pagar)
+                            </span>
                           ) : (
                             <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
-                              Aprobado
+                              Abonada
                             </span>
                           )}
                           {order.isModified && (
