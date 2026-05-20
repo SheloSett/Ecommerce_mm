@@ -76,9 +76,12 @@ function BannerRow({ banner }) {
 }
 
 export default function AnnouncementBar() {
-  const { announcement } = useSiteConfig();
+  const { announcement, loading } = useSiteConfig();
   const { customer } = useCustomerAuth();
 
+  // No renderizar mientras la config del sitio sigue cargando — antes el banner aparecía con la
+  // animación de scroll ya empezada (texto cortado a la mitad) durante el load inicial.
+  if (loading) return null;
   if (!announcement || !Array.isArray(announcement) || announcement.length === 0) return null;
 
   const customerType = customer?.type || "MINORISTA";
@@ -96,10 +99,14 @@ export default function AnnouncementBar() {
       <style>{`
         @keyframes ann-ltr { 0% { transform: translateX(-100%); } 100% { transform: translateX(100vw); } }
         @keyframes ann-rtl { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+        @keyframes ann-fade { from { opacity: 0; } to { opacity: 1; } }
         .ann-ltr { display:inline-block; white-space:nowrap; animation: ann-ltr 22s linear infinite; }
         .ann-rtl { display:inline-block; white-space:nowrap; animation: ann-rtl 22s linear infinite; }
+        .ann-wrap { animation: ann-fade 0.35s ease-out; }
       `}</style>
-      {visible.map((b) => <BannerRow key={b.id} banner={b} />)}
+      <div className="ann-wrap">
+        {visible.map((b) => <BannerRow key={b.id} banner={b} />)}
+      </div>
     </>
   );
 }
