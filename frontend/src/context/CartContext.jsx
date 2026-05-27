@@ -171,6 +171,7 @@ export function CartProvider({ children }) {
       await cartsApi.clearMyCart();
 
       // 2. Agregar cada item del pedido con precio efectivo actual
+      const isMayorista = customer?.type === "MAYORISTA";
       for (const item of orderItems) {
         // Omitir productos que ya no existen o están desactivados
         if (!item.product?.active) continue;
@@ -183,6 +184,8 @@ export function CartProvider({ children }) {
           name:         item.product.name,
           price:        effectivePrice,
           image:        item.product.images?.[0] || null,
+          // Antes los mayoristas no podían elegir variantes y se filtraban acá. Ahora pueden,
+          // así que al repetir pedido se hereda la variante elegida en el pedido original.
           variantId:    item.variantId    || null,
           variantLabel: item.variantLabel || null,
         });

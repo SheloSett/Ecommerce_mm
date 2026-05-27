@@ -26,6 +26,7 @@ services:
       - postgres
     environment:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      DIRECT_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
       JWT_SECRET: ${JWT_SECRET}
       PORT: 4000
       MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN}

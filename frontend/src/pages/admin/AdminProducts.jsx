@@ -558,11 +558,16 @@ export default function AdminProducts() {
             const initVals = {};
             variants.forEach((v) => {
               initVals[v.id] = {
-                stock: v.stock?.toString() || "0",
-                stockUnlimited: v.stockUnlimited || false,
-                price: v.price?.toString() || "",
-                cost: v.cost?.toString() || "",
-                sku: v.sku || "",
+                stock:              v.stock?.toString() || "0",
+                stockUnlimited:     v.stockUnlimited || false,
+                price:              v.price              != null ? v.price.toString()              : "",
+                salePrice:          v.salePrice          != null ? v.salePrice.toString()          : "",
+                wholesalePrice:     v.wholesalePrice     != null ? v.wholesalePrice.toString()     : "",
+                wholesaleSalePrice: v.wholesaleSalePrice != null ? v.wholesaleSalePrice.toString() : "",
+                cost:               v.cost?.toString() || "",
+                sku:                v.sku || "",
+                // Visibility leído del backend para saber qué inputs de precio mostrar (heredada del atributo)
+                visibility:         v.visibility || "AMBOS",
               };
             });
             setVariantEditValues((prev) => ({ ...prev, ...initVals }));
@@ -632,15 +637,52 @@ export default function AdminProducts() {
   const handleVariantQuickSave = async (variantId) => {
     const vals = variantEditValues[variantId];
     if (!vals) return;
+
+    // Encontrar el producto padre para validar precios contra el baseline del producto
+    const parentProduct = products.find((p) =>
+      (quickEditVariants[p.id] || []).some((v) => v.id === variantId)
+    );
+    const isMin = vals.visibility === "MINORISTA" || vals.visibility === "AMBOS";
+    const isMay = vals.visibility === "MAYORISTA" || vals.visibility === "AMBOS";
+
+    // Validar precios obligatorios: si la variante no tiene precio Y el producto padre tampoco → error
+    if (isMin && !vals.price && !parentProduct?.price) {
+      toast.error("Falta el precio minorista de la variante (o cargalo en el producto base)");
+      return;
+    }
+    if (isMay && !vals.wholesalePrice && !parentProduct?.wholesalePrice) {
+      toast.error("Falta el precio mayorista de la variante (o cargalo en el producto base)");
+      return;
+    }
+    // Validar ofertas < precios base si están cargados
+    if (vals.salePrice && vals.price && parseFloat(vals.salePrice) >= parseFloat(vals.price)) {
+      toast.error("La oferta minorista debe ser menor al precio minorista");
+      return;
+    }
+    if (vals.wholesaleSalePrice && vals.wholesalePrice && parseFloat(vals.wholesaleSalePrice) >= parseFloat(vals.wholesalePrice)) {
+      toast.error("La oferta mayorista debe ser menor al precio mayorista");
+      return;
+    }
+
     setVariantSaving((prev) => new Set(prev).add(variantId));
     try {
-      const fd = new FormData();
-      fd.append("stock", vals.stockUnlimited ? 0 : (vals.stock || 0));
-      fd.append("stockUnlimited", vals.stockUnlimited);
-      if (vals.price) fd.append("price", vals.price);
-      if (vals.sku)   fd.append("sku",   vals.sku);
-      if (vals.cost !== undefined && vals.cost !== "") fd.append("cost", vals.cost);
-      const res = await variantsApi.updateVariant(variantId, fd);
+      // El backend de variantes NO usa multer — espera JSON. Antes acá se mandaba FormData multipart
+      // y el req.body quedaba vacío, por eso el stock parecía guardarse en la UI pero al refrescar
+      // volvía al valor anterior. Ahora mandamos JSON directo con todos los campos relevantes.
+      const payload = {
+        stock: vals.stockUnlimited ? 0 : (vals.stock || 0),
+        stockUnlimited: vals.stockUnlimited,
+        // Precios mayorista/minorista (vacío → null para limpiar el campo en backend)
+        price:              vals.price              !== undefined ? (vals.price              === "" ? null : vals.price)              : undefined,
+        salePrice:          vals.salePrice          !== undefined ? (vals.salePrice          === "" ? null : vals.salePrice)          : undefined,
+        wholesalePrice:     vals.wholesalePrice     !== undefined ? (vals.wholesalePrice     === "" ? null : vals.wholesalePrice)     : undefined,
+        wholesaleSalePrice: vals.wholesaleSalePrice !== undefined ? (vals.wholesaleSalePrice === "" ? null : vals.wholesaleSalePrice) : undefined,
+        cost:               vals.cost               !== undefined ? (vals.cost               === "" ? null : vals.cost)               : undefined,
+        sku:                vals.sku ?? undefined,
+      };
+      // Limpiamos las claves undefined para que el backend reciba solo los campos que el admin tocó
+      Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+      const res = await variantsApi.updateVariant(variantId, payload);
       // Actualizar en cache local
       setQuickEditVariants((prev) => {
         const updated = {};
@@ -971,13 +1013,16 @@ export default function AdminProducts() {
                               <th className="px-3 py-3 w-44 xl:w-56">Variantes</th>
                               <th className="px-2 py-3 w-24 xl:w-32">Stock</th>
                               <th className="px-2 py-3 w-24 xl:w-32">Costo</th>
-                              <th className="px-2 py-3 w-28 xl:w-36">Precio minorista</th>
-                              {/* Para productos sin variantes se muestran columnas de precio adicionales */}
-                              {(p._count?.variants ?? 0) === 0 && <>
+                              {/* Para productos CON variantes: una sola columna "Precios" con los 4 inputs apilados según visibility.
+                                  Para productos SIN variantes: 4 columnas separadas (formato original). */}
+                              {(p._count?.variants ?? 0) === 0 ? <>
+                                <th className="px-2 py-3 w-28 xl:w-36">Precio minorista</th>
                                 <th className="px-2 py-3 w-28 xl:w-36">Oferta minorista</th>
                                 <th className="px-2 py-3 w-28 xl:w-36">Precio mayorista</th>
                                 <th className="px-2 py-3 w-28 xl:w-36">Oferta mayorista</th>
-                              </>}
+                              </> : (
+                                <th className="px-2 py-3 w-40 xl:w-48">Precios</th>
+                              )}
                               <th className="px-2 py-3 w-24 xl:w-32">SKU</th>
                             </tr>
                           </thead>
@@ -1032,11 +1077,39 @@ export default function AdminProducts() {
                                           </div>
                                         </td>
 
-                                        {/* Precio override de variante (vacío = usa precio base del producto) */}
+                                        {/* Precios — los inputs que se muestran dependen de la visibility heredada del atributo */}
                                         <td className="px-4 py-3">
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-slate-400 text-sm">$</span>
-                                            <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
+                                          <div className="flex flex-col gap-1 min-w-[160px]">
+                                            {/* Minorista: visible si visibility AMBOS o MINORISTA */}
+                                            {(vv.visibility === "MINORISTA" || vv.visibility === "AMBOS") && (
+                                              <>
+                                                <div className="flex items-center gap-1">
+                                                  <span className="text-[10px] text-slate-500 w-10 shrink-0">Min</span>
+                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                  <span className="text-[10px] text-red-500 w-10 shrink-0">Of.Min</span>
+                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <input type="number" step="0.01" min="0" value={vv.salePrice ?? ""} onChange={(e) => setVariantField(v.id, "salePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
+                                                </div>
+                                              </>
+                                            )}
+                                            {/* Mayorista: visible si visibility AMBOS o MAYORISTA */}
+                                            {(vv.visibility === "MAYORISTA" || vv.visibility === "AMBOS") && (
+                                              <>
+                                                <div className="flex items-center gap-1">
+                                                  <span className="text-[10px] text-purple-600 w-10 shrink-0">May</span>
+                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <input type="number" step="0.01" min="0" value={vv.wholesalePrice ?? ""} onChange={(e) => setVariantField(v.id, "wholesalePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                  <span className="text-[10px] text-red-500 w-10 shrink-0">Of.May</span>
+                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <input type="number" step="0.01" min="0" value={vv.wholesaleSalePrice ?? ""} onChange={(e) => setVariantField(v.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
+                                                </div>
+                                              </>
+                                            )}
                                           </div>
                                         </td>
 
@@ -1832,16 +1905,8 @@ export default function AdminProducts() {
               {/* Variantes — solo en modo edición (el producto ya tiene ID) */}
               {editingProduct && (
                 <>
-                  {/* Aviso prominente: las variantes solo aplican a clientes MINORISTA */}
-                  <div className="flex items-start gap-3 bg-amber-50 border-2 border-amber-400 rounded-xl px-4 py-3">
-                    <span className="text-2xl flex-shrink-0">⚠️</span>
-                    <div>
-                      <p className="font-bold text-amber-800 text-sm uppercase tracking-wide">Solo para clientes MINORISTA</p>
-                      <p className="text-amber-700 text-xs mt-0.5">
-                        Las variantes (color, talla, etc.) <strong>solo son visibles para clientes minoristas</strong>. Los clientes mayoristas agregan el producto directo al carrito sin seleccionar variantes.
-                      </p>
-                    </div>
-                  </div>
+                  {/* Aviso "Solo para minoristas" eliminado — ahora las variantes pueden ser para minorista,
+                      mayorista o ambos según la visibilidad de cada atributo. */}
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <button
                     type="button"
@@ -1856,6 +1921,7 @@ export default function AdminProducts() {
                       <ProductVariantsEditor
                         productId={editingProduct.id}
                         basePrice={editingProduct.price}
+                        baseWholesalePrice={editingProduct.wholesalePrice}
                         productImages={editingProduct.images || []}
                       />
                     </div>

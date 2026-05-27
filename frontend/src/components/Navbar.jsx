@@ -104,139 +104,134 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className="bg-primary-600 text-white sticky top-0 z-40 shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo */}
-            <Link to="/" className="flex items-center gap-2 font-bold text-xl">
-              <span className="text-blue-400">⚡</span>
-              <span>IGWT Store</span>
+      {/* ── Navbar principal — diseño Stitch, color de fondo: #0F172A (nuevo primario del template) ── */}
+      {/* bg-[#0F172A]: dark navy del template Stitch, fijo en ambos temas (clasico y oscuro) */}
+      <nav className="bg-[#0F172A] border-b border-white/10 shadow-sm sticky top-0 z-40">
+        {/* Grid de 3 columnas: logo | búsqueda centrada | iconos */}
+        <div className="grid grid-cols-3 items-center w-full px-10 max-w-[1280px] mx-auto h-20">
+
+          {/* ── COL 1: Logo ── */}
+          <div className="flex items-center">
+            <Link to="/" className="flex items-center gap-2 text-2xl font-semibold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
+              <span className="material-symbols-outlined text-[#7ffc97]">bolt</span>
+              IGWT Store
             </Link>
+          </div>
 
-            {/* Búsqueda (desktop) con autocomplete */}
-            <form onSubmit={handleSearch} className="hidden md:flex flex-1 max-w-md mx-8">
-              <div className="relative w-full" ref={searchContainerRef}>
-                <input
-                  type="text"
-                  placeholder="Buscar productos..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  className="w-full bg-primary-700 border border-primary-500 rounded-lg px-4 py-2 pr-10 text-sm focus:outline-none focus:border-secondary-400 transition-colors"
-                  autoComplete="off"
-                />
-                <button
-                  type="submit"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                >
-                  {suggestionsLoading ? (
-                    <span className="w-4 h-4 border-2 border-slate-500 border-t-blue-400 rounded-full animate-spin inline-block" />
-                  ) : "🔍"}
-                </button>
-
-                {/* Dropdown de sugerencias */}
-                {showSuggestions && suggestions.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
-                    {suggestions.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onMouseDown={() => handleSelectSuggestion(p)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
-                      >
-                        <div className="w-10 h-10 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
-                          {p.images?.[0] ? (
-                            <img src={getImageUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">📦</div>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                          <p className="text-xs text-slate-500">{p.categories?.[0]?.name || ""}</p>
-                        </div>
-                        <span className="text-sm font-semibold text-blue-600 flex-shrink-0">
-                          {formatSuggestionPrice(p)}
-                        </span>
-                      </button>
-                    ))}
-                    <button
-                      type="submit"
-                      onMouseDown={handleSearch}
-                      className="w-full px-3 py-2 text-xs text-center text-blue-600 hover:bg-blue-50 border-t border-slate-100 font-medium transition-colors"
-                    >
-                      Ver todos los resultados para "{search}" →
-                    </button>
-                  </div>
-                )}
-              </div>
-            </form>
-
-            {/* Links + Acciones */}
-            <div className="flex items-center gap-3">
-              <Link
-                to="/catalogo"
-                className="hidden md:block text-sm text-slate-300 hover:text-white transition-colors"
-              >
-                Catálogo
-              </Link>
-
-              {/* ─── Toggle claro / oscuro ─── */}
+          {/* ── COL 2: Búsqueda centrada y más larga ── */}
+          <div className="flex justify-center">
+            {/* Búsqueda pill (solo lg+) — centrada en el navbar, ancho completo de la columna */}
+            <form
+              onSubmit={handleSearch}
+              className="hidden lg:flex items-center bg-white/10 rounded-full px-4 py-2 border border-[#bdcaba]/30 gap-2 relative w-full max-w-lg"
+              ref={searchContainerRef}
+            >
+              <input
+                type="text"
+                placeholder="Buscar productos..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                className="bg-transparent text-sm text-white placeholder-white/50 focus:outline-none focus:ring-0 flex-1 border-0 outline-none"
+                autoComplete="off"
+              />
               <button
-                onClick={() => setTheme(theme === "oscuro" ? "clasico" : "oscuro")}
-                className="p-2 rounded-xl hover:bg-slate-800 transition-colors text-slate-300 hover:text-white"
-                aria-label={theme === "oscuro" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-                title={theme === "oscuro" ? "Modo claro" : "Modo oscuro"}
+                type="submit"
+                className="text-white opacity-60 hover:opacity-100 transition-opacity flex-shrink-0"
               >
-                {theme === "oscuro" ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
+                {suggestionsLoading ? (
+                  <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block" />
                 ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                  </svg>
+                  <span className="material-symbols-outlined">search</span>
                 )}
               </button>
 
-              {/* ─── Ícono de usuario ─── */}
+              {/* Dropdown de sugerencias de búsqueda */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden min-w-[320px]">
+                  {suggestions.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onMouseDown={() => handleSelectSuggestion(p)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
+                    >
+                      <div className="w-10 h-10 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
+                        {p.images?.[0] ? (
+                          <img src={getImageUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">📦</div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                        <p className="text-xs text-slate-500">{p.categories?.[0]?.name || ""}</p>
+                      </div>
+                      <span className="text-sm font-semibold text-blue-600 flex-shrink-0">
+                        {formatSuggestionPrice(p)}
+                      </span>
+                    </button>
+                  ))}
+                  <button
+                    type="submit"
+                    onMouseDown={handleSearch}
+                    className="w-full px-3 py-2 text-xs text-center text-blue-600 hover:bg-blue-50 border-t border-slate-100 font-medium transition-colors"
+                  >
+                    Ver todos los resultados para "{search}" →
+                  </button>
+                </div>
+              )}
+            </form>
+          </div>
+
+          {/* ── COL 3: Link Catálogo + Íconos alineados a la derecha ── */}
+          {/* justify-end: empuja los íconos al extremo derecho de la tercera columna */}
+          <div className="flex items-center justify-end gap-4">
+            <Link
+              to="/catalogo"
+              className="hidden md:block text-white/70 hover:text-white text-sm font-medium transition-colors mr-2"
+            >
+              Catálogo
+            </Link>
+
+              {/* Toggle claro / oscuro — agregado por nosotros, no está en el template */}
+              <button
+                onClick={() => setTheme(theme === "oscuro" ? "clasico" : "oscuro")}
+                className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
+                aria-label={theme === "oscuro" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
+                title={theme === "oscuro" ? "Modo claro" : "Modo oscuro"}
+              >
+                <span className="material-symbols-outlined">
+                  {theme === "oscuro" ? "light_mode" : "dark_mode"}
+                </span>
+              </button>
+
+              {/* Ícono de usuario — person (material symbol exacto del template) */}
               {customer ? (
-                // Cliente logueado → dropdown con nombre y logout
                 <div className="relative" ref={dropdownRef}>
                   <button
                     onClick={() => setUserDropdownOpen((o) => !o)}
-                    className="relative flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-slate-800 transition-colors"
+                    className="relative text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                     aria-label="Mi cuenta"
                   >
                     {/* Badge de notificaciones no leídas */}
                     {unreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 z-10">
+                      <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 z-10">
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </span>
                     )}
-                      <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                          d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                      </svg>
-                    <span className="hidden md:block text-sm text-slate-200 max-w-[100px] truncate">
-                      {customer.name.split(" ")[0]}
-                    </span>
-                    <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
+                    <span className="material-symbols-outlined">person</span>
                   </button>
 
-                  {/* Dropdown */}
+                  {/* Dropdown de usuario — contenido nuestro, diseño sin cambios */}
                   {userDropdownOpen && (
                     <div className="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50">
                       <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-slate-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                            <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                                d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                            </svg>
+                          <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                              d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                          </svg>
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{customer.name}</p>
@@ -250,7 +245,6 @@ export default function Navbar() {
                           </span>
                         </div>
                       </div>
-                      {/* Enlace a favoritos */}
                       <Link
                         to="/favoritos"
                         onClick={() => setUserDropdownOpen(false)}
@@ -266,8 +260,6 @@ export default function Navbar() {
                           </span>
                         )}
                       </Link>
-
-                      {/* Enlace a pedidos (y cotizaciones para mayoristas — tabs dentro de la misma página) */}
                       <Link
                         to="/pedidos"
                         onClick={() => setUserDropdownOpen(false)}
@@ -284,7 +276,6 @@ export default function Navbar() {
                           </span>
                         )}
                       </Link>
-                      {/* Enlace a editar perfil */}
                       <Link
                         to="/perfil"
                         onClick={() => setUserDropdownOpen(false)}
@@ -310,117 +301,112 @@ export default function Navbar() {
                   )}
                 </div>
               ) : (
-                // No logueado → ícono de persona que lleva al login
                 <Link
                   to="/login"
-                  className="p-2 rounded-xl hover:bg-slate-800 transition-colors"
+                  className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                   aria-label="Iniciar sesión"
                   title="Iniciar sesión"
                 >
-                  <svg className="w-5 h-5 text-slate-300 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                      d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                  </svg>
+                  <span className="material-symbols-outlined">person</span>
                 </Link>
               )}
 
-              {/* ─── Carrito: solo visible si el cliente está logueado ─── */}
+              {/* Carrito — abre el CartDrawer lateral (setCartOpen); antes usaba navigate("/carrito")
+                  que mandaba a la página completa pero dejaba el drawer nunca abierto */}
               {customer && (
                 <button
-                  onClick={() => navigate("/carrito")}
-                  className="relative p-2 hover:text-blue-400 transition-colors"
+                  onClick={() => setCartOpen(true)}
+                  className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all relative"
                   aria-label="Carrito"
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                    />
-                  </svg>
+                  <span className="material-symbols-outlined">shopping_cart</span>
                   {totalItems > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                    <span className="absolute -top-2 -right-2 bg-[#00873a] text-[#f7fff2] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                       {totalItems}
                     </span>
                   )}
                 </button>
               )}
 
-              {/* Menú móvil */}
+              {/* Menú móvil — usa material symbols para consistencia */}
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="md:hidden p-2"
+                className="md:hidden text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                 aria-label="Menú"
               >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
+                <span className="material-symbols-outlined">
+                  {mobileMenuOpen ? "close" : "menu"}
+                </span>
               </button>
             </div>
-          </div>
+        </div>
 
-          {/* Menú móvil expandido */}
-          {mobileMenuOpen && (
-            <div className="md:hidden pb-4 space-y-2">
-              <form onSubmit={handleSearch}>
-                <input
-                  type="text"
-                  placeholder="Buscar productos..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
-                />
-              </form>
+        {/* Menú móvil expandido */}
+        {mobileMenuOpen && (
+          <div className="md:hidden pb-4 space-y-2 border-t border-[#bdcaba]/20 pt-4 px-10">
+            <form onSubmit={handleSearch}>
+              <input
+                type="text"
+                placeholder="Buscar productos..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-white/10 border border-[#bdcaba]/30 rounded-full px-4 py-2 text-sm focus:outline-none text-white placeholder-white/50"
+              />
+            </form>
+            <Link
+              to="/catalogo"
+              className="block py-2 text-white/80 hover:text-white text-sm font-medium"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Catálogo
+            </Link>
+            {!customer && (
               <Link
-                to="/catalogo"
-                className="block py-2 text-slate-300 hover:text-white"
+                to="/login"
+                className="block py-2 text-white/80 hover:text-white text-sm"
                 onClick={() => setMobileMenuOpen(false)}
               >
-                Catálogo
+                Iniciar sesión
               </Link>
-              {!customer && (
-                <Link
-                  to="/login"
-                  className="block py-2 text-slate-300 hover:text-white"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  Iniciar sesión
-                </Link>
-              )}
-              {customer && customer.type === "MAYORISTA" && (
-                <Link
-                  to="/cotizaciones"
-                  className="block py-2 text-slate-300 hover:text-white"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  Mis cotizaciones
-                </Link>
-              )}
-              {customer && (
-                <button
-                  onClick={() => { handleLogout(); setMobileMenuOpen(false); }}
-                  className="block w-full text-left py-2 text-red-400 hover:text-red-300"
-                >
-                  Cerrar sesión ({customer.name.split(" ")[0]})
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+            {customer && customer.type === "MAYORISTA" && (
+              <Link
+                to="/cotizaciones"
+                className="block py-2 text-white/80 hover:text-white text-sm"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Mis cotizaciones
+              </Link>
+            )}
+            {customer && (
+              <button
+                onClick={() => { handleLogout(); setMobileMenuOpen(false); }}
+                className="block w-full text-left py-2 text-red-400 hover:text-red-300 text-sm"
+              >
+                Cerrar sesión ({customer.name.split(" ")[0]})
+              </button>
+            )}
+          </div>
+        )}
       </nav>
 
-      {/* Mini banner de anuncio configurable desde el admin */}
-      <AnnouncementBar />
+      {/* Banners ocultos en páginas de auth para no distraer al usuario */}
+      {!["/registro", "/login", "/olvide-mi-contrasena"].includes(location.pathname) &&
+        !location.pathname.startsWith("/reset-password") && (
+        <>
+          {/* Mini banner de anuncio configurable desde el admin */}
+          <AnnouncementBar />
 
-      {/* Banner mayorista — visible solo cuando no hay sesión de cliente activa */}
-      {!customer && (
-        <div className="mayorista-banner bg-amber-400 text-amber-900 text-xs font-medium text-center py-1.5 px-4 leading-tight">
-          ⚠️ Atención cliente mayorista: para ver los precios mayoristas debés{" "}
-          <Link to="/login" className="underline font-semibold hover:text-amber-950">
-            iniciar sesión con tu cuenta
-          </Link>
-        </div>
+          {/* Banner mayorista — visible solo cuando no hay sesión de cliente activa */}
+          {!customer && (
+            <div className="mayorista-banner bg-amber-400 text-amber-900 text-xs font-medium text-center py-1.5 px-4 leading-tight">
+              ⚠️ Atención cliente mayorista: para ver los precios mayoristas debés{" "}
+              <Link to="/login" className="underline font-semibold hover:text-amber-950">
+                iniciar sesión con tu cuenta
+              </Link>
+            </div>
+          )}
+        </>
       )}
 
       {/* CartDrawer solo si hay sesión de cliente */}

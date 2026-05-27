@@ -33,19 +33,30 @@ router.get("/product/:productId/attributes", async (req, res) => {
 router.post("/product/:productId/attributes", authMiddleware, async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
-    const { name, values = [] } = req.body; // values: string[]
+    const { name, values = [], visibility } = req.body; // values: string[]; visibility opcional
 
     if (!name?.trim()) return res.status(400).json({ error: "El nombre es requerido" });
+
+    // Validar visibility si vino
+    const allowedVis = ["AMBOS", "MAYORISTA", "MINORISTA"];
+    const vis = (visibility && allowedVis.includes(visibility)) ? visibility : "AMBOS";
 
     const attr = await prisma.productAttribute.create({
       data: {
         productId,
         name: name.trim(),
+        visibility: vis,
         values: {
           create: values.map((v, i) => ({ value: String(v).trim(), position: i })),
         },
       },
       include: { values: { orderBy: { position: "asc" } } },
+    });
+    // Propagar visibility a todas las variantes del producto — así las queries existentes
+    // (que filtran por variant.visibility) siguen funcionando sin cambios.
+    await prisma.productVariant.updateMany({
+      where: { productId },
+      data: { visibility: vis },
     });
     res.status(201).json(attr);
   } catch (err) {
@@ -54,14 +65,20 @@ router.post("/product/:productId/attributes", authMiddleware, async (req, res) =
   }
 });
 
-// PUT /api/variants/attributes/:id  — renombrar atributo y/o reemplazar sus valores
+// PUT /api/variants/attributes/:id  — renombrar atributo, reemplazar valores o cambiar visibility
 router.put("/attributes/:id", authMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, values } = req.body;
+    const { name, values, visibility } = req.body;
 
     const data = {};
     if (name?.trim()) data.name = name.trim();
+
+    // Validar y aceptar visibility
+    const allowedVis = ["AMBOS", "MAYORISTA", "MINORISTA"];
+    if (visibility && allowedVis.includes(visibility)) {
+      data.visibility = visibility;
+    }
 
     if (Array.isArray(values)) {
       // Reemplazar todos los valores: borrar los anteriores y crear los nuevos
@@ -76,6 +93,16 @@ router.put("/attributes/:id", authMiddleware, async (req, res) => {
       data,
       include: { values: { orderBy: { position: "asc" } } },
     });
+
+    // Si se cambió visibility, propagar a todas las variantes del producto.
+    // Las queries existentes filtran por variant.visibility, así que con esto siguen funcionando.
+    if (data.visibility) {
+      await prisma.productVariant.updateMany({
+        where: { productId: attr.productId },
+        data:  { visibility: data.visibility },
+      });
+    }
+
     res.json(attr);
   } catch (err) {
     console.error(err);
@@ -178,20 +205,41 @@ router.post("/product/:productId/generate", authMiddleware, async (req, res) => 
   }
 });
 
-// PUT /api/variants/:id  — actualizar stock, precio, sku, imagen de una variante.
+// PUT /api/variants/:id  — actualizar stock, precios, sku, imágenes y visibilidad de una variante.
+// Precios:
+//   - price / salePrice           → para minoristas (visibility MINORISTA o AMBOS)
+//   - wholesalePrice / wholesaleSalePrice → para mayoristas (visibility MAYORISTA o AMBOS)
 // La imagen es una URL (de las fotos del producto principal) o null para limpiarla.
 router.put("/:id", authMiddleware, async (req, res) => {
   try {
     const id   = parseInt(req.params.id);
-    const { stock, stockUnlimited, price, cost, sku, active, image, images } = req.body;
+    const {
+      stock, stockUnlimited,
+      price, salePrice, wholesalePrice, wholesaleSalePrice,
+      cost, sku, active, image, images, visibility,
+    } = req.body;
+
+    // Helper para parsear precios: null/empty string → null, valor numérico → float
+    const parsePrice = (v) => (v === "" || v === null || v === undefined) ? undefined : parseFloat(v);
 
     const data = {};
     if (stock          !== undefined) data.stock          = parseInt(stock);
     if (stockUnlimited !== undefined) data.stockUnlimited = stockUnlimited === "true" || stockUnlimited === true;
-    if (price          !== undefined) data.price          = price === "" || price === null ? null : parseFloat(price);
+    if (price              !== undefined) data.price              = price              === "" || price              === null ? null : parseFloat(price);
+    if (salePrice          !== undefined) data.salePrice          = salePrice          === "" || salePrice          === null ? null : parseFloat(salePrice);
+    if (wholesalePrice     !== undefined) data.wholesalePrice     = wholesalePrice     === "" || wholesalePrice     === null ? null : parseFloat(wholesalePrice);
+    if (wholesaleSalePrice !== undefined) data.wholesaleSalePrice = wholesaleSalePrice === "" || wholesaleSalePrice === null ? null : parseFloat(wholesaleSalePrice);
     if (cost           !== undefined) data.cost           = cost  === "" || cost  === null ? null : parseFloat(cost);
     if (sku            !== undefined) data.sku            = sku || null;
     if (active         !== undefined) data.active         = active === "true" || active === true;
+    // Visibilidad: validar contra el enum CustomerVisibility
+    if (visibility     !== undefined) {
+      const allowed = ["AMBOS", "MAYORISTA", "MINORISTA"];
+      if (!allowed.includes(visibility)) {
+        return res.status(400).json({ error: "visibility inválida (debe ser AMBOS, MAYORISTA o MINORISTA)" });
+      }
+      data.visibility = visibility;
+    }
     // image (legado, una sola foto) y images (array, múltiples). El admin nuevo manda images.
     if (image          !== undefined) data.image          = image || null;
     if (images         !== undefined) data.images         = Array.isArray(images) ? images.filter(Boolean) : [];
@@ -204,6 +252,40 @@ router.put("/:id", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al actualizar variante" });
+  }
+});
+
+// GET /api/variants/suggestions  — sugerencias de atributos/valores ya usados en otros productos
+// Devuelve { names: [...], valuesByName: { name: [valores] } } para autocomplete en el admin.
+router.get("/suggestions", authMiddleware, async (_req, res) => {
+  try {
+    const attrs = await prisma.productAttribute.findMany({
+      include: { values: { select: { value: true } } },
+      orderBy: { name: "asc" },
+    });
+    // Deduplicar nombres (case-insensitive) y agrupar valores únicos por nombre
+    const namesSet = new Set();
+    const valuesByName = {};
+    for (const a of attrs) {
+      const key = a.name.trim();
+      if (!key) continue;
+      namesSet.add(key);
+      if (!valuesByName[key]) valuesByName[key] = new Set();
+      for (const v of a.values) {
+        if (v.value?.trim()) valuesByName[key].add(v.value.trim());
+      }
+    }
+    // Convertir Sets a arrays ordenados
+    const result = {
+      names: Array.from(namesSet).sort((a, b) => a.localeCompare(b)),
+      valuesByName: Object.fromEntries(
+        Object.entries(valuesByName).map(([k, set]) => [k, Array.from(set).sort((a, b) => a.localeCompare(b))])
+      ),
+    };
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Error al obtener sugerencias" });
   }
 });
 

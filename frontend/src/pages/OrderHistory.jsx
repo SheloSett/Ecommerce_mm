@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useCart } from "../context/CartContext";
 import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
+import Footer from "../components/Footer";
 import toast from "react-hot-toast";
 
 function formatDate(dateStr) {
@@ -33,62 +34,111 @@ const SHIPPING_LABEL = {
 };
 
 const SHIPPING_ICON = {
-  RETIRO:           "🏪",
-  ENVIO:            "🚚",
-  CORREO_ARGENTINO: "📮",
+  RETIRO:           "store",
+  ENVIO:            "local_shipping",
+  CORREO_ARGENTINO: "mail",
 };
 
-// Etapas para pedidos con envío a domicilio
+// Etapas con iconos Material Symbols para pedidos con envío
 const FULFILLMENT_STAGES_ENVIO = [
-  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
-  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
-  { value: "ENVIADO",        label: "Enviado",        icon: "🚚" },
-  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
+  { value: "PENDIENTE",      label: "Pendiente",      icon: "schedule" },
+  { value: "EN_PREPARACION", label: "En preparación", icon: "inventory_2" },
+  { value: "ENVIADO",        label: "Enviado",        icon: "local_shipping" },
+  { value: "ENTREGADO",      label: "Entregado",      icon: "done_all" },
 ];
 
-// Etapas para pedidos con retiro en el local:
-// "ENVIADO" en DB se muestra como "Pedido listo" — el paquete no se despacha, está listo para retirar
+// "ENVIADO" en DB = "Pedido listo" para retiro en el local
 const FULFILLMENT_STAGES_RETIRO = [
-  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
-  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
-  { value: "ENVIADO",        label: "Pedido listo",   icon: "📦" },
-  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
+  { value: "PENDIENTE",      label: "Pendiente",      icon: "schedule" },
+  { value: "EN_PREPARACION", label: "En preparación", icon: "inventory_2" },
+  { value: "ENVIADO",        label: "Pedido listo",   icon: "storefront" },
+  { value: "ENTREGADO",      label: "Entregado",      icon: "done_all" },
 ];
 
 function FulfillmentTracker({ status = "PENDIENTE", shippingMethod = "RETIRO" }) {
-  // CORREO_ARGENTINO usa las mismas etapas que ENVIO (entrega a domicilio)
-  const stages = (shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO")
-    ? FULFILLMENT_STAGES_ENVIO
-    : FULFILLMENT_STAGES_RETIRO;
+  const stages =
+    shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO"
+      ? FULFILLMENT_STAGES_ENVIO
+      : FULFILLMENT_STAGES_RETIRO;
   const currentIdx = stages.findIndex((s) => s.value === status);
+
   return (
-    <div className="flex items-start mt-3 w-full">
-      {stages.map((stage, idx) => {
-        const isDone    = idx < currentIdx;
-        const isCurrent = idx === currentIdx;
-        return (
-          <div key={stage.value} className="flex-1 flex flex-col items-center relative">
-            {idx > 0 && (
-              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone || isCurrent ? "bg-green-300" : "bg-slate-200"}`} />
-            )}
-            <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-sm border-2 transition-colors ${
-              isCurrent ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" :
-              isDone    ? "border-green-400 bg-green-50 text-green-600" :
-                          "border-slate-200 bg-white text-slate-400"
-            }`}>
-              {isDone ? "✓" : stage.icon}
-            </div>
-            <span className={`text-[10px] mt-1 text-center leading-tight w-full px-1 ${
-              isCurrent ? "text-blue-600 font-semibold" :
-              isDone    ? "text-green-600" :
-                          "text-slate-400"
-            }`}>
-              {stage.label}
-            </span>
-          </div>
-        );
-      })}
+    <div className="py-3 px-2 overflow-x-auto">
+      <div className="flex items-center justify-between min-w-[400px]">
+        {stages.map((stage, idx) => {
+          const isDone    = idx < currentIdx;
+          const isCurrent = idx === currentIdx;
+          const isActive  = isDone || isCurrent;
+          return (
+            <Fragment key={stage.value}>
+              <div className="flex flex-col items-center gap-2 flex-1">
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                    isActive
+                      ? "bg-[#00873a] text-[#f7fff2]"
+                      : "bg-[#dce9ff] text-[#565e74] border border-[#bdcaba]"
+                  }`}
+                >
+                  <span
+                    className="material-symbols-outlined text-[18px]"
+                    style={{
+                      fontVariationSettings: isDone
+                        ? "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20"
+                        : "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20",
+                    }}
+                  >
+                    {isDone ? "check_circle" : stage.icon}
+                  </span>
+                </div>
+                <span
+                  className={`text-[11px] text-center leading-tight font-semibold ${
+                    isActive ? "text-[#006b2c]" : "text-[#565e74]"
+                  }`}
+                >
+                  {stage.label}
+                </span>
+              </div>
+              {idx < stages.length - 1 && (
+                <div
+                  className={`h-0.5 flex-grow mx-2 mb-5 ${
+                    idx < currentIdx ? "bg-[#16A34A]" : "bg-[#e2e8f0]"
+                  }`}
+                />
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+// Devuelve label y clase del badge según estado de pago + fulfillment
+function getStatusDisplay(order) {
+  if (order.status === "CANCELLED") {
+    return { label: "Cancelado", cls: "bg-[#ffdad6] text-[#93000a]" };
+  }
+  if (order.status === "PENDING") {
+    return { label: "Pendiente de pago", cls: "bg-amber-100 text-amber-800" };
+  }
+  if (order.status === "PAYMENT_REVIEW") {
+    return { label: "En revisión", cls: "bg-blue-100 text-blue-700" };
+  }
+  if (order.status === "QUOTE_APPROVED") {
+    return { label: "Aprobada s/pagar", cls: "bg-teal-100 text-teal-700" };
+  }
+  // APPROVED → mostrar estado de fulfillment
+  const fMap = {
+    PENDIENTE:      { label: "Pendiente",      cls: "bg-[#dce9ff] text-[#0051d5]" },
+    EN_PREPARACION: { label: "En preparación", cls: "bg-[#00873a]/10 text-[#00873a]" },
+    ENVIADO: {
+      label: order.shippingMethod === "RETIRO" ? "Listo para retiro" : "Enviado",
+      cls: "bg-[#00873a]/10 text-[#00873a]",
+    },
+    ENTREGADO: { label: "Entregado", cls: "bg-[#dce9ff] text-[#565e74]" },
+  };
+  return (
+    fMap[order.fulfillmentStatus] || { label: "Abonada", cls: "bg-green-100 text-green-700" }
   );
 }
 
@@ -134,18 +184,13 @@ function exportOrderExcel(order, customer) {
 
   const wsData = [...headerRows, itemHeader, ...itemRows, ...totalsRows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws["!cols"] = [
-    { wch: 38 },
-    { wch: 16 },
-    { wch: 10 },
-    { wch: 16 },
-  ];
+  ws["!cols"] = [{ wch: 38 }, { wch: 16 }, { wch: 10 }, { wch: 16 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `Pedido ${order.id}`);
   XLSX.writeFile(wb, `pedido-${order.id}.xlsx`);
 }
 
-// ── Exportar pedido a PDF (Blob → ventana de impresión) ──────────────────────
+// ── Exportar pedido a PDF ──────────────────────────────────────────────────
 function exportOrderPDF(order, customer) {
   const isMayorista = customer?.type === "MAYORISTA";
   const hasDiscount = (order.couponDiscount || 0) > 0;
@@ -223,7 +268,6 @@ function exportOrderPDF(order, customer) {
       <div class="order-date">${formatDate(order.createdAt)}</div>
     </div>
   </div>
-
   <div class="two-col">
     <div class="card">
       <div class="card-title">Cliente</div>
@@ -240,14 +284,10 @@ function exportOrderPDF(order, customer) {
       ${order.wantsInvoice ? `<div class="row"><span class="row-label">Factura</span><span class="row-value" style="color:#2563eb">Solicitada — IVA 21%</span></div>` : ""}
     </div>
   </div>
-
   ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del pedido:</strong> ${order.customerNote}</div>` : ""}
-
   <div class="section-title">Productos</div>
   <table><tbody>${itemCards}</tbody></table>
-
   <table class="totals-table"><tbody>${totalRows}</tbody></table>
-
   <div class="footer">Generado el ${new Date().toLocaleString("es-AR")} · IGWT Store</div>
 </div>
 </body>
@@ -264,12 +304,11 @@ export default function OrderHistory() {
   const { repeatOrder, loading: cartLoading } = useCart();
   const navigate = useNavigate();
 
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders]       = useState([]);
+  const [loading, setLoading]     = useState(true);
   const [repeatingId, setRepeatingId] = useState(null);
-  const [expandedId, setExpandedId] = useState(null);
+  const [expandedId, setExpandedId]   = useState(null);
 
-  // Redirigir solo cuando la sesión terminó de cargar desde localStorage
   useEffect(() => {
     if (loadingCustomer) return;
     if (!customer) navigate("/login");
@@ -277,7 +316,8 @@ export default function OrderHistory() {
 
   useEffect(() => {
     if (loadingCustomer || !customer) return;
-    ordersApi.getMy()
+    ordersApi
+      .getMy()
       .then((res) => setOrders(res.data))
       .catch(() => toast.error("No se pudo cargar el historial"))
       .finally(() => setLoading(false));
@@ -301,202 +341,261 @@ export default function OrderHistory() {
     }
   };
 
-  const toggleExpand = (id) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  };
+  const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   const isMayorista = customer?.type === "MAYORISTA";
 
   return (
     <>
       <Navbar />
-      <div className="min-h-screen bg-slate-50 py-10">
-        <div className="max-w-3xl mx-auto px-4">
+      <div className="ds-page min-h-screen bg-[#f8f9ff]">
+        <main className="max-w-[1280px] mx-auto px-6 py-16">
+
           {/* Encabezado */}
-          <div className="flex items-center gap-3 mb-6">
+          <div className="flex flex-col gap-2 mb-8">
             <button
               onClick={() => navigate(-1)}
-              className="p-2 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors"
-              aria-label="Volver"
+              className="flex items-center gap-2 text-[#006b2c] font-semibold hover:underline underline-offset-4 w-fit"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+              <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+              <span className="text-sm">Volver a mi cuenta</span>
             </button>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-800">Historial de pedidos</h1>
-              <p className="text-sm text-slate-500">Pedidos pendientes y aprobados</p>
-            </div>
+            <h1 className="text-[48px] font-bold leading-[56px] tracking-tight text-[#0b1c30]">
+              Mis pedidos
+            </h1>
+            <p className="text-[18px] text-[#565e74] leading-7">
+              Consulta el estado de tus compras y solicitudes de cotización.
+            </p>
           </div>
 
-          {/* Tabs: Pedidos / Cotizaciones (solo mayoristas) */}
-          {customer?.type === "MAYORISTA" && (
-            <div className="flex border-b border-slate-200 mb-6">
-              <span className="px-4 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600">
-                Pedidos
-              </span>
+          {/* Tabs */}
+          <div className="flex border-b border-[#bdcaba] mb-8 overflow-x-auto whitespace-nowrap">
+            <span className="px-6 py-4 text-sm font-bold text-[#006b2c] border-b-2 border-[#62df7d] -mb-[2px] tracking-wide">
+              PEDIDOS
+            </span>
+            {isMayorista && (
               <Link
                 to="/cotizaciones"
-                className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                className="px-6 py-4 text-sm font-semibold text-[#565e74] hover:text-[#0b1c30] tracking-wide transition-colors"
               >
-                Cotizaciones
+                COTIZACIONES
               </Link>
-            </div>
-          )}
+            )}
+          </div>
 
+          {/* Loading */}
           {loading && (
             <div className="flex justify-center py-20">
-              <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 border-4 border-[#00873a] border-t-transparent rounded-full animate-spin" />
             </div>
           )}
 
+          {/* Empty */}
           {!loading && orders.length === 0 && (
             <div className="text-center py-20">
-              <div className="text-5xl mb-4">📦</div>
-              <p className="text-slate-500 text-lg">Aún no tenés pedidos</p>
+              <span className="material-symbols-outlined text-6xl text-[#bdcaba] mb-4 block">
+                inventory_2
+              </span>
+              <p className="text-[#565e74] text-lg mb-4">Aún no tenés pedidos</p>
               <button
                 onClick={() => navigate("/catalogo")}
-                className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="px-6 py-2.5 bg-[#00873a] text-white font-semibold rounded-[10px] hover:opacity-90 transition-all"
               >
                 Ir al catálogo
               </button>
             </div>
           )}
 
-          {/* Lista de pedidos */}
-          <div className="space-y-4">
+          {/* Lista */}
+          <div className="grid grid-cols-1 gap-6">
             {orders.map((order) => {
-              const isExpanded = expandedId === order.id;
+              const isExpanded  = expandedId === order.id;
               const isRepeating = repeatingId === order.id;
-              const discount = order.couponDiscount || 0;
-              const iva = order.ivaAmount || 0;
-              const subtotal = order.total + discount - iva;
+              const discount    = order.couponDiscount || 0;
+              const iva         = order.ivaAmount || 0;
+              const subtotal    = order.total + discount - iva;
+              const isCancelled = order.status === "CANCELLED";
+              const isDelivered =
+                order.fulfillmentStatus === "ENTREGADO" && order.status === "APPROVED";
+              const isActiveOrder = !isCancelled && !isDelivered;
+              const { label: statusLabel, cls: statusCls } = getStatusDisplay(order);
+              const firstTwo   = order.items.slice(0, 2);
+              const extraCount = order.items.length - 2;
 
               return (
-                <div key={order.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                  {/* Cabecera del pedido */}
-                  <div className="p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold text-slate-700">Pedido #{order.id}</span>
-                          {order.status === "PENDING" ? (
-                            <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
-                              Pendiente de pago
-                            </span>
-                          ) : order.status === "PAYMENT_REVIEW" ? (
-                            <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                              Revisión de pago
-                            </span>
-                          ) : order.status === "QUOTE_APPROVED" ? (
-                            // Aprobada pero todavía no pagada (efectivo/transferencia pendiente de cobro)
-                            <span className="text-xs px-2 py-0.5 bg-teal-100 text-teal-700 rounded-full font-medium">
-                              Aprobada (sin pagar)
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-medium">
-                              Abonada
-                            </span>
-                          )}
+                <div
+                  key={order.id}
+                  className={`relative overflow-hidden bg-white rounded-xl border border-[#bdcaba]/30
+                    shadow-[0px_4px_20px_rgba(15,23,42,0.05)]
+                    hover:-translate-y-0.5 hover:shadow-[0px_8px_30px_rgba(15,23,42,0.08)]
+                    transition-all duration-200
+                    ${isCancelled ? "opacity-75 grayscale-[0.4]" : ""}`}
+                >
+                  {/* Strip lateral verde para pedidos activos */}
+                  {isActiveOrder && (
+                    <div className="absolute top-0 left-0 w-1.5 h-full bg-[#00873a]" />
+                  )}
+
+                  <div className="p-6 flex flex-col gap-5">
+                    {/* Header: ID + badge | precio + cantidad */}
+                    <div className="flex flex-wrap justify-between items-start gap-4">
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-xl font-semibold text-[#0b1c30]">
+                            Pedido #{order.id}
+                          </span>
+                          <span
+                            className={`px-3 py-1 rounded-full text-[12px] font-bold tracking-wider ${statusCls}`}
+                          >
+                            {statusLabel.toUpperCase()}
+                          </span>
                           {order.isModified && (
-                            <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full font-medium border border-orange-200">
+                            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-medium border border-orange-200">
                               ✏️ Modificado
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-400 mt-0.5">{formatDate(order.createdAt)}</p>
-                        <p className="text-base font-bold text-slate-800 mt-1">{formatPrice(order.total)}</p>
-                        <FulfillmentTracker status={order.fulfillmentStatus} shippingMethod={order.shippingMethod} />
+                        <span className="text-xs text-[#565e74]">
+                          {formatDate(order.createdAt)}
+                        </span>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-2xl font-bold text-[#0b1c30]">
+                          {formatPrice(order.total)}
+                        </span>
+                        <span className="text-xs text-[#565e74]">
+                          {order.items.length} producto{order.items.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Tracker — solo para pedidos no cancelados */}
+                    {!isCancelled && (
+                      <FulfillmentTracker
+                        status={order.fulfillmentStatus}
+                        shippingMethod={order.shippingMethod}
+                      />
+                    )}
+
+                    {/* Footer de la card: thumbnails + chips + botones */}
+                    <div className="flex flex-wrap justify-between items-center gap-4 pt-4 border-t border-[#bdcaba]/30">
+                      {/* Thumbnails apilados + chip de envío */}
+                      <div className="flex gap-4 items-center flex-wrap">
+                        <div className="flex -space-x-3">
+                          {firstTwo.map((item, i) => {
+                            const img = item.product?.images?.[0];
+                            return img ? (
+                              <img
+                                key={i}
+                                src={getImageUrl(img)}
+                                alt={item.product?.name}
+                                className="w-10 h-12 object-cover rounded-md border-2 border-white shadow-sm"
+                              />
+                            ) : (
+                              <div
+                                key={i}
+                                className="w-10 h-12 bg-[#dce9ff] border-2 border-white rounded-md flex items-center justify-center text-lg"
+                              >
+                                📦
+                              </div>
+                            );
+                          })}
+                          {extraCount > 0 && (
+                            <div className="w-10 h-12 bg-[#dce9ff] border-2 border-white rounded-md flex items-center justify-center text-[#3e4a3d] font-bold text-xs">
+                              +{extraCount}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-[#dae2fd]/50 px-3 py-1.5 rounded-lg">
+                          <span className="material-symbols-outlined text-[16px] text-[#565e74]">
+                            {SHIPPING_ICON[order.shippingMethod] || "local_shipping"}
+                          </span>
+                          <span className="text-xs font-semibold text-[#0b1c30]">
+                            {SHIPPING_LABEL[order.shippingMethod] || order.shippingMethod}
+                          </span>
+                        </div>
+                        {order.coupon?.code && (
+                          <div className="flex items-center gap-1 bg-green-50 border border-green-200 px-2.5 py-1 rounded-lg">
+                            <span className="material-symbols-outlined text-[14px] text-green-600">
+                              sell
+                            </span>
+                            <span className="text-xs font-semibold text-green-700">
+                              {order.coupon.code}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-1.5 flex-shrink-0 self-start flex-wrap justify-end">
+                      {/* Botones de acción */}
+                      <div className="flex gap-2 items-center flex-wrap justify-end">
+                        {/* Exportar PDF */}
+                        <button
+                          onClick={() => exportOrderPDF(order, customer)}
+                          title="Descargar PDF"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">print</span>
+                          <span className="hidden sm:inline">PDF</span>
+                        </button>
+                        {/* Exportar Excel */}
+                        <button
+                          onClick={() => exportOrderExcel(order, customer)}
+                          title="Exportar Excel"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[16px]">download</span>
+                          <span className="hidden sm:inline">Excel</span>
+                        </button>
+                        {/* Ver items (toggle inline) */}
+                        <button
+                          onClick={() => toggleExpand(order.id)}
+                          className="flex items-center gap-1.5 px-4 py-2 border border-[#bdcaba] text-[#0b1c30] text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/20 transition-all"
+                        >
+                          {isExpanded ? "Ocultar" : `Ver ${order.items.length} item${order.items.length !== 1 ? "s" : ""}`}
+                        </button>
                         {/* Ver detalle completo */}
                         <Link
                           to={`/pedidos/${order.id}`}
-                          className="px-2.5 py-1.5 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
+                          className="px-4 py-2 border border-[#bdcaba] text-[#0b1c30] text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/20 transition-all"
                         >
                           Ver detalle
                         </Link>
-
-                        {/* Repetir pedido — solo para pedidos ya aprobados (no en revisión de pago) */}
+                        {/* Repetir pedido */}
                         {order.status !== "PENDING" && order.status !== "PAYMENT_REVIEW" && (
                           <button
                             onClick={() => handleRepeat(order)}
                             disabled={isRepeating || cartLoading}
-                            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                            className="flex items-center gap-2 px-5 py-2 bg-[#0b1c30] text-white text-sm font-semibold rounded-[10px] hover:opacity-90 disabled:opacity-50 transition-all"
                           >
                             {isRepeating ? (
                               <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
                             ) : (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
+                              <span className="material-symbols-outlined text-[20px]">replay</span>
                             )}
-                            Repetir
+                            Repetir pedido
                           </button>
                         )}
-
-                        {/* Exportar — botones PDF y Excel (solo icono en mobile) */}
-                        <div className="flex gap-1.5">
-                          <button
-                            onClick={() => exportOrderPDF(order, customer)}
-                            title="Descargar PDF"
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                            </svg>
-                            <span className="hidden sm:inline">PDF</span>
-                          </button>
-                          <button
-                            onClick={() => exportOrderExcel(order, customer)}
-                            title="Exportar Excel"
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                            </svg>
-                            <span className="hidden sm:inline">Excel</span>
-                          </button>
-                        </div>
                       </div>
                     </div>
 
-                    {/* Info rápida de método — siempre visible bajo el tracker */}
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3">
-                      <span className="text-xs text-slate-500">
-                        💳 {PAYMENT_LABEL[order.paymentMethod] || order.paymentMethod}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {SHIPPING_ICON[order.shippingMethod] || "📦"} {SHIPPING_LABEL[order.shippingMethod] || order.shippingMethod}
-                      </span>
-                      {order.coupon?.code && (
-                        <span className="text-xs text-green-600 font-medium">
-                          🏷️ Cupón: {order.coupon.code}
-                        </span>
-                      )}
-                    </div>
+                    {/* Nota del cliente — siempre visible si existe */}
+                    {order.customerNote && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-sm text-amber-800">
+                        <span className="font-semibold">Nota del pedido:</span>{" "}
+                        {order.customerNote}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Detalle expandible de items */}
+                  {/* Items expandibles */}
                   {isExpanded && (
-                    <div className="border-t border-slate-100 px-5 py-4 space-y-3">
-                      {/* Nota del cliente */}
-                      {order.customerNote && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-sm text-amber-800">
-                          <span className="font-semibold">Nota del pedido:</span> {order.customerNote}
-                        </div>
-                      )}
-
-                      {/* Items */}
+                    <div className="border-t border-[#bdcaba]/30 px-6 py-5 space-y-3 bg-[#f8f9ff]">
                       {order.items.map((item) => {
-                        const img = item.product?.images?.[0];
+                        const img          = item.product?.images?.[0];
                         const discontinued = !item.product?.active;
-
                         return (
                           <div key={item.id} className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
+                            <div className="w-12 h-12 rounded-lg bg-[#dce9ff] overflow-hidden flex-shrink-0">
                               {img ? (
                                 <img
                                   src={getImageUrl(img)}
@@ -509,55 +608,61 @@ export default function OrderHistory() {
                                 </div>
                               )}
                             </div>
-
                             <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-medium truncate ${discontinued ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                              <p
+                                className={`text-sm font-medium truncate ${
+                                  discontinued ? "text-slate-400 line-through" : "text-[#0b1c30]"
+                                }`}
+                              >
                                 {item.product?.name || "Producto eliminado"}
                               </p>
                               {discontinued && (
-                                <span className="text-xs text-red-400">Producto no disponible</span>
+                                <span className="text-xs text-red-400">
+                                  Producto no disponible
+                                </span>
                               )}
                               {/* variantLabel oculto al cliente — solo visible en el panel admin */}
-                              <p className="text-xs text-slate-400">
+                              <p className="text-xs text-[#565e74]">
                                 {formatPrice(item.price)} × {item.quantity}
                               </p>
                             </div>
-
-                            <p className="text-sm font-semibold text-slate-700 flex-shrink-0">
+                            <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">
                               {formatPrice(item.price * item.quantity)}
                             </p>
                           </div>
                         );
                       })}
 
-                      {/* Desglose de totales — subtotal solo si hay diferencias */}
-                      <div className="border-t border-slate-100 pt-3 mt-1 space-y-1.5">
+                      {/* Desglose de totales */}
+                      <div className="border-t border-[#bdcaba]/30 pt-3 mt-1 space-y-1.5">
                         {(discount > 0 || (isMayorista && iva > 0)) && (
-                          <div className="flex justify-between text-xs text-slate-400">
+                          <div className="flex justify-between text-xs text-[#565e74]">
                             <span>Subtotal</span>
                             <span>{formatPrice(subtotal)}</span>
                           </div>
                         )}
                         {discount > 0 && (
                           <div className="flex justify-between text-xs text-green-600 font-medium">
-                            <span>Cupón aplicado{order.coupon?.code ? ` (${order.coupon.code})` : ""}</span>
+                            <span>
+                              Cupón{order.coupon?.code ? ` (${order.coupon.code})` : ""}
+                            </span>
                             <span>−{formatPrice(discount)}</span>
                           </div>
                         )}
                         {isMayorista && iva > 0 && (
-                          <div className="flex justify-between text-xs text-slate-400">
+                          <div className="flex justify-between text-xs text-[#565e74]">
                             <span>IVA</span>
                             <span>+{formatPrice(iva)}</span>
                           </div>
                         )}
-                        <div className="flex justify-between text-sm font-bold text-slate-800 pt-1 border-t border-slate-100">
+                        <div className="flex justify-between text-sm font-bold text-[#0b1c30] pt-1 border-t border-[#bdcaba]/30">
                           <span>Total</span>
                           <span>{formatPrice(order.total)}</span>
                         </div>
                       </div>
 
                       {order.items.some((i) => !i.product?.active) && (
-                        <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
+                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
                           ⚠️ Algunos productos ya no están disponibles y no se agregarán al repetir el pedido.
                         </p>
                       )}
@@ -567,8 +672,9 @@ export default function OrderHistory() {
               );
             })}
           </div>
-        </div>
+        </main>
       </div>
+      <Footer />
     </>
   );
 }

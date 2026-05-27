@@ -403,13 +403,17 @@
 
 /* Fondo general de la pagina */
 html[data-theme="oscuro"] .storefront {
-  background-color: #0f172a !important;
-  color: #e2e8f0 !important;
+  background-color: #0b1326 !important; /* background del template Stitch dark */
+  color: #dae2fd !important;            /* on-surface */
 }
 
-/* Navbar — antes era #020617 (negro); ahora usa el primario para consistencia con el tema claro */
+/* Navbar — mismo color #0F172A (nuevo primario del template Stitch) en ambos temas */
+/* Comentado: antes usaba el primario viejo del proyecto (#273d4d) en modo oscuro */
+/* html[data-theme="oscuro"] .storefront nav.sticky {
+  background-color: #273d4d !important;
+} */
 html[data-theme="oscuro"] .storefront nav.sticky {
-  background-color: #273d4d !important; /* primary-700, un tono más oscuro para el tema oscuro */
+  background-color: #0F172A !important;
 }
 
 /* Banner mayorista (amarillo) — clase específica para no afectar otros divs hermanos del nav (ej: CartDrawer) */
@@ -420,14 +424,14 @@ html[data-theme="oscuro"] .storefront .mayorista-banner {
 
 /* Footer */
 html[data-theme="oscuro"] .storefront footer {
-  background-color: #020617 !important;
+  background-color: #060e20 !important; /* surface-container-lowest (Stitch) */
 }
 
-/* Cards (ProductCard, filtros, etc.) — usa el color primario para que sean visibles sobre el fondo oscuro */
+/* Cards (ProductCard, filtros, etc.) */
 html[data-theme="oscuro"] .storefront .card {
-  background-color: #32485c !important; /* primary-600 — antes #1e293b */
-  border-color: #4a6d87 !important;
-  color: #e2e8f0 !important;
+  background-color: #222a3d !important; /* surface-container-high (Stitch) */
+  border-color: #3e4a3d !important;     /* outline-variant (Stitch) */
+  color: #dae2fd !important;            /* on-surface (Stitch) */
 }
 
 /* Titulos y subtitulos dentro de storefront */
@@ -435,30 +439,30 @@ html[data-theme="oscuro"] .storefront h1,
 html[data-theme="oscuro"] .storefront h2,
 html[data-theme="oscuro"] .storefront h3,
 html[data-theme="oscuro"] .storefront h4 {
-  color: #f1f5f9 !important;
+  color: #dae2fd !important; /* on-surface (Stitch) */
 }
 
 /* Textos secundarios */
-html[data-theme="oscuro"] .storefront .text-slate-900 { color: #f1f5f9 !important; }
-html[data-theme="oscuro"] .storefront .text-slate-800 { color: #e2e8f0 !important; }
-html[data-theme="oscuro"] .storefront .text-slate-700 { color: #cbd5e1 !important; }
-html[data-theme="oscuro"] .storefront .text-slate-600 { color: #94a3b8 !important; }
-html[data-theme="oscuro"] .storefront .text-slate-500 { color: #94a3b8 !important; }
-/* text-slate-400 se usa para precios tachados (line-through). En oscuro debe ser blanco-grisáceo para verse */
-html[data-theme="oscuro"] .storefront .text-slate-400 { color: #e2e8f0 !important; }
+html[data-theme="oscuro"] .storefront .text-slate-900 { color: #dae2fd !important; } /* on-surface (Stitch) */
+html[data-theme="oscuro"] .storefront .text-slate-800 { color: #dae2fd !important; } /* on-surface (Stitch) */
+html[data-theme="oscuro"] .storefront .text-slate-700 { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .storefront .text-slate-600 { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .storefront .text-slate-500 { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+/* text-slate-400 se usa para precios tachados (line-through). En oscuro debe ser legible */
+html[data-theme="oscuro"] .storefront .text-slate-400 { color: #dae2fd !important; } /* on-surface (Stitch) */
 
-/* Cart drawer y otros elementos: bg-slate-50 se vuelve #0f172a oscuro — los textos deben aclararse */
-html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-500 { color: #94a3b8 !important; }
-html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-600 { color: #94a3b8 !important; }
-html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-900 { color: #f1f5f9 !important; }
-html[data-theme="oscuro"] .storefront .bg-slate-50 .text-blue-600  { color: #38bdf8 !important; }
-html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
+/* Cart drawer y otros elementos: bg-slate-50 se vuelve oscuro — los textos deben aclararse */
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-500 { color: #bdcaba !important; } /* on-surface-variant */
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-600 { color: #bdcaba !important; } /* on-surface-variant */
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-slate-900 { color: #dae2fd !important; } /* on-surface */
+html[data-theme="oscuro"] .storefront .bg-slate-50 .text-blue-600  { color: #7bd0ff !important; } /* secondary (Stitch) */
+html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #3e4a3d !important; }     /* outline-variant (Stitch) */
 
-/* Fondos claros dentro de storefront -> oscuros */
-html[data-theme="oscuro"] .storefront .bg-slate-50 { background-color: #0f172a !important; }
-html[data-theme="oscuro"] .storefront .bg-slate-100 { background-color: #1e293b !important; }
-html[data-theme="oscuro"] .storefront .bg-slate-200 { background-color: #334155 !important; color: #e2e8f0 !important; }
-html[data-theme="oscuro"] .storefront .bg-white { background-color: #32485c !important; } /* primary-600 — antes #1e293b */
+/* Fondos claros dentro de storefront -> oscuros (paleta Stitch) */
+html[data-theme="oscuro"] .storefront .bg-slate-50  { background-color: #0b1326 !important; }  /* background (Stitch) */
+html[data-theme="oscuro"] .storefront .bg-slate-100 { background-color: #171f33 !important; }  /* surface-container (Stitch) */
+html[data-theme="oscuro"] .storefront .bg-slate-200 { background-color: #2d3449 !important; color: #dae2fd !important; } /* surface-container-highest */
+html[data-theme="oscuro"] .storefront .bg-white     { background-color: #222a3d !important; }  /* surface-container-high (Stitch) */
 
 /* Boton primario: verde secundario — antes usaba primary (azul-gris) */
 html[data-theme="oscuro"] .storefront .btn-primary {
@@ -474,11 +478,18 @@ html[data-theme="oscuro"] .storefront .btn-secondary {
   color: #ffffff !important;
 }
 
-/* Input / Busqueda en navbar */
-html[data-theme="oscuro"] .storefront input {
-  background-color: #1e293b !important;
-  border-color: #334155 !important;
-  color: #e2e8f0 !important;
+/* Input / Busqueda en general — modo oscuro */
+/* El input del navbar queda excluido (nav.sticky input) para mantener el pill transparente */
+html[data-theme="oscuro"] .storefront input:not(nav input) {
+  background-color: #171f33 !important; /* surface-container (Stitch) */
+  border-color: #3e4a3d !important;     /* outline-variant (Stitch) */
+  color: #dae2fd !important;            /* on-surface (Stitch) */
+}
+/* Input del navbar: siempre transparente para mantener el diseño del pill */
+html[data-theme="oscuro"] .storefront nav.sticky input {
+  background-color: transparent !important;
+  border: none !important;
+  color: #fff !important;
 }
 
 /* Links y badges de categoría en modo oscuro — color primario aclarado para contraste */
@@ -488,9 +499,9 @@ html[data-theme="oscuro"] .storefront .text-blue-600 {
 
 /* Paginacion */
 html[data-theme="oscuro"] .storefront button.bg-white {
-  background-color: #1e293b !important;
-  border-color: #334155 !important;
-  color: #e2e8f0 !important;
+  background-color: #222a3d !important; /* surface-container-high (Stitch) */
+  border-color: #3e4a3d !important;     /* outline-variant (Stitch) */
+  color: #dae2fd !important;            /* on-surface (Stitch) */
 }
 
 /* Banner de MercadoPago */
@@ -578,7 +589,7 @@ html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-600,
 html[data-theme="oscuro"] .storefront .bg-red-50\/40 .text-slate-500 { color: #fca5a5 !important; }
 
 /* Bordes */
-html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #334155 !important; }
+html[data-theme="oscuro"] .storefront .border-slate-200 { border-color: #3e4a3d !important; }     /* outline-variant (Stitch) */
 html[data-theme="oscuro"] .storefront .border-white\/30 { border-color: rgba(255,255,255,0.15) !important; }
 
 /* ── Página "Cómo comprar" — step cards en modo oscuro ── */
@@ -613,7 +624,7 @@ html[data-theme="oscuro"] .storefront .htb-steps .bg-white\/70  { background-col
 
 html[data-theme="oscuro"] .storefront .prose strong,
 html[data-theme="oscuro"] .storefront .prose b {
-  color: #f1f5f9 !important; /* blanco suave — mismo que h1/h2 en dark mode */
+  color: #dae2fd !important; /* on-surface (Stitch) */
 }
 
 html[data-theme="oscuro"] .storefront .prose em,
@@ -623,7 +634,7 @@ html[data-theme="oscuro"] .storefront .prose i {
 
 html[data-theme="oscuro"] .storefront .prose p,
 html[data-theme="oscuro"] .storefront .prose li {
-  color: #cbd5e1 !important; /* slate-300 — texto legible sobre fondo oscuro */
+  color: #bdcaba !important; /* on-surface-variant (Stitch) */
 }
 
 html[data-theme="oscuro"] .storefront .prose a {
@@ -631,8 +642,8 @@ html[data-theme="oscuro"] .storefront .prose a {
 }
 
 html[data-theme="oscuro"] .storefront .prose code {
-  color: #94a3b8 !important;
-  background-color: #1e293b !important;
+  color: #bdcaba !important;             /* on-surface-variant (Stitch) */
+  background-color: #171f33 !important;  /* surface-container (Stitch) */
 }
 
 /* Tema clásico: prose dentro de .card (fondo oscuro) — mismos ajustes */
@@ -718,11 +729,161 @@ html[data-theme="oscuro"] .prose [style*="color: rgb(255, 255, 255)"] {
 
 /* Scrollbar para tema oscuro */
 html[data-theme="oscuro"] ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: #171f33; /* surface-container (Stitch) */
 }
 html[data-theme="oscuro"] ::-webkit-scrollbar-thumb {
-  background: #475569;
+  background: #2d3449; /* surface-container-highest (Stitch) */
 }
 html[data-theme="oscuro"] ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: #3e4a3d; /* outline-variant (Stitch) */
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   DARK MODE — SISTEMA DE DISEÑO (.ds-page)
+   Cubre páginas de cuenta y legales que no usan clase .storefront:
+   Login, Register, EditProfile, Orders, Privacy, Terms, AboutUs, etc.
+   Scoped a .ds-page para no interferir con el panel de administración.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Fondos de página ── */
+html[data-theme="oscuro"] .ds-page .bg-\[\#f8f9ff\]  { background-color: #0b1326 !important; } /* background (Stitch) */
+html[data-theme="oscuro"] .ds-page .bg-slate-50       { background-color: #0b1326 !important; } /* background (Stitch) */
+
+/* ── Fondos de card / superficie ── */
+html[data-theme="oscuro"] .ds-page .bg-white          { background-color: #222a3d !important; } /* surface-container-high (Stitch) */
+html[data-theme="oscuro"] .ds-page .bg-slate-100      { background-color: #171f33 !important; } /* surface-container (Stitch) */
+html[data-theme="oscuro"] .ds-page .bg-slate-200      { background-color: #2d3449 !important; color: #dae2fd !important; } /* surface-container-highest */
+
+/* ── Superficies de color (surface-low, surface-container) ── */
+html[data-theme="oscuro"] .ds-page .bg-\[\#eff4ff\]  { background-color: #171f33 !important; } /* surface-container (Stitch) */
+html[data-theme="oscuro"] .ds-page .bg-\[\#dce9ff\]  { background-color: #2d3449 !important; } /* surface-container-highest (Stitch) */
+
+/* ── Inputs — fondo más oscuro que el card para crear profundidad ── */
+html[data-theme="oscuro"] .ds-page input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-theme="oscuro"] .ds-page textarea,
+html[data-theme="oscuro"] .ds-page select {
+  background-color: #171f33 !important;  /* surface-container (Stitch) */
+  border-color: #3e4a3d !important;      /* outline-variant (Stitch) */
+  color: #dae2fd !important;             /* on-surface (Stitch) */
+}
+html[data-theme="oscuro"] .ds-page input::placeholder,
+html[data-theme="oscuro"] .ds-page textarea::placeholder { color: #879485 !important; } /* outline (Stitch) */
+
+/* Nav input (barra de búsqueda) — mantener transparente del diseño Stitch */
+html[data-theme="oscuro"] .ds-page nav input {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+
+/* ── Texto primario ── */
+html[data-theme="oscuro"] .ds-page .text-\[\#0b1c30\] { color: #dae2fd !important; } /* on-surface (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-900    { color: #dae2fd !important; } /* on-surface (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-800    { color: #dae2fd !important; } /* on-surface (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-black        { color: #dae2fd !important; } /* on-surface (Stitch) */
+
+/* ── Texto secundario ── */
+html[data-theme="oscuro"] .ds-page .text-\[\#565e74\] { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-700    { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-600    { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-500    { color: #879485 !important; } /* outline (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-slate-400    { color: #bdcaba !important; } /* on-surface-variant (Stitch) */
+
+/* ── Texto acento verde ── */
+html[data-theme="oscuro"] .ds-page .text-\[\#006b2c\] { color: #62df7d !important; } /* primary (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-green-600    { color: #62df7d !important; } /* primary (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-green-700    { color: #7ffc97 !important; } /* primary-fixed (Stitch) */
+html[data-theme="oscuro"] .ds-page .text-green-800    { color: #7ffc97 !important; } /* primary-fixed (Stitch) */
+
+/* ── Texto acento azul (links) ── */
+html[data-theme="oscuro"] .ds-page .text-\[\#316bf3\] { color: #93c5fd !important; }
+html[data-theme="oscuro"] .ds-page .text-blue-600     { color: #60a5fa !important; }
+html[data-theme="oscuro"] .ds-page .text-blue-700     { color: #93c5fd !important; }
+
+/* ── Texto de error ── */
+html[data-theme="oscuro"] .ds-page .text-\[\#ba1a1a\] { color: #ff8a80 !important; }
+html[data-theme="oscuro"] .ds-page .text-red-600      { color: #f87171 !important; }
+html[data-theme="oscuro"] .ds-page .text-red-700      { color: #fca5a5 !important; }
+
+/* ── Bordes — tokens nuevos ── */
+html[data-theme="oscuro"] .ds-page .border-\[\#bdcaba\]     { border-color: #3e4a3d !important; }             /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .border-\[\#bdcaba\]\/50 { border-color: #3e4a3d !important; }             /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .border-\[\#bdcaba\]\/30 { border-color: rgba(62,74,61,0.6) !important; }  /* outline-variant 60% */
+html[data-theme="oscuro"] .ds-page .border-\[\#bdcaba\]\/20 { border-color: rgba(62,74,61,0.4) !important; }  /* outline-variant 40% */
+
+/* ── Bordes — Tailwind clásicos ── */
+html[data-theme="oscuro"] .ds-page .border-slate-100  { border-color: #3e4a3d !important; } /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .border-slate-200  { border-color: #3e4a3d !important; } /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .border-slate-300  { border-color: #879485 !important; } /* outline (Stitch) */
+html[data-theme="oscuro"] .ds-page .border-slate-900  { border-color: #879485 !important; } /* outline (Stitch) */
+
+/* ── Divisores ── */
+html[data-theme="oscuro"] .ds-page hr                              { border-color: #3e4a3d !important; } /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page .divide-slate-100 > * + *      { border-color: #3e4a3d !important; } /* outline-variant (Stitch) */
+
+/* ── Tablas ── */
+html[data-theme="oscuro"] .ds-page thead                { background-color: #0b1326 !important; }   /* background (Stitch) */
+html[data-theme="oscuro"] .ds-page thead th             { color: #bdcaba !important; }               /* on-surface-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page tbody tr             { border-color: #3e4a3d !important; }        /* outline-variant (Stitch) */
+html[data-theme="oscuro"] .ds-page tbody tr:hover       { background-color: #222a3d !important; }    /* surface-container-high (Stitch) */
+html[data-theme="oscuro"] .ds-page td                   { color: #bdcaba !important; }               /* on-surface-variant (Stitch) */
+
+/* ── Hover de botones neutros ── */
+html[data-theme="oscuro"] .ds-page button.hover\:bg-slate-50:hover  { background-color: #222a3d !important; } /* surface-container-high (Stitch) */
+html[data-theme="oscuro"] .ds-page button.hover\:bg-slate-100:hover { background-color: #2d3449 !important; } /* surface-container-highest (Stitch) */
+html[data-theme="oscuro"] .ds-page .hover\:bg-\[\#eff4ff\]:hover    { background-color: #2d3449 !important; } /* surface-container-highest (Stitch) */
+
+/* ── Scrollbar ── */
+html[data-theme="oscuro"] .ds-page ::-webkit-scrollbar-track { background: #171f33; } /* surface-container (Stitch) */
+html[data-theme="oscuro"] .ds-page ::-webkit-scrollbar-thumb { background: #2d3449; } /* surface-container-highest (Stitch) */
+html[data-theme="oscuro"] .ds-page ::-webkit-scrollbar-thumb:hover { background: #3e4a3d; } /* outline-variant (Stitch) */
+
+/* ══════════════════════════════════════════════════════════════════════
+   DARK MODE — TOKENS GLOBALES (Stitch Design System)
+   Aplican SIN scope de clase para cubrir cualquier página. La clase
+   .storefront y .ds-page ya cubren elementos internos; estas reglas
+   cubren los wrappers externos y las páginas sin clase scope.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Fondo de cuerpo — garantiza que todo el viewport sea oscuro */
+html[data-theme="oscuro"] body {
+  background-color: #0b1326 !important; /* background (Stitch) */
+}
+
+/* Fondos de página (wrapper exterior) */
+html[data-theme="oscuro"] .bg-\[\#f8f9ff\]  { background-color: #0b1326 !important; } /* background */
+html[data-theme="oscuro"] .bg-\[\#eff4ff\]  { background-color: #171f33 !important; } /* surface-container */
+html[data-theme="oscuro"] .bg-\[\#dce9ff\]  { background-color: #2d3449 !important; } /* surface-container-highest */
+html[data-theme="oscuro"] .bg-\[\#dbe1ff\]  { background-color: #2d3449 !important; } /* surface-container-highest — chips de variante en CartDrawer */
+
+/* Texto primario */
+html[data-theme="oscuro"] .text-\[\#0b1c30\] { color: #dae2fd !important; } /* on-surface */
+
+/* Texto secundario */
+html[data-theme="oscuro"] .text-\[\#565e74\] { color: #bdcaba !important; } /* on-surface-variant */
+
+/* Texto acento verde */
+html[data-theme="oscuro"] .text-\[\#006b2c\] { color: #62df7d !important; } /* primary */
+html[data-theme="oscuro"] .text-\[\#00873a\] { color: #62df7d !important; } /* primary */
+
+/* Texto error rojo */
+html[data-theme="oscuro"] .text-\[\#ba1a1a\] { color: #ffb4ab !important; } /* error */
+
+/* Texto azul secundario */
+html[data-theme="oscuro"] .text-\[\#00174b\] { color: #7bd0ff !important; } /* secondary */
+
+/* Bordes con tokens Stitch */
+html[data-theme="oscuro"] .border-\[\#bdcaba\]     { border-color: #3e4a3d !important; }        /* outline-variant */
+html[data-theme="oscuro"] .border-\[\#bdcaba\]\/50 { border-color: rgba(62,74,61,0.5) !important; }
+html[data-theme="oscuro"] .border-\[\#bdcaba\]\/40 { border-color: rgba(62,74,61,0.4) !important; }
+html[data-theme="oscuro"] .border-\[\#bdcaba\]\/30 { border-color: rgba(62,74,61,0.3) !important; }
+html[data-theme="oscuro"] .border-\[\#bdcaba\]\/20 { border-color: rgba(62,74,61,0.2) !important; }
+html[data-theme="oscuro"] .border-\[\#dce9ff\]     { border-color: #3e4a3d !important; }        /* outline-variant */
+html[data-theme="oscuro"] .border-\[\#006b2c\]     { border-color: #62df7d !important; }        /* primary */
+html[data-theme="oscuro"] .border-l-\[\#006b2c\]   { border-left-color: #62df7d !important; }  /* primary left border */
+
+/* Sidebar del checkout — bg-[#d3e4fe] es un azul claro que no tiene mapeo global */
+html[data-theme="oscuro"] .bg-\[\#d3e4fe\]  { background-color: #222a3d !important; } /* surface-container-high (Stitch) */
+
+/* Texto de descripción en bloque "Precio a convenir" — #3e4a3d es oscuro, invisible en dark mode */
+html[data-theme="oscuro"] .text-\[\#3e4a3d\] { color: #bdcaba !important; } /* on-surface-variant (Stitch) */

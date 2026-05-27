@@ -71,7 +71,9 @@ export const productsApi = {
   getAll: (params) => api.get("/products", { params }),
   getFacets: (params) => api.get("/products/facets", { params }),
   getAllAdmin: (params) => api.get("/products/admin/all", { params }),
-  getById: (id) => api.get(`/products/${id}`),
+  // getById acepta params opcionales — pasamos visibleFor para que el backend filtre las variantes
+  // según la visibility de cada una y el tipo de cliente actual.
+  getById: (id, params) => api.get(`/products/${id}`, { params }),
   create: (formData) =>
     api.post("/products", formData, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -306,6 +308,8 @@ export const variantsApi = {
   generate:         (productId)         => api.post(`/variants/product/${productId}/generate`),
   updateVariant:    (id, formData)      => api.put(`/variants/${id}`, formData),
   deleteAll:        (productId)         => api.delete(`/variants/product/${productId}/all`),
+  // Sugerencias de atributos/valores ya usados en otros productos (para autocomplete)
+  getSuggestions:   ()                  => api.get(`/variants/suggestions`),
 };
 
 // ─── Configuración del sitio ──────────────────────────────────────────────────

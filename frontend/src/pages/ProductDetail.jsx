@@ -120,12 +120,42 @@ export default function ProductDetail() {
     setQuantity(1);
     setSelectedTier(null);
 
+    // Pasamos visibleFor para que el backend filtre las variantes según visibility del cliente
+    const visibleFor = customer?.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
     productsApi
-      .getById(id)
+      .getById(id, { visibleFor })
       .then((res) => {
         if (cancelled) return;
+        // Ordenar las variantes según el orden de los valores del primer atributo (controlado por el admin
+        // con las flechas ↑/↓ en el editor). Si no hay atributos, dejamos el orden tal como viene de la DB.
+        const attrs = res.data.attributes || [];
+        if (attrs.length > 0 && Array.isArray(res.data.variants)) {
+          const firstAttr = attrs[0];
+          // Mapa "valor → posición" para el primer atributo
+          const valuePos = {};
+          firstAttr.values.forEach((v, i) => { valuePos[v.value] = i; });
+          // Sort estable por la posición del valor del primer atributo en cada combinación
+          const positionOf = (variant) => {
+            const combo = Array.isArray(variant.combination) ? variant.combination : [];
+            const c = combo.find((x) => x.name === firstAttr.name);
+            return c ? (valuePos[c.value] ?? 9999) : 9999;
+          };
+          res.data.variants = [...res.data.variants].sort((a, b) => positionOf(a) - positionOf(b));
+        }
         setProduct(res.data);
         saveRecent(res.data);
+        // Auto-seleccionar la primera variante DISPONIBLE (con stock) — ya ordenada según el admin.
+        const variants = res.data.variants || [];
+        if (variants.length > 0) {
+          const firstAvailable = variants.find((v) => v.stockUnlimited || v.stock > 0) || variants[0];
+          if (firstAvailable && Array.isArray(firstAvailable.combination)) {
+            const initialAttrs = {};
+            for (const c of firstAvailable.combination) {
+              initialAttrs[c.name] = c.value;
+            }
+            setSelectedAttrs(initialAttrs);
+          }
+        }
         // Cargar productos relacionados con jerarquía de categorías:
         // 1) misma subcategoría → 2) categoría padre → 3) cualquier producto
         const currentId = res.data.id;
@@ -182,9 +212,26 @@ export default function ProductDetail() {
     setSlideDir("next");
   }, [activeVariant?.id]);
 
-  // Precio efectivo: variante > precio base según tipo de cliente
+  // Precio efectivo: prioriza precio de variante según tipo de cliente, sino cae al precio base.
+  // Mayorista → wholesaleSalePrice > wholesalePrice (de la variante o producto)
+  // Minorista → salePrice > price (de la variante o producto)
   const effectivePrice = (() => {
-    if (activeVariant?.price != null) return activeVariant.price;
+    if (activeVariant) {
+      if (isMayorista) {
+        if (activeVariant.wholesaleSalePrice != null && activeVariant.wholesalePrice != null
+            && activeVariant.wholesaleSalePrice < activeVariant.wholesalePrice) {
+          return activeVariant.wholesaleSalePrice;
+        }
+        if (activeVariant.wholesalePrice != null) return activeVariant.wholesalePrice;
+        // Fallback al precio del producto padre si la variante no tiene mayorista
+      } else {
+        if (activeVariant.salePrice != null && activeVariant.price != null
+            && activeVariant.salePrice < activeVariant.price) {
+          return activeVariant.salePrice;
+        }
+        if (activeVariant.price != null) return activeVariant.price;
+      }
+    }
     if (!product) return 0;
     if (isMayorista && product.wholesalePrice) {
       if (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice)
@@ -239,8 +286,10 @@ export default function ProductDetail() {
       navigate("/login");
       return;
     }
-    // MAYORISTA no ve variantes → no se les exige seleccionarlas
-    if (hasVariants && !isMayorista && !allAttrsSelected) {
+    // Si hay variantes visibles para este cliente (sea minorista o mayorista), debe seleccionarlas.
+    // Si product.variants viene vacío (todas filtradas por visibility), no se exige selección.
+    const hasVisibleVariants = hasVariants && (product.variants?.length || 0) > 0;
+    if (hasVisibleVariants && !allAttrsSelected) {
       toast.error("Seleccioná todas las opciones del producto");
       return;
     }
@@ -253,16 +302,20 @@ export default function ProductDetail() {
     const variantLabel = activeVariant
       ? activeVariant.combination.map((c) => `${c.name}: ${c.value}`).join(" / ")
       : null;
-    await addItem(product, safeQty, tierPrice, activeVariant?.id || null, variantLabel);
+    // Si hay variante, el precio efectivo ya está calculado arriba (effectivePrice) y considera
+    // la variante + tipo de cliente. Si además hay tier price (descuento por cantidad), ese tiene prioridad.
+    const priceToCharge = tierPrice !== null ? tierPrice : (activeVariant ? effectivePrice : null);
+    await addItem(product, safeQty, priceToCharge, activeVariant?.id || null, variantLabel);
     toast.success(`${safeQty}x "${product.name}"${variantLabel ? ` (${variantLabel})` : ""} agregado al carrito`);
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col">
+      <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
         <Navbar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+          {/* Antes: border-blue-600 — actualizado a color verde del sistema de diseño */}
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#00873a]" />
         </div>
       </div>
     );
@@ -270,12 +323,15 @@ export default function ProductDetail() {
 
   if (!product) {
     return (
-      <div className="min-h-screen flex flex-col">
+      <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
         <Navbar />
-        <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-          <p className="text-5xl mb-4">😕</p>
-          <p className="text-xl font-medium">Producto no encontrado</p>
-          <Link to="/catalogo" className="mt-4 text-blue-600 hover:underline">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          {/* Antes: emoji 😕 — reemplazado por Material Symbol para consistencia visual */}
+          {/* <p className="text-5xl mb-4">😕</p> */}
+          <span className="material-symbols-outlined text-[72px] text-[#bdcaba]">sentiment_dissatisfied</span>
+          <p className="text-xl font-semibold text-[#0b1c30]">Producto no encontrado</p>
+          {/* Antes: text-blue-600 — actualizado a color verde del sistema de diseño */}
+          <Link to="/catalogo" className="text-sm text-[#006b2c] hover:underline font-medium">
             Volver al catálogo
           </Link>
         </div>
@@ -292,163 +348,215 @@ export default function ProductDetail() {
   const metaUrl   = `${SITE_URL}/producto/${product.id}`;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
       <SiteMeta title={metaTitle} description={metaDesc} image={metaImage} url={metaUrl} />
       <Navbar />
-      <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
-        {/* Breadcrumb */}
-        <nav className="text-sm text-slate-500 mb-6">
-          <Link to="/" className="hover:text-blue-600">Inicio</Link>
-          <span className="mx-2">/</span>
-          <Link to="/catalogo" className="hover:text-blue-600">Catálogo</Link>
+      <main className="flex-1 max-w-[1280px] mx-auto px-6 py-8 w-full">
+
+        {/* Breadcrumbs — chevron_right Material Symbol según template */}
+        {/* Antes: separador "/ " de texto plano — ahora usa Material Symbol */}
+        <nav className="flex items-center gap-1 mb-8 text-[#565e74] text-xs flex-wrap">
+          <Link to="/" className="hover:text-[#006b2c] transition-colors">Inicio</Link>
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>chevron_right</span>
+          <Link to="/catalogo" className="hover:text-[#006b2c] transition-colors">Catálogo</Link>
           {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
           {product.categories && product.categories.length > 0 && (
             <>
-              <span className="mx-2">/</span>
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>chevron_right</span>
               {product.categories.map((cat, i) => (
-                <span key={cat.id}>
-                  {i > 0 && <span className="mx-1">·</span>}
-                  <Link to={`/catalogo?category=${cat.slug}`} className="hover:text-blue-600">
+                <span key={cat.id} className="flex items-center gap-1">
+                  {i > 0 && <span className="mx-0.5">·</span>}
+                  <Link to={`/catalogo?category=${cat.slug}`} className="hover:text-[#006b2c] transition-colors">
                     {cat.name}
                   </Link>
                 </span>
               ))}
             </>
           )}
-          <span className="mx-2">/</span>
-          <span className="text-slate-800">{product.name}</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>chevron_right</span>
+          <span className="text-[#0b1c30] font-semibold">{product.name}</span>
         </nav>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-          {/* Galería de imágenes */}
-          <div>
-            <div
-              className="relative aspect-square rounded-2xl overflow-hidden mb-4 group"
-              style={{ backgroundColor: "#ffffff", cursor: zoom ? "zoom-out" : "zoom-in" }}
-              onMouseMove={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = ((e.clientX - rect.left) / rect.width) * 100;
-                const y = ((e.clientY - rect.top) / rect.height) * 100;
-                setZoomPos({ x, y });
-                setZoom(true);
-              }}
-              onMouseLeave={() => setZoom(false)}
-            >
-              {/* Fondo blanco — el bg-white del contenedor padre cubre el espacio vacío.
-                  Antes había una rama variantImageUrl que sobreescribía la galería; ahora la
-                  variante solo cambia el índice (selectedImage), así el cliente sigue viendo
-                  todo el carrusel y las flechas funcionan normal. */}
-              {galleryImages[selectedImage] ? (
-                <img
-                  key={`${activeVariant?.id || "noVariant"}-${selectedImage}`}
-                  src={getImageUrl(galleryImages[selectedImage])}
-                  alt={product.name}
-                  className={`relative w-full h-full object-contain ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
-                  style={{
-                    transform: zoom ? "scale(2.5)" : "scale(1)",
-                    transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
-                    transition: zoom ? "transform 0.08s ease-out" : "transform 0.25s ease-out",
-                  }}
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-7xl text-slate-300">
-                  📦
+        {/* Product Hero — lg:grid-cols-12 según template */}
+        {/* Antes: grid grid-cols-1 md:grid-cols-2 gap-10 */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mb-16">
+
+          {/* ── Galería — col-span-6 ── */}
+          {/* Antes: col-span-7 — reducido a 6 para que la imagen no quede excesivamente grande */}
+          <div className="lg:col-span-6">
+            <div className="flex gap-4">
+
+              {/* Thumbnails verticales — solo en desktop; en mobile se muestran debajo */}
+              {totalImages > 1 && (
+                <div className="hidden lg:flex flex-col gap-3 flex-shrink-0" style={{ width: 72 }}>
+                  {galleryImages.map((img, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSelectImage(i)}
+                      className={`w-full aspect-square rounded-lg overflow-hidden p-1 bg-white transition-colors ${
+                        selectedImage === i
+                          ? "border-2 border-[#00873a]"
+                          : "border border-[#bdcaba] hover:border-[#006b2c]"
+                      }`}
+                    >
+                      <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain" />
+                    </button>
+                  ))}
                 </div>
               )}
 
-              {/* Flechas — solo si hay más de 1 imagen */}
-              {totalImages > 1 && (
-                <>
-                  <button
-                    onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
-                  >
-                    ‹
-                  </button>
-                  <button
-                    onClick={() => { goNext(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
-                  >
-                    ›
-                  </button>
-                  {/* Indicador de posición */}
-                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
-                    {galleryImages.map((_, i) => (
-                      <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedImage ? "bg-white" : "bg-white/40"}`} />
-                    ))}
+              {/* Imagen principal */}
+              {/* Antes: aspect-[4/5] del template — vuelto a aspect-square porque 4/5 resultaba demasiado alto */}
+              <div
+                className="flex-1 relative bg-[#eff4ff] rounded-xl border border-[#bdcaba] overflow-hidden group aspect-square"
+                style={{ cursor: zoom ? "zoom-out" : "zoom-in" }}
+                onMouseMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = ((e.clientX - rect.left) / rect.width) * 100;
+                  const y = ((e.clientY - rect.top) / rect.height) * 100;
+                  setZoomPos({ x, y });
+                  setZoom(true);
+                }}
+                onMouseLeave={() => setZoom(false)}
+              >
+                {/* Fondo blanco — el bg-[#eff4ff] del contenedor padre cubre el espacio vacío.
+                    Antes había una rama variantImageUrl que sobreescribía la galería; ahora la
+                    variante solo cambia el índice (selectedImage), así el cliente sigue viendo
+                    todo el carrusel y las flechas funcionan normal. */}
+                {galleryImages[selectedImage] ? (
+                  <img
+                    key={`${activeVariant?.id || "noVariant"}-${selectedImage}`}
+                    src={getImageUrl(galleryImages[selectedImage])}
+                    alt={product.name}
+                    className={`absolute inset-0 w-full h-full object-contain p-8 ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
+                    style={{
+                      transform: zoom ? "scale(2.5)" : "scale(1)",
+                      transformOrigin: `${zoomPos.x}% ${zoomPos.y}%`,
+                      transition: zoom ? "transform 0.08s ease-out" : "transform 0.25s ease-out",
+                    }}
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {/* Antes: emoji 📦 — reemplazado por Material Symbol */}
+                    {/* <div className="w-full h-full flex items-center justify-center text-7xl text-slate-300">📦</div> */}
+                    <span className="material-symbols-outlined text-[80px] text-[#bdcaba]">inventory_2</span>
                   </div>
-                </>
-              )}
+                )}
+
+                {/* Flechas — solo si hay más de 1 imagen */}
+                {totalImages > 1 && (
+                  <>
+                    <button
+                      onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
+                    >
+                      {/* Antes: carácter ‹ — reemplazado por Material Symbol */}
+                      {/* ‹ */}
+                      <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                    </button>
+                    <button
+                      onClick={() => { goNext(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
+                    >
+                      {/* Antes: carácter › — reemplazado por Material Symbol */}
+                      {/* › */}
+                      <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                    </button>
+                    {/* Indicador de posición */}
+                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                      {galleryImages.map((_, i) => (
+                        <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedImage ? "bg-white" : "bg-white/40"}`} />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
-            {/* Miniaturas — filtradas a la galería de la variante activa si aplica */}
+            {/* Thumbnails horizontales — solo en mobile (en desktop se muestran verticales a la izq.) */}
+            {/* Antes: siempre visibles con overflow-x-auto — ahora solo en mobile (lg:hidden) */}
             {totalImages > 1 && (
-              <div className="flex gap-2 overflow-x-auto pb-2">
+              <div className="flex gap-2 overflow-x-auto pb-2 mt-3 lg:hidden">
                 {galleryImages.map((img, i) => (
                   <button
                     key={i}
                     onClick={() => handleSelectImage(i)}
-                    className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border-2 transition-colors ${
-                      selectedImage === i ? "border-blue-500" : "border-slate-200"
+                    className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 p-1 bg-white transition-colors ${
+                      selectedImage === i
+                        ? "border-2 border-[#00873a]"
+                        : "border border-[#bdcaba] hover:border-[#006b2c]"
                     }`}
                   >
-                    <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain p-1" style={{ backgroundColor: "#ffffff" }} />
+                    <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain" />
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Info del producto */}
-          <div>
-            {/* Antes: product.category (single) — ahora product.categories (array M2M) */}
-            {product.categories && product.categories.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {product.categories.map((cat) => (
-                  <Link
-                    key={cat.id}
-                    to={`/catalogo?category=${cat.slug}`}
-                    className="text-sm text-blue-600 font-semibold uppercase tracking-wide hover:underline"
-                  >
-                    {cat.name}
-                  </Link>
-                ))}
-              </div>
-            )}
-            <h1 className="text-3xl font-extrabold text-slate-900 mt-2 mb-4">{product.name}</h1>
+          {/* ── Info del producto — col-span-6 ── */}
+          {/* Antes: col-span-5 — ampliado a 6 para compensar la galería reducida */}
+          <div className="lg:col-span-6 flex flex-col gap-5">
 
-            {/* Precio según tipo de cliente.
-                Si hay un tier seleccionado, el precio principal muestra el precio del tier. */}
+            {/* Categoría + título */}
+            <div>
+              {/* Antes: text-blue-600 — actualizado a text-[#006b2c] */}
+              {product.categories && product.categories.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {product.categories.map((cat) => (
+                    <Link
+                      key={cat.id}
+                      to={`/catalogo?category=${cat.slug}`}
+                      className="text-xs font-semibold uppercase tracking-widest text-[#006b2c] hover:underline"
+                    >
+                      {cat.name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+              {/* Antes: text-3xl font-extrabold text-slate-900 */}
+              <h1 className="text-3xl font-bold text-[#0b1c30] leading-tight">{product.name}</h1>
+            </div>
+
+            {/* Bloque de precio.
+                Si hay una variante activa, usa los precios de la variante (con fallback al del producto si la variante no tiene).
+                Si hay un tier seleccionado (descuento por cantidad), el precio principal muestra el precio del tier. */}
             {(() => {
-              // Precio base sin tier
-              const isMayorista = customer?.type === "MAYORISTA";
-              const baseUnitPrice = isMayorista && product.wholesalePrice
-                ? (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? product.wholesaleSalePrice : product.wholesalePrice)
-                : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
-
-              // Si hay tier activo, ese es el precio por unidad
+              const isMayoristaUI = customer?.type === "MAYORISTA";
+              // Helper para obtener el precio de la variante o caer al del producto si la variante no lo define.
+              // Esto permite que el admin defina solo `wholesalePrice` por variante y el resto se herede.
+              const pick = (varField, productField) => {
+                if (activeVariant && activeVariant[varField] != null) return activeVariant[varField];
+                return product[productField];
+              };
+              // Precios base efectivos según tipo de cliente (variante > producto padre)
+              const basePrice          = isMayoristaUI ? pick("wholesalePrice",     "wholesalePrice")     : pick("price",     "price");
+              const baseSalePrice      = isMayoristaUI ? pick("wholesaleSalePrice", "wholesaleSalePrice") : pick("salePrice", "salePrice");
+              // El precio "actual" considera la oferta (sale) si es menor
+              const baseUnitPrice = baseSalePrice != null && basePrice != null && baseSalePrice < basePrice
+                ? baseSalePrice
+                : basePrice;
               const displayPrice = selectedTier ? selectedTier.price : baseUnitPrice;
-              const hasTierDiscount = selectedTier && selectedTier.price < baseUnitPrice;
+              const hasTierDiscount = selectedTier && baseUnitPrice != null && selectedTier.price < baseUnitPrice;
 
-              if (isMayorista && product.wholesalePrice) {
-                // hasWholesaleSale: hay precio de oferta mayorista activo
-                const hasWholesaleSale = product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice;
+              // ── Mayorista ──
+              if (isMayoristaUI && basePrice != null) {
+                const hasWholesaleSale = baseSalePrice != null && baseSalePrice < basePrice;
                 return (
-                  <div className="mb-6">
-                    {/* Precio original tachado: se muestra si hay oferta mayorista O si hay descuento por tier */}
-                    {(hasWholesaleSale && !hasTierDiscount) && (
-                      <p className="text-lg text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</p>
-                    )}
-                    {hasTierDiscount && (
-                      <p className="text-lg text-slate-400 line-through">{formatPrice(baseUnitPrice)}</p>
-                    )}
-                    <p className={`text-4xl font-bold ${hasWholesaleSale || hasTierDiscount ? "text-red-600" : "text-green-700"}`}>
-                      {formatPrice(displayPrice)}
-                    </p>
-                    <span className={`inline-block mt-1 px-3 py-1 text-sm font-semibold rounded-full ${
+                  <div>
+                    <div className="flex items-baseline gap-3 flex-wrap">
+                      <span className="text-4xl font-bold text-[#0b1c30]">{formatPrice(displayPrice)}</span>
+                      {(hasWholesaleSale && !hasTierDiscount) && (
+                        <span className="text-lg text-[#ba1a1a] line-through">{formatPrice(basePrice)}</span>
+                      )}
+                      {hasTierDiscount && (
+                        <span className="text-lg text-[#ba1a1a] line-through">{formatPrice(baseUnitPrice)}</span>
+                      )}
+                    </div>
+                    <span className={`inline-block mt-2 px-3 py-1 text-xs font-semibold rounded-full ${
                       hasWholesaleSale || hasTierDiscount
                         ? "bg-red-100 text-red-600"
-                        : "bg-green-100 text-green-700"
+                        : "bg-[#dce9ff] text-[#00174b]"
                     }`}>
                       {hasTierDiscount ? "Precio mayorista c/descuento" : hasWholesaleSale ? "Oferta mayorista" : "Precio mayorista"}
                     </span>
@@ -456,32 +564,33 @@ export default function ProductDetail() {
                 );
               }
 
-              // Minorista
-              const originalPrice = product.price;
-              // showStrike: hay precio de oferta minorista activo O hay descuento por tier
-              const showStrike = displayPrice < originalPrice;
+              // ── Minorista ──
+              const originalPrice = basePrice;
+              const showStrike = originalPrice != null && displayPrice < originalPrice;
               return (
-                <div className="mb-6">
+                <div>
+                  <div className="flex items-baseline gap-3 flex-wrap">
+                    <span className="text-4xl font-bold text-[#0b1c30]">{formatPrice(displayPrice)}</span>
+                    {showStrike && (
+                      <span className="text-lg text-[#ba1a1a] line-through">{formatPrice(originalPrice)}</span>
+                    )}
+                  </div>
                   {showStrike && (
-                    <p className="text-lg text-slate-400 line-through">{formatPrice(originalPrice)}</p>
-                  )}
-                  <p className={`text-4xl font-bold mb-1 ${showStrike ? "text-red-600" : "text-blue-600"}`}>
-                    {formatPrice(displayPrice)}
-                  </p>
-                  {showStrike && (
-                    <span className="inline-block px-3 py-1 bg-red-100 text-red-600 text-sm font-semibold rounded-full">
+                    <span className="inline-block mt-2 px-3 py-1 bg-red-100 text-red-600 text-xs font-semibold rounded-full">
                       {hasTierDiscount ? "Precio por cantidad" : "Precio oferta"}
                     </span>
                   )}
                   {/* Precio sin impuesto — calculado como price / 1.21, solo visible para MINORISTA */}
-                  {customer?.type !== "MAYORISTA" && (
-                    <p className="text-sm text-slate-400 mt-1">
-                      Precio sin impuestos {formatPrice(product.price / 1.21)}
+                  {customer?.type !== "MAYORISTA" && basePrice != null && (
+                    <p className="text-xs text-[#565e74] mt-1">
+                      Precio sin impuestos {formatPrice(basePrice / 1.21)}
                     </p>
                   )}
                 </div>
               );
             })()}
+
+            <hr className="border-[#bdcaba]/40" />
 
             {/* Tabla de descuentos por cantidad — clickeable para seleccionar */}
             {/* Mayoristas ven wholesalePriceTiers; minoristas ven priceTiers */}
@@ -490,19 +599,26 @@ export default function ProductDetail() {
               const activeTiers = isMayorista
                 ? (product.wholesalePriceTiers && product.wholesalePriceTiers.length > 0 ? product.wholesalePriceTiers : null)
                 : (product.priceTiers && product.priceTiers.length > 0 ? product.priceTiers : null);
-              // El % OFF se calcula contra el precio base del tipo de cliente
-              const basePrice = isMayorista && product.wholesalePrice
-                ? (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? product.wholesaleSalePrice : product.wholesalePrice)
-                : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
+              // El % OFF se calcula contra el precio efectivo (variante > producto) para que sea consistente
+              const pickField = (varField, productField) =>
+                activeVariant && activeVariant[varField] != null ? activeVariant[varField] : product[productField];
+              const baseUnit = isMayorista
+                ? pickField("wholesalePrice",     "wholesalePrice")
+                : pickField("price",              "price");
+              const saleUnit = isMayorista
+                ? pickField("wholesaleSalePrice", "wholesaleSalePrice")
+                : pickField("salePrice",          "salePrice");
+              const basePrice = saleUnit != null && baseUnit != null && saleUnit < baseUnit ? saleUnit : baseUnit;
               if (!activeTiers) return null;
               return (
-                <div className="mb-6 border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
-                    <span className="text-sm font-semibold text-slate-700">Descuentos por cantidad</span>
+                <div className="border border-[#bdcaba]/50 rounded-xl overflow-hidden">
+                  {/* Antes: border-slate-200 bg-slate-50 — actualizado a tokens del sistema */}
+                  <div className="bg-[#eff4ff] px-4 py-2 border-b border-[#bdcaba]/40">
+                    <span className="text-sm font-semibold text-[#0b1c30]">Descuentos por cantidad</span>
                     {selectedTier && (
                       <button
                         onClick={() => changeQuantity(1)}
-                        className="ml-3 text-xs text-slate-400 hover:text-slate-600 underline"
+                        className="ml-3 text-xs text-[#565e74] hover:text-[#0b1c30] underline"
                       >
                         quitar selección
                       </button>
@@ -532,25 +648,28 @@ export default function ProductDetail() {
                               sinStockSuficiente
                                 ? "opacity-40 cursor-not-allowed"
                                 : isSelected
-                                  ? "cursor-pointer bg-blue-50 border-l-4 border-blue-500"
-                                  : `cursor-pointer ${i % 2 === 0 ? "bg-white hover:bg-slate-50" : "bg-slate-50 hover:bg-slate-100"}`
+                                  /* Antes: bg-blue-50 border-l-4 border-blue-500 — actualizado a verde */
+                                  ? "cursor-pointer bg-[#eff4ff] border-l-4 border-[#006b2c]"
+                                  : `cursor-pointer ${i % 2 === 0 ? "bg-white hover:bg-[#f8f9ff]" : "bg-[#f8f9ff] hover:bg-[#eff4ff]"}`
                             }`}
                           >
-                            <td className={`px-4 py-3 font-medium ${isSelected ? "text-blue-700" : "text-slate-700"}`}>
+                            <td className={`px-4 py-3 font-medium ${isSelected ? "text-[#006b2c]" : "text-[#565e74]"}`}>
                               +{tier.minQty} unidades
                               {sinStockSuficiente && (
-                                <span className="ml-2 text-xs text-slate-400">(sin stock suficiente)</span>
+                                <span className="ml-2 text-xs text-[#565e74]">(sin stock suficiente)</span>
                               )}
                             </td>
-                            <td className={`px-4 py-3 font-semibold ${isSelected ? "text-blue-700" : "text-slate-800"}`}>
+                            <td className={`px-4 py-3 font-semibold ${isSelected ? "text-[#006b2c]" : "text-[#0b1c30]"}`}>
                               {formatPrice(tier.price)}
                             </td>
                             <td className="px-4 py-3 text-right">
                               {isSelected && (
-                                <span className="mr-2 text-blue-500 text-xs font-semibold">✓ seleccionado</span>
+                                /* Antes: text-blue-500 — actualizado a verde */
+                                <span className="mr-2 text-[#006b2c] text-xs font-semibold">✓ seleccionado</span>
                               )}
                               {discountPct > 0 && !sinStockSuficiente && (
-                                <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded-full">
+                                /* Antes: bg-green-100 text-green-700 — actualizado a tokens del sistema */
+                                <span className="bg-[#dce9ff] text-[#00174b] text-xs font-bold px-2 py-1 rounded-full">
                                   {discountPct}% OFF
                                 </span>
                               )}
@@ -564,28 +683,32 @@ export default function ProductDetail() {
               );
             })()}
 
-            {product.description && (
-              // dangerouslySetInnerHTML: la descripción puede contener HTML del editor rich text (TipTap)
-              // El contenido lo genera el admin autenticado, no usuarios externos — no hay riesgo XSS externo
-              <div
-                className="text-slate-600 leading-relaxed mb-6 prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{ __html: product.description }}
-              />
-            )}
-
-            {/* Selectores de variante — solo visibles para MINORISTA */}
-            {hasVariants && !isMayorista && (
-              <div className="space-y-4 mb-6">
+            {/* Selectores de variante — visibles si hay variantes filtradas por visibility para este cliente.
+                Antes había un hard-code !isMayorista que bloqueaba mayoristas; ahora se basa en si el backend
+                devolvió variantes visibles (filtradas por visibility + tipo de cliente). */}
+            {hasVariants && (product.variants?.length || 0) > 0 && (
+              <div className="space-y-4">
                 {product.attributes.map((attr) => (
                   <div key={attr.id}>
-                    <p className="text-sm font-semibold text-slate-700 mb-2">
+                    <p className="text-sm font-semibold text-[#0b1c30] mb-2">
                       {attr.name}
                       {selectedAttrs[attr.name] && (
-                        <span className="ml-2 text-blue-600 font-normal">{selectedAttrs[attr.name]}</span>
+                        /* Antes: text-blue-600 — actualizado a verde */
+                        <span className="ml-2 text-[#006b2c] font-normal">{selectedAttrs[attr.name]}</span>
                       )}
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {attr.values.map((v) => {
+                      {attr.values
+                        // Filtramos primero los valores que tienen AL MENOS una variante visible para este cliente.
+                        // product.variants ya viene filtrado por visibility desde el backend. Si para una opción
+                        // (ej: "1Mt") no hay ninguna variante visible, no renderizamos el botón en absoluto.
+                        .filter((v) => (product.variants || []).some((pv) => {
+                          const combo = Array.isArray(pv.combination)
+                            ? pv.combination
+                            : (typeof pv.combination === "string" ? JSON.parse(pv.combination) : null);
+                          return combo?.some((c) => c.name === attr.name && c.value === v.value);
+                        }))
+                        .map((v) => {
                         // Verificar si esta opción tiene stock (combinación disponible)
                         const isSelected = selectedAttrs[attr.name] === v.value;
                         // Una opción está agotada si todas las variantes que la incluyen están sin stock
@@ -602,12 +725,13 @@ export default function ProductDetail() {
                             key={v.id}
                             type="button"
                             onClick={() => !soldOut && setSelectedAttrs((prev) => ({ ...prev, [attr.name]: v.value }))}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                               isSelected
-                                ? "border-blue-600 bg-blue-50 text-blue-700"
+                                /* Antes: border-blue-600 bg-blue-50 text-blue-700 — actualizado a verde */
+                                ? "border-2 border-[#00873a] bg-[#dce9ff] text-[#0b1c30] font-semibold"
                                 : soldOut
-                                  ? "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed line-through"
-                                  : "border-slate-200 hover:border-blue-400 text-slate-700"
+                                  ? "border border-[#bdcaba] bg-[#f8f9ff] text-[#bdcaba] cursor-not-allowed line-through"
+                                  : "border border-[#bdcaba] bg-white text-[#565e74] hover:border-[#006b2c]"
                             }`}
                           >
                             {v.value}
@@ -624,35 +748,43 @@ export default function ProductDetail() {
             )}
 
             {/* Stock */}
-            <div className="flex items-center gap-2 mb-6">
+            <div className="flex items-center gap-2">
               {/* Para variantes: el backend garantiza stock si aparece; para sin variantes: chequear product.stock */}
               {(product.stockUnlimited || hasVariants || product.stock > 0) ? (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                  <span className="text-sm text-green-700 font-medium">
-                    {/* Cantidad de stock oculta al cliente — solo se muestra disponibilidad */}
-                    En stock
-                  </span>
+                  {/* Antes: span puntito bg-green-500 — reemplazado por Material Symbol check_circle filled */}
+                  {/* <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> */}
+                  <span
+                    className="material-symbols-outlined text-[#006b2c]"
+                    style={{ fontSize: 20, fontVariationSettings: "'FILL' 1" }}
+                  >check_circle</span>
+                  <span className="text-sm text-[#006b2c] font-medium">En stock</span>
                 </>
               ) : (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
-                  <span className="text-sm text-red-600 font-medium">Sin stock</span>
+                  {/* Antes: span puntito bg-red-500 — reemplazado por Material Symbol cancel filled */}
+                  {/* <span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> */}
+                  <span
+                    className="material-symbols-outlined text-[#ba1a1a]"
+                    style={{ fontSize: 20, fontVariationSettings: "'FILL' 1" }}
+                  >cancel</span>
+                  <span className="text-sm text-[#ba1a1a] font-medium">Sin stock</span>
                 </>
               )}
             </div>
 
             {/* Cantidad */}
             {!outOfStock && (
-              <div className="flex items-center gap-4 mb-6">
-                <span className="text-sm font-medium text-slate-700">Cantidad:</span>
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm font-medium text-[#0b1c30]">Cantidad:</span>
+                {/* Antes: botones bg-slate-100 con texto − + — actualizado a bg-[#eff4ff] con Material Symbols */}
+                <div className="flex items-center bg-[#eff4ff] rounded-lg border border-[#bdcaba] p-1">
                   <button
                     onClick={() => changeQuantity(Math.max(1, quantity - 1))}
                     disabled={quantity <= 1}
-                    className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="w-10 h-10 flex items-center justify-center text-[#0b1c30] hover:bg-[#dce9ff]/60 rounded-md transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    −
+                    <span className="material-symbols-outlined text-[20px]">remove</span>
                   </button>
                   <input
                     type="number"
@@ -665,67 +797,152 @@ export default function ProductDetail() {
                       if (!product.stockUnlimited && !isMayorista && val > availableStock) return changeQuantity(availableStock);
                       changeQuantity(val);
                     }}
-                    className="w-16 text-center font-semibold text-lg border border-slate-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-12 text-center font-semibold text-[#0b1c30] border-none bg-transparent focus:outline-none focus:ring-0"
                   />
                   <button
                     onClick={() => changeQuantity(isMayorista ? quantity + 1 : Math.min(availableStock, quantity + 1))}
-                    className="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-lg transition-colors"
+                    className="w-10 h-10 flex items-center justify-center text-[#0b1c30] hover:bg-[#dce9ff]/60 rounded-md transition-all"
                   >
-                    +
+                    <span className="material-symbols-outlined text-[20px]">add</span>
                   </button>
                 </div>
                 {selectedTier && (
-                  <span className="text-xs text-blue-600 font-medium">
+                  /* Antes: text-blue-600 — actualizado a verde */
+                  <span className="text-xs text-[#006b2c] font-medium">
                     mín. {selectedTier.minQty} u. · {formatPrice(selectedTier.price)} c/u
                   </span>
                 )}
               </div>
             )}
 
-            <button
-              onClick={handleAddToCart}
-              disabled={outOfStock}
-              className="btn-primary w-full text-base py-4 disabled:opacity-50"
-            >
-              {!customer
-                ? "Iniciar sesión para comprar"
-                : outOfStock
-                  ? "Sin stock disponible"
-                  : "🛒 Agregar al carrito"}
-            </button>
+            {/* Botones de acción */}
+            {/* Antes: btn-primary genérico con emoji 🛒 — actualizado a bg-[#00873a] + Material Symbol */}
+            <div className="grid grid-cols-1 gap-3">
+              <button
+                onClick={handleAddToCart}
+                disabled={outOfStock}
+                className="w-full bg-[#00873a] text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="material-symbols-outlined">shopping_cart</span>
+                {!customer
+                  ? "Iniciar sesión para comprar"
+                  : outOfStock
+                    ? "Sin stock disponible"
+                    : "Agregar al carrito"}
+              </button>
+              {/* Botón "Comprar ahora" — comentado por pedido del usuario */}
+              {/* {customer && !outOfStock && (
+                <button
+                  onClick={async () => {
+                    if (!customer) { navigate("/login"); return; }
+                    await handleAddToCart();
+                    navigate("/checkout");
+                  }}
+                  className="w-full border-2 border-[#0b1c30] text-[#0b1c30] hover:bg-[#0b1c30] hover:text-white py-4 px-8 rounded-lg font-bold text-base transition-all active:scale-95"
+                >
+                  Comprar ahora
+                </button>
+              )} */}
+            </div>
 
             {/* Botón ver video — solo si el producto tiene youtubeUrl */}
             {product.youtubeUrl && getYoutubeEmbedUrl(product.youtubeUrl) && (
               <button
                 onClick={() => setVideoOpen(true)}
-                className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-red-500 text-red-600 font-semibold hover:bg-red-50 transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-red-500 text-red-600 font-semibold hover:bg-red-50 transition-colors"
               >
                 ▶ Ver video del producto
               </button>
             )}
 
-            <div className="mt-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-600 space-y-2">
-              <p>✅ Pago seguro con MercadoPago</p>
-              <p>📦 Envíos a todo Argentina</p>
-              <p>🔒 Compra protegida</p>
+            {/* Caja de info de envío — según template */}
+            {/*
+              Antes: emojis ✅📦🔒 en bg-slate-50 — reemplazado por Material Symbols en bg-[#eff4ff]
+              <div className="mt-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-600 space-y-2">
+                <p>✅ Pago seguro con MercadoPago</p>
+                <p>📦 Envíos a todo Argentina</p>
+                <p>🔒 Compra protegida</p>
+              </div>
+            */}
+            <div className="bg-[#eff4ff] p-4 rounded-xl border border-[#bdcaba]/50 space-y-3">
+              <div className="flex gap-3 items-start">
+                <span className="material-symbols-outlined text-[#006b2c]">local_shipping</span>
+                <div>
+                  <p className="text-sm font-semibold text-[#0b1c30]">Envíos a todo Argentina</p>
+                  <p className="text-xs text-[#565e74]">Enviamos por Correo Argentino y otras empresas</p>
+                </div>
+              </div>
+              <div className="flex gap-3 items-start">
+                <span className="material-symbols-outlined text-[#006b2c]">verified_user</span>
+                <div>
+                  <p className="text-sm font-semibold text-[#0b1c30]">Pago 100% seguro</p>
+                  <p className="text-xs text-[#565e74]">Protegido con MercadoPago y encriptación SSL</p>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </main>
 
-      {/* Productos relacionados */}
-      {relatedProducts.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <h2 className="text-xl font-bold text-slate-800 mb-5">También te puede interesar</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-            {relatedProducts.map((p) => (
-              <ProductCard key={p.id} product={p} />
-            ))}
+            {/*
+              Descripción comentada — fue movida al tab "Descripción" debajo del hero según template.
+              En el diseño anterior estaba inline aquí en el panel derecho.
+              {product.description && (
+                <div
+                  className="text-slate-600 leading-relaxed mb-6 prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: product.description }}
+                />
+              )}
+            */}
           </div>
         </section>
-      )}
 
-      {/* Modal de video de YouTube */}
+        {/* Sección tabs — solo "Descripción" (Especificaciones y Opiniones excluidos por diseño) */}
+        {product.description && (
+          <section className="mb-16">
+            <div className="border-b border-[#bdcaba] flex gap-8 mb-6 overflow-x-auto">
+              <button className="pb-4 border-b-2 border-[#006b2c] text-[#006b2c] font-bold text-sm whitespace-nowrap">
+                Descripción
+              </button>
+              {/*
+                Tabs comentados por solicitud del usuario — estaban tachados en el screenshot de referencia.
+                <button className="pb-4 border-b-2 border-transparent text-[#565e74] hover:text-[#006b2c] font-medium text-sm whitespace-nowrap">Especificaciones</button>
+                <button className="pb-4 border-b-2 border-transparent text-[#565e74] hover:text-[#006b2c] font-medium text-sm whitespace-nowrap">Opiniones</button>
+              */}
+            </div>
+            {/*
+              Descripción movida desde el panel derecho del hero a este tab.
+              dangerouslySetInnerHTML: contenido HTML del editor TipTap — generado por admin autenticado, sin riesgo XSS externo.
+              "Detalles Técnicos" box del template comentado por solicitud del usuario (también tachado en el screenshot).
+            */}
+            <div
+              className="text-[#565e74] leading-relaxed prose prose-sm max-w-none"
+              dangerouslySetInnerHTML={{ __html: product.description }}
+            />
+          </section>
+        )}
+
+        {/* Productos relacionados */}
+        {relatedProducts.length > 0 && (
+          <section className="mb-16">
+            <div className="flex justify-between items-end mb-8 flex-wrap gap-4">
+              <div>
+                {/* Antes: text-xl font-bold text-slate-800 — actualizado a tokens del sistema */}
+                <h2 className="text-2xl font-bold text-[#0b1c30]">También te puede interesar</h2>
+                <p className="text-[#565e74] text-sm mt-1">Complementa tu compra con estos productos</p>
+              </div>
+              <Link to="/catalogo" className="text-[#006b2c] font-bold hover:underline flex items-center gap-1 text-sm">
+                Ver todo <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {relatedProducts.map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </div>
+          </section>
+        )}
+
+      </main>
+
+      {/* Modal de video de YouTube — sin cambios de lógica */}
       {videoOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"

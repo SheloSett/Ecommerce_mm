@@ -63,7 +63,6 @@ export default function Home() {
       .catch(console.error);
   }, [recentIds, customer?.type]);
 
-
   // Auto-avance del carrusel
   const next = useCallback(() => {
     setCurrentSlide((prev) => (prev + 1) % Math.max(slides.length, 1));
@@ -90,11 +89,9 @@ export default function Home() {
     }
   };
 
-  // Antes: objeto de slug exacto → emoji (solo 6 entradas, nuevas categorías mostraban 📦)
-  // const categoryIcons = { cables: "🔌", auriculares: "🎧", ... };
-  //
-  // Ahora: función que busca palabras clave dentro del slug para auto-asignar el emoji.
-  // Funciona para cualquier categoría nueva sin tocar código.
+  // Antes: getCategoryEmoji — mapeaba slug a emoji para cada categoría.
+  // Comentado porque fue reemplazado por getCategoryIcon (Material Symbols) según el template.
+  /*
   const getCategoryEmoji = (slug) => {
     const s = slug.toLowerCase();
     if (s.includes("auricular") || s.includes("audifonos") || s.includes("headphone")) return "🎧";
@@ -114,23 +111,51 @@ export default function Home() {
     if (s.includes("red") || s.includes("router") || s.includes("wifi") || s.includes("ethernet")) return "📶";
     if (s.includes("monitor") || s.includes("pantalla") || s.includes("display"))      return "🖥️";
     if (s.includes("gaming") || s.includes("juego") || s.includes("control") || s.includes("joystick") || s.includes("consola")) return "🎮";
-    // Nota: s ya está en minúsculas via .toLowerCase() — "Joystick" con mayúscula nunca haría match
     if (s.includes("iluminacion") || s.includes("lampara") || s.includes("luz"))       return "💡";
     if (s.includes("funda") || s.includes("protector") || s.includes("case"))          return "🛡️";
     if (s.includes("soporte") || s.includes("stand") || s.includes("base"))            return "🗜️";
     if (s.includes("limpieza") || s.includes("mantenimiento"))                          return "🧹";
     if (s.includes("audio") || s.includes("microfono") || s.includes("mic"))           return "🎙️";
-    return "📦"; // fallback genérico
+    return "📦";
+  };
+  */
+
+  // Mapeo slug → Material Symbol name para las cards de categoría (según template)
+  const getCategoryIcon = (slug) => {
+    const s = slug.toLowerCase();
+    if (s.includes("auricular") || s.includes("audifonos") || s.includes("headphone")) return "headphones";
+    if (s.includes("cable"))                                                             return "power";
+    if (s.includes("cargador") || s.includes("carga"))                                  return "charging_station";
+    if (s.includes("almacenamiento") || s.includes("disco") || s.includes("pendrive") || s.includes("memoria")) return "save";
+    if (s.includes("periferico") || s.includes("mouse") || s.includes("teclado"))       return "mouse";
+    if (s.includes("accesorio"))                                                         return "devices";
+    if (s.includes("parlante") || s.includes("altavoz") || s.includes("bocina") || s.includes("speaker")) return "speaker";
+    if (s.includes("adaptador") || s.includes("hub") || s.includes("conversor"))        return "cable";
+    if (s.includes("bateria") || s.includes("pila") || s.includes("powerbank"))         return "battery_charging_full";
+    if (s.includes("notebook") || s.includes("laptop") || s.includes("computadora") || s.includes("pc")) return "laptop";
+    if (s.includes("celular") || s.includes("smartphone") || s.includes("movil"))       return "smartphone";
+    if (s.includes("tablet") || s.includes("ipad"))                                     return "tablet";
+    if (s.includes("camara") || s.includes("foto") || s.includes("video"))              return "photo_camera";
+    if (s.includes("impresora") || s.includes("scanner"))                               return "print";
+    if (s.includes("red") || s.includes("router") || s.includes("wifi") || s.includes("ethernet")) return "wifi";
+    if (s.includes("monitor") || s.includes("pantalla") || s.includes("display"))      return "monitor";
+    if (s.includes("gaming") || s.includes("juego") || s.includes("control") || s.includes("joystick") || s.includes("consola")) return "sports_esports";
+    if (s.includes("iluminacion") || s.includes("lampara") || s.includes("luz"))       return "lightbulb";
+    if (s.includes("funda") || s.includes("protector") || s.includes("case"))          return "phone_iphone";
+    if (s.includes("soporte") || s.includes("stand") || s.includes("base"))            return "precision_manufacturing";
+    if (s.includes("limpieza") || s.includes("mantenimiento"))                          return "cleaning_services";
+    if (s.includes("audio") || s.includes("microfono") || s.includes("mic"))           return "mic";
+    return "devices_other";
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
       <SiteMeta />
       <Navbar />
 
       {/* ── Carrusel hero ─────────────────────────────────────────────────── */}
       {slides.length > 0 ? (
-        <section className="relative w-full overflow-hidden bg-slate-900" style={{ height: "420px" }}>
+        <section className="relative w-full overflow-hidden bg-[#0b1c30]" style={{ height: "420px" }}>
           {/* Slides */}
           {slides.map((slide, idx) => (
             <div
@@ -153,11 +178,11 @@ export default function Home() {
                 alt={slide.title || ""}
                 className="absolute inset-0 w-full h-full object-contain z-10"
               />
-              {/* Gradiente para legibilidad del texto — z-20 para estar sobre la imagen */}
+              {/* Gradiente para legibilidad del texto */}
               {(slide.title || slide.subtitle) && (
                 <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
               )}
-              {/* Texto superpuesto — z-30 para estar sobre el gradiente */}
+              {/* Texto superpuesto */}
               {(slide.title || slide.subtitle) && (
                 <div className="absolute bottom-0 left-0 right-0 p-8 text-white z-30">
                   <div className="max-w-4xl mx-auto">
@@ -177,24 +202,32 @@ export default function Home() {
             </div>
           ))}
 
-          {/* Flechas de navegación */}
+          {/* Flechas de navegación — antes: SVG chevron; ahora: Material Symbol */}
           {slides.length > 1 && (
             <>
               <button
                 onClick={(e) => { e.stopPropagation(); goTo((currentSlide - 1 + slides.length) % slides.length); }}
-                className="absolute left-4 top-1/2 -translate-y-1/2 z-20 bg-black/40 hover:bg-black/60 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
+                className="absolute left-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
+                {/*
+                  Antes: SVG chevron inline
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                */}
+                <span className="material-symbols-outlined">chevron_left</span>
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); goTo((currentSlide + 1) % slides.length); }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 z-20 bg-black/40 hover:bg-black/60 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
+                className="absolute right-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
+                {/*
+                  Antes: SVG chevron inline
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                */}
+                <span className="material-symbols-outlined">chevron_right</span>
               </button>
             </>
           )}
@@ -208,7 +241,8 @@ export default function Home() {
                   onClick={(e) => { e.stopPropagation(); goTo(idx); }}
                   className={`rounded-full transition-all ${
                     idx === currentSlide
-                      ? "bg-white w-6 h-2"
+                      /* Antes: bg-white w-6 h-2 — ahora verde del sistema de diseño */
+                      ? "bg-[#62df7d] w-6 h-2"
                       : "bg-white/50 hover:bg-white/75 w-2 h-2"
                   }`}
                 />
@@ -218,24 +252,27 @@ export default function Home() {
         </section>
       ) : (
         /* Hero estático si no hay slides configurados */
-        <section className="bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 text-white py-20 px-4">
+        /* Antes: from-slate-900 via-blue-950 — actualizado a tokens del sistema de diseño */
+        <section className="bg-gradient-to-br from-[#0b1c30] via-[#0b1c30] to-[#006b2c]/40 text-white py-20 px-4">
           <div className="max-w-4xl mx-auto text-center">
             <h1 className="text-4xl md:text-6xl font-extrabold mb-6 leading-tight">
               Tecnología que
-              <span className="text-blue-400"> conecta </span>
+              {/* Antes: text-blue-400 — actualizado a verde */}
+              <span className="text-[#62df7d]"> conecta </span>
               tu mundo
             </h1>
-            <p className="text-slate-300 text-lg md:text-xl mb-8 max-w-2xl mx-auto">
+            <p className="text-white/70 text-lg md:text-xl mb-8 max-w-2xl mx-auto">
               Cables, auriculares, cargadores y accesorios de alta calidad.
               Envíos a todo Argentina.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link to="/catalogo" className="btn-primary text-lg px-8 py-3">
-                Ver catálogo completo →
+              {/* Antes: btn-primary genérico — actualizado a tokens del sistema */}
+              <Link to="/catalogo" className="bg-[#00873a] hover:brightness-110 text-white font-bold px-8 py-3 rounded-xl transition-all text-lg">
+                Ver catálogo completo
               </Link>
               <Link
                 to="/catalogo?featured=true"
-                className="bg-white/10 hover:bg-white/20 text-white border border-white/30 font-semibold px-8 py-3 rounded-lg transition-colors"
+                className="bg-white/10 hover:bg-white/20 text-white border border-white/30 font-semibold px-8 py-3 rounded-xl transition-colors"
               >
                 Productos destacados
               </Link>
@@ -244,25 +281,30 @@ export default function Home() {
         </section>
       )}
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 w-full">
+      <main className="flex-1 max-w-[1280px] mx-auto px-6 py-12 w-full">
+
         {/* Categorías */}
         {categories.length > 0 && (
           <section className="mb-14">
-            <h2 className="text-2xl font-bold text-slate-900 mb-6">Explorar por categoría</h2>
+            {/* Antes: text-slate-900 — actualizado a text-[#0b1c30] */}
+            <h2 className="text-2xl font-bold text-[#0b1c30] mb-6">Explorar por categoría</h2>
+            {/* Antes: card p-4 text-center (card blanca) + emoji + text-blue-600 hover */}
+            {/* Ahora: card oscura bg-[#0b1c30] + Material Symbol icon + hover verde según template */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
               {categories.map((cat) => (
                 <Link
                   key={cat.id}
                   to={`/catalogo?category=${cat.slug}`}
-                  className="card p-4 text-center hover:shadow-md hover:border-blue-200 transition-all group"
+                  className="bg-[#0b1c30]/90 text-white p-4 rounded-xl flex flex-col items-center justify-center text-center group cursor-pointer hover:bg-[#00873a] transition-all duration-300"
                 >
-                  <div className="text-3xl mb-2">
-                    {getCategoryEmoji(cat.slug)}
-                  </div>
-                  <p className="text-sm font-semibold text-slate-700 group-hover:text-blue-600 transition-colors">
-                    {cat.name}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <span
+                    className="material-symbols-outlined text-[#62df7d] group-hover:text-white mb-2 transition-colors"
+                    style={{ fontSize: 32 }}
+                  >
+                    {getCategoryIcon(cat.slug)}
+                  </span>
+                  <p className="text-sm font-semibold leading-tight">{cat.name}</p>
+                  <p className="text-xs opacity-60 mt-1">
                     {cat.totalProducts ?? cat._count?.products ?? 0} productos
                   </p>
                 </Link>
@@ -271,38 +313,40 @@ export default function Home() {
           </section>
         )}
 
-        {/* Botón "Ver el catálogo" — entre categorías y productos destacados, ancho completo */}
+        {/* Botón "Ver el catálogo" */}
+        {/* Antes: gradiente secondary con emoji 🛒 + SVG arrow — actualizado a bg-[#00873a] + Material Symbols */}
         <div className="mb-14 -mt-6">
           <Link
             to="/catalogo"
-            className="group w-full flex items-center justify-center gap-3 bg-gradient-to-r from-secondary-800 via-secondary-600 to-secondary-400 hover:from-secondary-800 hover:via-secondary-700 hover:to-secondary-500 text-white font-bold px-8 py-4 rounded-2xl shadow-lg hover:shadow-secondary-600/30 transition-all duration-200 hover:-translate-y-0.5 text-base"
+            className="group w-full flex items-center justify-center gap-3 bg-[#00873a] hover:brightness-110 text-white font-bold px-8 py-4 rounded-xl shadow-lg transition-all duration-200 hover:-translate-y-0.5 text-base"
           >
-            <span>🛒</span>
+            {/*
+              Antes: emoji 🛒 + SVG chevron
+              <span>🛒</span>
+              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200" ...>...</svg>
+            */}
+            <span className="material-symbols-outlined">shopping_cart</span>
             Ver el catálogo completo
-            <svg
-              className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200"
-              fill="none" stroke="currentColor" viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
+            <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform duration-200">chevron_right</span>
           </Link>
         </div>
 
         {/* Productos destacados */}
         <section>
-          {/* Quitado "Ver todos →" — reemplazado por el botón llamativo de arriba */}
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-slate-900">Productos destacados</h2>
+            {/* Antes: text-slate-900 — actualizado a text-[#0b1c30] */}
+            <h2 className="text-2xl font-bold text-[#0b1c30]">Productos destacados</h2>
           </div>
 
           {loading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {[...Array(4)].map((_, i) => (
-                <div key={i} className="card animate-pulse">
-                  <div className="aspect-square bg-slate-200" />
+                <div key={i} className="bg-white rounded-xl border border-[#bdcaba]/30 animate-pulse">
+                  {/* Antes: bg-slate-200 — actualizado a bg-[#dce9ff] */}
+                  <div className="aspect-square bg-[#dce9ff]" />
                   <div className="p-4 space-y-2">
-                    <div className="h-4 bg-slate-200 rounded w-3/4" />
-                    <div className="h-4 bg-slate-200 rounded w-1/2" />
+                    <div className="h-4 bg-[#dce9ff] rounded w-3/4" />
+                    <div className="h-4 bg-[#dce9ff] rounded w-1/2" />
                   </div>
                 </div>
               ))}
@@ -313,15 +357,16 @@ export default function Home() {
               {featuredOffset > 0 && (
                 <button
                   onClick={() => setFeaturedOffset((o) => Math.max(0, o - CAROUSEL_PAGE_SIZE))}
-                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
                 >
-                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
+                  {/*
+                    Antes: SVG chevron
+                    <svg className="w-5 h-5 text-slate-600" ...>...</svg>
+                  */}
+                  <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_left</span>
                 </button>
               )}
 
-              {/* Cards visibles */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                 {featuredProducts
                   .slice(featuredOffset, featuredOffset + CAROUSEL_PAGE_SIZE)
@@ -334,11 +379,13 @@ export default function Home() {
               {featuredOffset + CAROUSEL_PAGE_SIZE < featuredProducts.length && (
                 <button
                   onClick={() => setFeaturedOffset((o) => Math.min(featuredProducts.length - CAROUSEL_PAGE_SIZE, o + CAROUSEL_PAGE_SIZE))}
-                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
                 >
-                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+                  {/*
+                    Antes: SVG chevron
+                    <svg className="w-5 h-5 text-slate-600" ...>...</svg>
+                  */}
+                  <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_right</span>
                 </button>
               )}
 
@@ -351,8 +398,9 @@ export default function Home() {
                       onClick={() => setFeaturedOffset(i * CAROUSEL_PAGE_SIZE)}
                       className={`rounded-full transition-all ${
                         Math.floor(featuredOffset / CAROUSEL_PAGE_SIZE) === i
-                          ? "bg-blue-600 w-5 h-2"
-                          : "bg-slate-300 hover:bg-slate-400 w-2 h-2"
+                          /* Antes: bg-blue-600 — actualizado a bg-[#0b1c30] */
+                          ? "bg-[#0b1c30] w-5 h-2"
+                          : "bg-[#bdcaba] hover:bg-[#565e74] w-2 h-2"
                       }`}
                     />
                   ))}
@@ -360,10 +408,13 @@ export default function Home() {
               )}
             </div>
           ) : (
-            <div className="text-center py-16 text-slate-400">
-              <p className="text-4xl mb-4">📦</p>
+            <div className="text-center py-16 text-[#565e74]">
+              {/* Antes: emoji 📦 — reemplazado por Material Symbol */}
+              {/* <p className="text-4xl mb-4">📦</p> */}
+              <span className="material-symbols-outlined text-[56px] text-[#bdcaba] mb-4 block">inventory_2</span>
               <p>Próximamente habrá productos disponibles.</p>
-              <Link to="/catalogo" className="text-blue-600 hover:underline mt-2 block">
+              {/* Antes: text-blue-600 — actualizado a verde */}
+              <Link to="/catalogo" className="text-[#006b2c] hover:underline mt-2 block">
                 Ver catálogo
               </Link>
             </div>
@@ -373,8 +424,14 @@ export default function Home() {
         {/* Ofertas — solo se renderiza si hay productos con onSale=true */}
         {saleProducts.length > 0 && (
           <section className="mt-14">
-            <div className="mb-6">
-              <h2 className="text-2xl font-bold text-slate-900">🔥 Ofertas</h2>
+            <div className="mb-6 flex items-center gap-2">
+              {/* Antes: emoji 🔥 — reemplazado por Material Symbol */}
+              {/* <h2 className="text-2xl font-bold text-slate-900">🔥 Ofertas</h2> */}
+              <span
+                className="material-symbols-outlined text-orange-500"
+                style={{ fontVariationSettings: "'FILL' 1", fontSize: 28 }}
+              >local_fire_department</span>
+              <h2 className="text-2xl font-bold text-[#0b1c30]">Ofertas</h2>
             </div>
 
             <div className="relative">
@@ -382,15 +439,12 @@ export default function Home() {
               {saleOffset > 0 && (
                 <button
                   onClick={() => setSaleOffset((o) => Math.max(0, o - CAROUSEL_PAGE_SIZE))}
-                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                  className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
                 >
-                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
+                  <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_left</span>
                 </button>
               )}
 
-              {/* Cards visibles */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
                 {saleProducts
                   .slice(saleOffset, saleOffset + CAROUSEL_PAGE_SIZE)
@@ -403,11 +457,9 @@ export default function Home() {
               {saleOffset + CAROUSEL_PAGE_SIZE < saleProducts.length && (
                 <button
                   onClick={() => setSaleOffset((o) => Math.min(saleProducts.length - CAROUSEL_PAGE_SIZE, o + CAROUSEL_PAGE_SIZE))}
-                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-slate-200 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"
+                  className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
                 >
-                  <svg className="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
+                  <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_right</span>
                 </button>
               )}
 
@@ -420,8 +472,9 @@ export default function Home() {
                       onClick={() => setSaleOffset(i * CAROUSEL_PAGE_SIZE)}
                       className={`rounded-full transition-all ${
                         Math.floor(saleOffset / CAROUSEL_PAGE_SIZE) === i
-                          ? "bg-orange-500 w-5 h-2"
-                          : "bg-slate-300 hover:bg-slate-400 w-2 h-2"
+                          /* Antes: bg-orange-500 — actualizado a bg-[#0b1c30] */
+                          ? "bg-[#0b1c30] w-5 h-2"
+                          : "bg-[#bdcaba] hover:bg-[#565e74] w-2 h-2"
                       }`}
                     />
                   ))}
@@ -431,10 +484,13 @@ export default function Home() {
           </section>
         )}
 
-        {/* Visitados recientemente — movido aquí para aparecer antes de las redes */}
+        {/* Visitados recientemente */}
+        {/* Antes: horizontal scroll con min-w-[280px] (cards enormes según template) */}
+        {/* Ahora: grid igual que los demás carruseles — tamaño normal usando ProductCard */}
         {recentProducts.length > 0 && (
           <section className="mt-14">
-            <h2 className="text-2xl font-bold text-slate-900 mb-6">Visto recientemente</h2>
+            {/* Antes: text-slate-900 — actualizado a text-[#0b1c30] */}
+            <h2 className="text-2xl font-bold text-[#0b1c30] mb-6">Visto recientemente</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {recentProducts.map((p) => (
                 <ProductCard key={p.id} product={p} />
@@ -443,7 +499,7 @@ export default function Home() {
           </section>
         )}
 
-        {/* Banner Redes Sociales — 3 cards lado a lado, cada una con color de la red */}
+        {/* Banner Redes Sociales — SIN CAMBIOS por solicitud del usuario */}
         <section className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4">
 
           {/* Instagram */}
@@ -503,22 +559,32 @@ export default function Home() {
 
         </section>
 
-        {/* Visitados recientemente — movido arriba del banner de redes, ver sección anterior */}
-
         {/* Banner MercadoPago */}
-        <section className="mt-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-8 text-white text-center">
+        {/* Antes: from-blue-600 to-blue-700 con emojis — actualizado a bg-[#316bf3] con Material Symbols */}
+        {/*
+          <section className="mt-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-8 text-white text-center">
+            <h3 className="text-2xl font-bold mb-2">Pagá con MercadoPago</h3>
+            <p className="text-blue-100 mb-4">...</p>
+            <div className="flex justify-center gap-4 text-3xl">
+              <span>💳</span><span>🏦</span><span>💵</span>
+            </div>
+          </section>
+        */}
+        <section className="mt-6 bg-[#316bf3] rounded-xl p-10 text-center text-white">
           <h3 className="text-2xl font-bold mb-2">Pagá con MercadoPago</h3>
-          <p className="text-blue-100 mb-4">
+          <p className="text-white/80 mb-6">
             Tarjeta de crédito, débito, efectivo y más. Compra segura garantizada.
           </p>
-          <div className="flex justify-center gap-4 text-3xl">
-            <span>💳</span>
-            <span>🏦</span>
-            <span>💵</span>
+          <div className="flex justify-center items-center gap-6">
+            <span className="material-symbols-outlined" style={{ fontSize: 40 }}>credit_card</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 40 }}>account_balance</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 40 }}>payments</span>
           </div>
         </section>
+
       </main>
 
+      {/* Footer: usamos nuestro componente Footer — NO el del template */}
       <Footer />
     </div>
   );

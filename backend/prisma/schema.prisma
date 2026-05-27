@@ -481,13 +481,17 @@ model SiteConfig {
 // Atributo de un producto: nombre libre definido por el admin (ej: "Color", "Metros", "Voltaje")
 // Cada producto define sus propios atributos independientemente.
 model ProductAttribute {
-  id        Int                    @id @default(autoincrement())
-  productId Int
-  product   Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name      String                 // Nombre libre: "Color", "Tamaño", "Material"
-  position  Int                    @default(0)
-  values    ProductAttributeValue[]
-  createdAt DateTime               @default(now())
+  id         Int                    @id @default(autoincrement())
+  productId  Int
+  product    Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name       String                 // Nombre libre: "Color", "Tamaño", "Material"
+  position   Int                    @default(0)
+  // Visibilidad del atributo: define qué tipo de cliente puede VER y ELEGIR las combinaciones derivadas.
+  // Toda variante del producto hereda esta visibility (se propaga al guardar/crear el atributo).
+  // Si un producto tiene varios atributos, predomina el del primer atributo (en posición).
+  visibility CustomerVisibility     @default(AMBOS)
+  values     ProductAttributeValue[]
+  createdAt  DateTime               @default(now())
 
   @@map("product_attributes")
 }
@@ -508,20 +512,32 @@ model ProductAttributeValue {
 // Combinación específica de atributos para un producto (una variante)
 // combination: JSON con los pares nombre-valor, ej: [{ "name": "Color", "value": "Rojo" }, { "name": "Metros", "value": "2m" }]
 model ProductVariant {
-  id             Int      @id @default(autoincrement())
-  productId      Int
-  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  combination    Json     // [{ name, value }] — snapshot de los atributos al generar
-  sku            String?
-  stock          Int      @default(0)
-  stockUnlimited Boolean  @default(false)
-  price          Float?   // null = usar precio base del producto
-  cost           Float?   // costo de la variante (sobrescribe el costo del producto padre)
-  image          String?     // LEGADO — antes era una sola foto. Se mantiene por compatibilidad y migración de datos viejos.
-  images         String[]    // URLs de Cloudinary (subset de las fotos del producto) asociadas a esta variante
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 Int                @id @default(autoincrement())
+  productId          Int
+  product            Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  combination        Json               // [{ name, value }] — snapshot de los atributos al generar
+  sku                String?
+  stock              Int                @default(0)
+  stockUnlimited     Boolean            @default(false)
+  // Precios por variante. Si null → fallback al precio del producto padre.
+  // visibility controla qué tipo de cliente la ve y por lo tanto qué precio aplica:
+  //   MINORISTA → usa price / salePrice
+  //   MAYORISTA → usa wholesalePrice / wholesaleSalePrice
+  //   AMBOS     → cada cliente ve el suyo
+  price              Float?
+  salePrice          Float?
+  wholesalePrice     Float?
+  wholesaleSalePrice Float?
+  cost               Float?             // costo de la variante (sobrescribe el costo del producto padre)
+  // Visibilidad de la variante. Por defecto AMBOS en variantes nuevas, pero la migración inicial
+  // setea las variantes existentes a MINORISTA para preservar el comportamiento previo (donde
+  // mayoristas no veían variantes por un hard-code en el frontend).
+  visibility         CustomerVisibility @default(AMBOS)
+  image              String?            // LEGADO — antes era una sola foto. Se mantiene por compatibilidad.
+  images             String[]           // URLs de Cloudinary (subset de las fotos del producto) asociadas a esta variante
+  active             Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   @@map("product_variants")
 }

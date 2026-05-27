@@ -243,6 +243,13 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 113- ahora si un producto que ya estaba agregado al carrito se quedo sin stock, se remarca en rojo explicandole eso al cliente, y hasta que no lo elimine del carrito no le permite avanzar a la compra. ✅
 
 114- BUG SOLUCIONADO: carrito Minorista muestra variantes, en caso de ser distintas muestra como si fuera 2 items. Lo mismo a la hora de imprimir (Diferente del mayorista, como las variantes se definen en cotizaciones, a la hora de imprimir, el item es 1 sola y muestra todas las variantes y sus cantidades)✅
+
+115- variantes para mayoristas ✅
+
+116- segurencia de variantes y atributos existentes ✅
+
+117- checkout modo oscuro se ve mal ✅
+
 ##
 
 
