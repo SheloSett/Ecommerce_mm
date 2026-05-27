@@ -7,29 +7,30 @@ import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 
-// ─── Sección colapsable del sidebar (estilo BH Photo) ────────────────────────
+// ─── Sección colapsable del sidebar ──────────────────────────────────────────
 function FilterSection({ title, defaultOpen = true, children, activeCount = 0 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="border-b border-slate-200 last:border-b-0">
+    <div className="border-b border-[#bdcaba]/40 last:border-b-0">
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between py-3 px-0 text-left group"
       >
-        <span className="font-semibold text-sm text-slate-800 group-hover:text-blue-600 transition-colors flex items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-[#0b1c30] group-hover:text-[#006b2c] transition-colors flex items-center gap-2">
           {title}
           {activeCount > 0 && (
-            <span className="bg-secondary-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+            <span className="bg-[#00873a] text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-bold">
               {activeCount}
             </span>
           )}
         </span>
-        <svg
-          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        <span
+          className={`material-symbols-outlined text-[18px] text-[#565e74] transition-transform duration-200 ${
+            open ? "rotate-180" : ""
+          }`}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
+          expand_more
+        </span>
       </button>
       {open && <div className="pb-3">{children}</div>}
     </div>
@@ -41,15 +42,15 @@ function CategoryItem({ label, count, checked, onClick, indent = false }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2.5 py-1 px-0 text-left group transition-colors ${
+      className={`w-full flex items-center gap-2.5 py-1.5 px-0 text-left group transition-colors ${
         indent ? "pl-4" : ""
       }`}
     >
       <span
         className={`flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
           checked
-            ? "bg-secondary-600 border-secondary-600"
-            : "border-slate-300 group-hover:border-secondary-400"
+            ? "bg-[#006b2c] border-[#006b2c]"
+            : "border-[#bdcaba] group-hover:border-[#006b2c]/60"
         }`}
       >
         {checked && (
@@ -58,11 +59,21 @@ function CategoryItem({ label, count, checked, onClick, indent = false }) {
           </svg>
         )}
       </span>
-      <span className={`text-sm flex-1 leading-tight ${checked ? "text-secondary-700 font-semibold" : "text-slate-600 group-hover:text-slate-800"}`}>
+      <span
+        className={`text-sm flex-1 leading-tight ${
+          checked ? "text-[#006b2c] font-semibold" : "text-[#565e74] group-hover:text-[#0b1c30]"
+        }`}
+      >
         {label}
       </span>
       {count !== undefined && (
-        <span className={`text-xs font-medium flex-shrink-0 ${checked ? "text-blue-500" : "text-slate-400"}`}>
+        <span
+          className={`text-xs font-medium flex-shrink-0 px-2 py-0.5 rounded-full ${
+            checked
+              ? "bg-[#006b2c]/10 text-[#006b2c]"
+              : "bg-[#dce9ff] text-[#565e74]"
+          }`}
+        >
           {count}
         </span>
       )}
@@ -75,13 +86,13 @@ function AttrItem({ value, checked, onToggle }) {
   return (
     <button
       onClick={onToggle}
-      className="w-full flex items-center gap-2.5 py-1 px-0 text-left group transition-colors"
+      className="w-full flex items-center gap-2.5 py-1.5 px-0 text-left group transition-colors"
     >
       <span
         className={`flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
           checked
-            ? "bg-secondary-600 border-secondary-600"
-            : "border-slate-300 group-hover:border-secondary-400"
+            ? "bg-[#006b2c] border-[#006b2c]"
+            : "border-[#bdcaba] group-hover:border-[#006b2c]/60"
         }`}
       >
         {checked && (
@@ -90,7 +101,11 @@ function AttrItem({ value, checked, onToggle }) {
           </svg>
         )}
       </span>
-      <span className={`text-sm leading-tight ${checked ? "text-secondary-700 font-semibold" : "text-slate-600 group-hover:text-slate-800"}`}>
+      <span
+        className={`text-sm leading-tight ${
+          checked ? "text-[#006b2c] font-semibold" : "text-[#565e74] group-hover:text-[#0b1c30]"
+        }`}
+      >
         {value}
       </span>
     </button>
@@ -249,27 +264,25 @@ export default function Catalog() {
   const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || totalAttrFilters > 0;
 
   // ─── Sidebar content (shared between desktop and mobile) ───────────────────
-  // IMPORTANTE: se llama como función {renderSidebar()} en lugar de {renderSidebar()}
+  // IMPORTANTE: se llama como función {renderSidebar()} en lugar de <RenderSidebar />
   // para evitar que React trate cada render como un componente nuevo y resetee el estado
   // de las secciones colapsables (FilterSection) en cada actualización de filtros.
   const renderSidebar = () => (
     <div className="space-y-0">
       {/* Limpiar todos los filtros */}
       {hasAnyFilter && (
-        <div className="pb-3 mb-1 border-b border-slate-200">
+        <div className="pb-3 mb-1 border-b border-[#bdcaba]/40">
           <button
             onClick={clearAllFilters}
-            className="text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium flex items-center gap-1"
+            className="text-xs text-[#006b2c] hover:text-[#004d1c] hover:underline font-semibold flex items-center gap-1"
           >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <span className="material-symbols-outlined text-[14px]">close</span>
             Limpiar todos los filtros
           </button>
         </div>
       )}
 
-      {/* Filtros especiales */}
+      {/* Filtros especiales — Ofertas y Stock */}
       <FilterSection title="Ofertas y Stock" defaultOpen={currentOnSale || currentLowStock}>
         <div className="space-y-1">
           <AttrItem
@@ -297,7 +310,7 @@ export default function Catalog() {
 
       {/* Categorías */}
       <FilterSection title="Categoría" defaultOpen={true}>
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <CategoryItem
             label="Todos los productos"
             checked={!currentCategory && !currentOnSale && !currentLowStock}
@@ -316,7 +329,7 @@ export default function Catalog() {
                 onClick={() => toggleCategory(cat.slug)}
               />
               {cat.children && cat.children.length > 0 && isParentActive(cat) && (
-                <div className="mt-0.5 space-y-0.5 ml-2 pl-2 border-l-2 border-blue-100">
+                <div className="mt-0.5 space-y-0.5 ml-2 pl-2 border-l-2 border-[#dce9ff]">
                   {cat.children.map((sub) => (
                     <CategoryItem
                       key={sub.id}
@@ -338,14 +351,12 @@ export default function Catalog() {
       {facets.length > 0 && (
         <>
           {totalAttrFilters > 0 && (
-            <div className="py-2 border-b border-slate-200">
+            <div className="py-2 border-b border-[#bdcaba]/40">
               <button
                 onClick={clearAllAttrs}
                 className="text-xs text-red-500 hover:text-red-700 hover:underline flex items-center gap-1"
               >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <span className="material-symbols-outlined text-[14px]">close</span>
                 Limpiar filtros de características
               </button>
             </div>
@@ -359,7 +370,7 @@ export default function Catalog() {
                 defaultOpen={activeValues.length > 0}
                 activeCount={activeValues.length}
               >
-                <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
                   {facet.values.map((val) => (
                     <AttrItem
                       key={val}
@@ -387,19 +398,20 @@ export default function Catalog() {
       : "Catálogo | IGWT Store";
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
       <SiteMeta title={metaTitle} description="Explorá todo el catálogo de accesorios electrónicos en IGWT Store." />
       <Navbar />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="flex flex-col md:flex-row gap-8">
+      <main className="flex-1 max-w-[1280px] mx-auto px-6 py-8 w-full">
+        <div className="flex flex-col md:flex-row gap-6">
 
           {/* ─── Sidebar desktop ─────────────────────────────────────────── */}
-          <aside className="hidden md:block w-56 flex-shrink-0">
-            <div className="card p-4 sticky top-20">
-              <h2 className="font-bold text-slate-900 text-base mb-3 pb-2 border-b border-slate-200">
-                Filtros
-              </h2>
+          <aside className="hidden md:block w-64 flex-shrink-0">
+            <div className="bg-white rounded-xl border border-[#bdcaba]/30 p-5 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] sticky top-24">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[#bdcaba]/40">
+                <span className="material-symbols-outlined text-[#006b2c] text-[20px]">filter_list</span>
+                <h2 className="font-bold text-[#0b1c30] text-sm tracking-wide uppercase">Filtros</h2>
+              </div>
               {renderSidebar()}
             </div>
           </aside>
@@ -408,14 +420,12 @@ export default function Catalog() {
           <div className="md:hidden">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm text-sm font-semibold text-slate-700 hover:border-blue-400 transition-colors"
+              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#bdcaba]/50 rounded-xl shadow-sm text-sm font-semibold text-[#0b1c30] hover:border-[#006b2c] transition-colors"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h18M7 12h10M11 20h2" />
-              </svg>
+              <span className="material-symbols-outlined text-[18px]">filter_list</span>
               Filtros
-              {(hasAnyFilter) && (
-                <span className="bg-blue-600 text-white text-xs rounded-full px-1.5 py-0.5">
+              {hasAnyFilter && (
+                <span className="bg-[#00873a] text-white text-xs rounded-full px-1.5 py-0.5 font-bold">
                   {selectedCategorySlugs.length + (currentOnSale ? 1 : 0) + (currentLowStock ? 1 : 0) + totalAttrFilters}
                 </span>
               )}
@@ -425,14 +435,21 @@ export default function Catalog() {
           {/* ─── Mobile drawer ────────────────────────────────────────────── */}
           {sidebarOpen && (
             <div className="fixed inset-0 z-50 md:hidden">
-              <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
-              <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-xl overflow-y-auto">
-                <div className="flex items-center justify-between p-4 border-b border-slate-200">
-                  <h2 className="font-bold text-slate-900">Filtros</h2>
-                  <button onClick={() => setSidebarOpen(false)} className="text-slate-400 hover:text-slate-700">
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+              <div
+                className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                onClick={() => setSidebarOpen(false)}
+              />
+              <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-2xl overflow-y-auto">
+                <div className="flex items-center justify-between p-4 border-b border-[#bdcaba]/30 bg-[#0F172A]">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#7ffc97] text-[20px]">filter_list</span>
+                    <h2 className="font-bold text-white">Filtros</h2>
+                  </div>
+                  <button
+                    onClick={() => setSidebarOpen(false)}
+                    className="text-white/60 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+                  >
+                    <span className="material-symbols-outlined">close</span>
                   </button>
                 </div>
                 <div className="p-4">
@@ -442,34 +459,104 @@ export default function Catalog() {
             </div>
           )}
 
-          {/* ─── Grilla de productos ──────────────────────────────────────── */}
+          {/* ─── Área de productos ────────────────────────────────────────── */}
           <div className="flex-1 min-w-0">
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900">
-                  {currentSearch
-                    ? `Resultados para "${currentSearch}"`
-                    : currentOnSale
-                    ? "🏷️ Productos en oferta"
-                    : currentLowStock
-                    ? "⚡ Pocas unidades"
-                    : selectedCategorySlugs.length === 1
-                    ? findCategoryName(selectedCategorySlugs[0])
-                    : selectedCategorySlugs.length > 1
-                    ? `${selectedCategorySlugs.length} categorías seleccionadas`
-                    : "Catálogo completo"}
-                </h1>
-                {pagination && (
-                  <p className="text-sm text-slate-500 mt-0.5">
-                    {pagination.total} producto{pagination.total !== 1 ? "s" : ""}
-                    {totalAttrFilters > 0 && (
-                      <span className="ml-2 text-blue-600 font-medium">
-                        · {totalAttrFilters} filtro{totalAttrFilters !== 1 ? "s" : ""} de características
-                      </span>
-                    )}
-                  </p>
-                )}
+
+            {/* Encabezado con título, contador, chips y controles */}
+            <div className="flex flex-col gap-3 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h1 className="text-2xl font-bold text-[#0b1c30] tracking-tight">
+                    {currentSearch
+                      ? `Resultados para "${currentSearch}"`
+                      : currentOnSale
+                      ? "Productos en oferta"
+                      : currentLowStock
+                      ? "Pocas unidades"
+                      : selectedCategorySlugs.length === 1
+                      ? findCategoryName(selectedCategorySlugs[0])
+                      : selectedCategorySlugs.length > 1
+                      ? `${selectedCategorySlugs.length} categorías seleccionadas`
+                      : "Catálogo completo"}
+                  </h1>
+                  {pagination && (
+                    <p className="text-sm text-[#565e74] mt-0.5">
+                      {pagination.total} producto{pagination.total !== 1 ? "s" : ""}
+                      {totalAttrFilters > 0 && (
+                        <span className="ml-2 text-[#006b2c] font-medium">
+                          · {totalAttrFilters} filtro{totalAttrFilters !== 1 ? "s" : ""} de características
+                        </span>
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                {/* Ordenamiento + toggle de vista */}
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  {currentSearch && (
+                    <button
+                      onClick={() => setFilter("search", "")}
+                      className="text-sm text-red-500 hover:underline flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                      Limpiar búsqueda
+                    </button>
+                  )}
+                  <select
+                    value={currentSortOrder}
+                    onChange={(e) => setFilter("sortOrder", e.target.value)}
+                    className="text-sm border border-[#bdcaba]/50 rounded-lg px-3 py-1.5 bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#006b2c]/30"
+                  >
+                    <option value="newest">Más nuevo a más viejo</option>
+                    <option value="oldest">Más viejo a más nuevo</option>
+                    <option value="az">Nombre: A → Z</option>
+                    <option value="za">Nombre: Z → A</option>
+                  </select>
+                  <select
+                    value={currentSortPrice}
+                    onChange={(e) => setFilter("sortPrice", e.target.value)}
+                    className="text-sm border border-[#bdcaba]/50 rounded-lg px-3 py-1.5 bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#006b2c]/30"
+                  >
+                    <option value="">Precio: sin orden</option>
+                    <option value="asc">Precio: menor a mayor</option>
+                    <option value="desc">Precio: mayor a menor</option>
+                  </select>
+
+                  {/* Toggle grilla / lista */}
+                  <div className="flex items-center border border-[#bdcaba]/50 rounded-lg overflow-hidden bg-white">
+                    <button
+                      onClick={() => handleSetView("grid")}
+                      title="Vista grilla"
+                      className={`p-1.5 transition-colors ${
+                        viewMode === "grid"
+                          ? "bg-[#0b1c30] text-white"
+                          : "text-[#565e74] hover:text-[#0b1c30]"
+                      }`}
+                    >
+                      {/* Ícono grilla */}
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                        <rect x="1" y="1" width="6" height="6" rx="1"/>
+                        <rect x="9" y="1" width="6" height="6" rx="1"/>
+                        <rect x="1" y="9" width="6" height="6" rx="1"/>
+                        <rect x="9" y="9" width="6" height="6" rx="1"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => handleSetView("list")}
+                      title="Vista lista"
+                      className={`p-1.5 transition-colors ${
+                        viewMode === "list"
+                          ? "bg-[#0b1c30] text-white"
+                          : "text-[#565e74] hover:text-[#0b1c30]"
+                      }`}
+                    >
+                      {/* Ícono lista */}
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Chips de atributos activos */}
@@ -480,140 +567,117 @@ export default function Catalog() {
                       <button
                         key={`${attrName}:${val}`}
                         onClick={() => toggleAttrValue(attrName, val)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-secondary-50 text-secondary-700 border border-secondary-200 rounded-full text-xs font-medium hover:bg-secondary-100 transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#eff4ff] text-[#0b1c30] border border-[#bdcaba]/50 rounded-full text-xs font-medium hover:bg-[#dce9ff] transition-colors"
                       >
-                        <span className="text-blue-400 font-semibold">{attrName}:</span> {val}
-                        <svg className="w-3 h-3 text-blue-400 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <span className="text-[#006b2c] font-semibold">{attrName}:</span> {val}
+                        <span className="material-symbols-outlined text-[12px] text-[#565e74] ml-0.5">close</span>
                       </button>
                     ))
                   )}
                 </div>
               )}
-
-              {/* Ordenamiento + toggle de vista */}
-              <div className="flex items-center gap-2 flex-wrap shrink-0">
-                {currentSearch && (
-                  <button onClick={() => setFilter("search", "")} className="text-sm text-red-500 hover:underline">
-                    Limpiar búsqueda ✕
-                  </button>
-                )}
-                <select
-                  value={currentSortOrder}
-                  onChange={(e) => setFilter("sortOrder", e.target.value)}
-                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="newest">Más nuevo a más viejo</option>
-                  <option value="oldest">Más viejo a más nuevo</option>
-                  <option value="az">Nombre: A → Z</option>
-                  <option value="za">Nombre: Z → A</option>
-                </select>
-                <select
-                  value={currentSortPrice}
-                  onChange={(e) => setFilter("sortPrice", e.target.value)}
-                  className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Precio: sin orden</option>
-                  <option value="asc">Precio: menor a mayor</option>
-                  <option value="desc">Precio: mayor a menor</option>
-                </select>
-
-                {/* Botones de vista grilla / lista */}
-                <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-white">
-                  <button
-                    onClick={() => handleSetView("grid")}
-                    title="Vista grilla"
-                    className={`p-1.5 transition-colors ${viewMode === "grid" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-600"}`}
-                  >
-                    {/* Ícono grilla */}
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-                      <rect x="1" y="1" width="6" height="6" rx="1"/>
-                      <rect x="9" y="1" width="6" height="6" rx="1"/>
-                      <rect x="1" y="9" width="6" height="6" rx="1"/>
-                      <rect x="9" y="9" width="6" height="6" rx="1"/>
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => handleSetView("list")}
-                    title="Vista lista"
-                    className={`p-1.5 transition-colors ${viewMode === "list" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-600"}`}
-                  >
-                    {/* Ícono lista */}
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
             </div>
 
+            {/* ─── Contenido: loading / vacío / productos ─── */}
             {loading ? (
-              <div className={viewMode === "list" ? "space-y-3" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"}>
+              <div className={
+                viewMode === "list"
+                  ? "space-y-3"
+                  : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+              }>
                 {[...Array(viewMode === "list" ? 6 : 12)].map((_, i) => (
                   viewMode === "list" ? (
-                    <div key={i} className="card animate-pulse flex gap-5 p-4">
-                      <div className="w-40 h-40 bg-slate-200 rounded-2xl flex-shrink-0" />
+                    <div key={i} className="bg-white rounded-xl border border-[#bdcaba]/30 animate-pulse flex gap-5 p-4">
+                      <div className="w-40 h-40 bg-[#dce9ff] rounded-xl flex-shrink-0" />
                       <div className="flex-1 flex flex-col justify-between py-1">
                         <div className="space-y-2">
-                          <div className="h-3 bg-slate-200 rounded w-1/5" />
-                          <div className="h-5 bg-slate-200 rounded w-2/3" />
-                          <div className="h-3 bg-slate-200 rounded w-full" />
-                          <div className="h-3 bg-slate-200 rounded w-4/5" />
+                          <div className="h-3 bg-[#dce9ff] rounded w-1/5" />
+                          <div className="h-5 bg-[#dce9ff] rounded w-2/3" />
+                          <div className="h-3 bg-[#dce9ff] rounded w-full" />
+                          <div className="h-3 bg-[#dce9ff] rounded w-4/5" />
                         </div>
                         <div className="flex justify-between items-end">
-                          <div className="h-7 bg-slate-200 rounded w-1/4" />
-                          <div className="h-9 bg-slate-200 rounded w-24" />
+                          <div className="h-7 bg-[#dce9ff] rounded w-1/4" />
+                          <div className="h-9 bg-[#dce9ff] rounded w-24" />
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div key={i} className="card animate-pulse">
-                      <div className="aspect-square bg-slate-200" />
+                    <div key={i} className="bg-white rounded-xl border border-[#bdcaba]/30 animate-pulse overflow-hidden">
+                      <div className="aspect-square bg-[#dce9ff]" />
                       <div className="p-4 space-y-2">
-                        <div className="h-4 bg-slate-200 rounded w-3/4" />
-                        <div className="h-4 bg-slate-200 rounded w-1/2" />
+                        <div className="h-4 bg-[#dce9ff] rounded w-3/4" />
+                        <div className="h-4 bg-[#dce9ff] rounded w-1/2" />
                       </div>
                     </div>
                   )
                 ))}
               </div>
             ) : products.length === 0 ? (
-              <div className="text-center py-20 text-slate-400">
-                <p className="text-5xl mb-4">🔍</p>
-                <p className="text-lg font-medium">No se encontraron productos</p>
+              <div className="flex flex-col items-center justify-center py-24 text-[#565e74]">
+                <span className="material-symbols-outlined text-[80px] text-[#bdcaba] mb-4">search_off</span>
+                <p className="text-lg font-semibold text-[#0b1c30] mb-2">No se encontraron productos</p>
                 {totalAttrFilters > 0 && (
-                  <button onClick={clearAllAttrs} className="mt-3 text-blue-600 hover:underline text-sm">
+                  <button
+                    onClick={clearAllAttrs}
+                    className="mt-2 text-[#006b2c] hover:underline text-sm font-medium"
+                  >
                     Quitar filtros de características
                   </button>
                 )}
-                <button onClick={() => setSearchParams({})} className="mt-2 block mx-auto text-blue-600 hover:underline text-sm">
+                <button
+                  onClick={() => setSearchParams({})}
+                  className="mt-2 text-[#006b2c] hover:underline text-sm font-medium"
+                >
                   Ver todos los productos
                 </button>
               </div>
             ) : (
               <>
-                <div className={viewMode === "list" ? "space-y-3" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"}>
+                <div className={
+                  viewMode === "list"
+                    ? "space-y-3"
+                    : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+                }>
                   {sortProducts(products).map((p) => (
                     <ProductCard key={p.id} product={p} viewMode={viewMode} />
                   ))}
                 </div>
 
+                {/* Paginación */}
                 {pagination && pagination.totalPages > 1 && (
-                  <div className="flex justify-center gap-2 mt-10">
+                  <div className="flex items-center justify-center gap-2 mt-12">
+                    {/* Anterior */}
+                    <button
+                      onClick={() => setFilter("page", String(Math.max(1, currentPage - 1)))}
+                      disabled={currentPage === 1}
+                      className="w-10 h-10 flex items-center justify-center rounded-lg border border-[#bdcaba]/50 hover:bg-[#eff4ff] transition-colors text-[#565e74] disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span className="material-symbols-outlined">chevron_left</span>
+                    </button>
+
                     {[...Array(pagination.totalPages)].map((_, i) => (
                       <button
                         key={i}
                         onClick={() => setFilter("page", String(i + 1))}
-                        className={`w-10 h-10 rounded-lg font-semibold text-sm transition-colors ${
+                        className={`w-10 h-10 flex items-center justify-center rounded-lg text-sm font-semibold transition-colors ${
                           currentPage === i + 1
-                            ? "bg-secondary-600 text-white"
-                            : "bg-white border border-slate-200 text-slate-700 hover:border-secondary-400"
+                            ? "bg-[#0b1c30] text-white"
+                            : "border border-[#bdcaba]/50 bg-white text-[#565e74] hover:border-[#006b2c] hover:text-[#006b2c]"
                         }`}
                       >
                         {i + 1}
                       </button>
                     ))}
+
+                    {/* Siguiente */}
+                    <button
+                      onClick={() => setFilter("page", String(Math.min(pagination.totalPages, currentPage + 1)))}
+                      disabled={currentPage === pagination.totalPages}
+                      className="w-10 h-10 flex items-center justify-center rounded-lg border border-[#bdcaba]/50 hover:bg-[#eff4ff] transition-colors text-[#565e74] disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span className="material-symbols-outlined">chevron_right</span>
+                    </button>
                   </div>
                 )}
               </>

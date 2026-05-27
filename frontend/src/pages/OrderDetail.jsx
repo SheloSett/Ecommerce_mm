@@ -226,7 +226,7 @@ export default function OrderDetail() {
     return (
       <>
         <Navbar />
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="ds-page min-h-screen bg-slate-50 flex items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
         </div>
       </>
@@ -264,7 +264,7 @@ export default function OrderDetail() {
   return (
     <>
       <Navbar />
-      <div className="min-h-screen bg-slate-50 py-6 px-4">
+      <div className="ds-page min-h-screen bg-slate-50 py-6 px-4">
         <div className="max-w-2xl mx-auto space-y-4">
 
           {/* Encabezado + volver */}
@@ -462,22 +462,23 @@ export default function OrderDetail() {
 
           {/* Acciones */}
           <div className="flex flex-wrap gap-3">
-            {order.status === "APPROVED" && (
-              <button
-                onClick={handleRepeat}
-                disabled={repeating || cartLoading}
-                className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-60 transition-colors"
-              >
-                {repeating ? (
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                )}
-                Repetir pedido
-              </button>
-            )}
+            {/* "Repetir pedido" disponible en cualquier estado del pedido:
+                el cliente puede querer rearmar el carrito para volver a pagar uno pendiente
+                o para volver a comprar lo mismo que un pedido ya entregado. */}
+            <button
+              onClick={handleRepeat}
+              disabled={repeating || cartLoading}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-60 transition-colors"
+            >
+              {repeating ? (
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              )}
+              Repetir pedido
+            </button>
             <button
               onClick={() => exportPDF(order, customer)}
               className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 transition-colors"

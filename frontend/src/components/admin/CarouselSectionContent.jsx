@@ -21,9 +21,10 @@ const TEXT_OPTIONS = [
   { key: "slate",  label: "Gris",     cls: "bg-slate-400" },
 ];
 const SCROLL_OPTIONS = [
-  { key: "none", label: "Estático",            icon: "⏹" },
-  { key: "ltr",  label: "Izquierda → Derecha", icon: "→" },
-  { key: "rtl",  label: "Derecha → Izquierda", icon: "←" },
+  { key: "none",   label: "Estático",            icon: "⏹" },
+  { key: "ltr",    label: "Izquierda → Derecha", icon: "→" },
+  { key: "rtl",    label: "Derecha → Izquierda", icon: "←" },
+  { key: "bounce", label: "Rebote",              icon: "↔" },
 ];
 const VISIBILITY_OPTIONS = [
   { key: "AMBOS",     label: "Todos",      icon: "👥" },

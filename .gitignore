@@ -7,3 +7,4 @@ node_modules
 # Backups de base de datos (no versionar, pueden ser grandes)
 backups/
 
+design

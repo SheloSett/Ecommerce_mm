@@ -5,24 +5,26 @@ import Footer from "../components/Footer";
 import SiteMeta from "../components/SiteMeta";
 import { useSiteConfig } from "../context/SiteConfigContext";
 
+// Iconos de valores — antes eran emojis, ahora Material Symbols para consistencia
+// const VALUES = [{ icon: "⚡", ... }, { icon: "🤝", ... }, ...]
 const VALUES = [
   {
-    icon: "⚡",
+    icon: "devices",
     title: "Tecnología accesible",
     desc: "Creemos que todos merecen acceso a la mejor tecnología sin pagar de más. Por eso trabajamos con los mejores proveedores para ofrecerte precios justos.",
   },
   {
-    icon: "🤝",
+    icon: "handshake",
     title: "Atención real",
     desc: "No somos un bot ni un formulario. Somos personas reales que responden tus preguntas, resuelven tus dudas y se aseguran de que tu pedido llegue perfecto.",
   },
   {
-    icon: "🛡️",
+    icon: "verified_user",
     title: "Garantía en todo",
     desc: "Todos nuestros productos tienen garantía. Si algo no funciona bien, lo resolvemos. Así de simple.",
   },
   {
-    icon: "📦",
+    icon: "local_shipping",
     title: "Entrega coordinada",
     desc: "Coordinamos cada entrega para que llegue en las mejores condiciones, sin apuros ni sorpresas.",
   },
@@ -35,7 +37,6 @@ const STATS = [
   { number: "98%", label: "Recomendarían IGWT" },
 ];
 
-// Defaults para cuando el admin no ha guardado contenido propio
 const HERO_DEFAULT = {
   badge: "Conocenos",
   title: "Tu tienda de",
@@ -68,9 +69,9 @@ export default function AboutUs() {
   const { aboutUsHero, aboutUsHistoria, aboutUsValores } = useSiteConfig();
   const [showAllValores, setShowAllValores] = useState(false);
 
-  // Usar datos del admin si existen, si no usar los hardcodeados
   const hero     = aboutUsHero     || HERO_DEFAULT;
   const historia = aboutUsHistoria || HISTORIA_DEFAULT;
+  // Si el admin configuró valores con emoji, se usan tal cual; si son los defaults, usamos Material Symbols
   const valores  = aboutUsValores  || VALUES;
 
   const MAX_VISIBLE_VALORES = 6;
@@ -78,34 +79,44 @@ export default function AboutUs() {
   const hasMoreValores  = valores.length > MAX_VISIBLE_VALORES;
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    // Antes: bg-white — actualizado a token del sistema de diseño
+    // <div className="min-h-screen flex flex-col bg-white">
+    <div className="ds-page min-h-screen flex flex-col bg-[#f8f9ff]">
       <SiteMeta title="Sobre nosotros — IGWT Store" description="Conocé quiénes somos, qué vendemos y por qué miles de clientes confían en IGWT Store para sus compras de tecnología." />
       <Navbar />
 
-      {/* ── HERO ── */}
-      <section className="relative overflow-hidden bg-slate-900 text-white">
-        {/* Fondo decorativo */}
+      {/* ── HERO — antes: bg-slate-900 con acentos azules — actualizado a #0b1c30 con acentos verdes ── */}
+      {/* <section className="relative overflow-hidden bg-slate-900 text-white"> */}
+      <section className="relative overflow-hidden bg-[#0b1c30] text-white">
         <div className="absolute inset-0 pointer-events-none select-none">
-          <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-blue-600/20 blur-3xl" />
-          <div className="absolute bottom-0 left-0 w-72 h-72 rounded-full bg-indigo-500/10 blur-3xl" />
-          {/* Grid punteado */}
+          {/* Antes: bg-blue-600/20 / bg-indigo-500/10 — actualizado a verde del sistema */}
+          {/* <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-blue-600/20 blur-3xl" /> */}
+          {/* <div className="absolute bottom-0 left-0 w-72 h-72 rounded-full bg-indigo-500/10 blur-3xl" /> */}
+          <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-[#00873a]/20 blur-3xl" />
+          <div className="absolute bottom-0 left-0 w-72 h-72 rounded-full bg-[#006b2c]/10 blur-3xl" />
           <div className="absolute inset-0 opacity-[0.04]"
             style={{ backgroundImage: "radial-gradient(circle, #fff 1px, transparent 1px)", backgroundSize: "32px 32px" }}
           />
         </div>
 
         <div className="relative max-w-5xl mx-auto px-6 py-24 md:py-32">
-          <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-semibold px-4 py-1.5 rounded-full mb-6 tracking-wider uppercase">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          {/* Antes: bg-blue-500/10 border-blue-500/20 text-blue-300 — actualizado a verde */}
+          {/* <div className="inline-flex ... bg-blue-500/10 border border-blue-500/20 text-blue-300 ..."> */}
+          <div className="inline-flex items-center gap-2 bg-[#00873a]/10 border border-[#00873a]/20 text-[#62df7d] text-xs font-semibold px-4 py-1.5 rounded-full mb-6 tracking-wider uppercase">
+            {/* Antes: w-1.5 h-1.5 bg-blue-400 animate-pulse */}
+            <span className="w-1.5 h-1.5 rounded-full bg-[#62df7d] animate-pulse" />
             {hero.badge}
           </div>
-          <h1 className="text-4xl md:text-6xl font-black leading-tight mb-6">
+          <h1 className="text-4xl md:text-6xl font-black leading-tight mb-6" style={{ fontFamily: "Outfit" }}>
             {hero.title} <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300">
+            {/* Antes: from-blue-400 to-cyan-300 — actualizado a verde del sistema */}
+            {/* <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300"> */}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#62df7d] to-[#00873a]">
               {hero.titleHighlight}
             </span>
           </h1>
-          <p className="text-slate-300 text-lg md:text-xl max-w-2xl leading-relaxed">
+          {/* Antes: text-slate-300 */}
+          <p className="text-white/60 text-lg md:text-xl max-w-2xl leading-relaxed">
             {hero.text}
           </p>
         </div>
@@ -128,66 +139,107 @@ export default function AboutUs() {
       <section className="max-w-5xl mx-auto px-6 py-20">
         <div className="grid md:grid-cols-2 gap-12 items-center">
           <div>
-            <span className="text-blue-600 font-bold text-sm uppercase tracking-widest">{historia.subtitle}</span>
-            <h2 className="text-3xl md:text-4xl font-black text-slate-900 mt-3 mb-6 leading-tight">
+            {/* Antes: text-blue-600 */}
+            <span className="text-[#006b2c] font-bold text-sm uppercase tracking-widest">{historia.subtitle}</span>
+            {/* Antes: text-slate-900 */}
+            <h2 className="text-3xl md:text-4xl font-black text-[#0b1c30] mt-3 mb-6 leading-tight" style={{ fontFamily: "Outfit" }}>
               {historia.title}
             </h2>
-            <div className="space-y-4 text-slate-600 leading-relaxed">
+            {/* Antes: text-slate-600 */}
+            <div className="space-y-4 text-[#565e74] leading-relaxed">
               {historia.paragraphs.map((p, i) => <p key={i}>{p}</p>)}
             </div>
           </div>
 
-          {/* Card decorativa */}
+          {/* Card decorativa — antes: bg-slate-900 con acentos azules */}
+          {/* <div className="bg-slate-900 rounded-2xl ..."> */}
           <div className="relative">
-            <div className="bg-slate-900 rounded-2xl p-8 text-white relative overflow-hidden">
-              <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-blue-600/30 blur-2xl" />
-              <div className="text-5xl mb-4">⚡</div>
-              <h3 className="text-2xl font-black mb-2">{historia.card.name}</h3>
-              <p className="text-slate-400 text-sm mb-6">{historia.card.location}</p>
+            <div className="bg-[#0b1c30] rounded-2xl p-8 text-white relative overflow-hidden">
+              {/* Antes: bg-blue-600/30 */}
+              <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-[#00873a]/30 blur-2xl" />
+              {/* Antes: emoji ⚡ text-5xl — reemplazado por Material Symbol */}
+              {/* <div className="text-5xl mb-4">⚡</div> */}
+              <span
+                className="material-symbols-outlined text-[48px] text-[#62df7d] mb-4 block"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >bolt</span>
+              <h3 className="text-2xl font-black mb-2" style={{ fontFamily: "Outfit" }}>{historia.card.name}</h3>
+              {/* Antes: text-slate-400 */}
+              <p className="text-white/40 text-sm mb-6">{historia.card.location}</p>
               <div className="space-y-3">
                 {historia.card.categories.map((cat) => (
                   <div key={cat} className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-slate-300 text-sm">{cat}</span>
+                    {/* Antes: bg-blue-400 */}
+                    <div className="w-2 h-2 rounded-full bg-[#62df7d] flex-shrink-0" />
+                    {/* Antes: text-slate-300 */}
+                    <span className="text-white/70 text-sm">{cat}</span>
                   </div>
                 ))}
               </div>
-              <div className="mt-6 pt-6 border-t border-slate-700">
-                <p className="text-xs text-slate-500">📍 {historia.card.address}</p>
-                <p className="text-xs text-slate-500 mt-1">📧 {historia.card.email}</p>
+              {/* Antes: border-slate-700 */}
+              <div className="mt-6 pt-6 border-t border-white/10">
+                {/* Antes: emoji 📍 / 📧 text-slate-500 */}
+                {/* <p className="text-xs text-slate-500">📍 {historia.card.address}</p> */}
+                {/* <p className="text-xs text-slate-500 mt-1">📧 {historia.card.email}</p> */}
+                <p className="text-xs text-white/30 flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[14px]">location_on</span>
+                  {historia.card.address}
+                </p>
+                <p className="text-xs text-white/30 flex items-center gap-1.5 mt-1">
+                  <span className="material-symbols-outlined text-[14px]">mail</span>
+                  {historia.card.email}
+                </p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── VALORES ── */}
-      <section className="bg-slate-50 py-20">
+      {/* ── VALORES — antes: bg-slate-50 con emojis ── */}
+      {/* <section className="bg-slate-50 py-20"> */}
+      <section className="bg-[#eff4ff] py-20">
         <div className="max-w-5xl mx-auto px-6">
           <div className="text-center mb-12">
-            <span className="text-blue-600 font-bold text-sm uppercase tracking-widest">Lo que nos define</span>
-            <h2 className="text-3xl md:text-4xl font-black text-slate-900 mt-3">Nuestros valores</h2>
+            {/* Antes: text-blue-600 */}
+            <span className="text-[#006b2c] font-bold text-sm uppercase tracking-widest">Lo que nos define</span>
+            {/* Antes: text-slate-900 */}
+            <h2 className="text-3xl md:text-4xl font-black text-[#0b1c30] mt-3" style={{ fontFamily: "Outfit" }}>
+              Nuestros valores
+            </h2>
           </div>
-          {/* Flex-wrap + justify-center: cualquier número de tarjetas queda centrado automáticamente */}
           <div className="flex flex-wrap justify-center gap-6">
             {visibleValores.map((v, i) => (
-              <div key={i} className="w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)] bg-white rounded-2xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                <div className="text-3xl mb-4">{v.icon}</div>
-                <h3 className="font-bold text-slate-900 mb-2">{v.title}</h3>
-                <p className="text-slate-500 text-sm leading-relaxed">{v.desc}</p>
+              // Antes: bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-md
+              <div key={i} className="w-full sm:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)] bg-white rounded-xl border border-[#bdcaba]/30 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] hover:shadow-[0px_8px_30px_rgba(15,23,42,0.08)] transition-shadow p-6">
+                {/* Antes: emoji text-3xl — ahora Material Symbol si es un nombre de icono, emoji si viene del admin */}
+                {/* <div className="text-3xl mb-4">{v.icon}</div> */}
+                <div className="mb-4">
+                  {v.icon && v.icon.includes(" ") === false && /^[a-z_]+$/.test(v.icon) ? (
+                    <span
+                      className="material-symbols-outlined text-[36px] text-[#00873a]"
+                      style={{ fontVariationSettings: "'FILL' 1" }}
+                    >{v.icon}</span>
+                  ) : (
+                    <div className="text-3xl">{v.icon}</div>
+                  )}
+                </div>
+                {/* Antes: text-slate-900 / text-slate-500 */}
+                <h3 className="font-bold text-[#0b1c30] mb-2">{v.title}</h3>
+                <p className="text-[#565e74] text-sm leading-relaxed">{v.desc}</p>
               </div>
             ))}
           </div>
 
-          {/* Botón "ver más / ver menos" — solo si hay más de 6 valores */}
           {hasMoreValores && (
             <div className="flex justify-center mt-8">
               <button
                 onClick={() => setShowAllValores(v => !v)}
-                className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-blue-500 transition-colors group"
+                // Antes: text-slate-400 hover:text-blue-500
+                className="flex flex-col items-center gap-1.5 text-[#565e74]/50 hover:text-[#006b2c] transition-colors group"
                 aria-label={showAllValores ? "Ver menos" : "Ver más valores"}
               >
-                <div className="w-20 h-0.5 bg-slate-300 group-hover:bg-blue-400 transition-colors rounded-full" />
+                {/* Antes: bg-slate-300 group-hover:bg-blue-400 */}
+                <div className="w-20 h-0.5 bg-[#bdcaba] group-hover:bg-[#00873a] transition-colors rounded-full" />
                 <svg
                   className={`w-5 h-5 transition-transform duration-300 ${showAllValores ? "rotate-180" : ""}`}
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -200,25 +252,33 @@ export default function AboutUs() {
         </div>
       </section>
 
-      {/* ── CTA ── */}
+      {/* ── CTA — antes: text-slate-900, bg-blue-600 / bg-slate-100 ── */}
       <section className="max-w-5xl mx-auto px-6 py-20 text-center">
-        <h2 className="text-3xl md:text-4xl font-black text-slate-900 mb-4">
+        {/* Antes: text-slate-900 */}
+        <h2 className="text-3xl md:text-4xl font-black text-[#0b1c30] mb-4" style={{ fontFamily: "Outfit" }}>
           ¿Listo para comprar?
         </h2>
-        <p className="text-slate-500 mb-8 max-w-md mx-auto">
+        {/* Antes: text-slate-500 */}
+        <p className="text-[#565e74] mb-8 max-w-md mx-auto">
           Explorá nuestro catálogo y encontrá los productos que necesitás. Si tenés dudas, estamos para ayudarte.
         </p>
         <div className="flex gap-4 justify-center flex-wrap">
+          {/* Antes: bg-blue-600 hover:bg-blue-700 */}
+          {/* <Link to="/catalogo" className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 ..."> */}
           <Link
             to="/catalogo"
-            className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 bg-[#00873a] text-white px-8 py-3 rounded-[10px] font-bold hover:brightness-110 transition-all"
           >
+            <span className="material-symbols-outlined text-[18px]">storefront</span>
             Ver catálogo
           </Link>
+          {/* Antes: bg-slate-100 text-slate-800 hover:bg-slate-200 */}
+          {/* <Link to="/como-comprar" className="bg-slate-100 text-slate-800 px-8 py-3 rounded-xl font-bold hover:bg-slate-200 ..."> */}
           <Link
             to="/como-comprar"
-            className="bg-slate-100 text-slate-800 px-8 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+            className="flex items-center gap-2 bg-[#eff4ff] text-[#0b1c30] border border-[#bdcaba]/50 px-8 py-3 rounded-[10px] font-bold hover:bg-[#dce9ff] transition-all"
           >
+            <span className="material-symbols-outlined text-[18px]">help_outline</span>
             ¿Cómo comprar?
           </Link>
         </div>

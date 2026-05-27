@@ -35,9 +35,12 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const cartQty = items.find((i) => i.id === product.id)?.quantity || 0;
 
   const isMayorista = customer?.type === "MAYORISTA";
-  // hasActiveVariants: controla si se muestra el modal de selección de variante (solo MINORISTA)
-  const hasActiveVariants = !isMayorista && (product._count?.variants ?? 0) > 0;
-  // hasVariants: si el producto tiene variantes (cualquier tipo de cliente)
+  // hasActiveVariants: ahora se basa solo en _count.variants — el backend YA filtra el conteo
+  // según la visibilidad de la variante y el tipo de cliente (visibleFor query param).
+  // Antes había un hard-code !isMayorista que bloqueaba mayoristas; ahora la decisión es del admin
+  // al setear la visibility de cada variante (MINORISTA / MAYORISTA / AMBOS).
+  const hasActiveVariants = (product._count?.variants ?? 0) > 0;
+  // hasVariants: si el producto tiene variantes visibles para este cliente
   const hasVariants = (product._count?.variants ?? 0) > 0;
 
   // Sin stock: si el producto tiene variantes, el backend garantiza que aparece solo si hay stock.
@@ -56,11 +59,13 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       return;
     }
     setLoadingProduct(true);
-    productsApi.getById(product.id)
+    // Pasamos visibleFor para que el backend filtre las variantes según el tipo de cliente
+    const visibleFor = customer?.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
+    productsApi.getById(product.id, { visibleFor })
       .then((res) => setFullProduct(res.data))
       .catch(console.error)
       .finally(() => setLoadingProduct(false));
-  }, [variantModal, product.id]);
+  }, [variantModal, product.id, customer?.type]);
 
   // Variante activa: la que coincide exactamente con selectedAttrs
   const allAttrsSelected = fullProduct?.attributes?.length > 0 &&
@@ -91,7 +96,22 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     const variantLabel = activeVariant
       ? activeVariant.combination.map((c) => `${c.name}: ${c.value}`).join(" / ")
       : null;
-    await addItem(fullProduct, variantQty, null, activeVariant?.id || null, variantLabel);
+    // Precio de la variante según tipo de cliente. Si la variante no tiene precio definido,
+    // caemos a null para que CartContext use el del producto padre.
+    const variantPrice = (() => {
+      if (!activeVariant) return null;
+      if (isMayorista) {
+        if (activeVariant.wholesaleSalePrice != null && activeVariant.wholesalePrice != null
+            && activeVariant.wholesaleSalePrice < activeVariant.wholesalePrice) return activeVariant.wholesaleSalePrice;
+        if (activeVariant.wholesalePrice != null) return activeVariant.wholesalePrice;
+      } else {
+        if (activeVariant.salePrice != null && activeVariant.price != null
+            && activeVariant.salePrice < activeVariant.price) return activeVariant.salePrice;
+        if (activeVariant.price != null) return activeVariant.price;
+      }
+      return null;
+    })();
+    await addItem(fullProduct, variantQty, variantPrice, activeVariant?.id || null, variantLabel);
     toast.success(`"${product.name}"${variantLabel ? ` (${variantLabel})` : ""} ×${variantQty} agregado al carrito`);
     setAddingVariant(false);
     // No cerramos el modal: el cliente puede seguir eligiendo otra variante
@@ -151,14 +171,14 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                     const hasTiers = Array.isArray(tiers) && tiers.length > 0;
                     if (!hasTiers) return null;
                     return (
-                      <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
-                        <p className="text-xs text-blue-700 font-medium leading-snug">
+                      <div className="bg-[#eff4ff] border border-[#bdcaba]/50 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
+                        <p className="text-xs text-[#0b1c30] font-medium leading-snug">
                           💰 Este producto tiene mejores precios llevando cantidad
                         </p>
                         <Link
                           to={`/producto/${product.id}`}
                           onClick={() => setVariantModal(false)}
-                          className="text-xs font-semibold text-blue-600 hover:text-blue-800 whitespace-nowrap underline underline-offset-2 transition-colors flex-shrink-0"
+                          className="text-xs font-semibold text-[#006b2c] hover:text-[#004d1c] whitespace-nowrap underline underline-offset-2 transition-colors flex-shrink-0"
                         >
                           Ver publicación →
                         </Link>
@@ -174,7 +194,16 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                         )}
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {attr.values.map((v) => {
+                        {attr.values
+                          // Solo mostrar valores que tengan al menos una variante visible para este cliente
+                          // (fullProduct.variants ya viene filtrado por visibility desde el backend)
+                          .filter((v) => (fullProduct.variants || []).some((pv) => {
+                            const combo = Array.isArray(pv.combination)
+                              ? pv.combination
+                              : (typeof pv.combination === "string" ? JSON.parse(pv.combination) : null);
+                            return combo?.some((c) => c.name === attr.name && c.value === v.value);
+                          }))
+                          .map((v) => {
                           const isSelected = selectedAttrs[attr.name] === v.value;
                           const relevantVariants = (fullProduct.variants || []).filter((pv) => {
                             const combo = Array.isArray(pv.combination)
@@ -194,10 +223,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                               }}
                               className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${
                                 isSelected
-                                  ? "border-blue-600 bg-blue-50 text-blue-700"
+                                  ? "border-[#006b2c] bg-[#006b2c]/5 text-[#006b2c]"
                                   : soldOut
-                                    ? "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed line-through"
-                                    : "border-slate-200 hover:border-blue-400 text-slate-700"
+                                    ? "border-[#bdcaba]/30 bg-[#f8f9ff] text-[#bdcaba] cursor-not-allowed line-through"
+                                    : "border-[#bdcaba]/50 hover:border-[#006b2c]/60 text-[#565e74]"
                               }`}
                             >
                               {v.value}
@@ -245,7 +274,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               <button
                 onClick={handleAddVariantToCart}
                 disabled={!allAttrsSelected || addingVariant || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0)}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-[#00873a] text-white text-sm font-bold hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {addingVariant ? (
                   <><span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Agregando...</>
@@ -257,7 +286,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           </div>
         </div>
       )}
-      <div className="card flex flex-row gap-5 p-4 hover:shadow-md transition-shadow duration-200">
+      <div className="bg-white rounded-xl border border-[#bdcaba]/30 p-4 flex flex-row gap-5 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] hover:shadow-[0px_8px_30px_rgba(15,23,42,0.08)] hover:-translate-y-0.5 transition-all duration-300">
         {/* Imagen grande */}
         <Link
           to={`/producto/${product.id}`}
@@ -292,10 +321,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           {/* Arriba: nombre + categoría + descripción */}
           <div>
             {product.categories?.[0] && (
-              <p className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">{product.categories[0].name}</p>
+              <p className="text-xs font-medium text-[#006b2c] uppercase tracking-wide mb-1">{product.categories[0].name}</p>
             )}
             <Link to={`/producto/${product.id}`}>
-              <h3 className="font-bold text-slate-800 text-base leading-snug line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</h3>
+              <h3 className="font-bold text-[#0b1c30] text-base leading-snug line-clamp-2 hover:text-[#006b2c] transition-colors">{product.name}</h3>
             </Link>
             {product.description && (
               <p className="text-sm text-slate-400 mt-1.5 line-clamp-2 leading-relaxed">{stripHtml(product.description)}</p>
@@ -334,13 +363,19 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             {/* Botón agregar — más compacto en mobile para no romper el layout */}
             <div className="flex-shrink-0">
               {outOfStock ? (
-                <span className="text-xs sm:text-sm text-slate-400 font-medium">Sin stock</span>
+                <span className="text-xs sm:text-sm text-[#565e74] font-medium">Sin stock</span>
               ) : customer ? (
-                <button onClick={handleAddToCart} className="btn-primary px-3 sm:px-5 py-2 text-xs sm:text-sm whitespace-nowrap">
+                <button
+                  onClick={handleAddToCart}
+                  className="px-3 sm:px-5 py-2 bg-[#00873a] text-white text-xs sm:text-sm font-semibold rounded-[10px] hover:brightness-110 transition-all whitespace-nowrap"
+                >
                   + Agregar
                 </button>
               ) : (
-                <button onClick={handleAddToCart} className="btn-secondary px-3 sm:px-4 py-2 text-xs sm:text-sm whitespace-nowrap">
+                <button
+                  onClick={handleAddToCart}
+                  className="px-3 sm:px-4 py-2 border border-[#bdcaba] text-[#0b1c30] text-xs sm:text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/30 transition-colors whitespace-nowrap"
+                >
                   Iniciar sesión
                 </button>
               )}
@@ -379,7 +414,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               <Link
                 to={`/producto/${product.id}`}
                 onClick={() => setVariantModal(false)}
-                className="font-bold text-slate-900 text-sm leading-tight line-clamp-2 hover:text-blue-600 transition-colors"
+                className="font-bold text-[#0b1c30] text-sm leading-tight line-clamp-2 hover:text-[#006b2c] transition-colors"
               >
                 {product.name}
               </Link>
@@ -506,7 +541,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             <button
               onClick={handleAddVariantToCart}
               disabled={!allAttrsSelected || addingVariant || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0)}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex-1 px-4 py-2.5 rounded-xl bg-[#00873a] text-white text-sm font-bold hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {addingVariant ? (
                 <><span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Agregando...</>
@@ -520,17 +555,18 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     )}
     <Link
       to={`/producto/${product.id}`}
-      className="card group flex flex-col overflow-hidden hover:shadow-md transition-shadow duration-200"
+      className="bg-white rounded-xl border border-[#bdcaba]/30 overflow-hidden shadow-[0px_4px_20px_rgba(15,23,42,0.05)] hover:shadow-[0px_8px_30px_rgba(15,23,42,0.1)] hover:-translate-y-1 transition-all duration-300 group flex flex-col"
     >
       {/* Imagen */}
-      <div className="relative aspect-square overflow-hidden" style={{ backgroundColor: "#ffffff" }}>
+      <div className="relative aspect-square overflow-hidden bg-[#eff4ff]">
         {img ? (
           <>
             {/* Sin fondo borroso — bg-white del contenedor cubre el espacio vacío */}
             <img
               src={getImageUrl(img)}
               alt={product.name}
-              className="relative w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+              // group-hover:scale-105 removido — la animación pasa al card (hover:-translate-y-1) por pedido del usuario
+              className="relative w-full h-full object-contain"
             />
           </>
         ) : (
@@ -631,14 +667,15 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             <button
               onClick={handleAddToCart}
               disabled={outOfStock}
-              className="btn-primary w-full text-xs sm:text-sm px-3 py-1.5 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-2 bg-[#00873a] text-white text-xs sm:text-sm font-semibold rounded-[10px] hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
             >
-              + Agregar
+              <span className="material-symbols-outlined text-[16px]">add_shopping_cart</span>
+              Agregar
             </button>
           ) : (
             <button
               onClick={handleAddToCart}
-              className="btn-secondary w-full text-xs sm:text-sm px-3 py-1.5"
+              className="w-full py-2 border border-[#bdcaba] text-[#0b1c30] text-xs sm:text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/30 transition-colors"
             >
               Iniciar sesión
             </button>

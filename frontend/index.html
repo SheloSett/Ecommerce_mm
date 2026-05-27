@@ -4,13 +4,40 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="shortcut icon" href="/favicon.png" type="image/png" />
-    
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- Título y descripción base — react-helmet-async los sobreescribe por página -->
     <title>IGWT Store</title>
     <meta name="description" content="Venta de artículos y accesorios electrónicos." />
     <meta name="author" content="IGWT Store" />
+
+    <!-- Preconnect PRIMERO para que el navegador prestablezca conexión antes de descargar los fonts -->
+    <!-- Antes: preconnect iba DESPUÉS del stylesheet — eso causaba FOIT en Firefox/Edge/Opera -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Material Symbols Outlined — iconos del sistema de diseño -->
+    <!-- display=swap: muestra texto fallback mientras carga, luego swapea — evita texto invisible en non-Chrome -->
+    <!-- Antes: display=block (texto invisible mientras carga) y sin crossorigin -->
+    <link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+      crossorigin />
+
+    <!-- Outfit — tipografía de títulos -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" crossorigin />
+
+    <style>
+      /* Configuración base de Material Symbols para que se vean como en el template Stitch */
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        font-size: 24px;
+        line-height: 1;
+        display: inline-block;
+        vertical-align: middle;
+        user-select: none;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

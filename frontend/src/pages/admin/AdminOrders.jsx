@@ -321,8 +321,10 @@ export default function AdminOrders() {
       if (order.paymentMethod !== "COTIZACION" || order.status !== "PENDING") continue;
       for (const item of (order.items || [])) {
         if (item.variantId) continue;
-        if (variantOptionsCache[item.productId] !== undefined) continue;
-        // Marcar como cargando (null) para no lanzar requests duplicados
+        // Siempre refrescar al expandir: no saltar aunque ya esté en caché (puede estar desactualizado)
+        // if (variantOptionsCache[item.productId] !== undefined) continue; // comentado: caché podría ser stale
+        // Marcar como cargando (null) para no lanzar requests duplicados mientras se expande
+        if (variantOptionsCache[item.productId] === null) continue; // ya hay un fetch en curso
         setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: null }));
         productsApi.getById(item.productId).then((res) => {
           const variants = (res.data.variants || []).filter((v) => v.active);
@@ -432,24 +434,23 @@ export default function AdminOrders() {
     }
   };
 
-  // Abrir el panel de asignación de variantes para un item de cotización
+  // Abrir el panel de asignación de variantes para un item de cotización.
+  // Siempre hace fetch fresco para mostrar stock actualizado (evita caché desactualizado).
   const openVariantPanel = async (item) => {
     setVariantPanelOpen((prev) => ({ ...prev, [item.id]: true }));
-    if (!variantOptionsCache[item.productId]) {
-      try {
-        const res = await productsApi.getById(item.productId);
-        const variants = (res.data.variants || []).filter((v) => v.active);
-        setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: variants }));
-        // Inicializar asignaciones: una fila vacía
-        if (!variantAssignments[item.id]) {
-          setVariantAssignments((prev) => ({ ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] }));
-        }
-      } catch {
-        toast.error("No se pudieron cargar las variantes");
-        setVariantPanelOpen((prev) => ({ ...prev, [item.id]: false }));
+    // Marcar como cargando (null) para mostrar spinner mientras refresca
+    setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: null }));
+    try {
+      const res = await productsApi.getById(item.productId);
+      const variants = (res.data.variants || []).filter((v) => v.active);
+      setVariantOptionsCache((prev) => ({ ...prev, [item.productId]: variants }));
+      // Inicializar asignaciones: una fila vacía (solo si no hay asignación previa)
+      if (!variantAssignments[item.id]) {
+        setVariantAssignments((prev) => ({ ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] }));
       }
-    } else if (!variantAssignments[item.id]) {
-      setVariantAssignments((prev) => ({ ...prev, [item.id]: [{ variantId: "", quantity: item.quantity }] }));
+    } catch {
+      toast.error("No se pudieron cargar las variantes");
+      setVariantPanelOpen((prev) => ({ ...prev, [item.id]: false }));
     }
   };
 

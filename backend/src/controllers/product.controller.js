@@ -27,18 +27,21 @@ async function getProducts(req, res) {
     }
     // Si no se envía visibleFor, no se filtra (admin o legacy)
 
-    // Filtrado automático por stock: stock físico es único — mismo filtro para ambos canales.
-    // Sin variantes: requiere product.stock > 0. Con variantes: requiere alguna variante con stock.
+    // Filtrado automático por stock + visibilidad de variantes según tipo de cliente.
+    // Para variantes, además del active+stock, también deben ser visibles para el cliente
+    // (visibility AMBOS o coincidente con el tipo de cliente).
     if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
+      // Set de visibilidades que el cliente puede ver
+      const visibleSet = ["AMBOS", visibleFor];
       where.AND = [
         ...(where.AND || []),
         {
           OR: [
             { stockUnlimited: true },
-            // Sin variantes activas: verificar product.stock directo
-            { AND: [{ variants: { none: { active: true } } }, { stock: { gt: 0 } }] },
-            // Con variantes: al menos una variante activa con stock
-            { variants: { some: { active: true, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
+            // Sin variantes visibles para este cliente: verificar product.stock directo
+            { AND: [{ variants: { none: { active: true, visibility: { in: visibleSet } } } }, { stock: { gt: 0 } }] },
+            // Con variantes visibles para este cliente: al menos una con stock
+            { variants: { some: { active: true, visibility: { in: visibleSet }, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
           ],
         },
       ];
@@ -118,15 +121,21 @@ async function getProducts(req, res) {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // Filtro de variantes contables según tipo de cliente: solo las visibles para él.
+    // Si no se envía visibleFor (admin/legacy), cuenta todas las activas.
+    const variantsCountWhere = (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA")
+      ? { active: true, visibility: { in: ["AMBOS", visibleFor] } }
+      : { active: true };
+
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
         // Antes: include: { category: { select: { id, name, slug } } }
         include: {
           categories: { select: { id: true, name: true, slug: true } },
-          // _count.variants: cuántas variantes activas tiene, para que el frontend
-          // muestre modal "seleccioná variantes" en lugar de agregar directo desde la card
-          _count: { select: { variants: { where: { active: true } } } },
+          // _count.variants: cuántas variantes visibles para el cliente tiene, para que el
+          // frontend decida si mostrar modal de selección o agregar directo desde la card.
+          _count: { select: { variants: { where: variantsCountWhere } } },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -214,6 +223,7 @@ async function getProductsAdmin(req, res) {
           categories: {
             include: { parent: { select: { id: true, name: true } } },
           },
+          // _count.variants: el admin siempre ve todas las variantes activas (sin filtrar por visibility)
           _count: { select: { variants: { where: { active: true } } } },
           attributes: {
             include: { values: { orderBy: { position: "asc" } } },
@@ -286,13 +296,20 @@ async function getProductsAdmin(req, res) {
 async function getProduct(req, res) {
   try {
     const { id } = req.params;
+    const { visibleFor } = req.query;
+
+    // Filtrar variantes según visibilidad para el tipo de cliente actual.
+    // Si no se envía visibleFor (admin), devuelve todas las activas.
+    const variantsWhere = (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA")
+      ? { active: true, visibility: { in: ["AMBOS", visibleFor] } }
+      : { active: true };
 
     const product = await prisma.product.findUnique({
       where: { id: parseInt(id) },
       include: {
         categories: { include: { parent: { select: { id: true, name: true, slug: true } } } },
         attributes: { include: { values: { orderBy: { position: "asc" } } }, orderBy: { position: "asc" } },
-        variants:   { where: { active: true }, orderBy: { createdAt: "asc" } },
+        variants:   { where: variantsWhere, orderBy: { createdAt: "asc" } },
       },
     });
 

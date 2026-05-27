@@ -4,67 +4,51 @@ import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
+import Footer from "../components/Footer";
 import toast from "react-hot-toast";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
-    day: "2-digit", month: "long", year: "numeric",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
   });
 }
 
-const FULFILLMENT_STAGES = [
-  { value: "PENDIENTE",      label: "Pendiente",      icon: "🕐" },
-  { value: "EN_PREPARACION", label: "En preparación", icon: "🔧" },
-  { value: "ENVIADO",        label: "Enviado",        icon: "🚚" },
-  { value: "ENTREGADO",      label: "Entregado",      icon: "✅" },
-];
-
-function FulfillmentTracker({ status = "PENDIENTE" }) {
-  const currentIdx = FULFILLMENT_STAGES.findIndex((s) => s.value === status);
-  return (
-    <div className="flex items-start mt-3 w-full">
-      {FULFILLMENT_STAGES.map((stage, idx) => {
-        const isDone    = idx < currentIdx;
-        const isCurrent = idx === currentIdx;
-        return (
-          <div key={stage.value} className="flex-1 flex flex-col items-center relative">
-            {idx > 0 && (
-              <div className={`absolute top-3.5 right-1/2 w-full h-0.5 -translate-y-1/2 ${isDone ? "bg-green-300" : "bg-slate-200"}`} />
-            )}
-            <div className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-sm border-2 transition-colors ${
-              isCurrent ? "border-blue-500 bg-blue-50 text-blue-600 font-bold" :
-              isDone    ? "border-green-400 bg-green-50 text-green-600" :
-                          "border-slate-200 bg-white text-slate-300"
-            }`}>
-              {isDone ? "✓" : stage.icon}
-            </div>
-            <span className={`text-[10px] mt-1 text-center leading-tight w-full px-1 ${
-              isCurrent ? "text-blue-600 font-semibold" :
-              isDone    ? "text-green-600" :
-                          "text-slate-400"
-            }`}>
-              {stage.label}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 function formatPrice(price) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
 }
 
-function StatusBadge({ status }) {
+// Devuelve label, clase de badge y si la card debe tener borde verde
+function getQuoteDisplay(status) {
   const map = {
-    PENDING:        { label: "Pendiente",               className: "bg-yellow-100 text-yellow-700" },
-    QUOTE_APPROVED: { label: "¡Aprobada! Pendiente de pago", className: "bg-teal-100 text-teal-700 font-semibold" },
-    APPROVED:       { label: "Pagada",                  className: "bg-green-100 text-green-700"   },
-    REJECTED:       { label: "Rechazada",               className: "bg-red-100 text-red-700"       },
-    CANCELLED:      { label: "Cancelada",               className: "bg-slate-100 text-slate-500"   },
+    PENDING: {
+      label: "Pendiente",
+      badgeCls: "bg-yellow-100 text-yellow-800 font-bold",
+      cardBorder: false,
+    },
+    QUOTE_APPROVED: {
+      label: "¡Aprobada! Pendiente de pago",
+      badgeCls: "bg-[#7ffc97] text-[#002109] font-bold",
+      cardBorder: true,
+    },
+    APPROVED: {
+      label: "Pagada",
+      badgeCls: "bg-green-100 text-green-700 font-bold",
+      cardBorder: false,
+    },
+    REJECTED: {
+      label: "Rechazada",
+      badgeCls: "bg-[#ffdad6] text-[#93000a] font-bold",
+      cardBorder: false,
+    },
+    CANCELLED: {
+      label: "Cancelada",
+      badgeCls: "border border-[#bdcaba] text-[#565e74] font-bold",
+      cardBorder: false,
+    },
   };
-  const { label, className } = map[status] || { label: status, className: "bg-slate-100 text-slate-500" };
-  return <span className={`text-xs px-2 py-0.5 rounded-full ${className}`}>{label}</span>;
+  return map[status] || { label: status, badgeCls: "bg-slate-100 text-slate-500", cardBorder: false };
 }
 
 export default function QuotationHistory() {
@@ -77,7 +61,7 @@ export default function QuotationHistory() {
   const [expandedId, setExpandedId] = useState(null);
 
   // Modal de cancelación
-  const [cancelModal, setCancelModal] = useState(null); // orderId
+  const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling]   = useState(false);
 
@@ -89,7 +73,8 @@ export default function QuotationHistory() {
 
   const loadQuotes = () => {
     if (loadingCustomer || !customer || customer.type !== "MAYORISTA") return;
-    ordersApi.getMyCotizaciones()
+    ordersApi
+      .getMyCotizaciones()
       .then((res) => setQuotes(res.data))
       .catch(() => toast.error("No se pudo cargar las cotizaciones"))
       .finally(() => setLoading(false));
@@ -99,14 +84,12 @@ export default function QuotationHistory() {
     loadQuotes();
   }, [customer?.id, loadingCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Al abrir la página, marcar notificaciones como leídas
   useEffect(() => {
     markAllRead();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
-  // Cancelar cotización
   const handleCancel = async () => {
     if (!cancelModal) return;
     setCancelling(true);
@@ -127,191 +110,274 @@ export default function QuotationHistory() {
   return (
     <>
       <Navbar />
-      <div className="min-h-screen bg-slate-50 py-10">
-        <div className="max-w-3xl mx-auto px-4">
+      <div className="ds-page min-h-screen bg-[#f8f9ff]">
+        <main className="max-w-[1280px] mx-auto px-6 py-16">
 
           {/* Encabezado */}
-          <div className="flex items-center gap-3 mb-6">
-            <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500 transition-colors">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+          <div className="flex flex-col gap-2 mb-8">
+            <button
+              onClick={() => navigate(-1)}
+              className="flex items-center gap-2 text-[#006b2c] font-semibold hover:underline underline-offset-4 w-fit"
+            >
+              <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+              <span className="text-sm">Volver a mi cuenta</span>
             </button>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-800">Mis pedidos</h1>
-              <p className="text-sm text-slate-500">Solicitudes enviadas al vendedor</p>
-            </div>
+            <h1 className="text-[48px] font-bold leading-[56px] tracking-tight text-[#0b1c30]">
+              Mis pedidos
+            </h1>
+            <p className="text-[18px] text-[#565e74] leading-7">
+              Solicitudes enviadas al vendedor
+            </p>
           </div>
 
-          {/* Tabs: Pedidos / Cotizaciones */}
-          <div className="flex border-b border-slate-200 mb-6">
+          {/* Tabs */}
+          <div className="flex border-b border-[#bdcaba] mb-8 overflow-x-auto whitespace-nowrap">
             <Link
               to="/pedidos"
-              className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+              className="px-6 py-4 text-sm font-semibold text-[#565e74] hover:text-[#0b1c30] tracking-wide transition-colors"
             >
-              Pedidos
+              PEDIDOS
             </Link>
-            <span className="px-4 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600">
-              Cotizaciones
+            <span className="px-6 py-4 text-sm font-bold text-[#006b2c] border-b-2 border-[#62df7d] -mb-[2px] tracking-wide">
+              COTIZACIONES
             </span>
           </div>
 
+          {/* Loading */}
           {loading && (
             <div className="flex justify-center py-20">
-              <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 border-4 border-[#00873a] border-t-transparent rounded-full animate-spin" />
             </div>
           )}
 
+          {/* Empty */}
           {!loading && quotes.length === 0 && (
             <div className="text-center py-20">
-              <div className="text-5xl mb-4">📋</div>
-              <p className="text-slate-500 text-lg">Aún no enviaste ninguna cotización</p>
-              <button onClick={() => navigate("/catalogo")} className="mt-4 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+              <span className="material-symbols-outlined text-6xl text-[#bdcaba] mb-4 block">
+                request_quote
+              </span>
+              <p className="text-[#565e74] text-lg mb-4">Aún no enviaste ninguna cotización</p>
+              <button
+                onClick={() => navigate("/catalogo")}
+                className="px-6 py-2.5 bg-[#00873a] text-white font-semibold rounded-[10px] hover:opacity-90 transition-all"
+              >
                 Ver productos
               </button>
             </div>
           )}
 
-          <div className="space-y-4">
+          {/* Lista de cotizaciones */}
+          <div className="grid grid-cols-1 gap-6">
             {quotes.map((quote) => {
               const isExpanded = expandedId === quote.id;
-              const items      = quote.items || []; // clientSnapshot items
-              // isActive: mostrar botones de acción si la cotización no está finalizada
-              const isActive   = quote.status !== "CANCELLED" && quote.status !== "REJECTED" && quote.status !== "APPROVED";
+              const items      = quote.items || [];
+              const isActive   =
+                quote.status !== "CANCELLED" &&
+                quote.status !== "REJECTED" &&
+                quote.status !== "APPROVED";
+              const { label: statusLabel, badgeCls, cardBorder } = getQuoteDisplay(quote.status);
+              const isCancelledOrRejected =
+                quote.status === "CANCELLED" || quote.status === "REJECTED";
 
               return (
-                <div key={quote.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-
-                  {/* Cabecera */}
-                  <div className="p-5 flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-slate-700">Cotización #{quote.id}</span>
-                        <StatusBadge status={quote.status} />
+                <div
+                  key={quote.id}
+                  className={`bg-white rounded-xl shadow-sm transition-shadow duration-200
+                    ${cardBorder
+                      ? "border-2 border-[#00873a] shadow-md"
+                      : "border border-[#bdcaba]/30 hover:shadow-md"}
+                    ${isCancelledOrRejected ? "opacity-80" : ""}`}
+                >
+                  <div className="p-6">
+                    {/* Header: ID + badge | toggle items */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-xl font-semibold text-[#0b1c30]">
+                          Cotización #{quote.id}
+                        </span>
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs tracking-wider uppercase ${badgeCls}`}
+                        >
+                          {statusLabel}
+                        </span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">{formatDate(quote.createdAt)}</p>
-                      <p className="text-base font-bold text-slate-800 mt-1">
-                        {quote.status === "APPROVED" ? "Total: " : "Total estimado: "}{formatPrice(quote.total)}
-                      </p>
-                      {/* Tracker de estado de pedido — solo cuando ya está pagada/aprobada */}
-                      {quote.status === "APPROVED" && (
-                        <FulfillmentTracker status={quote.fulfillmentStatus} />
-                      )}
-                      {/* Nota del admin: si menciona "stock" es una alerta, sino nota normal */}
-                      {quote.adminNotes && (() => {
-                        const isStockAlert = quote.adminNotes.includes("stock");
-                        return (
-                          <div className={`mt-2 text-xs rounded-lg px-3 py-2 ${isStockAlert ? "text-orange-700 bg-orange-50 border border-orange-200" : "text-blue-700 bg-blue-50"}`}>
-                            {isStockAlert ? "⚠️" : "💬"} <strong>{isStockAlert ? "Aviso de stock:" : "Nota del vendedor:"}</strong> {quote.adminNotes}
-                          </div>
-                        );
-                      })()}
+                      <button
+                        onClick={() => toggleExpand(quote.id)}
+                        className="flex items-center gap-2 px-4 py-2 border border-[#bdcaba] text-[#0b1c30] rounded-lg text-sm font-semibold hover:bg-[#dce9ff]/30 transition-colors self-start md:self-center"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">
+                          {isExpanded ? "expand_less" : "expand_more"}
+                        </span>
+                        {isExpanded
+                          ? "Ocultar"
+                          : `Ver ${items.length} item${items.length !== 1 ? "s" : ""}`}
+                      </button>
                     </div>
-                    <button
-                      onClick={() => toggleExpand(quote.id)}
-                      className="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors flex-shrink-0"
-                    >
-                      {isExpanded ? "Ocultar" : `Ver ${items.length} item${items.length !== 1 ? "s" : ""}`}
-                    </button>
+
+                    {/* Fecha + total */}
+                    <div className="mb-6">
+                      <p className="text-sm text-[#565e74] mb-1">{formatDate(quote.createdAt)}</p>
+                      <p className="text-2xl font-bold text-[#0b1c30]">
+                        {quote.status === "APPROVED" ? "Total: " : "Total estimado: "}
+                        <span className={cardBorder ? "text-[#006b2c]" : ""}>
+                          {formatPrice(quote.total)}
+                        </span>
+                      </p>
+                    </div>
+
+                    {/* Nota del admin */}
+                    {quote.adminNotes && (() => {
+                      const isStockAlert = quote.adminNotes.includes("stock");
+                      return (
+                        <div
+                          className={`flex items-start gap-2 p-4 rounded-lg mb-4 text-sm leading-relaxed ${
+                            isStockAlert
+                              ? "bg-orange-50 border border-orange-200 text-orange-700"
+                              : "bg-blue-50 text-blue-700"
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[18px] flex-shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            {isStockAlert ? "warning" : "info"}
+                          </span>
+                          <span>
+                            <strong>
+                              {isStockAlert ? "Aviso de stock:" : "Nota del vendedor:"}
+                            </strong>{" "}
+                            {quote.adminNotes}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Info box — cotización pendiente */}
+                    {quote.status === "PENDING" && (
+                      <div className="flex items-start gap-3 bg-[#eff4ff] p-4 rounded-lg mb-4">
+                        <span
+                          className="material-symbols-outlined text-[#00873a] flex-shrink-0"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
+                          info
+                        </span>
+                        <p className="text-sm text-[#3e4a3d] leading-relaxed">
+                          Tu cotización está siendo revisada. Te notificaremos cuando el vendedor
+                          realice cambios o la apruebe.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Motivo de cancelación */}
+                    {quote.status === "CANCELLED" && quote.cancelReason && (
+                      <div className="bg-slate-50 border border-[#bdcaba] rounded-lg px-4 py-3 mb-4">
+                        <p className="text-xs text-[#565e74]">
+                          <span className="font-semibold">Motivo:</span> {quote.cancelReason}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Acciones */}
+                    {isActive && (
+                      <div className="flex flex-col sm:flex-row gap-3 mt-2">
+                        {/* Pagar orden — solo si aprobada con items y total > 0 */}
+                        {quote.status === "QUOTE_APPROVED" &&
+                          items.length > 0 &&
+                          quote.total > 0 && (
+                            <button
+                              onClick={() => navigate(`/pagar-cotizacion/${quote.id}`)}
+                              className="flex items-center justify-center gap-3 px-8 py-3 bg-[#00873a] text-white font-bold rounded-lg hover:brightness-110 transition-all shadow-lg shadow-[#00873a]/20"
+                            >
+                              <span
+                                className="material-symbols-outlined text-[20px]"
+                                style={{ fontVariationSettings: "'FILL' 1" }}
+                              >
+                                payments
+                              </span>
+                              Pagar orden
+                            </button>
+                          )}
+
+                        {/* Cancelar */}
+                        <button
+                          onClick={() => {
+                            setCancelModal(quote.id);
+                            setCancelReason("");
+                          }}
+                          className="px-6 py-3 border-2 border-red-500 text-red-600 font-semibold rounded-lg hover:bg-red-50 transition-all"
+                        >
+                          Cancelar cotización
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Items (snapshot) */}
+                  {/* Items (expandibles) */}
                   {isExpanded && (
-                    <div className="border-t border-slate-100 px-5 py-4 space-y-3">
+                    <div className="border-t border-[#bdcaba]/30 px-6 py-5 bg-[#f8f9ff] space-y-3">
                       {items.length === 0 ? (
-                        <p className="text-sm text-slate-400 text-center py-4">Sin items</p>
-                      ) : items.map((item, idx) => (
-                        <div key={item.id || idx} className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-lg bg-slate-100 overflow-hidden flex-shrink-0">
-                            {item.image
-                              ? <img src={getImageUrl(item.image)} alt={item.name} className="w-full h-full object-cover" />
-                              : <div className="w-full h-full flex items-center justify-center text-slate-300 text-xl">📦</div>
-                            }
+                        <p className="text-sm text-[#565e74] text-center py-4">Sin items</p>
+                      ) : (
+                        items.map((item, idx) => (
+                          <div key={item.id || idx} className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-lg bg-[#dce9ff] overflow-hidden flex-shrink-0">
+                              {item.image ? (
+                                <img
+                                  src={getImageUrl(item.image)}
+                                  alt={item.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-xl">
+                                  📦
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-[#0b1c30] truncate">
+                                {item.name}
+                              </p>
+                              <p className="text-xs text-[#565e74]">
+                                {formatPrice(item.price)} × {item.quantity}
+                              </p>
+                            </div>
+                            <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">
+                              {formatPrice(item.price * item.quantity)}
+                            </p>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
-                            <p className="text-xs text-slate-400">{formatPrice(item.price)} × {item.quantity}</p>
-                          </div>
-                          <p className="text-sm font-semibold text-slate-700 flex-shrink-0">
-                            {formatPrice(item.price * item.quantity)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Acciones según estado */}
-                  {isActive && (
-                    <div className="border-t border-slate-100 px-5 py-4 flex gap-3 flex-wrap">
-
-                      {/* Pagar orden — solo si el admin aprobó la cotización y hay items con total > 0 */}
-                      {quote.status === "QUOTE_APPROVED" && items.length > 0 && quote.total > 0 && (
-                        <button
-                          onClick={() => navigate(`/pagar-cotizacion/${quote.id}`)}
-                          className="flex-1 px-4 py-2.5 bg-green-600 text-white font-bold text-sm rounded-xl hover:bg-green-700 transition-colors text-center"
-                        >
-                          💳 Pagar orden
-                        </button>
+                        ))
                       )}
-
-                      {/* Cancelar cotización */}
-                      <button
-                        onClick={() => { setCancelModal(quote.id); setCancelReason(""); }}
-                        className="px-4 py-2.5 border border-red-200 text-red-600 font-semibold text-sm rounded-xl hover:bg-red-50 transition-colors"
-                      >
-                        Cancelar cotización
-                      </button>
-
-                    </div>
-                  )}
-
-                  {/* Info según estado */}
-                  {quote.status === "PENDING" && (
-                    <div className="px-5 pb-4">
-                      <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
-                        📬 Tu cotización está siendo revisada. Te notificaremos cuando el vendedor realice cambios o la apruebe.
-                      </p>
-                    </div>
-                  )}
-                  {quote.status === "CANCELLED" && quote.cancelReason && (
-                    <div className="px-5 pb-4">
-                      <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
-                        Motivo de cancelación: {quote.cancelReason}
-                      </p>
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
-
-        </div>
+        </main>
       </div>
+      <Footer />
 
-      {/* Modal cancelación */}
+      {/* Modal de cancelación */}
       {cancelModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <h3 className="font-bold text-slate-800 text-lg">Cancelar cotización</h3>
-            <p className="text-sm text-slate-500">
+            <h3 className="font-bold text-[#0b1c30] text-lg">Cancelar cotización</h3>
+            <p className="text-sm text-[#565e74]">
               ¿Estás seguro que querés cancelar esta cotización? Esta acción no se puede deshacer.
             </p>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-[#0b1c30] mb-1">
                 Motivo (opcional)
               </label>
               <textarea
                 value={cancelReason}
                 onChange={(e) => setCancelReason(e.target.value)}
                 placeholder="Ej: Ya no necesito los productos, encontré otra opción..."
-                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+                className="w-full border border-[#bdcaba] rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
                 rows={3}
               />
             </div>
             <div className="flex gap-3">
               <button
                 onClick={() => setCancelModal(null)}
-                className="flex-1 px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="flex-1 px-4 py-2 border border-[#bdcaba] rounded-xl text-sm font-semibold text-[#0b1c30] hover:bg-[#f8f9ff]"
               >
                 Volver
               </button>

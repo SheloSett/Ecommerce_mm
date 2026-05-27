@@ -62,12 +62,27 @@ function BannerRow({ banner }) {
     );
   };
 
+  // Determinar clase de animación según el modo de scroll
+  const animClass =
+    banner.scrollDir === "rtl"    ? "ann-rtl"    :
+    banner.scrollDir === "ltr"    ? "ann-ltr"    :
+    banner.scrollDir === "bounce" ? "ann-bounce" : null;
+
+  // El modo "bounce" usa inline-block + translateX con calc — más confiable que position:absolute
+  if (banner.scrollDir === "bounce") {
+    return (
+      <div className={`${bgCls} ${textCls} text-sm py-2 overflow-hidden`}>
+        <div className="ann-bounce">{renderContent()}</div>
+      </div>
+    );
+  }
+
   return (
     <div className={`${bgCls} ${textCls} text-sm py-2 ${banner.scrollDir === "none" ? "text-center px-4" : "overflow-hidden"}`}>
       {banner.scrollDir === "none" ? (
         <span>{renderContent()}</span>
       ) : (
-        <span className={banner.scrollDir === "rtl" ? "ann-rtl" : "ann-ltr"}>
+        <span className={animClass}>
           {renderContent()}
         </span>
       )}
@@ -100,8 +115,21 @@ export default function AnnouncementBar() {
         @keyframes ann-ltr { 0% { transform: translateX(-100%); } 100% { transform: translateX(100vw); } }
         @keyframes ann-rtl { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
         @keyframes ann-fade { from { opacity: 0; } to { opacity: 1; } }
+        /* Rebote: el texto arranca a la izquierda y se desplaza hasta el borde derecho usando
+           translateX(calc(100vw - 100%)). 100% se refiere al ancho del propio elemento, 100vw al viewport.
+           Con animation-direction:alternate la animación va y vuelve → efecto rebote.
+           Mucho más simple que el approach con position:absolute. */
+        @keyframes ann-bounce-anim {
+          0%   { transform: translateX(0); }
+          100% { transform: translateX(calc(100vw - 100%)); }
+        }
         .ann-ltr { display:inline-block; white-space:nowrap; animation: ann-ltr 22s linear infinite; }
         .ann-rtl { display:inline-block; white-space:nowrap; animation: ann-rtl 22s linear infinite; }
+        .ann-bounce {
+          display: inline-block;
+          white-space: nowrap;
+          animation: ann-bounce-anim 10s ease-in-out infinite alternate;
+        }
         .ann-wrap { animation: ann-fade 0.35s ease-out; }
       `}</style>
       <div className="ann-wrap">
