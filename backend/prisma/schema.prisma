@@ -182,6 +182,9 @@ model OrderItem {
   variantId    Int?    // ID de la variante seleccionada (null si sin variante)
   variantLabel String? // Ej: "Color: Negro / RGB: Si" — guardado al momento del pedido
   variantSku   String? // SKU de la variante seleccionada al momento del pedido
+  // variantByAdmin: true si la variante fue asignada por el admin al aprobar una cotización
+  // (no la eligió el cliente). Se usa para NO copiarla al repetir pedido ni mostrarla al cliente.
+  variantByAdmin Boolean @default(false)
   order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product      Product @relation(fields: [productId], references: [id])
 

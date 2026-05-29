@@ -334,8 +334,8 @@ export default function QuotationHistory() {
                               <p className="text-sm font-medium text-[#0b1c30] truncate">
                                 {item.name}
                               </p>
-                              {/* Variante elegida por el cliente — se muestra solo si existe */}
-                              {item.variantLabel && (
+                              {/* Variante elegida por el cliente — no mostrar si la asignó el admin */}
+                              {item.variantLabel && !item.variantByAdmin && (
                                 <div className="flex flex-wrap gap-1 mt-0.5">
                                   {item.variantLabel.split(" / ").map((v, vi) => (
                                     <span key={vi} className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#dbe1ff] text-[#00174b]">

@@ -171,24 +171,28 @@ export function CartProvider({ children }) {
       await cartsApi.clearMyCart();
 
       // 2. Agregar cada item del pedido con precio efectivo actual
-      const isMayorista = customer?.type === "MAYORISTA";
+      // isMayorista ya no se usa para decidir las variantes (ahora se usa el flag
+      // variantByAdmin del item), pero se deja comentado por si vuelve a hacer falta.
+      // const isMayorista = customer?.type === "MAYORISTA";
       for (const item of orderItems) {
         // Omitir productos que ya no existen o están desactivados
         if (!item.product?.active) continue;
 
         // Precio efectivo según tipo de cliente; si es null/undefined, usa el precio histórico del pedido
         const effectivePrice = getEffectivePrice(item.product) ?? item.price;
+        // No copiar la variante si fue asignada por el admin en la cotización (variantByAdmin).
+        // Esas variantes las elige el admin al separar el pedido, no el cliente, así que al
+        // repetir no deben heredarse. Las variantes que eligió el cliente (variantByAdmin=false)
+        // sí se copian, tanto para mayoristas como minoristas.
+        const skipVariant = item.variantByAdmin === true;
         await cartsApi.addItem({
           productId:    item.productId,
           quantity:     item.quantity,
           name:         item.product.name,
           price:        effectivePrice,
           image:        item.product.images?.[0] || null,
-          // Para MAYORISTAS: nunca copiar la variante al repetir. Las variantes en cotizaciones
-          // las asigna el admin, no el cliente — copiarlas sería incorrecto.
-          // Para MINORISTAS: sí copiar, ellos siempre las eligen en el storefront.
-          variantId:    isMayorista ? null : (item.variantId    || null),
-          variantLabel: isMayorista ? null : (item.variantLabel || null),
+          variantId:    skipVariant ? null : (item.variantId    || null),
+          variantLabel: skipVariant ? null : (item.variantLabel || null),
         });
       }
 

@@ -1324,7 +1324,9 @@ async function approveCotizacion(req, res) {
         }
         await prisma.orderItem.update({
           where: { id: itemId },
-          data:  { variantId: newVariantId, variantLabel: newVariantLabel },
+          // variantByAdmin: true → marca que esta variante la asignó el admin, no el cliente.
+          // Así el front no la copia al repetir pedido ni la muestra al cliente.
+          data:  { variantId: newVariantId, variantLabel: newVariantLabel, variantByAdmin: true },
         });
       }
     }
