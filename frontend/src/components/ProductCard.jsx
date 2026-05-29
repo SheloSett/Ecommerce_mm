@@ -298,12 +298,22 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           ) : (
             <div className="w-full h-full flex items-center justify-center text-5xl text-slate-200">📦</div>
           )}
-          {/* Badge oferta */}
-          {product.salePrice && product.salePrice < product.price && (
-            <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
-              OFERTA
-            </span>
-          )}
+          {/* Badge % OFF — se muestra para minoristas (salePrice) o mayoristas (wholesaleSalePrice) */}
+          {(() => {
+            const isMay = customer?.type === "MAYORISTA";
+            const hasSale = isMay
+              ? product.wholesaleSalePrice && product.wholesalePrice && product.wholesaleSalePrice < product.wholesalePrice
+              : product.salePrice && product.salePrice < product.price;
+            if (!hasSale) return null;
+            const pct = isMay
+              ? Math.round((1 - product.wholesaleSalePrice / product.wholesalePrice) * 100)
+              : Math.round((1 - product.salePrice / product.price) * 100);
+            return (
+              <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                {pct}% OFF
+              </span>
+            );
+          })()}
           {/* Botón favorito */}
           <button
             onClick={(e) => { e.preventDefault(); toggle(product); }}
@@ -339,7 +349,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className="text-xs sm:text-sm text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
                     <span className="font-bold text-green-700 text-base sm:text-xl">{formatPrice(product.wholesaleSalePrice)}</span>
-                    <span className="text-xs text-green-600 font-medium">mayorista</span>
+                    <span className="text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-md">
+                      {Math.round((1 - product.wholesaleSalePrice / product.wholesalePrice) * 100)}% OFF
+                    </span>
+                    <span className="text-xs text-green-600 font-medium w-full">mayorista</span>
                   </div>
                 ) : (
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -351,11 +364,14 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-xs sm:text-sm text-slate-400 line-through">{formatPrice(product.price)}</span>
                   <span className="font-bold text-red-600 text-base sm:text-xl">{formatPrice(product.salePrice)}</span>
+                  <span className="text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-md">
+                    {Math.round((1 - product.salePrice / product.price) * 100)}% OFF
+                  </span>
                 </div>
               ) : (
                 <span className="font-bold text-slate-900 text-base sm:text-xl">{formatPrice(product.price)}</span>
               )}
-              {!outOfStock && product.stock != null && !product.stockUnlimited && product.stock <= 5 && (
+              {!outOfStock && product.stock != null && product.stock > 0 && !product.stockUnlimited && product.stock <= 5 && (
                 <p className="text-xs text-amber-500 font-medium mt-0.5">⚠ Últimas {product.stock} unidades</p>
               )}
             </div>
@@ -645,6 +661,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                 <>
                   <span className="text-xs text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
                   <FitText max={18} min={12} className="font-bold text-green-700">{formatPrice(product.wholesaleSalePrice)}</FitText>
+                  <span className="text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-md self-center">
+                    {Math.round((1 - product.wholesaleSalePrice / product.wholesalePrice) * 100)}% OFF
+                  </span>
                   <span className="text-xs text-green-600 font-semibold">mayorista</span>
                 </>
               ) : (
@@ -657,6 +676,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               <>
                 <span className="text-xs text-slate-400 line-through">{formatPrice(product.price)}</span>
                 <FitText max={18} min={12} className="font-bold text-red-600">{formatPrice(product.salePrice)}</FitText>
+                <span className="text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-md self-center">
+                  {Math.round((1 - product.salePrice / product.price) * 100)}% OFF
+                </span>
               </>
             ) : (
               <FitText max={18} min={12} className="font-bold text-slate-900">{formatPrice(product.price)}</FitText>

@@ -128,7 +128,7 @@ export default function AnnouncementBar() {
         .ann-bounce {
           display: inline-block;
           white-space: nowrap;
-          animation: ann-bounce-anim 10s ease-in-out infinite alternate;
+          animation: ann-bounce-anim 25s ease-in-out infinite alternate;
         }
         .ann-wrap { animation: ann-fade 0.35s ease-out; }
       `}</style>

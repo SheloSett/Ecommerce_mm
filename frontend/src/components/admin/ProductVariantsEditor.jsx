@@ -13,7 +13,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
 
   // Estado para agregar un atributo nuevo
   const [newAttrName,       setNewAttrName]       = useState("");
-  const [newAttrValues,     setNewAttrValues]     = useState(""); // CSV: "Rojo, Azul, Verde"
+  const [newAttrValues,     setNewAttrValues]     = useState([]); // array de chips/tags
+  const [newAttrValueInput, setNewAttrValueInput] = useState(""); // texto en curso del chip input
   const [newAttrVisibility, setNewAttrVisibility] = useState("AMBOS");
   const [savingAttr,        setSavingAttr]        = useState(false);
 
@@ -60,7 +61,11 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
 
   const handleAddAttribute = async () => {
     if (!newAttrName.trim()) { toast.error("Ingresá el nombre del atributo"); return; }
-    const values = newAttrValues.split(",").map((v) => v.trim()).filter(Boolean);
+    // Flush del input en curso: si el usuario escribió algo sin presionar Enter, lo agregamos igual
+    const pendingInput = newAttrValueInput.trim();
+    const values = pendingInput
+      ? [...new Set([...newAttrValues, pendingInput])]
+      : [...newAttrValues];
     if (values.length === 0) { toast.error("Ingresá al menos un valor"); return; }
 
     const hadVariants = variants.length > 0;
@@ -73,7 +78,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
       });
       setAttributes((prev) => [...prev, res.data]);
       setNewAttrName("");
-      setNewAttrValues("");
+      setNewAttrValues([]);
+      setNewAttrValueInput("");
       setNewAttrVisibility("AMBOS");
       // Si ya había combinaciones generadas, regenerar automáticamente para que se actualicen
       // con el nuevo atributo. Si era el primer atributo, el usuario debe presionar "Generar" manualmente.
@@ -529,6 +535,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Agregar nuevo atributo</p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {/* Nombre del atributo */}
             <input
               type="text"
               list="attr-names-suggestions"
@@ -537,14 +544,60 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
               onChange={(e) => setNewAttrName(e.target.value)}
               className="px-3 py-2 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <input
-              type="text"
-              list="attr-values-suggestions"
-              placeholder="Valores: Rojo, Azul, Verde"
-              value={newAttrValues}
-              onChange={(e) => setNewAttrValues(e.target.value)}
-              className="px-3 py-2 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+
+            {/* Valores — chip/tag input: Enter o coma agrega el tag */}
+            <div
+              className="flex flex-wrap gap-1.5 items-center px-2 py-1.5 bg-white border border-slate-300 dark:bg-slate-900/50 dark:border-slate-600 rounded-md focus-within:ring-2 focus-within:ring-blue-500 min-h-[38px] cursor-text"
+              onClick={(e) => e.currentTarget.querySelector("input")?.focus()}
+            >
+              {newAttrValues.map((val) => (
+                <span
+                  key={val}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 text-xs font-medium rounded-full"
+                >
+                  {val}
+                  <button
+                    type="button"
+                    onClick={() => setNewAttrValues((prev) => prev.filter((v) => v !== val))}
+                    className="hover:text-red-500 transition-colors leading-none"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                list="attr-values-suggestions"
+                placeholder={newAttrValues.length === 0 ? "Escribí un valor y presioná Enter" : "Otro valor…"}
+                value={newAttrValueInput}
+                onChange={(e) => {
+                  // Si el usuario tipea una coma, hacer flush del valor actual como chip
+                  const raw = e.target.value;
+                  if (raw.includes(",")) {
+                    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+                    const toAdd = parts.filter((p) => !newAttrValues.includes(p));
+                    if (toAdd.length) setNewAttrValues((prev) => [...prev, ...toAdd]);
+                    setNewAttrValueInput("");
+                  } else {
+                    setNewAttrValueInput(raw);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = newAttrValueInput.trim();
+                    if (!val) return;
+                    if (!newAttrValues.includes(val)) setNewAttrValues((prev) => [...prev, val]);
+                    setNewAttrValueInput("");
+                  }
+                  // Backspace sobre input vacío elimina el último chip
+                  if (e.key === "Backspace" && newAttrValueInput === "" && newAttrValues.length > 0) {
+                    setNewAttrValues((prev) => prev.slice(0, -1));
+                  }
+                }}
+                className="flex-1 min-w-[120px] bg-transparent border-none outline-none text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+              />
+            </div>
           </div>
 
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -858,7 +911,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                           <div className="flex flex-col gap-0.5 text-xs">
                             {(v.visibility === "MINORISTA" || v.visibility === "AMBOS" || !v.visibility) && (
                               <div>
-                                <span className="text-slate-400 dark:text-slate-500 mr-1">Min:</span>
+                                <span className="text-slate-400 dark:text-slate-500 mr-1">Base minorista:</span>
                                 {v.price != null ? formatPrice(v.price) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
                                 {v.salePrice != null && (
                                   <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.salePrice)})</span>
@@ -867,8 +920,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                             )}
                             {(v.visibility === "MAYORISTA" || v.visibility === "AMBOS") && (
                               <div>
-                                <span className="text-purple-500 dark:text-purple-400 mr-1">May:</span>
-                                {v.wholesalePrice != null ? formatPrice(v.wholesalePrice) : <span className="text-slate-400 dark:text-slate-500">—</span>}
+                                <span className="text-purple-500 dark:text-purple-400 mr-1">Base mayorista:</span>
+                                {v.wholesalePrice != null ? formatPrice(v.wholesalePrice) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
                                 {v.wholesaleSalePrice != null && (
                                   <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.wholesaleSalePrice)})</span>
                                 )}

@@ -184,10 +184,11 @@ export function CartProvider({ children }) {
           name:         item.product.name,
           price:        effectivePrice,
           image:        item.product.images?.[0] || null,
-          // Antes los mayoristas no podían elegir variantes y se filtraban acá. Ahora pueden,
-          // así que al repetir pedido se hereda la variante elegida en el pedido original.
-          variantId:    item.variantId    || null,
-          variantLabel: item.variantLabel || null,
+          // Para MAYORISTAS: nunca copiar la variante al repetir. Las variantes en cotizaciones
+          // las asigna el admin, no el cliente — copiarlas sería incorrecto.
+          // Para MINORISTAS: sí copiar, ellos siempre las eligen en el storefront.
+          variantId:    isMayorista ? null : (item.variantId    || null),
+          variantLabel: isMayorista ? null : (item.variantLabel || null),
         });
       }
 

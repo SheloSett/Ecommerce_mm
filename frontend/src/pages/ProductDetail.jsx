@@ -553,13 +553,20 @@ export default function ProductDetail() {
                         <span className="text-lg text-[#ba1a1a] line-through">{formatPrice(baseUnitPrice)}</span>
                       )}
                     </div>
-                    <span className={`inline-block mt-2 px-3 py-1 text-xs font-semibold rounded-full ${
-                      hasWholesaleSale || hasTierDiscount
-                        ? "bg-red-100 text-red-600"
-                        : "bg-[#dce9ff] text-[#00174b]"
-                    }`}>
-                      {hasTierDiscount ? "Precio mayorista c/descuento" : hasWholesaleSale ? "Oferta mayorista" : "Precio mayorista"}
-                    </span>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      {hasWholesaleSale && !hasTierDiscount && (
+                        <span className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
+                          {Math.round((1 - baseSalePrice / basePrice) * 100)}% OFF
+                        </span>
+                      )}
+                      <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                        hasWholesaleSale || hasTierDiscount
+                          ? "bg-red-100 text-red-600"
+                          : "bg-[#dce9ff] text-[#00174b]"
+                      }`}>
+                        {hasTierDiscount ? "Precio mayorista c/descuento" : hasWholesaleSale ? "Oferta mayorista" : "Precio mayorista"}
+                      </span>
+                    </div>
                   </div>
                 );
               }
@@ -576,9 +583,16 @@ export default function ProductDetail() {
                     )}
                   </div>
                   {showStrike && (
-                    <span className="inline-block mt-2 px-3 py-1 bg-red-100 text-red-600 text-xs font-semibold rounded-full">
-                      {hasTierDiscount ? "Precio por cantidad" : "Precio oferta"}
-                    </span>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      {!hasTierDiscount && (
+                        <span className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
+                          {Math.round((1 - displayPrice / originalPrice) * 100)}% OFF
+                        </span>
+                      )}
+                      <span className="px-3 py-1 bg-red-100 text-red-600 text-xs font-semibold rounded-full">
+                        {hasTierDiscount ? "Precio por cantidad" : "Precio oferta"}
+                      </span>
+                    </div>
                   )}
                   {/* Precio sin impuesto — calculado como price / 1.21, solo visible para MINORISTA */}
                   {customer?.type !== "MAYORISTA" && basePrice != null && (

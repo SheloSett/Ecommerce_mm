@@ -69,13 +69,14 @@ export default function CartDrawer({ open, onClose }) {
               </span>
               <p className="text-base font-semibold text-[#0b1c30] mb-1">Tu carrito está vacío</p>
               <p className="text-sm text-[#565e74] mb-6">Explorá el catálogo para agregar productos</p>
-              <button
+              <Link
+                to="/catalogo"
                 onClick={onClose}
                 className="flex items-center gap-2 px-5 py-2.5 bg-[#00873a] text-white font-semibold rounded-[10px] hover:opacity-90 transition-all text-sm"
               >
                 <span className="material-symbols-outlined text-[18px]">store</span>
                 Ver catálogo
-              </button>
+              </Link>
             </div>
           ) : (
             items.map((item) => {

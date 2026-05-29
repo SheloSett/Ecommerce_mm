@@ -172,11 +172,11 @@ export default function Home() {
                 aria-hidden="true"
                 className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
               />
-              {/* Imagen principal: se muestra completa sin recortar, debajo del texto */}
+              {/* Imagen principal: object-cover para que ocupe todo el ancho del banner (1920×600px recomendado) */}
               <img
                 src={getImageUrl(slide.image)}
                 alt={slide.title || ""}
-                className="absolute inset-0 w-full h-full object-contain z-10"
+                className="absolute inset-0 w-full h-full object-cover z-10"
               />
               {/* Gradiente para legibilidad del texto */}
               {(slide.title || slide.subtitle) && (
