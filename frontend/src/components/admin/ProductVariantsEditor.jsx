@@ -228,6 +228,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesaleSalePrice: v.wholesaleSalePrice != null ? String(v.wholesaleSalePrice) : "",
         cost:               v.cost  != null ? String(v.cost)  : "",
         sku:                v.sku ?? "",
+        // Ubicación en depósito (override opcional del producto)
+        module:             v.module ?? "",
+        shelf:              v.shelf  ?? "",
         // Visibilidad heredada del atributo (read-only en esta fila)
         visibility:         attrVisibility,
         // images: array de URLs de las fotos del producto asignadas a esta variante.
@@ -283,6 +286,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesaleSalePrice: isMay ? (e.wholesaleSalePrice === "" ? "" : (parseFloat(e.wholesaleSalePrice) || "")) : null,
         cost:               e.cost  === "" ? "" : (parseFloat(e.cost)  || ""),
         sku:                e.sku,
+        // Ubicación en depósito (override del producto; vacío → el backend lo guarda como null)
+        module:             e.module ?? "",
+        shelf:              e.shelf  ?? "",
         visibility:         e.visibility || "AMBOS",
         images:             e.images || [],
         image:              e.images && e.images.length > 0 ? e.images[0] : null,
@@ -664,6 +670,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                 <th className="px-3 py-2.5 text-center w-56">Precios</th>
                 <th className="px-3 py-2.5 text-center w-28">Costo</th>
                 <th className="px-3 py-2.5 text-center w-32">SKU</th>
+                <th className="px-3 py-2.5 text-center w-36">Ubicación</th>
                 <th className="px-3 py-2.5 w-24"></th>
               </tr>
             </thead>
@@ -859,6 +866,24 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                             className="w-full px-2 py-1 bg-slate-900/50 border border-slate-600 rounded text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </td>
+                        {/* Ubicación — edit. Módulo + Estante lado a lado. Vacío = usa la del producto. */}
+                        <td className="px-3 py-2">
+                          <div className="flex gap-1">
+                            <input
+                              type="text" placeholder="Mód."
+                              value={e.module}
+                              onChange={(ev) => setEditing((p) => ({ ...p, [v.id]: { ...e, module: ev.target.value } }))}
+                              className="w-1/2 px-2 py-1 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            <input
+                              type="text" placeholder="Est."
+                              value={e.shelf}
+                              onChange={(ev) => setEditing((p) => ({ ...p, [v.id]: { ...e, shelf: ev.target.value } }))}
+                              className="w-1/2 px-2 py-1 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          </div>
+                          <p className="text-[9px] text-slate-400 mt-0.5 text-center leading-tight">vacío = usa la del producto</p>
+                        </td>
                         {/* Acciones — edit */}
                         <td className="px-3 py-2">
                           <div className="flex gap-1">
@@ -935,6 +960,16 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         </td>
                         {/* SKU — view */}
                         <td className="px-4 py-3 text-center text-slate-500 dark:text-slate-400 text-xs">{v.sku || "—"}</td>
+                        {/* Ubicación — view. Muestra módulo/estante propios de la variante (si tiene). */}
+                        <td className="px-4 py-3 text-center text-xs">
+                          {(v.module || v.shelf) ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30 font-semibold">
+                              📍 {v.module || "—"} · {v.shelf || "—"}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500">Usa la del producto</span>
+                          )}
+                        </td>
                         {/* Acciones — view */}
                         <td className="px-4 py-3">
                           <button

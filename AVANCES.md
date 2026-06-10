@@ -250,6 +250,18 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 117- checkout modo oscuro se ve mal ✅
 
+
+118- fijate que el panel de mis favoritos tiene cards distintas a la demas del catalogo, o del home, cambiala a comok estan en las otras vistas ✅
+
+
+119- las medidas que te deje en la img3 son las indicadas para que ocupe todo el recuadro del banner, es decir mira la img4 -> nose el tamaño de la foto que esta puesta, pero la idea es que ocupe todo el ancho, y que aun asi se vea bien... ✅
+
+120- ya que estamos implementando en algunos casos variantes de los productos en pedidos mayoristas, solo en los productos que tengan esa variante que eligio el cliente mayorista pueden aparecer en el detalle que eligio esa opcion, como en la img5 con los cables vga ✅
+
+121- la barra banner que esta en todas las vista, cuandopones rebotar va muy rapido, debe ser mas lento ✅
+
+122- bug del boton del catalogo en carrito ✅
+
 ##
 
 

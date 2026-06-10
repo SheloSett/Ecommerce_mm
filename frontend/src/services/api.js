@@ -97,6 +97,16 @@ export const categoriesApi = {
   delete: (id) => api.delete(`/categories/${id}`),
 };
 
+// ─── Proveedores ──────────────────────────────────────────────────────────────
+// Solo admin: lista dinámica de proveedores asignables a un producto (se crean inline
+// desde el formulario de producto, igual que las categorías).
+export const suppliersApi = {
+  getAll: () => api.get("/suppliers"),
+  create: (data) => api.post("/suppliers", data),
+  update: (id, data) => api.put(`/suppliers/${id}`, data),
+  remove: (id) => api.delete(`/suppliers/${id}`),
+};
+
 // ─── Órdenes ──────────────────────────────────────────────────────────────────
 export const ordersApi = {
   create: (data) => api.post("/orders", data),

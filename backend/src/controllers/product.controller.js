@@ -5,6 +5,30 @@ const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
 const prisma = new PrismaClient();
 
+// Campos de uso interno (ubicación en depósito + proveedor) que SOLO el admin debe ver.
+// En respuestas públicas (catálogo, detalle para clientes) se eliminan del objeto producto.
+const ADMIN_ONLY_PRODUCT_FIELDS = ["module", "shelf", "supplierId", "supplier"];
+function stripAdminProductFields(product) {
+  if (!product) return product;
+  const clone = { ...product };
+  for (const f of ADMIN_ONLY_PRODUCT_FIELDS) delete clone[f];
+  return clone;
+}
+
+// Determina si la request viene de un admin autenticado (token JWT con rol ADMIN/SUPERADMIN).
+// Se usa para decidir si exponer o no los campos internos del producto.
+function isAdminRequest(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
+  try {
+    const jwt = require("jsonwebtoken");
+    const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
+    return decoded.role === "ADMIN" || decoded.role === "SUPERADMIN";
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
@@ -145,7 +169,8 @@ async function getProducts(req, res) {
     ]);
 
     res.json({
-      products,
+      // Catálogo público: nunca exponer ubicación de depósito ni proveedor
+      products: products.map(stripAdminProductFields),
       pagination: {
         total,
         page: parseInt(page),
@@ -234,6 +259,8 @@ async function getProductsAdmin(req, res) {
             where: { sku: { not: null } },
             select: { id: true, sku: true, stock: true, stockUnlimited: true, combination: true },
           },
+          // Proveedor asignado (solo admin) — para preseleccionarlo al editar y mostrarlo en el listado
+          supplier: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -310,6 +337,7 @@ async function getProduct(req, res) {
         categories: { include: { parent: { select: { id: true, name: true, slug: true } } } },
         attributes: { include: { values: { orderBy: { position: "asc" } } }, orderBy: { position: "asc" } },
         variants:   { where: variantsWhere, orderBy: { createdAt: "asc" } },
+        supplier:   { select: { id: true, name: true } },
       },
     });
 
@@ -337,7 +365,8 @@ async function getProduct(req, res) {
       }
     }
 
-    res.json(product);
+    // Si quien consulta no es admin, ocultar los campos internos (depósito + proveedor)
+    res.json(isAdminRequest(req) ? product : stripAdminProductFields(product));
   } catch (err) {
     console.error("getProduct error:", err);
     res.status(500).json({ error: "Error al obtener el producto" });
@@ -394,7 +423,7 @@ async function enforceCarouselLimit(field, excludeId = null) {
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, weight, length, width, height, visibility } = req.body;
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
     const priceTiers = parseTiers(priceTiersRaw);
     const wholesalePriceTiers = parseTiers(wholesalePriceTiersRaw);
     // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
@@ -449,6 +478,11 @@ async function createProduct(req, res) {
         length: length ? parseFloat(length) : null,
         width:  width  ? parseFloat(width)  : null,
         height: height ? parseFloat(height) : null,
+        // Ubicación en depósito (módulo/estante) — texto libre, opcional
+        module: module ? module.trim() : null,
+        shelf:  shelf  ? shelf.trim()  : null,
+        // Proveedor: relación opcional. Si viene un id válido lo conectamos, sino queda sin proveedor.
+        supplier: supplierId ? { connect: { id: parseInt(supplierId) } } : undefined,
         // Antes: categoryId: categoryId ? parseInt(categoryId) : null
         categories: categoryIds.length > 0 ? { connect: categoryIds.map((id) => ({ id })) } : undefined,
         featured: featured === "true" || featured === true,
@@ -462,7 +496,7 @@ async function createProduct(req, res) {
         wholesalePriceTiers: wholesalePriceTiers || undefined,
         images,
       },
-      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
+      include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
     });
 
     res.status(201).json(product);
@@ -476,7 +510,7 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility } = req.body;
+    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
     // undefined → no tocar (allowUndefined=true); null/[] → borrar tiers
     const priceTiersUpdate = parseTiers(priceTiersRaw, true);
     const wholesalePriceTiersUpdate = parseTiers(wholesalePriceTiersRaw, true);
@@ -586,6 +620,13 @@ async function updateProduct(req, res) {
         length: length !== undefined ? (length ? parseFloat(length) : null) : existing.length,
         width:  width  !== undefined ? (width  ? parseFloat(width)  : null) : existing.width,
         height: height !== undefined ? (height ? parseFloat(height) : null) : existing.height,
+        // Ubicación en depósito: si viene en el body se actualiza (vacío → null), sino se conserva
+        module: module !== undefined ? (module ? module.trim() : null) : existing.module,
+        shelf:  shelf  !== undefined ? (shelf  ? shelf.trim()  : null) : existing.shelf,
+        // Proveedor: si no vino en el body, no tocar. Si vino con id → conectar; si vino vacío → desvincular.
+        ...(supplierId !== undefined
+          ? { supplier: supplierId ? { connect: { id: parseInt(supplierId) } } : { disconnect: true } }
+          : {}),
         // Antes: categoryId: categoryId !== undefined ? (categoryId ? parseInt(categoryId) : null) : existing.categoryId
         // set: reemplaza todas las categorías por las nuevas; si no vino en el body, no tocar
         ...(categoryIds !== null ? { categories: { set: categoryIds.map((id) => ({ id })) } } : {}),
@@ -619,7 +660,7 @@ async function updateProduct(req, res) {
         ...(wholesalePriceTiersUpdate !== undefined ? { wholesalePriceTiers: wholesalePriceTiersUpdate } : {}),
         images,
       },
-      include: { categories: { include: { parent: { select: { id: true, name: true } } } } },
+      include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
     });
 
     res.json(product);

@@ -54,6 +54,7 @@ import AdminReturns from "./pages/admin/AdminReturns";
 // AdminUsers: movido a UsersSectionContent embebido en AdminSettings — página standalone descartada
 // import AdminUsers from "./pages/admin/AdminUsers";
 import AdminOrderDetail from "./pages/admin/AdminOrderDetail";
+import AdminPurchaseOrder from "./pages/admin/AdminPurchaseOrder";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
@@ -157,6 +158,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="ordenes"><AdminOrderDetail /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          {/* Orden de compra a proveedores: selección de productos del pedido para imprimir */}
+          <Route
+            path="/admin/ordenes/:id/compra"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="ordenes"><AdminPurchaseOrder /></RequirePermission>
               </ProtectedRoute>
             }
           />

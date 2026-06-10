@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { productsApi, categoriesApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
+import { productsApi, categoriesApi, suppliersApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
 import TierEditor from "../../components/admin/TierEditor";
+import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
 
 const EMPTY_FORM = {
   name: "",
@@ -28,6 +29,11 @@ const EMPTY_FORM = {
   length: "",
   width: "",
   height: "",
+  // Ubicación en depósito (solo admin): módulo + estante físico del artículo
+  module: "",
+  shelf: "",
+  // Proveedor (solo admin): id del proveedor seleccionado (string para el <select>)
+  supplierId: "",
   categoryIds: [],
   featured: false,
   // onSale: marca el producto para la sección "Ofertas" de la home
@@ -53,6 +59,7 @@ export default function AdminProductCreate() {
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [categories, setCategories] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [newImages, setNewImages] = useState([]);
   const [saving, setSaving] = useState(false);
   const [savedProduct, setSavedProduct] = useState(null);
@@ -67,6 +74,7 @@ export default function AdminProductCreate() {
 
   useEffect(() => {
     categoriesApi.getAll().then((res) => setCategories(res.data));
+    suppliersApi.getAll().then((res) => setSuppliers(res.data)).catch(() => {});
   }, []);
 
   const handleImageSelect = (e) => {
@@ -130,6 +138,10 @@ export default function AdminProductCreate() {
       formData.append("length", form.length);
       formData.append("width", form.width);
       formData.append("height", form.height);
+      // Depósito + proveedor (solo admin)
+      formData.append("module", form.module || "");
+      formData.append("shelf", form.shelf || "");
+      formData.append("supplierId", form.supplierId || "");
       formData.append("featured", form.featured);
       formData.append("onSale", form.onSale);
       formData.append("hotSeller", form.hotSeller);
@@ -269,6 +281,14 @@ export default function AdminProductCreate() {
               ))}
             </div>
           </div>
+
+          {/* Depósito y proveedor (solo admin) */}
+          <WarehouseSupplierFields
+            form={form}
+            setForm={setForm}
+            suppliers={suppliers}
+            setSuppliers={setSuppliers}
+          />
 
           {/* Descripción — editor rich text */}
           <div>

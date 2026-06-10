@@ -25,6 +25,7 @@ const wishlistRoutes   = require("./routes/wishlist.routes");
 const adminUsersRoutes = require("./routes/adminUsers.routes");
 const shippingRoutes   = require("./routes/shipping.routes");
 const adminTestRoutes  = require("./routes/admin-test.routes");
+const supplierRoutes   = require("./routes/supplier.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -107,6 +108,7 @@ app.use("/api/wishlist",     wishlistRoutes);
 app.use("/api/admin-users", adminUsersRoutes);
 app.use("/api/shipping",   shippingRoutes);
 app.use("/api/admin-test", adminTestRoutes);
+app.use("/api/suppliers",  supplierRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

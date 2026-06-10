@@ -610,6 +610,13 @@ export default function AdminOrders() {
       const imgHtml = imgSrc
         ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
         : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
+      // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
+      // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
+      const mod   = item.variant?.module ?? item.product?.module;
+      const shelf = item.variant?.shelf  ?? item.product?.shelf;
+      const locHtml = (mod || shelf)
+        ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
+        : "";
       return `
       <tr>
         <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
@@ -618,6 +625,7 @@ export default function AdminOrders() {
             <div>
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
+              ${locHtml}
               <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
@@ -1392,6 +1400,20 @@ export default function AdminOrders() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                               </svg>
                               Imprimir
+                            </button>
+                            {/* Orden de compra a proveedores — abre la vista de selección de productos */}
+                            <button
+                              onClick={() => navigate(`/admin/ordenes/${order.id}/compra`)}
+                              className="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 text-xs font-semibold flex items-center gap-1"
+                              title="Generar orden de compra a proveedores"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                              </svg>
+                              {/* Antes: "Comprar" — renombrado a "Orden de compra" porque el botón no compra
+                                  nada: genera la orden de compra a proveedores (ver tooltip y ruta /compra).
+                                  "Comprar" confundía en una lista de pedidos de clientes. */}
+                              Orden de compra
                             </button>
                             <button
                               onClick={() => {

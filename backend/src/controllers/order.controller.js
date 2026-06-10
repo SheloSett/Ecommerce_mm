@@ -26,6 +26,33 @@ const {
 
 const prisma = new PrismaClient();
 
+// Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
+// costo e imágenes. A diferencia del precio o la etiqueta de variante (que se congelan al
+// momento del pedido para historial), estos datos los queremos actualizados: la ubicación
+// cambia al reordenar el depósito y el costo/foto sirven para la orden de compra al proveedor.
+// No usamos relación/FK en OrderItem.variantId porque las variantes se regeneran/borran y
+// referencias colgantes romperían la constraint; resolvemos con una query batcheada por variantId.
+// El frontend usa fallback por campo, ej: item.variant?.module ?? item.product?.module.
+// Solo se usa en endpoints admin (getOrders / getOrder).
+async function attachVariantDetails(orders) {
+  const list = Array.isArray(orders) ? orders : [orders];
+  const variantIds = [...new Set(
+    list.flatMap((o) => (o.items || []).map((i) => i.variantId).filter(Boolean))
+  )];
+  if (variantIds.length === 0) return;
+  const variants = await prisma.productVariant.findMany({
+    where:  { id: { in: variantIds } },
+    select: { id: true, module: true, shelf: true, cost: true, images: true },
+  });
+  const map = {};
+  for (const v of variants) map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images };
+  for (const o of list) {
+    for (const i of (o.items || [])) {
+      if (i.variantId && map[i.variantId]) i.variant = map[i.variantId];
+    }
+  }
+}
+
 // GET /api/orders - Listar órdenes (solo admin)
 async function getOrders(req, res) {
   try {
@@ -69,7 +96,8 @@ async function getOrders(req, res) {
         include: {
           items: {
             include: {
-              product: { select: { id: true, name: true, images: true } },
+              // module/shelf: ubicación en depósito — se imprime en la orden desde el listado (ruta admin-only)
+              product: { select: { id: true, name: true, images: true, module: true, shelf: true } },
             },
           },
           // Incluir datos del cupón para mostrar en detalle y en impresión
@@ -81,6 +109,9 @@ async function getOrders(req, res) {
       }),
       prisma.order.count({ where }),
     ]);
+
+    // Adjuntar datos de variante (en vivo) para la impresión desde el listado
+    await attachVariantDetails(orders);
 
     res.json({
       orders,
@@ -107,7 +138,9 @@ async function getOrder(req, res) {
       include: {
         items: {
           include: {
-            product: { select: { id: true, name: true, images: true } },
+            // module/shelf: ubicación en depósito (impresión de separación).
+            // cost/supplier: para la orden de compra al proveedor. Esta ruta es admin-only.
+            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, supplier: { select: { id: true, name: true } } } },
           },
         },
         // Incluir cupón para mostrarlo en el detalle de la orden en el panel admin
@@ -118,6 +151,9 @@ async function getOrder(req, res) {
     if (!order) {
       return res.status(404).json({ error: "Orden no encontrada" });
     }
+
+    // Adjuntar datos de variante (en vivo) para la impresión del detalle y la orden de compra
+    await attachVariantDetails(order);
 
     res.json(order);
   } catch (err) {
@@ -1917,9 +1953,14 @@ async function modifyOrder(req, res) {
         }
       }
 
+      // cost: si viene en el body, se actualiza (vacío → null para volver al fallback del producto)
+      const costUpdate = incoming.cost !== undefined
+        ? (incoming.cost === "" || incoming.cost === null ? null : parseFloat(incoming.cost))
+        : undefined;
+
       await prisma.orderItem.update({
         where: { id: existingItem.id },
-        data:  { quantity: newQty, price: newPrice },
+        data:  { quantity: newQty, price: newPrice, ...(costUpdate !== undefined ? { cost: costUpdate } : {}) },
       });
     }
 
@@ -1955,6 +1996,8 @@ async function modifyOrder(req, res) {
           product:      { connect: { id: pid } },
           quantity:     qty,
           price:        price,
+          // cost del ítem para el pedido (vacío → null = usa el costo del producto en la orden de compra)
+          cost:         (newItem.cost === "" || newItem.cost === undefined || newItem.cost === null) ? null : parseFloat(newItem.cost),
           variantId:    newItem.variantId ? parseInt(newItem.variantId) : null,
           variantLabel: newItem.variantLabel || null,
         },

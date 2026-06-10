@@ -93,6 +93,17 @@
 .admin-dark .bg-slate-100 { background-color: #1e293b !important; }
 .admin-dark .bg-slate-200 { background-color: #334155 !important; }
 
+/* Fondos slate CON modificador de opacidad (ej: bg-slate-50/60, bg-slate-50/50).
+   El nombre de clase generado es literalmente "bg-slate-50/60", por lo que el
+   selector ".bg-slate-50" de arriba NO los alcanza → quedaban claros en modo
+   oscuro (la caja "Depósito y proveedor" del modal de productos, las filas
+   zebra de AdminCategories/AdminPurchases y ProductVariantsEditor, etc.).
+   El selector por atributo [class*=] sí los captura. Nota: "bg-slate-50/" NO
+   coincide con "bg-slate-500/" porque exige la barra justo después del 50. */
+.admin-dark [class*="bg-slate-50/"]  { background-color: #0f172a !important; }
+.admin-dark [class*="bg-slate-100/"] { background-color: #1e293b !important; }
+.admin-dark [class*="bg-slate-200/"] { background-color: #334155 !important; }
+
 /* Fondos de color (azul, rojo, verde, amber, etc.) — versiones oscuras */
 .admin-dark .bg-blue-50    { background-color: #0f1f35 !important; }
 .admin-dark .bg-red-50     { background-color: #1f0f0f !important; }
@@ -464,6 +475,12 @@ html[data-theme="oscuro"] .storefront .bg-slate-100 { background-color: #171f33 
 html[data-theme="oscuro"] .storefront .bg-slate-200 { background-color: #2d3449 !important; color: #dae2fd !important; } /* surface-container-highest */
 html[data-theme="oscuro"] .storefront .bg-white     { background-color: #222a3d !important; }  /* surface-container-high (Stitch) */
 
+/* Fondos slate con modificador de opacidad (bg-slate-50/60, etc.) — ver nota en
+   la sección .admin-dark. Mismo bug, mismo arreglo, para la tienda pública. */
+html[data-theme="oscuro"] .storefront [class*="bg-slate-50/"]  { background-color: #0b1326 !important; }  /* background (Stitch) */
+html[data-theme="oscuro"] .storefront [class*="bg-slate-100/"] { background-color: #171f33 !important; }  /* surface-container (Stitch) */
+html[data-theme="oscuro"] .storefront [class*="bg-slate-200/"] { background-color: #2d3449 !important; }  /* surface-container-highest (Stitch) */
+
 /* Boton primario: verde secundario — antes usaba primary (azul-gris) */
 html[data-theme="oscuro"] .storefront .btn-primary {
   background-color: #009900 !important; /* secondary-600 */
@@ -753,6 +770,12 @@ html[data-theme="oscuro"] .ds-page .bg-slate-50       { background-color: #0b132
 html[data-theme="oscuro"] .ds-page .bg-white          { background-color: #222a3d !important; } /* surface-container-high (Stitch) */
 html[data-theme="oscuro"] .ds-page .bg-slate-100      { background-color: #171f33 !important; } /* surface-container (Stitch) */
 html[data-theme="oscuro"] .ds-page .bg-slate-200      { background-color: #2d3449 !important; color: #dae2fd !important; } /* surface-container-highest */
+
+/* Fondos slate con modificador de opacidad (bg-slate-50/60, etc.) — ver nota en
+   la sección .admin-dark. Mismo bug, mismo arreglo, para páginas de cuenta/legales. */
+html[data-theme="oscuro"] .ds-page [class*="bg-slate-50/"]  { background-color: #0b1326 !important; } /* background (Stitch) */
+html[data-theme="oscuro"] .ds-page [class*="bg-slate-100/"] { background-color: #171f33 !important; } /* surface-container (Stitch) */
+html[data-theme="oscuro"] .ds-page [class*="bg-slate-200/"] { background-color: #2d3449 !important; } /* surface-container-highest (Stitch) */
 
 /* ── Superficies de color (surface-low, surface-container) ── */
 html[data-theme="oscuro"] .ds-page .bg-\[\#eff4ff\]  { background-color: #171f33 !important; } /* surface-container (Stitch) */

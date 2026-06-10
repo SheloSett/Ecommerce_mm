@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { productsApi, categoriesApi, variantsApi, getImageUrl } from "../../services/api";
+import { productsApi, categoriesApi, suppliersApi, variantsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
 import TierEditor from "../../components/admin/TierEditor";
+import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
 import * as XLSX from "xlsx";
 
 const EMPTY_FORM = {
@@ -31,6 +32,11 @@ const EMPTY_FORM = {
   length: "",
   width: "",
   height: "",
+  // Ubicación en depósito (solo admin): módulo + estante físico del artículo
+  module: "",
+  shelf: "",
+  // Proveedor (solo admin): id del proveedor seleccionado (string para el <select>)
+  supplierId: "",
   // categoryId: "",  // Reemplazado por categoryIds (array M2M)
   categoryIds: [],
   featured: false,
@@ -183,6 +189,7 @@ export default function AdminProducts() {
   const [applyingPrice, setApplyingPrice] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [suppliers, setSuppliers] = useState([]);
   const [newImages, setNewImages] = useState([]);
   const [keepImages, setKeepImages] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -231,6 +238,7 @@ export default function AdminProducts() {
   useEffect(() => {
     fetchProducts();
     categoriesApi.getAll().then((res) => setCategories(res.data));
+    suppliersApi.getAll().then((res) => setSuppliers(res.data)).catch(() => {});
   }, []);
 
   // Crea una categoría nueva desde el mini-form inline del modal de producto.
@@ -317,6 +325,10 @@ export default function AdminProducts() {
       length: product.length?.toString() || "",
       width:  product.width?.toString()  || "",
       height: product.height?.toString() || "",
+      // Depósito + proveedor (solo admin)
+      module: product.module || "",
+      shelf:  product.shelf  || "",
+      supplierId: product.supplierId?.toString() || "",
       // categoryId: product.categoryId?.toString() || "",  // Reemplazado por M2M
       categoryIds: product.categories?.map((c) => c.id.toString()) || [],
       featured: product.featured,
@@ -377,6 +389,10 @@ export default function AdminProducts() {
       formData.append("length", form.length);
       formData.append("width",  form.width);
       formData.append("height", form.height);
+      // Depósito + proveedor (solo admin)
+      formData.append("module", form.module || "");
+      formData.append("shelf", form.shelf || "");
+      formData.append("supplierId", form.supplierId || "");
       // categoryId: form.categoryId — Reemplazado por M2M: enviar cada ID por separado
       form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       formData.append("featured", form.featured);
@@ -1423,6 +1439,14 @@ export default function AdminProducts() {
                   ))}
                 </div>
               </div>
+
+              {/* Depósito y proveedor (solo admin) */}
+              <WarehouseSupplierFields
+                form={form}
+                setForm={setForm}
+                suppliers={suppliers}
+                setSuppliers={setSuppliers}
+              />
 
               {/* Descripción — editor rich text */}
               <div>

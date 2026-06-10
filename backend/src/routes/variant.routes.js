@@ -217,6 +217,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
       stock, stockUnlimited,
       price, salePrice, wholesalePrice, wholesaleSalePrice,
       cost, sku, active, image, images, visibility,
+      module, shelf, // ubicación en depósito a nivel variante (override del producto)
     } = req.body;
 
     // Helper para parsear precios: null/empty string → null, valor numérico → float
@@ -243,6 +244,9 @@ router.put("/:id", authMiddleware, async (req, res) => {
     // image (legado, una sola foto) y images (array, múltiples). El admin nuevo manda images.
     if (image          !== undefined) data.image          = image || null;
     if (images         !== undefined) data.images         = Array.isArray(images) ? images.filter(Boolean) : [];
+    // Ubicación en depósito: vacío → null (para que el fallback al producto funcione con ??)
+    if (module         !== undefined) data.module         = module ? String(module).trim() : null;
+    if (shelf          !== undefined) data.shelf          = shelf  ? String(shelf).trim()  : null;
 
     const variant = await prisma.productVariant.update({ where: { id }, data });
     if (stock !== undefined || stockUnlimited !== undefined) {

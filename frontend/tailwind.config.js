@@ -1,6 +1,19 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  // darkMode: hace que las variantes `dark:` (ej. dark:bg-slate-800) respondan
+  // a los toggles de la app y NO al tema del sistema operativo (que era el
+  // comportamiento por defecto y causaba que componentes nuevos se vieran mal).
+  // Se activan cuando el elemento es descendiente de:
+  //   - .admin-dark            → panel de administración (toggle 🌙/☀️)
+  //   - [data-theme="oscuro"]  → tienda pública (toggle de la navbar)
+  // Así se puede usar el patrón estándar "clase-clara dark:clase-oscura" en
+  // cualquier componente nuevo y funciona solo, sin tener que mapear cada clase
+  // a mano en index.css.
+  darkMode: ["variant", [
+    ".admin-dark &",
+    '[data-theme="oscuro"] &',
+  ]],
   theme: {
     extend: {
       colors: {

@@ -5,10 +5,11 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  // directUrl: requerido por Supabase cuando DATABASE_URL apunta al pooler (pgbouncer).
-  // Prisma usa esta URL solo para correr migraciones (prisma migrate deploy),
-  // porque pgbouncer en modo transaction no soporta prepared statements de migrate.
-  directUrl = env("DIRECT_URL")
+  // directUrl COMENTADO: se usaba cuando la BD era Supabase con pgbouncer (pooler).
+  // Con Postgres local en el mismo VPS no hace falta — la URL directa va al puerto 5432
+  // y soporta prepared statements sin problema. Si en el futuro volvemos a Supabase u
+  // otro provider con pooler, descomentar esta línea y setear DIRECT_URL en .env.
+  // directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -62,6 +63,14 @@ model Product {
   length          Float?      // Largo en cm
   width           Float?      // Ancho en cm
   height          Float?      // Alto en cm
+  // Ubicación física en el depósito (solo visible para el admin — se oculta en respuestas públicas).
+  // module/shelf indican el módulo y estante donde está guardado el artículo, para que quien
+  // separa el pedido sepa dónde ir a buscarlo (aparecen al imprimir la orden).
+  module          String?     // Módulo del depósito
+  shelf           String?     // Estante del depósito
+  // Proveedor del producto (relación opcional). Solo visible para el admin.
+  supplierId      Int?
+  supplier        Supplier?   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   images          String[]
   // categoryId/category reemplazados por relación M2M — un producto puede tener varias categorías
   // categoryId   Int?
@@ -179,6 +188,10 @@ model OrderItem {
   productId    Int
   quantity     Int
   price        Float
+  // cost: costo de este ítem para ESTE pedido (lo que se le paga al proveedor). Editable desde la
+  // modificación del pedido y usado en la orden de compra. Si es null, se usa el costo del
+  // producto/variante (fallback). No afecta el costo maestro del producto.
+  cost         Float?
   variantId    Int?    // ID de la variante seleccionada (null si sin variante)
   variantLabel String? // Ej: "Color: Negro / RGB: Si" — guardado al momento del pedido
   variantSku   String? // SKU de la variante seleccionada al momento del pedido
@@ -386,6 +399,18 @@ enum GastoType {
   NEGOCIO
 }
 
+// Proveedores: lista dinámica de proveedores asignables a un producto.
+// Funciona como un "enum editable": el admin elige uno existente o crea uno nuevo
+// desde el formulario de producto (igual que las categorías). Solo visible para el admin.
+model Supplier {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  products  Product[] // Inverso de Product.supplier
+  createdAt DateTime  @default(now())
+
+  @@map("suppliers")
+}
+
 // Registro de compras de stock al proveedor
 model Purchase {
   id        Int            @id @default(autoincrement())
@@ -532,6 +557,11 @@ model ProductVariant {
   wholesalePrice     Float?
   wholesaleSalePrice Float?
   cost               Float?             // costo de la variante (sobrescribe el costo del producto padre)
+  // Ubicación física en el depósito a nivel variante (opcional, solo admin).
+  // Si está vacío, se usa la ubicación del producto padre (fallback). Sirve para cuando una
+  // variante puntual está guardada en un módulo/estante distinto al del resto del artículo.
+  module             String?            // Módulo del depósito (override del producto)
+  shelf              String?            // Estante del depósito (override del producto)
   // Visibilidad de la variante. Por defecto AMBOS en variantes nuevas, pero la migración inicial
   // setea las variantes existentes a MINORISTA para preservar el comportamiento previo (donde
   // mayoristas no veían variantes por un hard-code en el frontend).

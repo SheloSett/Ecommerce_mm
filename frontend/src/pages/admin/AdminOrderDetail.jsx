@@ -157,6 +157,8 @@ export default function AdminOrderDetail() {
       image:        i.product?.images?.[0] || null,
       quantity:     i.quantity,
       price:        i.price,
+      // cost: costo efectivo actual (ítem → variante → producto) para mostrarlo como default editable
+      cost:         i.cost ?? i.variant?.cost ?? i.product?.cost ?? "",
       variantId:    i.variantId || null,
       variantLabel: i.variantLabel || null,
     })));
@@ -180,6 +182,10 @@ export default function AdminOrderDetail() {
 
   const updateEditPrice = (idx, val) => {
     setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, price: val } : it));
+  };
+
+  const updateEditCost = (idx, val) => {
+    setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, cost: val } : it));
   };
 
   const removeEditItem = (idx) => {
@@ -214,6 +220,7 @@ export default function AdminOrderDetail() {
         image:        product.images?.[0] || null,
         quantity:     1,
         price:        price,
+        cost:         product.cost ?? "",
         variantId:    null,
         variantLabel: null,
       }]);
@@ -234,6 +241,8 @@ export default function AdminOrderDetail() {
         productId:    it.productId,
         quantity:     parseInt(it.quantity),
         price:        parseFloat(it.price),
+        // cost: se envía siempre (vacío → el backend lo guarda como null y usa el costo del producto)
+        cost:         it.cost === "" || it.cost === null || it.cost === undefined ? "" : it.cost,
         variantId:    it.variantId || undefined,
         variantLabel: it.variantLabel || undefined,
       }));
@@ -266,6 +275,13 @@ export default function AdminOrderDetail() {
       const imgHtml = imgSrc
         ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
         : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
+      // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
+      // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
+      const mod   = item.variant?.module ?? item.product?.module;
+      const shelf = item.variant?.shelf  ?? item.product?.shelf;
+      const locHtml = (mod || shelf)
+        ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
+        : "";
       return `
       <tr>
         <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
@@ -274,6 +290,7 @@ export default function AdminOrderDetail() {
             <div>
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
+              ${locHtml}
               <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
@@ -455,6 +472,17 @@ export default function AdminOrderDetail() {
               </svg>
               Imprimir
             </button>
+            {/* Orden de compra a proveedores — vista de selección de productos a comprar */}
+            <button
+              onClick={() => navigate(`/admin/ordenes/${order.id}/compra`)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-xl transition-colors"
+              title="Generar orden de compra a proveedores"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              Orden de compra
+            </button>
             {!editMode && (
               <button
                 onClick={enterEditMode}
@@ -540,10 +568,10 @@ export default function AdminOrderDetail() {
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p>
                         {item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
                       </div>
-                      {/* Precio editable */}
+                      {/* Precio de venta + costo (proveedor) + cantidad editables */}
                       <div className="flex flex-col items-end gap-1">
                         <div className="flex items-center gap-1">
-                          <span className="text-xs text-slate-400">$</span>
+                          <span className="text-[10px] text-slate-400 w-12 text-right">Venta $</span>
                           <input
                             type="number"
                             min="0"
@@ -554,13 +582,26 @@ export default function AdminOrderDetail() {
                           />
                         </div>
                         <div className="flex items-center gap-1">
-                          <span className="text-xs text-slate-400">×</span>
+                          <span className="text-[10px] text-slate-400 w-12 text-right">Costo $</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.cost}
+                            onChange={(e) => updateEditCost(idx, e.target.value)}
+                            placeholder="—"
+                            title="Costo del proveedor para este pedido (se usa en la orden de compra)"
+                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-slate-400 w-12 text-right">Cant. ×</span>
                           <input
                             type="number"
                             min="1"
                             value={item.quantity}
                             onChange={(e) => updateEditQty(idx, e.target.value)}
-                            className="w-16 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
                           />
                         </div>
                       </div>
