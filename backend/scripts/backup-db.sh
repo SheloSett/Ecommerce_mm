@@ -31,7 +31,10 @@ BACKUP_FILE="$BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.sql.gz"
 echo "[$(date)] Iniciando backup de $DB_NAME..."
 
 # pg_dump comprimido con gzip — más chico, sube más rápido
-pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-acl | gzip > "$BACKUP_FILE"
+# -h localhost fuerza conexión por TCP/IP (en vez del socket Unix), así Postgres
+# usa autenticación md5 (con password de ~/.pgpass) en lugar de peer (que matchearía
+# el usuario del SO contra el de la DB y fallaría porque corremos como 'shelo').
+pg_dump -h localhost -U "$DB_USER" -d "$DB_NAME" --no-owner --no-acl | gzip > "$BACKUP_FILE"
 echo "[$(date)] Backup local creado: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
 
 # Subir a Backblaze B2 (si rclone está configurado)
