@@ -1,10 +1,12 @@
 .env
 .env.local
 .env.*.local
-.env.example
+.env.production
 node_modules
 .claude
 # Backups de base de datos (no versionar, pueden ser grandes)
 backups/
+# Builds del frontend (regenerables con npm run build)
+frontend/dist/
 
 design
