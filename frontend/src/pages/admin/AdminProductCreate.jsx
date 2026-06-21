@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { productsApi, categoriesApi, suppliersApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
+import { productsApi, categoriesApi, suppliersApi, aiApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
@@ -79,6 +79,88 @@ export default function AdminProductCreate() {
 
   const handleImageSelect = (e) => {
     setNewImages(Array.from(e.target.files));
+  };
+
+  // ─── Asistente de IA (Gemini) ──────────────────────────────────────────────
+  const [aiLoadingText, setAiLoadingText]     = useState(false);
+  const [aiLoadingImages, setAiLoadingImages] = useState(false);
+  const [aiImages, setAiImages]               = useState([]);          // dataURLs generadas
+  const [aiAdded, setAiAdded]                 = useState(new Set());   // índices ya agregados
+
+  // Previsualización de las fotos seleccionadas: object URLs que se revocan al cambiar la lista
+  const [imagePreviews, setImagePreviews] = useState([]);
+  useEffect(() => {
+    const urls = newImages.map((f) => ({ url: URL.createObjectURL(f), name: f.name }));
+    setImagePreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u.url));
+  }, [newImages]);
+
+  const removeImageAt = (idx) => {
+    setNewImages((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Sugerir título, descripción y SKU a partir de la primera foto subida.
+  const handleAiSuggestText = async () => {
+    const base = newImages[0];
+    if (!base) { toast.error("Subí una foto del producto primero"); return; }
+    setAiLoadingText(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", base);
+      const res = await aiApi.suggestText(fd);
+      setForm((f) => ({
+        ...f,
+        name:        res.data.name        || f.name,
+        description: res.data.description || f.description,
+        sku:         res.data.sku         || f.sku,
+      }));
+      toast.success("Datos sugeridos por IA ✨");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo sugerir con IA");
+    } finally {
+      setAiLoadingText(false);
+    }
+  };
+
+  // Generar variantes de la foto (el admin elige cuáles agregar).
+  const handleAiSuggestImages = async () => {
+    const base = newImages[0];
+    if (!base) { toast.error("Subí una foto del producto primero"); return; }
+    setAiLoadingImages(true);
+    setAiImages([]);
+    setAiAdded(new Set());
+    try {
+      const fd = new FormData();
+      fd.append("image", base);
+      fd.append("count", "3");
+      const res = await aiApi.suggestImages(fd);
+      setAiImages(res.data.images || []);
+      if (!(res.data.images || []).length) toast.error("La IA no devolvió imágenes");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudieron generar imágenes");
+    } finally {
+      setAiLoadingImages(false);
+    }
+  };
+
+  // dataURL → File, para que la foto generada se suba igual que las demás al guardar.
+  const dataUrlToFile = (dataUrl, filename) => {
+    const [meta, b64] = dataUrl.split(",");
+    const mime = (meta.match(/data:(.*?);base64/) || [])[1] || "image/png";
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], filename, { type: mime });
+  };
+
+  const addAiImage = (idx) => {
+    if (aiAdded.has(idx)) return;
+    const dataUrl = aiImages[idx];
+    const ext = (dataUrl.match(/data:image\/(\w+)/) || [])[1] || "png";
+    const file = dataUrlToFile(dataUrl, `ia-${Date.now()}-${idx}.${ext}`);
+    setNewImages((prev) => [...prev, file]);
+    setAiAdded((prev) => new Set(prev).add(idx));
+    toast.success("Foto agregada");
   };
 
   const handleCreateCategory = async () => {
@@ -668,11 +750,124 @@ export default function AdminProductCreate() {
               onChange={handleImageSelect}
               className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
             />
-            {newImages.length > 0 && (
-              <p className="text-xs text-blue-600 mt-1">
-                {newImages.length} imagen{newImages.length > 1 ? "es" : ""} seleccionada{newImages.length > 1 ? "s" : ""}
-              </p>
+            {/* Miniaturas de las fotos seleccionadas (incluye las agregadas por IA) */}
+            {imagePreviews.length > 0 && (
+              <>
+                <div className="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {imagePreviews.map((img, idx) => (
+                    <div key={idx} className="relative group aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                      <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
+                      {idx === 0 && (
+                        <span className="absolute top-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-600 text-white shadow">Principal</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeImageAt(idx)}
+                        title="Quitar"
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-red-600 text-white text-xs leading-none flex items-center justify-center sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  {newImages.length} imagen{newImages.length > 1 ? "es" : ""} · la <strong>principal</strong> es la que usa la IA.
+                </p>
+              </>
             )}
+
+            {/* ── Asistente de IA (Gemini) ── */}
+            <div className="mt-4 rounded-2xl border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50 to-fuchsia-50 dark:from-violet-950/40 dark:to-fuchsia-950/30 p-4 sm:p-5 shadow-sm">
+              <div className="flex items-center gap-2.5 mb-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white text-lg shadow-sm shrink-0">✨</div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-800 leading-tight">Asistente de IA</h3>
+                  <p className="text-[11px] text-slate-500 leading-tight">Completá los datos a partir de la foto principal</p>
+                </div>
+              </div>
+
+              {newImages.length === 0 ? (
+                <div className="text-xs text-slate-500 bg-white/70 dark:bg-slate-800/60 border border-violet-100 dark:border-violet-900/40 rounded-xl px-3 py-2.5">
+                  📷 Subí una foto del producto arriba para habilitar las sugerencias.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Autocompletar texto */}
+                  <button
+                    type="button"
+                    onClick={handleAiSuggestText}
+                    disabled={aiLoadingText}
+                    className="group flex items-center gap-3 rounded-xl bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-900/50 hover:border-violet-400 hover:shadow-md disabled:opacity-60 disabled:hover:shadow-none px-3.5 py-3 text-left transition-all"
+                  >
+                    <span className="w-9 h-9 rounded-lg bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300 flex items-center justify-center text-lg shrink-0">
+                      {aiLoadingText
+                        ? <span className="animate-spin rounded-full h-4 w-4 border-2 border-violet-500 border-t-transparent" />
+                        : "📝"}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-800">Autocompletar datos</span>
+                      <span className="block text-[11px] text-emerald-600">Título, descripción y SKU · gratis</span>
+                    </span>
+                  </button>
+
+                  {/* Generar fotos */}
+                  <button
+                    type="button"
+                    onClick={handleAiSuggestImages}
+                    disabled={aiLoadingImages}
+                    className="group flex items-center gap-3 rounded-xl bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-900/50 hover:border-violet-400 hover:shadow-md disabled:opacity-60 disabled:hover:shadow-none px-3.5 py-3 text-left transition-all"
+                  >
+                    <span className="w-9 h-9 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-500/20 text-fuchsia-600 dark:text-fuchsia-300 flex items-center justify-center text-lg shrink-0">
+                      {aiLoadingImages
+                        ? <span className="animate-spin rounded-full h-4 w-4 border-2 border-fuchsia-500 border-t-transparent" />
+                        : "🖼️"}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-800">Generar fotos similares</span>
+                      <span className="block text-[11px] text-amber-600">Requiere plan pago de Gemini</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {aiLoadingImages && (
+                <p className="text-[11px] text-slate-500 mt-2.5 flex items-center gap-1.5">
+                  <span className="animate-spin rounded-full h-3 w-3 border-2 border-fuchsia-500 border-t-transparent" />
+                  Generando imágenes… puede tardar unos segundos.
+                </p>
+              )}
+
+              {aiImages.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs text-slate-500 mb-2">
+                    Tocá las que quieras agregar (elegí solo las que se parezcan al producto real):
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {aiImages.map((src, idx) => {
+                      const added = aiAdded.has(idx);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => addAiImage(idx)}
+                          disabled={added}
+                          className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-colors ${added ? "border-green-500 ring-2 ring-green-200" : "border-slate-200 hover:border-violet-400"}`}
+                        >
+                          <img src={src} alt="" className="w-full h-full object-cover" />
+                          <span className={`absolute bottom-1 right-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${added ? "bg-green-500 text-white" : "bg-black/60 text-white"}`}>
+                            {added ? "✓ Agregada" : "+ Agregar"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    ⚠️ Imágenes generadas por IA. Revisá que representen fielmente el producto antes de publicar.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Botones */}

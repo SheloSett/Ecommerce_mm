@@ -39,6 +39,11 @@ services:
       CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
       CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
       CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      # IA Gemini (autocompletar producto + generar fotos). Poné GEMINI_API_KEY en el .env raíz.
+      # Si queda vacío, los botones de IA quedan deshabilitados (el resto anda igual).
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # OpenAI: respaldo (fallback) para la generación de fotos. Opcional.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "4000:4000"
     volumes:

@@ -724,7 +724,12 @@ async function getStats(req, res) {
     const revenue = totalRevenue._sum.total || 0;
     // Costo total = suma de (cantidad × costo unitario) por cada item
     const totalCost = approvedItems.reduce((sum, item) => {
-      return sum + item.quantity * (item.product?.cost || 0);
+      // Antes: solo item.product?.cost (costo MAESTRO), ignorando el costo guardado en la orden.
+      // return sum + item.quantity * (item.product?.cost || 0);
+      // Ahora: usa item.cost (snapshot del costo de ESE pedido) y solo cae al del producto si es null.
+      // Se usa ?? (no ||) para respetar un costo guardado de 0.
+      const unitCost = item.cost ?? item.product?.cost ?? 0;
+      return sum + item.quantity * unitCost;
     }, 0);
     const totalProfit = revenue - totalCost;
 
@@ -1571,7 +1576,11 @@ async function getMetrics(req, res) {
       }
       productSalesMap[pid].quantity += item.quantity;
       productSalesMap[pid].revenue += item.price * item.quantity;
-      productSalesMap[pid].profit += item.price * item.quantity - (item.product?.cost || 0) * item.quantity;
+      // Antes: el costo de la ganancia usaba solo item.product?.cost (costo maestro).
+      // profit += item.price * item.quantity - (item.product?.cost || 0) * item.quantity;
+      // Ahora: usa el costo guardado en la orden (item.cost) y solo cae al del producto si es null.
+      const unitCost = item.cost ?? item.product?.cost ?? 0;
+      productSalesMap[pid].profit += item.price * item.quantity - unitCost * item.quantity;
     }
     const allProducts = Object.values(productSalesMap);
 
@@ -1862,11 +1871,17 @@ async function getBadgeCounts(req, res) {
 async function modifyOrder(req, res) {
   try {
     const orderId = parseInt(req.params.id);
-    const { items } = req.body;
+    // applyCostToProduct: lo envía el modal del front. Si es true, además de guardar el costo en la
+    // orden, se actualiza el costo MAESTRO del producto (para los próximos pedidos) y se congela el
+    // costo viejo en las órdenes anteriores para que esas NO cambien.
+    const { items, applyCostToProduct } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
     }
+
+    // productId -> nuevo costo, para propagar al producto al final (solo si applyCostToProduct).
+    const costToPropagate = new Map();
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -1962,6 +1977,11 @@ async function modifyOrder(req, res) {
         where: { id: existingItem.id },
         data:  { quantity: newQty, price: newPrice, ...(costUpdate !== undefined ? { cost: costUpdate } : {}) },
       });
+
+      // Si el admin confirmó propagar al producto y este item tiene un costo numérico, anotarlo.
+      if (applyCostToProduct && typeof costUpdate === "number" && !isNaN(costUpdate)) {
+        costToPropagate.set(existingItem.productId, costUpdate);
+      }
     }
 
     // Agregar nuevos items y descontar stock
@@ -1990,18 +2010,46 @@ async function modifyOrder(req, res) {
         await syncProductVisibility(pid);
       }
 
+      // cost del ítem para el pedido (vacío → null = usa el costo del producto en la orden de compra)
+      const newItemCost = (newItem.cost === "" || newItem.cost === undefined || newItem.cost === null) ? null : parseFloat(newItem.cost);
+
       await prisma.orderItem.create({
         data: {
           order:        { connect: { id: orderId } },
           product:      { connect: { id: pid } },
           quantity:     qty,
           price:        price,
-          // cost del ítem para el pedido (vacío → null = usa el costo del producto en la orden de compra)
-          cost:         (newItem.cost === "" || newItem.cost === undefined || newItem.cost === null) ? null : parseFloat(newItem.cost),
+          cost:         newItemCost,
           variantId:    newItem.variantId ? parseInt(newItem.variantId) : null,
           variantLabel: newItem.variantLabel || null,
         },
       });
+
+      // Propagar al producto si corresponde (mismo criterio que los items existentes).
+      if (applyCostToProduct && newItemCost !== null && !isNaN(newItemCost)) {
+        costToPropagate.set(pid, newItemCost);
+      }
+    }
+
+    // ── Propagar el costo al PRODUCTO (solo si el admin lo confirmó en el modal) ──
+    // Para cada producto cuyo costo cambió en este pedido y se eligió "Sí, actualizar el producto":
+    //  1. Congelamos el costo VIEJO en las órdenes ANTERIORES (items de ese producto con cost null,
+    //     de OTRAS órdenes) para que NO cambien al mover el costo maestro.
+    //  2. Actualizamos el costo maestro del producto → lo heredan los PRÓXIMOS pedidos.
+    for (const [pid, newCost] of costToPropagate) {
+      const prod = await prisma.product.findUnique({ where: { id: pid }, select: { cost: true } });
+      if (!prod) continue;
+      const oldCost = prod.cost;
+      if (oldCost === newCost) continue; // no hubo cambio real de costo
+
+      // Congelar el costo efectivo viejo en las órdenes anteriores (oldCost; si era null, 0 = lo que mostraban)
+      await prisma.orderItem.updateMany({
+        where: { productId: pid, cost: null, orderId: { not: orderId } },
+        data:  { cost: oldCost ?? 0 },
+      });
+
+      // Actualizar el costo maestro del producto (lo usarán los próximos pedidos)
+      await prisma.product.update({ where: { id: pid }, data: { cost: newCost } });
     }
 
     // Recalcular total: subtotal de items + IVA (si aplica) - descuento cupón

@@ -89,6 +89,24 @@ export const productsApi = {
   delete: (id) => api.delete(`/products/${id}`),
 };
 
+// ─── IA (Google Gemini) ─────────────────────────────────────────────────────────
+// Autocompletar datos del producto y generar fotos a partir de una imagen.
+// Timeouts altos: la IA (sobre todo generar imágenes) tarda más que el default de 12s.
+export const aiApi = {
+  // formData con campo "image" → { name, description, sku }
+  suggestText: (formData) =>
+    api.post("/ai/suggest-text", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000,
+    }),
+  // formData con campo "image" (y opcional "count") → { images: [dataURL, ...] }
+  suggestImages: (formData) =>
+    api.post("/ai/suggest-images", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 180000,
+    }),
+};
+
 // ─── Categorías ───────────────────────────────────────────────────────────────
 export const categoriesApi = {
   getAll: () => api.get("/categories"),
@@ -131,7 +149,10 @@ export const ordersApi = {
   updateItem: (orderId, itemId, quantity, price) => api.patch(`/orders/${orderId}/items/${itemId}`, { quantity, ...(price !== undefined && { price }) }),
   deleteItem: (orderId, itemId) => api.delete(`/orders/${orderId}/items/${itemId}`),
   addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
-  modifyOrder: (orderId, items) => api.post(`/orders/${orderId}/modify`, { items }),
+  // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
+  // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
+  modifyOrder: (orderId, items, applyCostToProduct = false) =>
+    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct }),
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
   publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
   // Admin: aprobar cotización
@@ -147,7 +168,10 @@ export const ordersApi = {
   applyCoupon: (orderId, couponCode, customerEmail) =>
     customerAuthApi.patch(`/orders/${orderId}/apply-coupon`, { couponCode, customerEmail }),
   // Admin: modificar un pedido ya aprobado (post-pago)
-  modifyOrder: (orderId, items) => api.post(`/orders/${orderId}/modify`, { items }),
+  // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
+  // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
+  modifyOrder: (orderId, items, applyCostToProduct = false) =>
+    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct }),
 };
 
 // ─── Pagos ────────────────────────────────────────────────────────────────────
@@ -288,6 +312,9 @@ export const purchasesApi = {
   getAll:   ()         => api.get("/purchases"),
   getById:  (id)       => api.get(`/purchases/${id}`),
   create:   (data)     => api.post("/purchases", data),
+  update:   (id, data) => api.put(`/purchases/${id}`, data),
+  // DELETE con body: axios requiere pasar el payload dentro de { data } (decisiones de auto-borrado).
+  remove:   (id, data) => api.delete(`/purchases/${id}`, { data }),
 };
 
 // ─── Botón de Arrepentimiento / Devoluciones ─────────────────────────────────

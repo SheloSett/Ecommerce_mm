@@ -76,6 +76,9 @@ export default function AdminOrderDetail() {
   const [editMode, setEditMode] = useState(false);
   const [editItems, setEditItems] = useState([]);
   const [savingEdit, setSavingEdit] = useState(false);
+  // Modal que pregunta si el cambio de costo también se aplica al producto (próximos pedidos).
+  // Guarda el payload ya armado para enviarlo según la respuesta (Sí/No).
+  const [costModal, setCostModal] = useState(null);
   const [productSearch, setProductSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -229,11 +232,36 @@ export default function AdminOrderDetail() {
     setSearchResults([]);
   };
 
-  const handleSaveEdit = async () => {
+  // Detecta si el admin cambió el costo de algún item EXISTENTE respecto del costo que tenía.
+  // (Los items nuevos no disparan el modal: su costo se guarda solo en la orden.)
+  const didCostChange = () => {
+    return editItems.some((it) => {
+      if (!it.itemId) return false;
+      const orig = (order.items || []).find((oi) => oi.id === it.itemId);
+      if (!orig) return false;
+      const originalCost = orig.cost ?? orig.variant?.cost ?? orig.product?.cost ?? null;
+      const newNum  = it.cost === "" || it.cost === null || it.cost === undefined ? null : parseFloat(it.cost);
+      const origNum = originalCost === "" || originalCost === null || originalCost === undefined ? null : parseFloat(originalCost);
+      return newNum !== origNum;
+    });
+  };
+
+  const handleSaveEdit = () => {
     if (editItems.length === 0) {
       toast.error("El pedido debe tener al menos un producto");
       return;
     }
+    // Si cambió algún costo, preguntar si se aplica también al producto (próximos pedidos).
+    if (didCostChange()) {
+      setCostModal({ open: true });
+    } else {
+      doSaveEdit(false);
+    }
+  };
+
+  // Ejecuta la modificación. applyCostToProduct = respuesta del modal (Sí/No).
+  const doSaveEdit = async (applyCostToProduct) => {
+    setCostModal(null);
     setSavingEdit(true);
     try {
       const payload = editItems.map((it) => ({
@@ -246,7 +274,7 @@ export default function AdminOrderDetail() {
         variantId:    it.variantId || undefined,
         variantLabel: it.variantLabel || undefined,
       }));
-      const res = await ordersApi.modifyOrder(order.id, payload);
+      const res = await ordersApi.modifyOrder(order.id, payload, applyCostToProduct);
       setOrder(res.data);
       setEditMode(false);
       setEditItems([]);
@@ -958,6 +986,48 @@ export default function AdminOrderDetail() {
           </div>
         </div>
       </div>
+
+      {/* Modal: ¿aplicar el nuevo costo también al producto (próximos pedidos)? */}
+      {costModal?.open && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <h2 className="text-lg font-bold text-slate-800">Cambiaste el costo</h2>
+            <p className="text-sm text-slate-600">
+              ¿Querés actualizar también el <strong>costo del producto</strong> para los próximos pedidos?
+            </p>
+            <ul className="text-xs text-slate-500 list-disc pl-5 space-y-1">
+              <li><strong>Sí:</strong> se actualiza el costo del producto. Lo usarán este pedido y los próximos; los pedidos anteriores quedan como estaban.</li>
+              <li><strong>No:</strong> el nuevo costo se aplica solo a este pedido.</li>
+            </ul>
+            <div className="flex gap-3 justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => doSaveEdit(false)}
+                disabled={savingEdit}
+                className="px-4 py-2 border border-slate-300 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                No, solo este pedido
+              </button>
+              <button
+                type="button"
+                onClick={() => doSaveEdit(true)}
+                disabled={savingEdit}
+                className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                Sí, actualizar el producto
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCostModal(null)}
+              disabled={savingEdit}
+              className="w-full text-center text-xs text-slate-400 hover:text-slate-600 pt-1"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

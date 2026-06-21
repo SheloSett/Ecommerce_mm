@@ -113,13 +113,29 @@ function ToolbarButton({ onClick, active, title, children }) {
 export default function RichTextEditor({ value, onChange }) {
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      // StarterKit (TipTap v3) ya incluye Link y Underline.
+      // - link: openOnClick:false → al hacer click dentro del editor no navega (molesta al editar).
+      // - underline:false → desactivamos el Underline del StarterKit para no duplicarlo con el
+      //   import explícito de abajo (evita el warning "Duplicate extension names").
+      StarterKit.configure({
+        link: { openOnClick: false },
+        underline: false,
+      }),
       AdaptiveColor,
       FontSize,
       Underline,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
     ],
     content: value || "",
+    // Al PEGAR quitamos las etiquetas <a> (enlaces). Cuando el admin copia un título que es un link
+    // de otra web, antes se pegaba como enlace y quedaba subrayado sin poder sacarlo con el botón "S"
+    // (el subrayado lo daba el link, no la marca de subrayado). Así el texto entra plano, sin link.
+    editorProps: {
+      transformPastedHTML(html) {
+        // Elimina <a ...> y </a> conservando el texto interno.
+        return html.replace(/<\/?a\b[^>]*>/gi, "");
+      },
+    },
     onUpdate({ editor }) {
       // Emitir HTML al padre; si el editor está vacío devolver string vacío
       const html = editor.isEmpty ? "" : editor.getHTML();
@@ -168,6 +184,17 @@ export default function RichTextEditor({ value, onChange }) {
           title="Subrayado"
         >
           <span style={{ textDecoration: "underline" }}>S</span>
+        </ToolbarButton>
+
+        {/* Quitar enlace: el texto pegado desde otra web puede venir como link y quedar subrayado
+            sin poder sacarlo con "S". Seleccionar el texto y tocar este botón lo vuelve texto normal.
+            Se resalta (active) cuando el cursor/selección está sobre un enlace. */}
+        <ToolbarButton
+          onClick={() => editor.chain().focus().unsetLink().run()}
+          active={editor.isActive("link")}
+          title="Quitar enlace"
+        >
+          🔗✕
         </ToolbarButton>
 
         <div className="w-px h-5 bg-slate-200 mx-1" />

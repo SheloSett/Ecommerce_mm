@@ -20,14 +20,20 @@ async function getSuppliers(req, res) {
 // POST /api/suppliers - Crear proveedor (admin)
 async function createSupplier(req, res) {
   try {
-    const { name } = req.body;
+    // Antes solo se recibía `name`. Ahora también `street` (calle) y `phone` (teléfono), ambos opcionales.
+    const { name, street, phone } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "El nombre del proveedor es requerido" });
     }
 
     const supplier = await prisma.supplier.create({
-      data: { name: name.trim() },
+      // Antes: data: { name: name.trim() }
+      data: {
+        name: name.trim(),
+        street: street?.trim() || null, // opcional
+        phone:  phone?.trim()  || null, // opcional
+      },
     });
 
     res.status(201).json(supplier);
@@ -40,11 +46,12 @@ async function createSupplier(req, res) {
   }
 }
 
-// PUT /api/suppliers/:id - Renombrar proveedor (admin)
+// PUT /api/suppliers/:id - Editar proveedor (admin) — antes solo renombraba
 async function updateSupplier(req, res) {
   try {
     const { id } = req.params;
-    const { name } = req.body;
+    // Antes solo se recibía `name`. Ahora también `street` y `phone`.
+    const { name, street, phone } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "El nombre del proveedor es requerido" });
@@ -52,7 +59,12 @@ async function updateSupplier(req, res) {
 
     const supplier = await prisma.supplier.update({
       where: { id: parseInt(id) },
-      data: { name: name.trim() },
+      // Antes: data: { name: name.trim() }
+      data: {
+        name: name.trim(),
+        street: street?.trim() || null, // opcional
+        phone:  phone?.trim()  || null, // opcional
+      },
     });
 
     res.json(supplier);

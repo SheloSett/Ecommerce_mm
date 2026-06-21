@@ -405,7 +405,10 @@ enum GastoType {
 model Supplier {
   id        Int       @id @default(autoincrement())
   name      String    @unique
+  street    String?   // Calle / dirección del proveedor (opcional)
+  phone     String?   // Teléfono de contacto del proveedor (opcional)
   products  Product[] // Inverso de Product.supplier
+  purchases Purchase[] // Inverso de Purchase.supplierRef
   createdAt DateTime  @default(now())
 
   @@map("suppliers")
@@ -414,7 +417,11 @@ model Supplier {
 // Registro de compras de stock al proveedor
 model Purchase {
   id        Int            @id @default(autoincrement())
-  supplier  String         // Nombre del proveedor
+  supplier  String         // Nombre del proveedor (snapshot histórico — se conserva aunque se borre el proveedor)
+  // supplierId/supplierRef: vínculo real (opcional) a la entidad Supplier. onDelete: SetNull para que
+  // borrar un proveedor NO borre sus compras (queda el nombre como snapshot en el campo `supplier`).
+  supplierId  Int?
+  supplierRef Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   date      DateTime       // Fecha de la compra
   items     PurchaseItem[]
   createdAt DateTime       @default(now())
@@ -432,6 +439,12 @@ model PurchaseItem {
   cost        Float    // Costo unitario pagado
   quantity    Int      // Unidades recibidas
   productId   Int?     // ID del producto afectado (creado o actualizado)
+  // ── Snapshot para poder REVERTIR la compra al editarla o eliminarla ──
+  prevCost         Float?   // Costo del producto ANTES de que esta compra lo modificara (para restaurarlo)
+  prevStock        Int?     // Stock del producto antes de la compra (informativo)
+  variantId        Int?     // Variante afectada, si el SKU correspondía a una variante
+  prevVariantStock Int?     // Stock de la variante antes de la compra
+  createdProduct   Boolean  @default(false) // true si esta compra CREÓ el producto (candidato a auto-borrado)
 
   @@map("purchase_items")
 }

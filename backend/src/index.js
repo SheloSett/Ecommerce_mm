@@ -26,6 +26,7 @@ const adminUsersRoutes = require("./routes/adminUsers.routes");
 const shippingRoutes   = require("./routes/shipping.routes");
 const adminTestRoutes  = require("./routes/admin-test.routes");
 const supplierRoutes   = require("./routes/supplier.routes");
+const aiRoutes         = require("./routes/ai.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -72,8 +73,35 @@ const generalLimiter = rateLimit({
   },
 });
 
+// CORS: antes era un único origin fijo (process.env.FRONTEND_URL), lo que bloqueaba el acceso
+// por "www" cuando FRONTEND_URL estaba sin www (y viceversa) → "blocked by CORS policy".
+// Ahora construimos una LISTA de orígenes permitidos que incluye automáticamente la variante
+// con/sin "www" de cada URL de FRONTEND_URL (que puede ser una sola o varias separadas por coma),
+// más localhost para desarrollo. Así entrar por igwtstore.com.ar o www.igwtstore.com.ar funciona igual.
+const allowedOrigins = (() => {
+  const raw = process.env.FRONTEND_URL || "http://localhost:3000";
+  const set = new Set(["http://localhost:3000", "http://localhost:5173"]);
+  for (const url of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    set.add(url);
+    try {
+      const u = new URL(url);
+      // Variante opuesta de www: si tiene www la agrega sin www, y al revés.
+      const host = u.hostname.startsWith("www.") ? u.hostname.slice(4) : `www.${u.hostname}`;
+      set.add(`${u.protocol}//${host}`);
+    } catch { /* URL inválida → se ignora */ }
+  }
+  return [...set];
+})();
+console.log("[CORS] Orígenes permitidos:", allowedOrigins.join(", "));
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  // origin: process.env.FRONTEND_URL || "http://localhost:3000",  ← reemplazado por la lista de arriba
+  origin: (origin, callback) => {
+    // Sin origin = same-origin, curl, apps móviles, healthchecks → permitir
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+  },
   credentials: true,
 }));
 app.use("/api", generalLimiter);
@@ -109,6 +137,7 @@ app.use("/api/admin-users", adminUsersRoutes);
 app.use("/api/shipping",   shippingRoutes);
 app.use("/api/admin-test", adminTestRoutes);
 app.use("/api/suppliers",  supplierRoutes);
+app.use("/api/ai",         aiRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

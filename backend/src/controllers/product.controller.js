@@ -758,6 +758,21 @@ async function quickUpdateProduct(req, res) {
   }
 }
 
+// Helper reutilizable: elimina las imágenes de un producto del almacenamiento.
+// Cloudinary si es URL https, disco local si es path relativo (imágenes viejas).
+// Se extrajo del cuerpo de deleteProduct para poder reusarlo desde purchase.controller
+// (al auto-borrar productos creados por una compra que se elimina).
+async function deleteProductImages(images) {
+  for (const imgPath of images || []) {
+    if (imgPath.startsWith("http")) {
+      await deleteByUrl(imgPath);
+    } else {
+      const fullPath = path.join(__dirname, "../../", imgPath);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+  }
+}
+
 // DELETE /api/products/:id - Eliminar producto (admin)
 async function deleteProduct(req, res) {
   try {
@@ -769,14 +784,16 @@ async function deleteProduct(req, res) {
     }
 
     // Eliminar imágenes: Cloudinary si es URL https, disco local si es path relativo (imágenes viejas)
-    for (const imgPath of existing.images) {
-      if (imgPath.startsWith("http")) {
-        await deleteByUrl(imgPath);
-      } else {
-        const fullPath = path.join(__dirname, "../../", imgPath);
-        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-      }
-    }
+    // Antes este bucle estaba inline; se movió al helper deleteProductImages() para poder reusarlo.
+    // for (const imgPath of existing.images) {
+    //   if (imgPath.startsWith("http")) {
+    //     await deleteByUrl(imgPath);
+    //   } else {
+    //     const fullPath = path.join(__dirname, "../../", imgPath);
+    //     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    //   }
+    // }
+    await deleteProductImages(existing.images);
 
     await prisma.product.delete({ where: { id: parseInt(id) } });
 
@@ -970,6 +987,7 @@ module.exports = {
   updateProduct,
   quickUpdateProduct,
   deleteProduct,
+  deleteProductImages, // helper reutilizado por purchase.controller
   bulkPriceAdjust,
   getProductFacets,
   syncProductVisibility,

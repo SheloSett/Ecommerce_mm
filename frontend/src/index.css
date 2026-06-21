@@ -113,6 +113,53 @@
 .admin-dark .bg-emerald-50 { background-color: #0a1f14 !important; }
 .admin-dark .bg-purple-50  { background-color: #150f1f !important; }
 
+/* Familias de color ADICIONALES (violet, fuchsia, indigo, cyan, sky, teal, pink, rose) — red de
+   seguridad para que paneles/badges/bordes claros se oscurezcan SOLOS en el admin, sin tener que
+   acordarse del dark: en cada caso. OJO: esto NO cubre gradientes (from-/to-) ni valores
+   arbitrarios (bg con hex) ni opacidades (bg-white con barra) — esos siguen necesitando dark:. */
+.admin-dark .bg-violet-50   { background-color: #1a1033 !important; }
+.admin-dark .bg-fuchsia-50  { background-color: #2a0a26 !important; }
+.admin-dark .bg-indigo-50   { background-color: #14143a !important; }
+.admin-dark .bg-cyan-50     { background-color: #07212b !important; }
+.admin-dark .bg-sky-50      { background-color: #0a1f35 !important; }
+.admin-dark .bg-teal-50     { background-color: #08201d !important; }
+.admin-dark .bg-pink-50     { background-color: #2a0a1a !important; }
+.admin-dark .bg-rose-50     { background-color: #2a0a12 !important; }
+
+.admin-dark .bg-violet-100  { background-color: #3b0764 !important; }
+.admin-dark .bg-fuchsia-100 { background-color: #4a044e !important; }
+.admin-dark .bg-indigo-100  { background-color: #312e81 !important; }
+.admin-dark .bg-cyan-100    { background-color: #164e63 !important; }
+.admin-dark .bg-sky-100     { background-color: #0c4a6e !important; }
+.admin-dark .bg-teal-100    { background-color: #134e4a !important; }
+.admin-dark .bg-pink-100    { background-color: #831843 !important; }
+.admin-dark .bg-rose-100    { background-color: #881337 !important; }
+
+/* Fondos slate con opacidad de estas familias ya cubiertos arriba; acá los bordes claros */
+.admin-dark .border-violet-200  { border-color: #4c1d95 !important; }
+.admin-dark .border-violet-100  { border-color: #3b0764 !important; }
+.admin-dark .border-fuchsia-200 { border-color: #701a75 !important; }
+.admin-dark .border-fuchsia-100 { border-color: #4a044e !important; }
+.admin-dark .border-indigo-200  { border-color: #3730a3 !important; }
+.admin-dark .border-indigo-100  { border-color: #312e81 !important; }
+.admin-dark .border-cyan-200    { border-color: #155e75 !important; }
+.admin-dark .border-sky-200     { border-color: #075985 !important; }
+.admin-dark .border-teal-200    { border-color: #115e59 !important; }
+.admin-dark .border-pink-200    { border-color: #9d174d !important; }
+
+.admin-dark .text-violet-600  { color: #a78bfa !important; }
+.admin-dark .text-violet-700  { color: #c4b5fd !important; }
+.admin-dark .text-fuchsia-600 { color: #e879f9 !important; }
+.admin-dark .text-fuchsia-700 { color: #f0abfc !important; }
+.admin-dark .text-indigo-600  { color: #818cf8 !important; }
+.admin-dark .text-indigo-700  { color: #a5b4fc !important; }
+.admin-dark .text-cyan-600    { color: #22d3ee !important; }
+.admin-dark .text-cyan-700    { color: #67e8f9 !important; }
+.admin-dark .text-sky-600     { color: #38bdf8 !important; }
+.admin-dark .text-teal-600    { color: #2dd4bf !important; }
+.admin-dark .text-pink-600    { color: #f472b6 !important; }
+.admin-dark .text-rose-600    { color: #fb7185 !important; }
+
 /* Badges *-100: no estaban mapeados → fondo claro + texto claro = invisible.
    Badges de tipo/estado en AdminCustomers y AdminCoupons usan bg-*-100. */
 .admin-dark .bg-green-100   { background-color: #14532d !important; }

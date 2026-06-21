@@ -72,7 +72,16 @@ export default function AdminLayout({ children, title }) {
       ],
     },
     { path: "/admin/caja",         label: "Caja",            icon: "💰",  permission: "caja" },
-    { path: "/admin/compras",      label: "Compras",         icon: "🛍️", permission: "compras" },
+    {
+      path: "/admin/compras",
+      label: "Compras",
+      icon: "🛍️",
+      permission: "compras",
+      subItems: [
+        { label: "Compras",     tab: "" },                          // → /admin/compras
+        { label: "Proveedores", href: "/admin/compras/proveedores" },
+      ],
+    },
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
