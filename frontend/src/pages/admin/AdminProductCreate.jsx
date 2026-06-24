@@ -78,7 +78,12 @@ export default function AdminProductCreate() {
   }, []);
 
   const handleImageSelect = (e) => {
-    setNewImages(Array.from(e.target.files));
+    const files = Array.from(e.target.files);
+    e.target.value = ""; // resetea el input: permite volver a elegir (incluso el mismo archivo)
+    const total = newImages.length + files.length;
+    // Acumula en vez de reemplazar; tope de 10 imágenes (lo que dice el label)
+    setNewImages((prev) => [...prev, ...files].slice(0, 10));
+    if (total > 10) toast.error("Máximo 10 imágenes — se agregaron hasta completar 10");
   };
 
   // ─── Asistente de IA (Gemini) ──────────────────────────────────────────────
@@ -110,7 +115,7 @@ export default function AdminProductCreate() {
       const res = await aiApi.suggestText(fd);
       setForm((f) => ({
         ...f,
-        name:        res.data.name        || f.name,
+        name:        (res.data.name || f.name || "").toUpperCase(),
         description: res.data.description || f.description,
         sku:         res.data.sku         || f.sku,
       }));
@@ -186,29 +191,46 @@ export default function AdminProductCreate() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.price || !form.cost || !form.wholesalePrice) {
-      toast.error("Nombre, precio minorista, precio mayorista y costo son requeridos");
+    // Según la visibilidad solo se muestran/validan los precios relevantes.
+    const isMin = form.visibility === "AMBOS" || form.visibility === "MINORISTA";
+    const isMay = form.visibility === "AMBOS" || form.visibility === "MAYORISTA";
+
+    if (!form.name || !form.cost) {
+      toast.error("Nombre y costo son requeridos");
       return;
     }
-    if (form.salePrice && Number(form.salePrice) >= Number(form.price)) {
+    if (isMin && !form.price) {
+      toast.error("Falta el precio minorista");
+      return;
+    }
+    if (isMay && !form.wholesalePrice) {
+      toast.error("Falta el precio mayorista");
+      return;
+    }
+    if (isMin && form.salePrice && Number(form.salePrice) >= Number(form.price)) {
       toast.error("El precio de oferta debe ser menor al precio normal");
       return;
     }
-    if (form.wholesaleSalePrice && Number(form.wholesaleSalePrice) >= Number(form.wholesalePrice)) {
+    if (isMay && form.wholesaleSalePrice && Number(form.wholesaleSalePrice) >= Number(form.wholesalePrice)) {
       toast.error("La oferta mayorista debe ser menor al precio mayorista");
       return;
     }
 
+    // El precio oculto se rellena con el del otro tipo (price es obligatorio en la DB).
+    // || → no pisa un valor ya cargado.
+    const effPrice     = form.price || form.wholesalePrice;
+    const effWholesale = form.wholesalePrice || form.price;
+
     setSaving(true);
     try {
       const formData = new FormData();
-      formData.append("name", form.name);
+      formData.append("name", form.name.toUpperCase()); // título siempre en mayúsculas
       formData.append("description", form.description);
       formData.append("cost", form.cost);
-      formData.append("price", form.price);
+      formData.append("price", effPrice);
       formData.append("ivaRate", form.ivaRate || "21");
       formData.append("salePrice", form.salePrice);
-      formData.append("wholesalePrice", form.wholesalePrice);
+      formData.append("wholesalePrice", effWholesale);
       formData.append("wholesaleSalePrice", form.wholesaleSalePrice);
       formData.append("minQuantity", form.minQuantity || "1");
       formData.append("stock", form.stockUnlimited ? "0" : (form.stock || "0"));
@@ -246,6 +268,16 @@ export default function AdminProductCreate() {
     }
   };
 
+  // Reinicia el formulario para cargar OTRO producto sin volver al listado.
+  const startNewProduct = () => {
+    setSavedProduct(null);
+    setForm(EMPTY_FORM);
+    setNewImages([]);
+    setAiImages([]);
+    setAiAdded(new Set());
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   // ─── Vista post-creación: editor de variantes ────────────────────────────
   if (savedProduct) {
     return (
@@ -263,12 +295,20 @@ export default function AdminProductCreate() {
                 <p className="text-sm text-slate-500">{savedProduct.name} — podés agregar variantes ahora o hacerlo después</p>
               </div>
             </div>
-            <button
-              onClick={() => navigate("/admin/productos")}
-              className="btn-primary"
-            >
-              Ir al listado →
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={startNewProduct}
+                className="btn-secondary whitespace-nowrap"
+              >
+                + Nuevo producto
+              </button>
+              <button
+                onClick={() => navigate("/admin/productos")}
+                className="btn-primary whitespace-nowrap"
+              >
+                Ir al listado →
+              </button>
+            </div>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
             <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} productImages={savedProduct.images || []} />
@@ -306,7 +346,7 @@ export default function AdminProductCreate() {
               <input
                 type="text"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => setForm({ ...form, name: e.target.value.toUpperCase() })}
                 className="input"
                 required
               />
@@ -381,6 +421,33 @@ export default function AdminProductCreate() {
             />
           </div>
 
+          {/* Visible para — MOVIDO ACÁ (encima de costo/precios) a pedido del cliente:
+              define qué precios se muestran abajo (minorista / mayorista). */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              {[
+                { value: "AMBOS", label: "Todos", icon: "👥" },
+                { value: "MINORISTA", label: "Minorista", icon: "🛒" },
+                { value: "MAYORISTA", label: "Mayorista", icon: "🏭" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, visibility: opt.value })}
+                  className={`flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2 rounded-xl border-2 text-xs sm:text-sm font-medium transition-colors ${
+                    form.visibility === opt.value
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 text-slate-600 hover:border-slate-300"
+                  }`}
+                >
+                  <span>{opt.icon}</span>
+                  <span className="truncate">{opt.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Costo + Alícuota IVA: apilados en mobile, en la misma fila desde sm */}
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
             <div>
@@ -422,14 +489,17 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
-          {/* Precios — 2 columnas en mobile, 4 desde md */}
+          {/* Precios — solo se muestran los relevantes según "Visible para" (arriba) */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: "Precio minorista", key: "price", required: true },
-              { label: "Oferta minorista", key: "salePrice" },
-              { label: "Precio mayorista", key: "wholesalePrice", required: true },
-              { label: "Oferta mayorista", key: "wholesaleSalePrice" },
-            ].map(({ label, key, required }) => (
+              { label: "Precio minorista", key: "price", required: true, group: "min" },
+              { label: "Oferta minorista", key: "salePrice", group: "min" },
+              { label: "Precio mayorista", key: "wholesalePrice", required: true, group: "may" },
+              { label: "Oferta mayorista", key: "wholesaleSalePrice", group: "may" },
+            ].filter((f) =>
+              (f.group === "min" && (form.visibility === "AMBOS" || form.visibility === "MINORISTA")) ||
+              (f.group === "may" && (form.visibility === "AMBOS" || form.visibility === "MAYORISTA"))
+            ).map(({ label, key, required }) => (
               <div key={key}>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
                   {label}{required && " *"}
@@ -535,19 +605,23 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
-          {/* Descuentos por cantidad */}
-          <TierEditor
-            label="Descuentos por cantidad — Minoristas"
-            tiers={form.priceTiers}
-            fieldKey="priceTiers"
-            setForm={setForm}
-          />
-          <TierEditor
-            label="Descuentos por cantidad — Mayoristas"
-            tiers={form.wholesalePriceTiers}
-            fieldKey="wholesalePriceTiers"
-            setForm={setForm}
-          />
+          {/* Descuentos por cantidad — solo el tipo visible según "Visible para" */}
+          {(form.visibility === "AMBOS" || form.visibility === "MINORISTA") && (
+            <TierEditor
+              label="Descuentos por cantidad — Minoristas"
+              tiers={form.priceTiers}
+              fieldKey="priceTiers"
+              setForm={setForm}
+            />
+          )}
+          {(form.visibility === "AMBOS" || form.visibility === "MAYORISTA") && (
+            <TierEditor
+              label="Descuentos por cantidad — Mayoristas"
+              tiers={form.wholesalePriceTiers}
+              fieldKey="wholesalePriceTiers"
+              setForm={setForm}
+            />
+          )}
 
           {/* Categorías */}
           <div>
@@ -710,32 +784,7 @@ export default function AdminProductCreate() {
             </label>
           </div>
 
-          {/* Visibilidad — grid de 3 columnas iguales que se adaptan al viewport.
-              Antes era flex con padding fijo y el botón Mayorista se cortaba en mobile. */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              {[
-                { value: "AMBOS", label: "Todos", icon: "👥" },
-                { value: "MINORISTA", label: "Minorista", icon: "🛒" },
-                { value: "MAYORISTA", label: "Mayorista", icon: "🏭" },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setForm({ ...form, visibility: opt.value })}
-                  className={`flex items-center justify-center gap-1.5 px-2 sm:px-4 py-2 rounded-xl border-2 text-xs sm:text-sm font-medium transition-colors ${
-                    form.visibility === opt.value
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-slate-200 text-slate-600 hover:border-slate-300"
-                  }`}
-                >
-                  <span>{opt.icon}</span>
-                  <span className="truncate">{opt.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* (El bloque "Visible para" se movió arriba, encima de Costo/Precios, a pedido del cliente.) */}
 
           {/* Imágenes */}
           <div>

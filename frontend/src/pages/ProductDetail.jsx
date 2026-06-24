@@ -448,6 +448,10 @@ export default function ProductDetail() {
                   <>
                     <button
                       onClick={() => { goPrev(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
+                      // Sobre la flecha NO se hace zoom: apagamos el zoom al entrar y cortamos la
+                      // propagación del mousemove para que el contenedor no lo vuelva a activar.
+                      onMouseEnter={() => setZoom(false)}
+                      onMouseMove={(e) => e.stopPropagation()}
                       className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
                     >
                       {/* Antes: carácter ‹ — reemplazado por Material Symbol */}
@@ -456,6 +460,8 @@ export default function ProductDetail() {
                     </button>
                     <button
                       onClick={() => { goNext(); clearInterval(autoplayRef.current); autoplayRef.current = setInterval(goNext, 5000); }}
+                      onMouseEnter={() => setZoom(false)}
+                      onMouseMove={(e) => e.stopPropagation()}
                       className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
                     >
                       {/* Antes: carácter › — reemplazado por Material Symbol */}
