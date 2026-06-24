@@ -777,25 +777,49 @@ async function deleteProductImages(images) {
 async function deleteProduct(req, res) {
   try {
     const { id } = req.params;
+    const pid = parseInt(id);
+    // force: permite borrar igual un producto con ventas (desvinculándolo de las órdenes vía SetNull).
+    // Llega como ?force=true (query) o { force: true } (body).
+    const force = req.query.force === "true" || req.body?.force === true;
 
-    const existing = await prisma.product.findUnique({ where: { id: parseInt(id) } });
+    const existing = await prisma.product.findUnique({ where: { id: pid } });
     if (!existing) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
 
-    // Eliminar imágenes: Cloudinary si es URL https, disco local si es path relativo (imágenes viejas)
-    // Antes este bucle estaba inline; se movió al helper deleteProductImages() para poder reusarlo.
-    // for (const imgPath of existing.images) {
-    //   if (imgPath.startsWith("http")) {
-    //     await deleteByUrl(imgPath);
-    //   } else {
-    //     const fullPath = path.join(__dirname, "../../", imgPath);
-    //     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-    //   }
-    // }
-    await deleteProductImages(existing.images);
+    // Verificar si el producto tiene ventas (items de órdenes que lo referencian). Si las tiene y NO
+    // se pidió force, devolvemos 409 con el detalle para que el front pida confirmación. Borrarlo
+    // dejaría esos pedidos mostrando "Producto eliminado" (se conservan precio/cantidad/costo).
+    const salesCount = await prisma.orderItem.count({ where: { productId: pid } });
+    if (salesCount > 0 && !force) {
+      return res.status(409).json({
+        error: `Este producto tiene ${salesCount} venta(s) registrada(s). Si lo borrás, esos pedidos mostrarán "Producto eliminado".`,
+        hasSales: true,
+        salesCount,
+      });
+    }
 
-    await prisma.product.delete({ where: { id: parseInt(id) } });
+    if (salesCount > 0) {
+      // Force-delete de un producto CON ventas: guardamos una COPIA (nombre + foto principal) en sus
+      // items de orden, para que los pedidos sigan identificándolo tras el borrado. CONSERVAMOS las
+      // imágenes (no las borramos) para que la foto del snapshot siga disponible en la orden.
+      await prisma.orderItem.updateMany({
+        where: { productId: pid },
+        data: {
+          productName:  existing.name,
+          productImage: existing.images?.[0] || null,
+        },
+      });
+    } else {
+      // Sin ventas: borrado normal. Liberamos las imágenes del almacenamiento.
+      // IMPORTANTE: se borran SOLO cuando ya vamos a borrar el producto (antes se borraban antes del
+      // delete, y si el delete fallaba el producto quedaba sin fotos).
+      await deleteProductImages(existing.images);
+    }
+
+    // Con onDelete: SetNull en OrderItem.product, este delete ya no es bloqueado por las ventas:
+    // los order_items quedan con productId = null pero conservan el snapshot (productName/productImage).
+    await prisma.product.delete({ where: { id: pid } });
 
     res.json({ message: "Producto eliminado correctamente" });
   } catch (err) {

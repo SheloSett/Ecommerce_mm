@@ -53,6 +53,26 @@ async function attachVariantDetails(orders) {
   }
 }
 
+// Reconstruye un "product" mínimo desde el snapshot (productName/productImage) cuando el producto fue
+// borrado y su productId quedó en null. Así TODAS las vistas de órdenes siguen mostrando nombre + foto
+// (leen item.product?.name / images) sin necesidad de tocar el frontend. Acepta una orden o un array.
+function hydrateDeletedProducts(orders) {
+  const list = Array.isArray(orders) ? orders : [orders];
+  for (const o of list) {
+    for (const i of (o?.items || [])) {
+      if (i && !i.product && i.productName) {
+        i.product = {
+          id:     null,
+          name:   i.productName,
+          images: i.productImage ? [i.productImage] : [],
+          active: false,
+        };
+      }
+    }
+  }
+  return orders;
+}
+
 // GET /api/orders - Listar órdenes (solo admin)
 async function getOrders(req, res) {
   try {
@@ -112,6 +132,8 @@ async function getOrders(req, res) {
 
     // Adjuntar datos de variante (en vivo) para la impresión desde el listado
     await attachVariantDetails(orders);
+    // Reconstruir el producto desde el snapshot en ítems cuyo producto fue borrado
+    hydrateDeletedProducts(orders);
 
     res.json({
       orders,
@@ -154,6 +176,7 @@ async function getOrder(req, res) {
 
     // Adjuntar datos de variante (en vivo) para la impresión del detalle y la orden de compra
     await attachVariantDetails(order);
+    hydrateDeletedProducts(order); // reconstruir producto borrado desde el snapshot
 
     res.json(order);
   } catch (err) {
@@ -795,6 +818,7 @@ async function getMyOrderById(req, res) {
     });
 
     if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+    hydrateDeletedProducts(order);
     res.json(order);
   } catch (err) {
     console.error("getMyOrderById error:", err);
@@ -845,6 +869,7 @@ async function getMyOrders(req, res) {
       orderBy: { createdAt: "desc" },
     });
 
+    hydrateDeletedProducts(orders);
     res.json(orders);
   } catch (err) {
     console.error("getMyOrders error:", err);
@@ -1562,12 +1587,14 @@ async function getMetrics(req, res) {
     // ── Top 10 productos más vendidos (por cantidad) ─────────────────────────
     const productSalesMap = {};
     for (const item of items) {
-      const pid = item.productId;
+      // Si el producto fue borrado (productId null), agrupamos por el snapshot para no fusionar todos
+      // los borrados en una sola fila.
+      const pid = item.productId ?? ("deleted-" + (item.productName || item.id));
       if (!productSalesMap[pid]) {
         productSalesMap[pid] = {
           id: pid,
-          name: item.product?.name || "Producto eliminado",
-          image: item.product?.images?.[0] || null,
+          name: item.product?.name || item.productName || "Producto eliminado",
+          image: item.product?.images?.[0] || item.productImage || null,
           quantity: 0,
           revenue: 0,
           cost: item.product?.cost || 0,
@@ -2083,6 +2110,7 @@ async function modifyOrder(req, res) {
       },
     });
 
+    hydrateDeletedProducts(updated); // mostrar snapshot si algún producto fue borrado
     res.json(updated);
   } catch (err) {
     console.error("modifyOrder error:", err);

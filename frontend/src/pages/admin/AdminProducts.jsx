@@ -544,7 +544,25 @@ export default function AdminProducts() {
       toast.success("Producto eliminado");
       fetchProducts(search);
     } catch (err) {
-      toast.error("Error al eliminar el producto");
+      // 409 hasSales: el producto tiene ventas. Confirmamos el borrado forzado (se desvincula de las
+      // órdenes; esos pedidos mostrarán "Producto eliminado", pero se conservan precio/cantidad/costo).
+      if (err.response?.status === 409 && err.response.data?.hasSales) {
+        const n = err.response.data.salesCount;
+        if (!confirm(
+          `"${product.name}" tiene ${n} venta(s) registrada(s).\n\n` +
+          `Si lo borrás igual, esos pedidos van a mostrar "Producto eliminado" ` +
+          `(se conservan precio, cantidad y costo, así que las métricas no cambian).\n\n¿Borrar de todos modos?`
+        )) return;
+        try {
+          await productsApi.delete(product.id, true); // force
+          toast.success("Producto eliminado");
+          fetchProducts(search);
+        } catch {
+          toast.error("Error al eliminar el producto");
+        }
+        return;
+      }
+      toast.error(err.response?.data?.error || "Error al eliminar el producto");
     }
   };
 

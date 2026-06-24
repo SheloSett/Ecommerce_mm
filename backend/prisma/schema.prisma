@@ -185,7 +185,12 @@ model Notification {
 model OrderItem {
   id           Int     @id @default(autoincrement())
   orderId      Int
-  productId    Int
+  // productId pasa a ser opcional para permitir el "borrado forzado" de un producto con ventas:
+  // al borrar el producto, estos items quedan con productId = null (onDelete: SetNull) en vez de
+  // bloquear el borrado. La línea conserva price/quantity/cost (historial financiero intacto);
+  // solo se pierde el vínculo al producto (se muestra "Producto eliminado").
+  // Antes: productId    Int
+  productId    Int?
   quantity     Int
   price        Float
   // cost: costo de este ítem para ESTE pedido (lo que se le paga al proveedor). Editable desde la
@@ -198,8 +203,14 @@ model OrderItem {
   // variantByAdmin: true si la variante fue asignada por el admin al aprobar una cotización
   // (no la eligió el cliente). Se usa para NO copiarla al repetir pedido ni mostrarla al cliente.
   variantByAdmin Boolean @default(false)
+  // Snapshot del producto, para conservar su identidad si el producto se borra (force-delete).
+  // Se completan al borrar el producto: la orden sigue mostrando nombre + foto aunque productId quede null.
+  productName  String? // Nombre del producto al momento de borrarlo
+  productImage String? // Foto principal del producto al momento de borrarlo (URL o path)
   order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product      Product @relation(fields: [productId], references: [id])
+  // Antes: product Product @relation(fields: [productId], references: [id])  (relación requerida, bloqueaba el borrado)
+  // Ahora opcional + SetNull: borrar el producto deja productId en null sin romper la orden.
+  product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@map("order_items")
 }

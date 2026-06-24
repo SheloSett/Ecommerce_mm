@@ -86,7 +86,8 @@ export const productsApi = {
   // Soporta: price, salePrice, wholesalePrice, wholesaleSalePrice, stock, stockUnlimited, minQuantity, active
   quickUpdate: (id, data) => api.patch(`/products/${id}/quick`, data),
   bulkPriceAdjust: (data) => api.post("/products/bulk-price-adjust", data),
-  delete: (id) => api.delete(`/products/${id}`),
+  // force=true permite borrar un producto con ventas (lo desvincula de las órdenes vía SetNull).
+  delete: (id, force = false) => api.delete(`/products/${id}${force ? "?force=true" : ""}`),
 };
 
 // ─── IA (Google Gemini) ─────────────────────────────────────────────────────────

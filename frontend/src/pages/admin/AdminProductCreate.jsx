@@ -831,13 +831,13 @@ export default function AdminProductCreate() {
               <div className="flex items-center gap-2.5 mb-3">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-white text-lg shadow-sm shrink-0">✨</div>
                 <div className="min-w-0">
-                  <h3 className="text-sm font-bold text-slate-800 leading-tight">Asistente de IA</h3>
-                  <p className="text-[11px] text-slate-500 leading-tight">Completá los datos a partir de la foto principal</p>
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 leading-tight">Asistente de IA</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">Completá los datos a partir de la foto principal</p>
                 </div>
               </div>
 
               {newImages.length === 0 ? (
-                <div className="text-xs text-slate-500 bg-white/70 dark:bg-slate-800/60 border border-violet-100 dark:border-violet-900/40 rounded-xl px-3 py-2.5">
+                <div className="text-xs text-slate-500 dark:text-slate-300 bg-white/70 dark:bg-slate-800/60 border border-violet-100 dark:border-violet-900/40 rounded-xl px-3 py-2.5">
                   📷 Subí una foto del producto arriba para habilitar las sugerencias.
                 </div>
               ) : (
@@ -855,8 +855,8 @@ export default function AdminProductCreate() {
                         : "📝"}
                     </span>
                     <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-slate-800">Autocompletar datos</span>
-                      <span className="block text-[11px] text-emerald-600">Título, descripción y SKU · gratis</span>
+                      <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Autocompletar datos</span>
+                      <span className="block text-[11px] text-emerald-600 dark:text-emerald-400">Título, descripción y SKU · gratis</span>
                     </span>
                   </button>
 
@@ -873,15 +873,15 @@ export default function AdminProductCreate() {
                         : "🖼️"}
                     </span>
                     <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-slate-800">Generar fotos similares</span>
-                      <span className="block text-[11px] text-amber-600">Requiere plan pago de Gemini</span>
+                      <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Generar fotos similares</span>
+                      <span className="block text-[11px] text-amber-600 dark:text-amber-400">Requiere plan pago de Gemini</span>
                     </span>
                   </button>
                 </div>
               )}
 
               {aiLoadingImages && (
-                <p className="text-[11px] text-slate-500 mt-2.5 flex items-center gap-1.5">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2.5 flex items-center gap-1.5">
                   <span className="animate-spin rounded-full h-3 w-3 border-2 border-fuchsia-500 border-t-transparent" />
                   Generando imágenes… puede tardar unos segundos.
                 </p>
@@ -889,7 +889,7 @@ export default function AdminProductCreate() {
 
               {aiImages.length > 0 && (
                 <div className="mt-3">
-                  <p className="text-xs text-slate-500 mb-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
                     Tocá las que quieras agregar (elegí solo las que se parezcan al producto real):
                   </p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -911,7 +911,7 @@ export default function AdminProductCreate() {
                       );
                     })}
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
                     ⚠️ Imágenes generadas por IA. Revisá que representen fielmente el producto antes de publicar.
                   </p>
                 </div>
