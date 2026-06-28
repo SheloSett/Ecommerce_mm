@@ -781,10 +781,19 @@ export default function AdminProducts() {
 
         {/* ── Capital en stock ─────────────────────────────────────────────── */}
         {(() => {
-          const withCost     = products.filter(p => !p.stockUnlimited && p.cost != null && p.cost > 0);
-          const sinCosto     = products.filter(p => !p.stockUnlimited && (p.cost == null || p.cost <= 0)).length;
-          const capitalTotal = withCost.reduce((sum, p) => sum + p.stock * p.cost, 0);
-          const infinitos    = products.filter(p => p.stockUnlimited).length;
+          // Capital calculado en el backend por producto (stockCapital + capitalStatus). Ya considera
+          // las variantes FINITAS: antes se usaba p.stock/p.stockUnlimited a nivel producto, así que un
+          // producto con una variante ilimitada quedaba excluido completo y no se contaban las unidades
+          // reales de sus otras variantes. Ver getProductsAdmin.
+          // Antes:
+          // const withCost     = products.filter(p => !p.stockUnlimited && p.cost != null && p.cost > 0);
+          // const sinCosto     = products.filter(p => !p.stockUnlimited && (p.cost == null || p.cost <= 0)).length;
+          // const capitalTotal = withCost.reduce((sum, p) => sum + p.stock * p.cost, 0);
+          // const infinitos    = products.filter(p => p.stockUnlimited).length;
+          const counted      = products.filter(p => p.capitalStatus === "counted");
+          const sinCosto     = products.filter(p => p.capitalStatus === "noCost").length;
+          const infinitos    = products.filter(p => p.capitalStatus === "unlimited").length;
+          const capitalTotal = products.reduce((sum, p) => sum + (p.stockCapital || 0), 0);
           return (
             <div className="rounded-2xl bg-gradient-to-r from-slate-800 to-slate-700 text-white px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4 shadow-lg">
               <div className="flex-1">
@@ -795,7 +804,7 @@ export default function AdminProducts() {
               </div>
               <div className="flex flex-col gap-1 text-sm sm:text-right">
                 <span className="text-slate-300">
-                  <span className="font-semibold text-white">{withCost.length}</span> producto{withCost.length !== 1 ? "s" : ""} contabilizados
+                  <span className="font-semibold text-white">{counted.length}</span> producto{counted.length !== 1 ? "s" : ""} contabilizados
                 </span>
                 {sinCosto > 0 && (
                   <span className="text-amber-400 font-medium">

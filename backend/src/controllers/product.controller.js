@@ -278,6 +278,7 @@ async function getProductsAdmin(req, res) {
     const productIds = products.map((p) => p.id);
     let soldMap = {};
     let variantStockMap = {};
+    let variantCapitalMap = {}; // productId -> { capital, finiteStock } (capital de variantes finitas)
     if (productIds.length > 0) {
       // Prisma no tiene @map en orderId/productId → columnas en DB son camelCase
       const soldStats = await prisma.$queryRaw`
@@ -302,15 +303,51 @@ async function getProductsAdmin(req, res) {
         GROUP BY "productId"
       `;
       variantStockStats.forEach((r) => { variantStockMap[r.productId] = r.variantStock; });
+
+      // Capital en stock aportado por las variantes FINITAS: suma de (stock × costo de la variante,
+      // con fallback al costo del producto). Las variantes ilimitadas aportan 0 pero NO descartan al
+      // producto: si tiene alguna variante finita con stock, ese valor se cuenta igual.
+      const variantCapitalStats = await prisma.$queryRaw`
+        SELECT v."productId",
+          COALESCE(SUM(CASE WHEN v."stockUnlimited" THEN 0 ELSE v.stock * COALESCE(v.cost, p.cost, 0) END), 0)::float AS "capital",
+          COALESCE(SUM(CASE WHEN v."stockUnlimited" THEN 0 ELSE v.stock END), 0)::int AS "finiteStock"
+        FROM product_variants v
+        JOIN products p ON v."productId" = p.id
+        WHERE v.active = true
+          AND v."productId" = ANY(${productIds})
+        GROUP BY v."productId"
+      `;
+      variantCapitalStats.forEach((r) => {
+        variantCapitalMap[r.productId] = { capital: Number(r.capital) || 0, finiteStock: r.finiteStock || 0 };
+      });
     }
 
     res.json({
-      products: products.map((p) => ({
-        ...p,
-        totalSold: soldMap[p.id] || 0,
-        // variantStockTotal: -1 = ilimitado, número = suma de stocks de variantes activas, null = sin variantes
-        variantStockTotal: variantStockMap[p.id] !== undefined ? variantStockMap[p.id] : null,
-      })),
+      products: products.map((p) => {
+        const hasActiveVariants = variantStockMap[p.id] !== undefined;
+        // stockCapital: valor del stock FINITO del producto (para "Capital total en stock").
+        // capitalStatus: cómo se cuenta en la tarjeta → "counted" (suma), "noCost" (tiene stock pero
+        // sin costo), "unlimited" (no hay stock finito que contar).
+        let stockCapital = 0;
+        let capitalStatus;
+        if (hasActiveVariants) {
+          const vc = variantCapitalMap[p.id] || { capital: 0, finiteStock: 0 };
+          if (vc.capital > 0)          { capitalStatus = "counted";   stockCapital = vc.capital; }
+          else if (vc.finiteStock > 0) { capitalStatus = "noCost";    stockCapital = 0; }
+          else                         { capitalStatus = "unlimited"; stockCapital = 0; }
+        } else if (p.stockUnlimited)                 { capitalStatus = "unlimited"; stockCapital = 0; }
+        else if (p.cost != null && p.cost > 0)       { capitalStatus = "counted";   stockCapital = p.stock * p.cost; }
+        else                                         { capitalStatus = "noCost";    stockCapital = 0; }
+
+        return {
+          ...p,
+          totalSold: soldMap[p.id] || 0,
+          // variantStockTotal: -1 = ilimitado, número = suma de stocks de variantes activas, null = sin variantes
+          variantStockTotal: variantStockMap[p.id] !== undefined ? variantStockMap[p.id] : null,
+          stockCapital,
+          capitalStatus,
+        };
+      }),
       pagination: {
         total,
         page: parseInt(page),
