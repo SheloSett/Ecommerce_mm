@@ -209,10 +209,15 @@ async function getProductsAdmin(req, res) {
     }
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-      ];
+      // Buscar SOLO por título (nombre). Antes también buscaba en la descripción, lo que devolvía
+      // productos sin la palabra en el título (ej: "rca" aparecía en la descripción de cables que no
+      // son RCA). Si en el futuro se quiere buscar también por SKU, agregar aquí { sku: { contains... } }.
+      // Antes:
+      // where.OR = [
+      //   { name: { contains: search, mode: "insensitive" } },
+      //   { description: { contains: search, mode: "insensitive" } },
+      // ];
+      where.name = { contains: search, mode: "insensitive" };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
