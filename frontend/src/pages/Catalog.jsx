@@ -200,12 +200,17 @@ export default function Catalog() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => { fetchFacets(); }, [fetchFacets]);
-  useEffect(() => { categoriesApi.getAll().then((res) => setCategories(res.data)); }, []);
+  // Pasamos visibleFor para que el conteo de cada categoría refleje solo lo que este cliente ve
+  // realmente (excluye solo-mayorista/minorista y sin stock), igual que la grilla. Depende de
+  // visibleFor para refrescar al iniciar/cerrar sesión o cambiar el tipo de cliente.
+  useEffect(() => { categoriesApi.getAll({ visibleFor }).then((res) => setCategories(res.data)); }, [visibleFor]);
 
   const setFilter = (key, value) => {
     const newParams = new URLSearchParams(searchParams);
     if (value) { newParams.set(key, value); } else { newParams.delete(key); }
-    newParams.delete("page");
+    // Al cambiar un FILTRO se vuelve a la página 1. Pero si lo que se está cambiando ES la
+    // página (paginación), NO hay que borrarla — si no, nunca se puede pasar de la página 1.
+    if (key !== "page") newParams.delete("page");
     setSearchParams(newParams);
   };
 

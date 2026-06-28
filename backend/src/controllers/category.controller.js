@@ -13,19 +13,44 @@ function toSlug(name) {
     .replace(/\s+/g, "-");
 }
 
+// Filtro "qué ve realmente el cliente": visibilidad (AMBOS o su tipo) + stock (del producto o de una
+// variante visible). DEBE coincidir con el filtro de la grilla en product.controller > getProducts():
+// si se cambia uno, cambiar el otro, o los conteos de categoría dejan de coincidir con lo que se muestra.
+// Si no se envía visibleFor (admin/legacy), devuelve {} → cuenta todos los activos (comportamiento previo).
+function publicVisibilityWhere(visibleFor) {
+  if (visibleFor !== "MAYORISTA" && visibleFor !== "MINORISTA") return {};
+  const visibleSet = ["AMBOS", visibleFor];
+  return {
+    visibility: { in: visibleSet },
+    AND: [{
+      OR: [
+        { stockUnlimited: true },
+        { AND: [{ variants: { none: { active: true, visibility: { in: visibleSet } } } }, { stock: { gt: 0 } }] },
+        { variants: { some: { active: true, visibility: { in: visibleSet }, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
+      ],
+    }],
+  };
+}
+
 // GET /api/categories
 // Retorna categorías de nivel superior con sus subcategorías anidadas
 async function getCategories(req, res) {
   try {
+    // visibleFor (MINORISTA/MAYORISTA) hace que el conteo refleje solo lo que ese cliente ve realmente
+    // (excluye productos solo-mayorista/minorista y sin stock), igual que la grilla.
+    const { visibleFor } = req.query;
+    // Antes: where: { active: true } — contaba todos los activos, sin filtrar visibilidad ni stock.
+    const productCountWhere = { active: true, ...publicVisibilityWhere(visibleFor) };
+
     const categories = await prisma.category.findMany({
       where: { parentId: null }, // Solo categorías raíz (sin padre)
       include: {
-        // Solo contar productos activos (publicados)
-        _count: { select: { products: { where: { active: true } } } },
-        // Incluir subcategorías con su conteo de productos activos
+        // Contar solo los productos que el cliente ve realmente (activos + visibilidad + stock)
+        _count: { select: { products: { where: productCountWhere } } },
+        // Incluir subcategorías con su conteo de productos visibles
         children: {
           include: {
-            _count: { select: { products: { where: { active: true } } } },
+            _count: { select: { products: { where: productCountWhere } } },
           },
           orderBy: { name: "asc" },
         },

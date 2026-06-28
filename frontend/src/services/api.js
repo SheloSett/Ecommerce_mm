@@ -110,7 +110,9 @@ export const aiApi = {
 
 // ─── Categorías ───────────────────────────────────────────────────────────────
 export const categoriesApi = {
-  getAll: () => api.get("/categories"),
+  // params opcional: { visibleFor } hace que los conteos por categoría reflejen solo lo que ese
+  // tipo de cliente ve realmente (igual que la grilla). Sin params → cuenta todos los activos (admin).
+  getAll: (params) => api.get("/categories", { params }),
   create: (data) => api.post("/categories", data),
   update: (id, data) => api.put(`/categories/${id}`, data),
   delete: (id) => api.delete(`/categories/${id}`),
