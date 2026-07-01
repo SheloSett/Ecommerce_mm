@@ -544,7 +544,7 @@ async function createProduct(req, res) {
 
     const product = await prisma.product.create({
       data: {
-        name,
+        name: name.trim(), // trim: sin espacios al inicio/fin, que rompían el orden A→Z del catálogo
         description: description || null,
         price: parseFloat(price),
         cost: cost ? parseFloat(cost) : null,
@@ -685,7 +685,7 @@ async function updateProduct(req, res) {
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
       data: {
-        name: name || existing.name,
+        name: name ? name.trim() : existing.name, // trim: sin espacios al inicio/fin (rompían el orden A→Z)
         description: description !== undefined ? description : existing.description,
         price: price ? parseFloat(price) : existing.price,
         cost: cost !== undefined ? (cost ? parseFloat(cost) : null) : existing.cost,
