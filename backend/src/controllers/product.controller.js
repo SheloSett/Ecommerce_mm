@@ -32,7 +32,7 @@ function isAdminRequest(req) {
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, attrs } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, attrs, sortOrder, sortPrice } = req.query;
 
     const where = {};
 
@@ -151,6 +151,17 @@ async function getProducts(req, res) {
       ? { active: true, visibility: { in: ["AMBOS", visibleFor] } }
       : { active: true };
 
+    // Orden del catálogo (mismo criterio que los dropdowns del front): el precio tiene prioridad sobre
+    // el orden por nombre/fecha. Default: más nuevo primero. Se ordena en el BACKEND para que funcione
+    // con la paginación — antes se ordenaba en el cliente y solo reordenaba la página actual (20 de N).
+    let orderBy;
+    if (sortPrice === "asc")         orderBy = { price: "asc" };
+    else if (sortPrice === "desc")   orderBy = { price: "desc" };
+    else if (sortOrder === "az")     orderBy = { name: "asc" };
+    else if (sortOrder === "za")     orderBy = { name: "desc" };
+    else if (sortOrder === "oldest") orderBy = { createdAt: "asc" };
+    else                             orderBy = { createdAt: "desc" };
+
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
@@ -161,7 +172,8 @@ async function getProducts(req, res) {
           // frontend decida si mostrar modal de selección o agregar directo desde la card.
           _count: { select: { variants: { where: variantsCountWhere } } },
         },
-        orderBy: { createdAt: "desc" },
+        // Antes: orderBy: { createdAt: "desc" } (fijo). Ahora según sortOrder/sortPrice.
+        orderBy,
         skip,
         take: parseInt(limit),
       }),

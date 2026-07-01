@@ -155,15 +155,18 @@ export default function Catalog() {
     ? JSON.stringify(selectedAttrs)
     : undefined;
 
-  const sortProducts = (list) => {
-    const sorted = [...list];
-    if (currentSortPrice === "asc")  return sorted.sort((a, b) => a.price - b.price);
-    if (currentSortPrice === "desc") return sorted.sort((a, b) => b.price - a.price);
-    if (currentSortOrder === "oldest") return sorted.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (currentSortOrder === "az")     return sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
-    if (currentSortOrder === "za")     return sorted.sort((a, b) => b.name.localeCompare(a.name, "es"));
-    return sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  };
+  // COMENTADO: el ordenamiento se movió al backend (getProducts lee sortOrder/sortPrice) para que
+  // funcione con la paginación. Esta versión ordenaba solo la página actual (20 de N), por eso los
+  // filtros A→Z / Z→A "no funcionaban" sobre todo el catálogo.
+  // const sortProducts = (list) => {
+  //   const sorted = [...list];
+  //   if (currentSortPrice === "asc")  return sorted.sort((a, b) => a.price - b.price);
+  //   if (currentSortPrice === "desc") return sorted.sort((a, b) => b.price - a.price);
+  //   if (currentSortOrder === "oldest") return sorted.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  //   if (currentSortOrder === "az")     return sorted.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  //   if (currentSortOrder === "za")     return sorted.sort((a, b) => b.name.localeCompare(a.name, "es"));
+  //   return sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  // };
 
   const fetchProducts = useCallback(() => {
     setLoading(true);
@@ -173,6 +176,9 @@ export default function Catalog() {
     if (currentOnSale)   params.onSale   = "true";
     if (currentLowStock) params.lowStock = "true";
     if (attrsParam)      params.attrs    = attrsParam;
+    // Orden: ahora lo resuelve el backend (para que funcione con la paginación, no solo la página actual)
+    if (currentSortOrder) params.sortOrder = currentSortOrder;
+    if (currentSortPrice) params.sortPrice = currentSortPrice;
 
     productsApi
       .getAll(params)
@@ -182,7 +188,7 @@ export default function Catalog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, visibleFor, attrsParam]);
+  }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, visibleFor, attrsParam, currentSortOrder, currentSortPrice]);
 
   // Traer facetas (atributos disponibles) cada vez que cambian los filtros base (no los de attr)
   const fetchFacets = useCallback(() => {
@@ -644,7 +650,9 @@ export default function Catalog() {
                     ? "space-y-3"
                     : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
                 }>
-                  {sortProducts(products).map((p) => (
+                  {/* Antes: sortProducts(products) — ordenaba en el cliente y solo afectaba la página
+                      actual (20 de N). Ahora el orden lo resuelve el backend según sortOrder/sortPrice. */}
+                  {products.map((p) => (
                     <ProductCard key={p.id} product={p} viewMode={viewMode} />
                   ))}
                 </div>
