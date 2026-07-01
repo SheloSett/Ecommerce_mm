@@ -180,6 +180,10 @@ export default function AdminProducts() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Paginación en el cliente: se traen TODOS los productos (para que el capital y los tabs cuenten el
+  // total) y se muestran de a PER_PAGE por página.
+  const PER_PAGE = 50;
+  const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportType, setExportType] = useState("MINORISTA");
@@ -228,8 +232,10 @@ export default function AdminProducts() {
 
   const fetchProducts = (searchTerm = "") => {
     setLoading(true);
+    // all: true → el backend devuelve TODOS los productos (sin paginar). Antes: limit: 100, que truncaba
+    // el listado a 100 y hacía que el capital y los tabs solo contaran esos 100.
     productsApi
-      .getAllAdmin({ search: searchTerm, limit: 100 })
+      .getAllAdmin({ search: searchTerm, all: true })
       .then((res) => setProducts(res.data.products))
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -289,8 +295,12 @@ export default function AdminProducts() {
 
   const handleSearch = (e) => {
     e.preventDefault();
+    setPage(1); // volver a la primera página al hacer una búsqueda nueva
     fetchProducts(search);
   };
+
+  // Al cambiar de tab (Todos / Sin stock / Quiebre) volvemos a la primera página
+  useEffect(() => { setPage(1); }, [activeTab]);
 
   const openCreate = () => {
     setEditingProduct(null);
@@ -775,6 +785,18 @@ export default function AdminProducts() {
     return { stock, unlimited };
   };
 
+  // Lista filtrada por el tab activo (Sin stock / Quiebre) sobre TODOS los productos cargados.
+  const filteredProducts = products.filter((p) => {
+    const { stock: es, unlimited: eu } = effectiveStock(p);
+    if (isSinStock)     return !eu && es <= 0;
+    if (isQuiebreStock) return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
+    return true;
+  });
+  // Paginación en el cliente: 50 por página. Clampeamos la página actual por si el filtro achicó la lista.
+  const listTotalPages = Math.max(1, Math.ceil(filteredProducts.length / PER_PAGE));
+  const safePage = Math.min(page, listTotalPages);
+  const pagedProducts = filteredProducts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
   return (
     <AdminLayout title="Productos">
       <div className="space-y-4">
@@ -898,13 +920,17 @@ export default function AdminProducts() {
             No hay productos. ¡Crea el primero!
           </div>
         ) : (
+          <>
           <div className="space-y-3">
-            {products.filter(p => {
+            {/* Antes se filtraba+mapeaba acá mismo sobre todo `products`. Ahora el filtro por tab y la
+                paginación (50/pág) se calculan arriba en `pagedProducts`, para poder mostrar controles de página. */}
+            {/* {products.filter(p => {
               const { stock: es, unlimited: eu } = effectiveStock(p);
               if (isSinStock)     return !eu && es <= 0;
               if (isQuiebreStock) return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
               return true;
-            }).map((p) => {
+            }).map((p) => { */}
+            {pagedProducts.map((p) => {
               const img = p.images?.[0];
               // Antes: getCategoryBreadcrumb(p.category) — ahora M2M array
               const breadcrumb = getProductCategoryLabels(p.categories);
@@ -1256,6 +1282,68 @@ export default function AdminProducts() {
               );
             })}
           </div>
+
+          {/* Si el filtro por tab no deja ningún producto en esta vista */}
+          {filteredProducts.length === 0 && (
+            <div className="card py-12 text-center text-slate-400">
+              No hay productos en esta vista.
+            </div>
+          )}
+
+          {/* ── Controles de paginación (50 productos por página) ───────────────── */}
+          {listTotalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold text-slate-600 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                ← Anterior
+              </button>
+
+              {/* Números de página (compacto: muestra hasta 7 páginas centradas en la actual) */}
+              {(() => {
+                const pages = [];
+                const maxButtons = 7;
+                let start = Math.max(1, safePage - 3);
+                let end = Math.min(listTotalPages, start + maxButtons - 1);
+                start = Math.max(1, end - maxButtons + 1);
+                for (let i = start; i <= end; i++) pages.push(i);
+                return pages.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setPage(n)}
+                    className={`min-w-[2.25rem] px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                      n === safePage
+                        ? "bg-blue-600 text-white"
+                        : "border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ));
+              })()}
+
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(listTotalPages, p + 1))}
+                disabled={safePage >= listTotalPages}
+                className="px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-semibold text-slate-600 dark:text-slate-200 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Siguiente →
+              </button>
+            </div>
+          )}
+
+          {/* Texto: "Mostrando X–Y de Z" */}
+          {filteredProducts.length > 0 && (
+            <p className="text-center text-xs text-slate-400 dark:text-slate-500 pt-1">
+              Mostrando {(safePage - 1) * PER_PAGE + 1}–{Math.min(safePage * PER_PAGE, filteredProducts.length)} de {filteredProducts.length} productos
+            </p>
+          )}
+          </>
         )}
       </div>
 

@@ -102,12 +102,31 @@ async function createPreference(req, res) {
 // MercadoPago notifica aquí cuando cambia el estado de un pago
 async function handleWebhook(req, res) {
   try {
+    // FIX: index.js monta express.raw() en esta ruta, por lo que req.body llega como Buffer
+    // crudo, NUNCA como objeto JSON. Todos los accesos req.body?.type / req.body?.data?.id
+    // de abajo devolvían siempre undefined (el webhook solo funcionaba si MP mandaba los
+    // datos por query string). Parseamos el Buffer a JSON acá, con try/catch por si el
+    // body viene vacío o no es JSON válido.
+    let body = req.body;
+    if (Buffer.isBuffer(body)) {
+      try {
+        body = JSON.parse(body.toString("utf8") || "{}");
+      } catch {
+        body = {};
+      }
+    }
+
     // Log para debug: MP envía la info en query, en body, o en ambos. Distintos
     // formatos según la integración: viejo (topic+id), nuevo (type+data.id), v2 con body JSON.
-    console.log("[MP WEBHOOK] query:", JSON.stringify(req.query), "body:", JSON.stringify(req.body));
+    // console.log("[MP WEBHOOK] query:", JSON.stringify(req.query), "body:", JSON.stringify(req.body));
+    // ↑ Comentado: req.body es un Buffer y se logueaba como {"type":"Buffer","data":[...]} (ilegible).
+    //   Se reemplaza por el log de abajo que muestra el body ya parseado.
+    console.log("[MP WEBHOOK] query:", JSON.stringify(req.query), "body:", JSON.stringify(body));
 
     // Tipo: aceptar "type" (nuevo) o "topic" (viejo) de query o body
-    const type = req.query.type || req.query.topic || req.body?.type || req.body?.topic;
+    // const type = req.query.type || req.query.topic || req.body?.type || req.body?.topic;
+    // ↑ Comentado: usaba req.body (Buffer) — los campos del body nunca se leían. Ahora usa `body` parseado.
+    const type = req.query.type || req.query.topic || body?.type || body?.topic;
 
     // Solo procesamos notificaciones de pagos
     if (type !== "payment") {
@@ -120,11 +139,18 @@ async function handleWebhook(req, res) {
     // - req.query.id:         formato viejo ?topic=payment&id=123
     // - req.body?.data?.id:   cuando MP manda el JSON en el body POST
     // - req.body?.id:         payload viejo en body
+    // const paymentId = req.query["data.id"]
+    //                || req.query.data?.id
+    //                || req.query.id
+    //                || req.body?.data?.id
+    //                || req.body?.id;
+    // ↑ Comentado: req.body era un Buffer, así que body.data.id / body.id nunca se leían.
+    //   Ahora se usa el `body` parseado a JSON al inicio del handler.
     const paymentId = req.query["data.id"]
                    || req.query.data?.id
                    || req.query.id
-                   || req.body?.data?.id
-                   || req.body?.id;
+                   || body?.data?.id
+                   || body?.id;
 
     if (!paymentId) {
       console.log("[MP WEBHOOK] paymentId no encontrado, ignorando");
@@ -153,6 +179,22 @@ async function handleWebhook(req, res) {
 
     const newStatus = statusMap[payment.status] || "PENDING";
 
+    // FIX idempotencia: MercadoPago puede enviar la MISMA notificación varias veces
+    // (reintentos si tarda la respuesta, eventos payment.updated duplicados, etc.).
+    // Antes, cada webhook "approved" repetido volvía a descontar el stock y re-enviaba
+    // los emails (doble descuento de stock por una sola venta). Ahora consultamos el
+    // estado previo de la orden: si ya estaba APPROVED, actualizamos los datos de MP
+    // pero NO repetimos el descuento ni los emails.
+    const existingOrder = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true },
+    });
+    if (!existingOrder) {
+      console.log("[MP WEBHOOK] orden no encontrada:", orderId);
+      return res.sendStatus(200);
+    }
+    const wasAlreadyApproved = existingOrder.status === "APPROVED";
+
     // Actualizar la orden con el resultado del pago
     await prisma.order.update({
       where: { id: orderId },
@@ -164,7 +206,9 @@ async function handleWebhook(req, res) {
     });
 
     // Si el pago fue aprobado: descontar stock + notificar al admin + email al cliente
-    if (newStatus === "APPROVED") {
+    // if (newStatus === "APPROVED") {
+    // ↑ Comentado: sin el chequeo de estado previo, un webhook repetido descontaba stock de nuevo.
+    if (newStatus === "APPROVED" && !wasAlreadyApproved) {
       const order = await prisma.order.findUnique({
         where: { id: orderId },
         include: { items: { include: { product: true } }, coupon: true },
@@ -172,6 +216,27 @@ async function handleWebhook(req, res) {
 
       if (order) {
         for (const item of order.items) {
+          // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
+          // producto base. Antes este loop descontaba siempre del producto base, así que en
+          // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
+          // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
+          if (item.variantId) {
+            const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+            if (variant && !variant.stockUnlimited) {
+              await prisma.productVariant.update({
+                where: { id: item.variantId },
+                data: { stock: Math.max(0, variant.stock - item.quantity) },
+              });
+            }
+            continue;
+          }
+
+          // Producto sin variante: descontar del stock base (comportamiento original).
+          // Los ilimitados no se tocan: antes se les descontaba igual y el número quedaba
+          // negativo/confuso en el admin aunque no afectara la venta.
+          const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
+          if (!baseProduct || baseProduct.stockUnlimited) continue;
+
           const updated = await prisma.product.update({
             where: { id: item.productId },
             data: { stock: { decrement: item.quantity } },

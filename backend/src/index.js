@@ -161,6 +161,20 @@ app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
 
+// Asegurar la extensión "unaccent" de Postgres al arrancar (búsqueda insensible a tildes).
+// El código de búsqueda (searchProductIds en product.controller) depende de esta extensión y,
+// si no existe, cae silenciosamente al fallback SENSIBLE a tildes — como no hay ninguna
+// migración que la cree, una base nueva (o un restore) perdía la búsqueda sin tildes sin
+// que nadie lo note. CREATE EXTENSION IF NOT EXISTS es idempotente e inofensivo si ya existe.
+// Si el usuario de DB no tiene permisos, solo se loguea la advertencia y la app sigue normal.
+const { PrismaClient } = require("@prisma/client");
+const prismaBoot = new PrismaClient();
+prismaBoot
+  .$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS unaccent')
+  .then(() => console.log("✅ Extensión unaccent de Postgres verificada (búsqueda sin tildes activa)"))
+  .catch((e) => console.warn("⚠️ No se pudo crear/verificar la extensión unaccent (la búsqueda será sensible a tildes):", e.message))
+  .finally(() => prismaBoot.$disconnect().catch(() => {}));
+
 // Iniciar cron jobs de campañas de email (restock mayoristas + recomendaciones minoristas)
 const { startCronJobs } = require("./services/cron.service");
 startCronJobs();

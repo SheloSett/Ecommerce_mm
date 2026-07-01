@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+// useNavigate: para redirigir al catálogo tras el registro (la cuenta ahora se crea al instante)
+import { Link, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { customersApi } from "../services/api";
+import { useCustomerAuth } from "../context/CustomerAuthContext";
 
 // Clase base compartida para inputs con icono a la izquierda
 const inputCls =
@@ -58,6 +60,9 @@ export default function Register() {
   });
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const navigate = useNavigate();
+  // updateCustomerWithToken guarda token + datos en localStorage y estado → deja al usuario logueado
+  const { updateCustomerWithToken } = useCustomerAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -87,8 +92,19 @@ export default function Register() {
     try {
       // Enviamos sin confirmPassword (solo el backend necesita password)
       const { confirmPassword, ...data } = form;
-      await customersApi.register(data);
-      setSubmitted(true);
+      // Antes: await customersApi.register(data); setSubmitted(true);
+      // Ahora la cuenta se crea al instante (sin aprobación del admin) y el backend devuelve un
+      // token → dejamos al usuario logueado y lo mandamos al catálogo directamente.
+      const res = await customersApi.register(data);
+      if (res.data?.token && res.data?.customer) {
+        updateCustomerWithToken(res.data.token, res.data.customer);
+        toast.success("¡Cuenta creada! Ya estás conectado.");
+        navigate("/catalogo");
+      } else {
+        // Fallback: si el backend todavía no devuelve token (versión anterior), mostrar la
+        // pantalla de "solicitud enviada" como antes.
+        setSubmitted(true);
+      }
     } catch (err) {
       const msg = err.response?.data?.error || "Error al enviar la solicitud";
       toast.error(msg);

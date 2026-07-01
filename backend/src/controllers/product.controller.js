@@ -226,7 +226,11 @@ async function getProducts(req, res) {
 // GET /api/products/admin - Listar TODOS los productos para el admin (activos e inactivos)
 async function getProductsAdmin(req, res) {
   try {
-    const { category, search, page = 1, limit = 50, lowStock } = req.query;
+    const { category, search, page = 1, limit = 50, lowStock, all } = req.query;
+    // all=true: el admin trae TODOS los productos (sin paginar en el server) para que el "Capital total
+    // en stock" y los tabs "Sin stock"/"Quiebre de stock" cuenten sobre el total real, no sobre una página.
+    // La paginación visual (50 por página) la hace el cliente. Ver AdminProducts.jsx.
+    const noPaginate = all === "true";
 
     const where = {};
 
@@ -310,8 +314,9 @@ async function getProductsAdmin(req, res) {
           supplier: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: "desc" },
-        skip,
-        take: parseInt(limit),
+        // skip,                    // Comentado: con all=true no paginamos en el server; el admin pagina en el cliente.
+        // take: parseInt(limit),   // Comentado: así el capital y los tabs "Sin stock/Quiebre" cuentan TODOS los productos.
+        ...(noPaginate ? {} : { skip, take: parseInt(limit) }),
       }),
       prisma.product.count({ where }),
     ]);

@@ -25,22 +25,43 @@ async function register(req, res) {
       return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
     }
 
-    // Verifica si ya existe una solicitud con ese email
+    // Verifica si ya existe una cuenta con ese email
     const existing = await prisma.customer.findUnique({ where: { email } });
     if (existing) {
-      return res.status(409).json({ error: "Ya existe una solicitud con ese email" });
+      // Antes: "Ya existe una solicitud con ese email" — ahora las cuentas se crean directas
+      return res.status(409).json({ error: "Ya existe una cuenta con ese email" });
     }
 
     // Hashear la contraseña antes de guardar
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const customer = await prisma.customer.create({
-      data: { name, email, password: hashedPassword, phone, cuit, documentType: documentType || null },
+      // Antes la cuenta quedaba PENDING (default del schema) hasta que el admin la aprobara.
+      // Ahora se crea APPROVED al instante: el registro minorista no requiere aprobación.
+      // La aprobación del admin queda solo para el pedido de cuenta MAYORISTA (mayoristaRequest).
+      // seenByAdmin: true para que no sume al badge "Clientes" del sidebar (no hay nada que aprobar).
+      data: { name, email, password: hashedPassword, phone, cuit, documentType: documentType || null, status: "APPROVED", seenByAdmin: true },
     });
 
+    // Devolver un token igual que el login, para que el front deje al usuario logueado al instante
+    // (sin pedirle que vuelva a ingresar sus credenciales).
+    const token = jwt.sign(
+      { id: customer.id, email: customer.email, name: customer.name, type: customer.type, role: "CUSTOMER" },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     res.status(201).json({
-      message: "Solicitud enviada. El administrador revisará tu registro y te contactará.",
-      customer: { id: customer.id, name: customer.name, email: customer.email },
+      // Antes: "Solicitud enviada. El administrador revisará tu registro y te contactará."
+      message: "¡Cuenta creada! Ya podés comprar.",
+      token,
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        type: customer.type,
+      },
     });
   } catch (err) {
     console.error("Register customer error:", err);
