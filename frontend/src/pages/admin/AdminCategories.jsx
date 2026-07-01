@@ -1,7 +1,28 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
-import { categoriesApi } from "../../services/api";
+import { categoriesApi, productsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
+
+const formatPrice = (n) =>
+  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
+
+// Badge del conteo: si hay productos, es un botón clickeable (abre el modal con la lista).
+function CountBadge({ count, onClick }) {
+  if (!count) return <span className="text-slate-400 text-xs">0</span>;
+  return (
+    <button
+      onClick={onClick}
+      title="Ver productos vinculados"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold transition-colors"
+    >
+      {count}
+      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
+  );
+}
 
 export default function AdminCategories() {
   const [categories, setCategories] = useState([]);
@@ -13,10 +34,31 @@ export default function AdminCategories() {
   const [parentId, setParentId] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Modal "ver productos vinculados" a una categoría
+  const [viewingCat, setViewingCat] = useState(null);
+  const [catProducts, setCatProducts] = useState([]);
+  const [loadingCatProducts, setLoadingCatProducts] = useState(false);
+
+  // Abre el modal y trae los productos vinculados a esa categoría (por slug).
+  const openProducts = async (cat) => {
+    setViewingCat(cat);
+    setCatProducts([]);
+    setLoadingCatProducts(true);
+    try {
+      const res = await productsApi.getAllAdmin({ category: cat.slug, limit: 100 });
+      setCatProducts(res.data.products || []);
+    } catch {
+      toast.error("No se pudieron cargar los productos");
+    } finally {
+      setLoadingCatProducts(false);
+    }
+  };
+
   const fetchCategories = () => {
     setLoading(true);
     categoriesApi
-      .getAll()
+      // all: true → cuenta TODOS los productos vinculados (activos + inactivos), no solo los visibles
+      .getAll({ all: true })
       .then((res) => setCategories(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -97,7 +139,7 @@ export default function AdminCategories() {
               <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-3">Nombre</th>
                 <th className="px-4 py-3 hidden sm:table-cell">Slug</th>
-                <th className="px-4 py-3 hidden xs:table-cell">Productos</th>
+                <th className="px-4 py-3 table-cell">Productos</th>
                 <th className="px-4 py-3 text-right">Acciones</th>
               </tr>
             </thead>
@@ -122,7 +164,9 @@ export default function AdminCategories() {
                     <tr key={cat.id} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="px-4 py-3 font-semibold text-slate-800">{cat.name}</td>
                       <td className="px-4 py-3 font-mono text-slate-500 text-xs hidden sm:table-cell">{cat.slug}</td>
-                      <td className="px-4 py-3 text-slate-600 hidden xs:table-cell">{cat._count?.products || 0}</td>
+                      <td className="px-4 py-3 table-cell">
+                        <CountBadge count={cat._count?.products || 0} onClick={() => openProducts(cat)} />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2 justify-end">
                           <button
@@ -151,7 +195,9 @@ export default function AdminCategories() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5 font-mono text-slate-400 text-xs hidden sm:table-cell">{sub.slug}</td>
-                        <td className="px-4 py-2.5 text-slate-500 hidden xs:table-cell">{sub._count?.products || 0}</td>
+                        <td className="px-4 py-2.5 table-cell">
+                          <CountBadge count={sub._count?.products || 0} onClick={() => openProducts(sub)} />
+                        </td>
                         <td className="px-4 py-2.5">
                           <div className="flex gap-2 justify-end">
                             <button
@@ -177,6 +223,57 @@ export default function AdminCategories() {
           </table>
         </div>
       </div>
+
+      {/* Modal "ver productos vinculados" */}
+      {viewingCat && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setViewingCat(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div className="min-w-0">
+                <h2 className="font-bold text-slate-800 truncate">Productos en “{viewingCat.name}”</h2>
+                <p className="text-xs text-slate-500">
+                  {loadingCatProducts ? "Cargando…" : `${catProducts.length} producto${catProducts.length !== 1 ? "s" : ""} vinculado${catProducts.length !== 1 ? "s" : ""}`}
+                </p>
+              </div>
+              <button onClick={() => setViewingCat(null)} className="p-2 hover:bg-slate-100 rounded-lg shrink-0">✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {loadingCatProducts ? (
+                <div className="py-12 flex justify-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+                </div>
+              ) : catProducts.length === 0 ? (
+                <p className="text-center text-slate-400 py-8 text-sm">No hay productos en esta categoría.</p>
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {catProducts.map((p) => (
+                    <li key={p.id} className="flex items-center gap-3 py-2.5">
+                      {p.images?.[0] ? (
+                        <img src={getImageUrl(p.images[0])} alt="" className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">📦</div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                        <p className="text-xs text-slate-400">{formatPrice(p.price)}{p.sku ? ` · ${p.sku}` : ""}</p>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${p.active ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"}`}>
+                        {p.active ? "Activo" : "Inactivo"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal crear/editar */}
       {showModal && (

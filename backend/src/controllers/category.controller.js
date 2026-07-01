@@ -39,8 +39,12 @@ async function getCategories(req, res) {
     // visibleFor (MINORISTA/MAYORISTA) hace que el conteo refleje solo lo que ese cliente ve realmente
     // (excluye productos solo-mayorista/minorista y sin stock), igual que la grilla.
     const { visibleFor } = req.query;
+    // all=true (admin): cuenta TODOS los productos vinculados (activos + inactivos, sin filtrar
+    // visibilidad ni stock). Sirve para el panel de categorías, donde importa cuántos están asignados.
+    // Sin all: cuenta solo lo que el cliente ve realmente (activos + visibilidad + stock), como la grilla.
+    const countAll = req.query.all === "true";
     // Antes: where: { active: true } — contaba todos los activos, sin filtrar visibilidad ni stock.
-    const productCountWhere = { active: true, ...publicVisibilityWhere(visibleFor) };
+    const productCountWhere = countAll ? {} : { active: true, ...publicVisibilityWhere(visibleFor) };
 
     const categories = await prisma.category.findMany({
       where: { parentId: null }, // Solo categorías raíz (sin padre)
@@ -169,8 +173,11 @@ async function deleteCategory(req, res) {
   try {
     const { id } = req.params;
 
-    // Verificar que no tenga productos asociados
-    const count = await prisma.product.count({ where: { categoryId: parseInt(id) } });
+    // Verificar que no tenga productos asociados.
+    // Antes: where: { categoryId: parseInt(id) } — pero Product ya NO tiene categoryId (se migró a la
+    // relación M2M categories[]), así que esa query tiraba error de Prisma → 500 al borrar CUALQUIER
+    // categoría. Ahora se cuenta por la relación M2M.
+    const count = await prisma.product.count({ where: { categories: { some: { id: parseInt(id) } } } });
     if (count > 0) {
       return res.status(400).json({
         error: `No se puede eliminar: tiene ${count} producto(s) asociado(s). Primero reasigna o elimina los productos.`,

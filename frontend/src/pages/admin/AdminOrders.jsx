@@ -1323,7 +1323,24 @@ export default function AdminOrders() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-slate-600">#{order.id}</span>
+                            {/* Antes era un <span> no clickeable. Ahora el número de orden lleva al
+                                detalle completo (/admin/ordenes/:id) y marca la orden como vista. */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!order.seenByAdmin) {
+                                  ordersApi.markSeen(order.id).catch(() => {});
+                                  setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, seenByAdmin: true } : o));
+                                  if (order.paymentMethod === "COTIZACION") decrementBadge("cotizaciones");
+                                  else if (order.status === "PENDING") decrementBadge("ordenesPendientes");
+                                }
+                                navigate(`/admin/ordenes/${order.id}`);
+                              }}
+                              className="font-mono font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                              title="Ver detalle de la orden"
+                            >
+                              #{order.id}
+                            </button>
                             {isNew && (
                               <span className="text-[10px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full leading-none">NUEVO</span>
                             )}

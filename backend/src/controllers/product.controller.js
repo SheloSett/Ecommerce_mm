@@ -29,6 +29,27 @@ function isAdminRequest(req) {
   }
 }
 
+// Búsqueda de productos por nombre (y opcionalmente SKU) INSENSIBLE A TILDES y mayúsculas, usando la
+// extensión `unaccent` de Postgres (unaccent(name) ILIKE unaccent(term)). Así "camara" encuentra
+// "CÁMARA" y viceversa. Devuelve el array de IDs que coinciden, o `null` si la extensión no está
+// instalada / falla — en ese caso el caller usa el filtro normal (sensible a tildes) como fallback.
+async function searchProductIds(term, { includeSku = false } = {}) {
+  const t = (term || "").trim();
+  if (!t) return null;
+  // Escapar comodines de LIKE para que % y _ del usuario se traten como literales.
+  const safe = t.replace(/[\\%_]/g, (m) => "\\" + m);
+  const like = `%${safe}%`;
+  try {
+    const rows = includeSku
+      ? await prisma.$queryRaw`SELECT id FROM products WHERE unaccent(name) ILIKE unaccent(${like}) OR sku ILIKE ${like}`
+      : await prisma.$queryRaw`SELECT id FROM products WHERE unaccent(name) ILIKE unaccent(${like})`;
+    return rows.map((r) => r.id);
+  } catch (e) {
+    console.warn("searchProductIds: 'unaccent' no disponible, usando fallback sensible a tildes:", e.message);
+    return null;
+  }
+}
+
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
@@ -92,10 +113,16 @@ async function getProducts(req, res) {
     }
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { sku:  { contains: search, mode: "insensitive" } },
-      ];
+      // Búsqueda insensible a tildes vía unaccent (con fallback sensible a tildes si la extensión no está).
+      const ids = await searchProductIds(search, { includeSku: true });
+      if (ids !== null) {
+        where.id = { in: ids };
+      } else {
+        where.OR = [
+          { name: { contains: search, mode: "insensitive" } },
+          { sku:  { contains: search, mode: "insensitive" } },
+        ];
+      }
     }
 
     if (featured === "true") {
@@ -229,7 +256,10 @@ async function getProductsAdmin(req, res) {
       //   { name: { contains: search, mode: "insensitive" } },
       //   { description: { contains: search, mode: "insensitive" } },
       // ];
-      where.name = { contains: search, mode: "insensitive" };
+      // Búsqueda insensible a tildes vía unaccent (fallback al filtro por nombre si no está la extensión).
+      const ids = await searchProductIds(search, { includeSku: false });
+      if (ids !== null) where.id = { in: ids };
+      else where.name = { contains: search, mode: "insensitive" };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -972,10 +1002,16 @@ async function getProductFacets(req, res) {
     }
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { sku:  { contains: search, mode: "insensitive" } },
-      ];
+      // Búsqueda insensible a tildes vía unaccent (con fallback sensible a tildes si la extensión no está).
+      const ids = await searchProductIds(search, { includeSku: true });
+      if (ids !== null) {
+        where.id = { in: ids };
+      } else {
+        where.OR = [
+          { name: { contains: search, mode: "insensitive" } },
+          { sku:  { contains: search, mode: "insensitive" } },
+        ];
+      }
     }
 
     if (onSale === "true") {

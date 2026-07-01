@@ -346,7 +346,13 @@ export default function AdminProductCreate() {
               <input
                 type="text"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value.toUpperCase() })}
+                onChange={(e) => {
+                  // Pasar a mayúsculas preservando la posición del cursor (si no, salta al final).
+                  const el = e.target;
+                  const s = el.selectionStart, en = el.selectionEnd;
+                  setForm((f) => ({ ...f, name: el.value.toUpperCase() }));
+                  requestAnimationFrame(() => { try { el.setSelectionRange(s, en); } catch (_) {} });
+                }}
                 className="input"
                 required
               />

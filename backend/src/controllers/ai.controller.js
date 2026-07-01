@@ -1,14 +1,18 @@
 // Integración de IA para el alta de productos:
-//  - TEXTO/VISIÓN (título, descripción, SKU desde la foto): Google Gemini (gratis en free tier).
+//  - TEXTO/VISIÓN (título, descripción, SKU desde la foto): Claude (Anthropic) como primario,
+//    con Google Gemini de respaldo. Claude NO genera imágenes, por eso solo se usa para el texto.
 //  - IMÁGENES (fotos similares): cadena con FALLBACK → se intenta Gemini y, si falla, OpenAI.
 //    Así, si un proveedor está saturado/sin cuota, el otro responde → casi nunca falla.
-// Keys: GEMINI_API_KEY (texto + imágenes) y OPENAI_API_KEY (respaldo de imágenes). Si una falta,
-// ese proveedor simplemente se saltea. Los clientes se crean de forma lazy (el server arranca igual).
+// Keys: ANTHROPIC_API_KEY (texto), GEMINI_API_KEY (texto de respaldo + imágenes) y OPENAI_API_KEY
+// (respaldo de imágenes). Si una falta, ese proveedor se saltea. Clientes lazy (el server arranca igual).
 const { GoogleGenAI } = require("@google/genai");
 // openai exporta la clase y el helper toFile; require defensivo por si cambia el shape del paquete.
 const OpenAILib = require("openai");
 const OpenAI  = OpenAILib.OpenAI || OpenAILib.default || OpenAILib;
 const toFile  = OpenAILib.toFile || (OpenAILib.default && OpenAILib.default.toFile);
+// Anthropic (Claude): visión para el texto del producto. require defensivo por el shape del paquete.
+const AnthropicLib = require("@anthropic-ai/sdk");
+const Anthropic = AnthropicLib.Anthropic || AnthropicLib.default || AnthropicLib;
 
 // Modelos configurables por env. Defaults según la doc oficial (jun 2026):
 //  - Gemini texto/visión: gemini-3.5-flash
@@ -18,6 +22,8 @@ const toFile  = OpenAILib.toFile || (OpenAILib.default && OpenAILib.default.toFi
 const TEXT_MODEL         = process.env.GEMINI_TEXT_MODEL  || "gemini-3.5-flash";
 const IMAGE_MODEL        = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+// Claude (texto/visión). Default al modelo más capaz; overrideable por env.
+const CLAUDE_MODEL       = process.env.CLAUDE_MODEL       || "claude-opus-4-8";
 
 let _ai = null;
 function getClient() {
@@ -35,6 +41,14 @@ function getOpenAI() {
   return _openai;
 }
 
+let _anthropic = null;
+function getAnthropic() {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return null;
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: key });
+  return _anthropic;
+}
+
 // Detecta errores de cuota/límite (429 RESOURCE_EXHAUSTED). En el nivel gratuito de Gemini
 // la generación de imágenes tiene cuota 0, así que estos errores son esperables ahí.
 function isQuotaError(e) {
@@ -48,9 +62,10 @@ function isQuotaError(e) {
 // 500 interno, sobrecarga. NO incluye 429 (cuota) porque eso no se arregla reintentando.
 function isTransient(e) {
   if (!e) return false;
-  if (e.status === 503 || e.status === 500 || e.code === 503 || e.code === 500) return true;
+  // 529 = overloaded de Anthropic; 503/500 = Gemini/otros
+  if ([500, 503, 529].includes(e.status) || [500, 503, 529].includes(e.code)) return true;
   const s = e.message || String(e);
-  return /UNAVAILABLE|high demand|overloaded|"code":\s*50[03]/i.test(s);
+  return /UNAVAILABLE|high demand|overloaded|"code":\s*(50[03]|529)/i.test(s);
 }
 
 // Reintenta una llamada con backoff exponencial ante errores transitorios (503/500).
@@ -109,48 +124,97 @@ function imageProviders() {
   return list;
 }
 
-// POST /api/ai/suggest-text — analiza la foto del producto y sugiere nombre, descripción y SKU.
-async function suggestText(req, res) {
-  try {
-    const ai = getClient();
-    if (!ai) return res.status(503).json({ error: "IA no configurada: falta GEMINI_API_KEY en el servidor" });
-    if (!req.file) return res.status(400).json({ error: "Subí una imagen para analizar" });
-
-    const base64 = req.file.buffer.toString("base64");
-    const mimeType = req.file.mimetype || "image/jpeg";
-
-    const prompt = `Sos un asistente que cataloga productos para una tienda online en Argentina.
+// ── Sugerencia de texto (título, descripción, SKU) desde la foto ──────────────
+const TEXT_PROMPT = `Sos un asistente que cataloga productos para una tienda online en Argentina.
 Analizá la imagen del producto y devolvé un JSON con:
 - "name": título corto y claro del producto, en español (máx ~60 caracteres).
 - "description": descripción de venta de 2 a 4 oraciones, en español, en texto plano (sin HTML ni markdown).
 - "sku": un código interno corto en MAYÚSCULAS, alfanumérico, derivado del producto (sin espacios; usá guiones si hace falta).
-Respondé SOLO con el JSON, sin texto adicional.`;
+Respondé ÚNICAMENTE con el objeto JSON, sin markdown ni explicaciones.`;
 
-    const response = await withRetry(() => ai.models.generateContent({
-      model: TEXT_MODEL,
-      contents: [
-        { inlineData: { mimeType, data: base64 } },
-        { text: prompt },
+// Extrae un objeto JSON de un texto (tolera fences ```json ... ``` o texto alrededor).
+function parseJsonLoose(text) {
+  if (!text) return null;
+  let t = String(text).trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const first = t.indexOf("{"), last = t.lastIndexOf("}");
+  if (first !== -1 && last !== -1) t = t.slice(first, last + 1);
+  try { return JSON.parse(t); } catch { return null; }
+}
+
+// Claude (Anthropic) — visión. Devuelve { name, description, sku }, null si no hay key, o lanza.
+async function claudeSuggestText(base64, mimeType) {
+  const client = getAnthropic();
+  if (!client) return null;
+  const msg = await withRetry(() => client.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 1024,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+        { type: "text", text: TEXT_PROMPT },
       ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            name:        { type: "string" },
-            description: { type: "string" },
-            sku:         { type: "string" },
-          },
-          required: ["name", "description", "sku"],
-        },
-      },
-    }));
+    }],
+  }));
+  const text = (msg.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  return parseJsonLoose(text);
+}
 
-    let data;
-    try {
-      data = JSON.parse(response.text);
-    } catch {
-      return res.status(502).json({ error: "La IA devolvió una respuesta no válida. Probá de nuevo." });
+// Gemini — visión (respaldo del texto). Devuelve { name, description, sku }, null si no hay key, o lanza.
+async function geminiSuggestText(base64, mimeType) {
+  const ai = getClient();
+  if (!ai) return null;
+  const response = await withRetry(() => ai.models.generateContent({
+    model: TEXT_MODEL,
+    contents: [
+      { inlineData: { mimeType, data: base64 } },
+      { text: TEXT_PROMPT },
+    ],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: { name: { type: "string" }, description: { type: "string" }, sku: { type: "string" } },
+        required: ["name", "description", "sku"],
+      },
+    },
+  }));
+  return parseJsonLoose(response.text);
+}
+
+// POST /api/ai/suggest-text — analiza la foto y sugiere nombre, descripción y SKU.
+// Preferencia: Claude (primario) → Gemini (respaldo). Si uno falla, prueba el otro.
+async function suggestText(req, res) {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Subí una imagen para analizar" });
+    const base64 = req.file.buffer.toString("base64");
+    const mimeType = req.file.mimetype || "image/jpeg";
+
+    const providers = [];
+    if (process.env.ANTHROPIC_API_KEY) providers.push({ name: "claude", fn: claudeSuggestText });
+    if (process.env.GEMINI_API_KEY)    providers.push({ name: "gemini", fn: geminiSuggestText });
+    if (providers.length === 0) {
+      return res.status(503).json({ error: "IA no configurada: falta ANTHROPIC_API_KEY o GEMINI_API_KEY en el servidor" });
+    }
+
+    let data = null, lastErr = null;
+    for (const prov of providers) {
+      try {
+        data = await prov.fn(base64, mimeType);
+        if (data) break; // éxito
+      } catch (e) {
+        lastErr = e;
+        console.error(`suggestText [${prov.name}] error:`, e.message);
+      }
+    }
+
+    if (!data) {
+      if (isTransient(lastErr)) {
+        return res.status(503).json({ error: "El modelo de IA está saturado en este momento. Probá de nuevo en unos segundos." });
+      }
+      return res.status(502).json({ error: "La IA no devolvió una respuesta válida. Probá de nuevo." });
     }
 
     res.json({
@@ -160,9 +224,6 @@ Respondé SOLO con el JSON, sin texto adicional.`;
     });
   } catch (err) {
     console.error("suggestText error:", err);
-    if (isTransient(err)) {
-      return res.status(503).json({ error: "El modelo de IA está saturado en este momento. Probá de nuevo en unos segundos." });
-    }
     res.status(500).json({ error: "Error al sugerir datos con IA" });
   }
 }
