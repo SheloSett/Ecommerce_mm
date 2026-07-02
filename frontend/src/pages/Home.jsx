@@ -304,9 +304,12 @@ export default function Home() {
                     {getCategoryIcon(cat.slug)}
                   </span>
                   <p className="text-sm font-semibold leading-tight">{cat.name}</p>
+                  {/* Contador "X productos" oculto a pedido del cliente (no quiere contadores
+                      de categorías ni en el inicio ni en el catálogo):
                   <p className="text-xs opacity-60 mt-1">
                     {cat.totalProducts ?? cat._count?.products ?? 0} productos
                   </p>
+                  */}
                 </Link>
               ))}
             </div>

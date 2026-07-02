@@ -302,6 +302,14 @@ export default function AdminProducts() {
   // Al cambiar de tab (Todos / Sin stock / Quiebre) volvemos a la primera página
   useEffect(() => { setPage(1); }, [activeTab]);
 
+  // Al cambiar de página, subir al tope (pedido del cliente: que la nueva página arranque arriba).
+  // Saltamos el primer render para no forzar el scroll al entrar a la vista.
+  const isFirstPageRender = useRef(true);
+  useEffect(() => {
+    if (isFirstPageRender.current) { isFirstPageRender.current = false; return; }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [page]);
+
   const openCreate = () => {
     setEditingProduct(null);
     setForm(EMPTY_FORM);
@@ -957,9 +965,19 @@ export default function AdminProducts() {
                       {breadcrumb && (
                         <p className="text-xs text-slate-400 mb-0.5 truncate">{breadcrumb}</p>
                       )}
+                      {/* Antes era un <p> no clickeable:
                       <p className="font-bold text-slate-800 text-sm uppercase tracking-wide truncate">
                         {p.name}
                       </p>
+                      Ahora el título abre la edición del producto (igual que el botón "Editar producto"). */}
+                      <button
+                        type="button"
+                        onClick={() => openEdit(p)}
+                        title="Editar producto"
+                        className="block w-full text-left font-bold text-slate-800 text-sm uppercase tracking-wide truncate hover:text-blue-600 hover:underline cursor-pointer"
+                      >
+                        {p.name}
+                      </button>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                         {p.sku && (
                           <span className="text-xs text-slate-400 font-mono">SKU: {p.sku}</span>

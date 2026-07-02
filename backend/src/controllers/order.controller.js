@@ -256,18 +256,46 @@ async function createOrder(req, res) {
         }
       }
 
-      // Lógica de precios:
-      // - Mayorista: usa wholesaleSalePrice si está definido, sino wholesalePrice, sino precio normal
-      // - Minorista: usa salePrice si está definido Y es menor al precio normal, sino precio normal
+      // Si el item tiene variante, traerla ANTES del cálculo de precio: las variantes pueden definir
+      // sus propios precios. Antes esto se buscaba después (solo para el SKU) y el precio se calculaba
+      // únicamente con el producto padre → una variante con precio propio se cobraba mal.
+      let selectedVariant = null;
+      if (item.variantId) {
+        selectedVariant = await prisma.productVariant.findUnique({
+          where: { id: parseInt(item.variantId) },
+          select: { sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true },
+        });
+      }
+
+      // Lógica de precios (fallback por GRUPO, no por campo):
+      // - Si la variante define su precio base para el tipo de cliente, TODO el grupo sale de la
+      //   variante: su oferta se usa solo si la variante la define (vacía = SIN oferta; NO se hereda
+      //   la oferta del producto padre — eso mostraba/cobraba ofertas absurdas, ej. variante $14.999
+      //   con la oferta $1.000 del padre).
+      // - Si la variante no define precio base, se usa el grupo completo del producto padre.
       let effectivePrice = product.price;
-      if (isMayorista && product.wholesalePrice) {
-        effectivePrice = product.wholesalePrice;
-        // Si hay precio de oferta mayorista válido, tiene prioridad sobre el precio mayorista base
-        if (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice) {
-          effectivePrice = product.wholesaleSalePrice;
+      if (isMayorista) {
+        if (selectedVariant?.wholesalePrice != null) {
+          effectivePrice = selectedVariant.wholesalePrice;
+          if (selectedVariant.wholesaleSalePrice != null && selectedVariant.wholesaleSalePrice < selectedVariant.wholesalePrice) {
+            effectivePrice = selectedVariant.wholesaleSalePrice;
+          }
+        } else if (product.wholesalePrice) {
+          effectivePrice = product.wholesalePrice;
+          // Si hay precio de oferta mayorista válido, tiene prioridad sobre el precio mayorista base
+          if (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice) {
+            effectivePrice = product.wholesaleSalePrice;
+          }
         }
-      } else if (!isMayorista && product.salePrice && product.salePrice < product.price) {
-        effectivePrice = product.salePrice;
+      } else {
+        if (selectedVariant?.price != null) {
+          effectivePrice = selectedVariant.price;
+          if (selectedVariant.salePrice != null && selectedVariant.salePrice < selectedVariant.price) {
+            effectivePrice = selectedVariant.salePrice;
+          }
+        } else if (product.salePrice && product.salePrice < product.price) {
+          effectivePrice = product.salePrice;
+        }
       }
 
       // Descuentos por cantidad: se aplica el tier del tipo de cliente correspondiente.
@@ -283,15 +311,17 @@ async function createOrder(req, res) {
 
       total += finalPrice * item.quantity;
 
-      // Buscar SKU de la variante seleccionada si se proporcionó variantId
-      let variantSku = null;
-      if (item.variantId) {
-        const variant = await prisma.productVariant.findUnique({
-          where: { id: parseInt(item.variantId) },
-          select: { sku: true },
-        });
-        variantSku = variant?.sku || null;
-      }
+      // SKU de la variante seleccionada — reusa selectedVariant (traída arriba para el precio).
+      // Antes se hacía una segunda consulta solo para el SKU:
+      // let variantSku = null;
+      // if (item.variantId) {
+      //   const variant = await prisma.productVariant.findUnique({
+      //     where: { id: parseInt(item.variantId) },
+      //     select: { sku: true },
+      //   });
+      //   variantSku = variant?.sku || null;
+      // }
+      const variantSku = selectedVariant?.sku || null;
 
       orderItems.push({
         productId:    product.id,

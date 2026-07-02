@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -66,6 +66,8 @@ function CategoryItem({ label, count, checked, onClick, indent = false }) {
       >
         {label}
       </span>
+      {/* Contador por categoría oculto a pedido del cliente (no quiere contadores en los filtros).
+          La prop `count` se sigue recibiendo por si se quiere volver a mostrar:
       {count !== undefined && (
         <span
           className={`text-xs font-medium flex-shrink-0 px-2 py-0.5 rounded-full ${
@@ -77,6 +79,7 @@ function CategoryItem({ label, count, checked, onClick, indent = false }) {
           {count}
         </span>
       )}
+      */}
     </button>
   );
 }
@@ -206,6 +209,14 @@ export default function Catalog() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => { fetchFacets(); }, [fetchFacets]);
+
+  // Al cambiar de página, subir al tope de la página (pedido del cliente: que la nueva página arranque
+  // arriba). Saltamos el primer render para no forzar el scroll al entrar / abrir un link directo.
+  const isFirstPageRender = useRef(true);
+  useEffect(() => {
+    if (isFirstPageRender.current) { isFirstPageRender.current = false; return; }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [currentPage]);
   // Pasamos visibleFor para que el conteo de cada categoría refleje solo lo que este cliente ve
   // realmente (excluye solo-mayorista/minorista y sin stock), igual que la grilla. Depende de
   // visibleFor para refrescar al iniciar/cerrar sesión o cambiar el tipo de cliente.

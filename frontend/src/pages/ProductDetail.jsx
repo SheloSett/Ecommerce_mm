@@ -529,15 +529,26 @@ export default function ProductDetail() {
                 Si hay un tier seleccionado (descuento por cantidad), el precio principal muestra el precio del tier. */}
             {(() => {
               const isMayoristaUI = customer?.type === "MAYORISTA";
-              // Helper para obtener el precio de la variante o caer al del producto si la variante no lo define.
-              // Esto permite que el admin defina solo `wholesalePrice` por variante y el resto se herede.
-              const pick = (varField, productField) => {
-                if (activeVariant && activeVariant[varField] != null) return activeVariant[varField];
-                return product[productField];
-              };
-              // Precios base efectivos según tipo de cliente (variante > producto padre)
-              const basePrice          = isMayoristaUI ? pick("wholesalePrice",     "wholesalePrice")     : pick("price",     "price");
-              const baseSalePrice      = isMayoristaUI ? pick("wholesaleSalePrice", "wholesaleSalePrice") : pick("salePrice", "salePrice");
+              // Fallback por GRUPO (no por campo): si la variante define su precio base, la oferta
+              // sale SOLO de la variante (vacía = sin oferta). Antes el fallback era campo por campo
+              // y una variante con precio propio ($14.999) heredaba la oferta del producto padre
+              // ($1.000) → mostraba una oferta absurda que no correspondía.
+              // Antes:
+              // const pick = (varField, productField) => {
+              //   if (activeVariant && activeVariant[varField] != null) return activeVariant[varField];
+              //   return product[productField];
+              // };
+              // const basePrice     = isMayoristaUI ? pick("wholesalePrice", "wholesalePrice") : pick("price", "price");
+              // const baseSalePrice = isMayoristaUI ? pick("wholesaleSalePrice", "wholesaleSalePrice") : pick("salePrice", "salePrice");
+              const pickGroup = (baseField, saleField) =>
+                activeVariant && activeVariant[baseField] != null
+                  ? { base: activeVariant[baseField], sale: activeVariant[saleField] }
+                  : { base: product[baseField], sale: product[saleField] };
+              const priceGroup = isMayoristaUI
+                ? pickGroup("wholesalePrice", "wholesaleSalePrice")
+                : pickGroup("price", "salePrice");
+              const basePrice     = priceGroup.base;
+              const baseSalePrice = priceGroup.sale;
               // El precio "actual" considera la oferta (sale) si es menor
               const baseUnitPrice = baseSalePrice != null && basePrice != null && baseSalePrice < basePrice
                 ? baseSalePrice
@@ -619,15 +630,23 @@ export default function ProductDetail() {
               const activeTiers = isMayorista
                 ? (product.wholesalePriceTiers && product.wholesalePriceTiers.length > 0 ? product.wholesalePriceTiers : null)
                 : (product.priceTiers && product.priceTiers.length > 0 ? product.priceTiers : null);
-              // El % OFF se calcula contra el precio efectivo (variante > producto) para que sea consistente
-              const pickField = (varField, productField) =>
-                activeVariant && activeVariant[varField] != null ? activeVariant[varField] : product[productField];
-              const baseUnit = isMayorista
-                ? pickField("wholesalePrice",     "wholesalePrice")
-                : pickField("price",              "price");
-              const saleUnit = isMayorista
-                ? pickField("wholesaleSalePrice", "wholesaleSalePrice")
-                : pickField("salePrice",          "salePrice");
+              // El % OFF se calcula contra el precio efectivo (variante > producto) para que sea consistente.
+              // Fallback por GRUPO (igual que el bloque de precio de arriba): si la variante define su
+              // precio base, la oferta solo puede venir de la variante — no se hereda la del padre.
+              // Antes (campo por campo):
+              // const pickField = (varField, productField) =>
+              //   activeVariant && activeVariant[varField] != null ? activeVariant[varField] : product[productField];
+              // const baseUnit = isMayorista ? pickField("wholesalePrice", "wholesalePrice") : pickField("price", "price");
+              // const saleUnit = isMayorista ? pickField("wholesaleSalePrice", "wholesaleSalePrice") : pickField("salePrice", "salePrice");
+              const pickTierGroup = (baseField, saleField) =>
+                activeVariant && activeVariant[baseField] != null
+                  ? { base: activeVariant[baseField], sale: activeVariant[saleField] }
+                  : { base: product[baseField], sale: product[saleField] };
+              const tierGroup = isMayorista
+                ? pickTierGroup("wholesalePrice", "wholesaleSalePrice")
+                : pickTierGroup("price", "salePrice");
+              const baseUnit = tierGroup.base;
+              const saleUnit = tierGroup.sale;
               const basePrice = saleUnit != null && baseUnit != null && saleUnit < baseUnit ? saleUnit : baseUnit;
               if (!activeTiers) return null;
               return (
