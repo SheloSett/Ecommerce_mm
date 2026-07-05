@@ -352,6 +352,34 @@ npm run build
 sudo cp -r dist/* /var/www/igwtstore/frontend/
 ```
 
+### Deploy puntual: URLs con slug (feature #123 — correr UNA sola vez)
+
+El campo `slug` de productos es `@unique`, y `prisma db push` pide `--accept-data-loss` para
+crear esa constraint (falso positivo: es seguro, pero NUNCA usamos ese flag). En su lugar,
+aplicar el cambio con estos 3 pasos manuales ANTES del `pm2 restart`:
+
+```bash
+cd ~/Ecommerce_mm/backend
+
+# 1. Crear la columna (aditivo, no toca datos)
+psql -U ecommerce_user -d ecommerce_db -h localhost -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS slug text;"
+
+# 2. Generar slugs para los productos existentes (idempotente: solo toca los que tienen slug NULL)
+npx prisma generate
+node prisma/backfill-product-slugs.js
+
+# 3. Crear el índice único (mismo nombre que espera Prisma)
+psql -U ecommerce_user -d ecommerce_db -h localhost -c "CREATE UNIQUE INDEX IF NOT EXISTS products_slug_key ON products(slug);"
+
+# Verificar: no debe quedar ninguno sin slug
+psql -U ecommerce_user -d ecommerce_db -h localhost -c "SELECT COUNT(*) AS sin_slug FROM products WHERE slug IS NULL;"
+
+pm2 restart igwtstore-backend
+```
+
+Después de esto, `npx prisma db push` va a decir "already in sync" (la DB ya coincide con el schema).
+Los links viejos `/producto/123` siguen funcionando: el backend acepta id numérico o slug.
+
 ### Restaurar desde backup
 ```bash
 gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | psql -U ecommerce_user -d ecommerce_db -h localhost

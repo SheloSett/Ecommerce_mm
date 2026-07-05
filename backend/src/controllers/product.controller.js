@@ -29,6 +29,40 @@ function isAdminRequest(req) {
   }
 }
 
+// Convierte un texto a slug URL-amigable: "Cargador USB Tipo-C" → "cargador-usb-tipo-c".
+// Saca tildes, deja solo alfanumérico + guiones, colapsa guiones y recorta a 80 chars.
+function toSlug(str) {
+  return String(str || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // quita tildes/diacriticos
+    .replace(/[^a-z0-9\s-]/g, "")    // solo letras, números, espacios y guiones
+    .trim()
+    .replace(/\s+/g, "-")            // espacios → guion
+    .replace(/-+/g, "-")            // guiones repetidos → uno solo
+    .replace(/^-+|-+$/g, "")        // sin guiones al inicio/fin
+    .substring(0, 80)
+    .replace(/-+$/g, "");           // por si el corte a 80 dejó un guion colgando
+}
+
+// Genera un slug ÚNICO para un producto a partir del nombre. Si ya existe, prueba "-2", "-3", etc.
+// excludeId: id del propio producto (en updates) para que no colisione consigo mismo.
+async function generateUniqueProductSlug(name, excludeId = null) {
+  const base = toSlug(name) || "producto";
+  let slug = base;
+  let n = 2;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const clash = await prisma.product.findFirst({
+      where: { slug, ...(excludeId ? { NOT: { id: excludeId } } : {}) },
+      select: { id: true },
+    });
+    if (!clash) return slug;
+    slug = `${base}-${n}`;
+    n += 1;
+  }
+}
+
 // Búsqueda de productos por nombre (y opcionalmente SKU) INSENSIBLE A TILDES y mayúsculas, usando la
 // extensión `unaccent` de Postgres (unaccent(name) ILIKE unaccent(term)). Así "camara" encuentra
 // "CÁMARA" y viceversa. Devuelve el array de IDs que coinciden, o `null` si la extensión no está
@@ -414,6 +448,10 @@ async function getProduct(req, res) {
     const { id } = req.params;
     const { visibleFor } = req.query;
 
+    // El parámetro puede ser un id numérico (links viejos, QR, PDFs ya impresos) o un slug legible
+    // (URLs nuevas). Si es solo dígitos → busca por id; si no → por slug. Así no se rompe nada previo.
+    const where = /^\d+$/.test(String(id)) ? { id: parseInt(id) } : { slug: String(id) };
+
     // Filtrar variantes según visibilidad para el tipo de cliente actual.
     // Si no se envía visibleFor (admin), devuelve todas las activas.
     const variantsWhere = (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA")
@@ -421,7 +459,7 @@ async function getProduct(req, res) {
       : { active: true };
 
     const product = await prisma.product.findUnique({
-      where: { id: parseInt(id) },
+      where,
       include: {
         categories: { include: { parent: { select: { id: true, name: true, slug: true } } } },
         attributes: { include: { values: { orderBy: { position: "asc" } } }, orderBy: { position: "asc" } },
@@ -547,9 +585,13 @@ async function createProduct(req, res) {
     if (featured === "true" || featured === true) await enforceCarouselLimit("featured");
     if (onSale === "true" || onSale === true)     await enforceCarouselLimit("onSale");
 
+    // slug URL-amigable único, generado desde el nombre (ver getProduct: acepta id numérico o slug).
+    const slug = await generateUniqueProductSlug(name.trim());
+
     const product = await prisma.product.create({
       data: {
         name: name.trim(), // trim: sin espacios al inicio/fin, que rompían el orden A→Z del catálogo
+        slug,
         description: description || null,
         price: parseFloat(price),
         cost: cost ? parseFloat(cost) : null,
@@ -687,10 +729,16 @@ async function updateProduct(req, res) {
     if (isOnSaleNow   && !existing.onSale)   carouselChecks.push(enforceCarouselLimit("onSale",   numericId));
     if (carouselChecks.length) await Promise.all(carouselChecks);
 
+    // slug: se mantiene ESTABLE (no se regenera al cambiar el nombre) para no romper links ya
+    // compartidos. Solo se genera si el producto todavía no tiene (productos previos al backfill).
+    let slug = existing.slug;
+    if (!slug) slug = await generateUniqueProductSlug(name ? name.trim() : existing.name, existing.id);
+
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
       data: {
         name: name ? name.trim() : existing.name, // trim: sin espacios al inicio/fin (rompían el orden A→Z)
+        slug,
         description: description !== undefined ? description : existing.description,
         price: price ? parseFloat(price) : existing.price,
         cost: cost !== undefined ? (cost ? parseFloat(cost) : null) : existing.cost,

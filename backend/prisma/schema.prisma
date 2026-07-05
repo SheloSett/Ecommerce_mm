@@ -58,6 +58,10 @@ model Product {
   // Descuentos por cantidad mayorista: misma estructura, aplica solo a clientes MAYORISTA.
   wholesalePriceTiers  Json?
   sku             String?     // Código SKU del producto
+  // slug: URL amigable para SEO (ej: "cargador-usb-tipo-c"). Único. Se genera desde el nombre al crear
+  // (con sufijo -2, -3 si colisiona) y se mantiene estable aunque después cambie el nombre, para no
+  // romper links compartidos. Nullable para permitir el backfill de los productos que ya existían.
+  slug            String?     @unique
   youtubeUrl      String?     // URL de video de YouTube del producto
   weight          Float?      // Peso en kg
   length          Float?      // Largo en cm

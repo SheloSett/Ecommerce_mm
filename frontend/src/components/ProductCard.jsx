@@ -152,7 +152,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               {img ? <img src={getImageUrl(img)} alt={product.name} className="w-16 h-16 object-cover rounded-xl flex-shrink-0 border border-slate-100" />
                 : <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-2xl flex-shrink-0">📦</div>}
               <div className="flex-1 min-w-0">
-                <Link to={`/producto/${product.id}`} onClick={() => setVariantModal(false)} className="font-bold text-slate-900 text-sm leading-tight line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</Link>
+                <Link to={`/producto/${product.slug || product.id}`} onClick={() => setVariantModal(false)} className="font-bold text-slate-900 text-sm leading-tight line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</Link>
                 <p className="text-xs text-slate-400 mt-0.5">Elegí las opciones para agregar al carrito</p>
               </div>
               <button onClick={(e) => { e.preventDefault(); setVariantModal(false); }} className="flex-shrink-0 text-slate-400 hover:text-slate-600 transition-colors p-1">
@@ -176,7 +176,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                           💰 Este producto tiene mejores precios llevando cantidad
                         </p>
                         <Link
-                          to={`/producto/${product.id}`}
+                          to={`/producto/${product.slug || product.id}`}
                           onClick={() => setVariantModal(false)}
                           className="text-xs font-semibold text-[#006b2c] hover:text-[#004d1c] whitespace-nowrap underline underline-offset-2 transition-colors flex-shrink-0"
                         >
@@ -289,7 +289,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       <div className="bg-white rounded-xl border border-[#bdcaba]/30 p-4 flex flex-row gap-5 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] hover:shadow-[0px_8px_30px_rgba(15,23,42,0.08)] hover:-translate-y-0.5 transition-all duration-300">
         {/* Imagen grande */}
         <Link
-          to={`/producto/${product.id}`}
+          to={`/producto/${product.slug || product.id}`}
           className="relative flex-shrink-0 w-40 h-40 rounded-2xl overflow-hidden border border-slate-100"
           style={{ backgroundColor: "#ffffff" }}
         >
@@ -333,7 +333,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             {product.categories?.[0] && (
               <p className="text-xs font-medium text-[#006b2c] uppercase tracking-wide mb-1">{product.categories[0].name}</p>
             )}
-            <Link to={`/producto/${product.id}`}>
+            <Link to={`/producto/${product.slug || product.id}`}>
               <h3 className="font-bold text-[#0b1c30] text-base leading-snug line-clamp-2 hover:text-[#006b2c] transition-colors">{product.name}</h3>
             </Link>
             {product.description && (
@@ -428,7 +428,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             )}
             <div className="flex-1 min-w-0">
               <Link
-                to={`/producto/${product.id}`}
+                to={`/producto/${product.slug || product.id}`}
                 onClick={() => setVariantModal(false)}
                 className="font-bold text-[#0b1c30] text-sm leading-tight line-clamp-2 hover:text-[#006b2c] transition-colors"
               >
@@ -465,7 +465,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                         💰 Este producto tiene mejores precios llevando cantidad
                       </p>
                       <Link
-                        to={`/producto/${product.id}`}
+                        to={`/producto/${product.slug || product.id}`}
                         onClick={() => setVariantModal(false)}
                         className="text-xs font-semibold text-blue-600 hover:text-blue-800 whitespace-nowrap underline underline-offset-2 transition-colors flex-shrink-0"
                       >
@@ -570,7 +570,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       </div>
     )}
     <Link
-      to={`/producto/${product.id}`}
+      to={`/producto/${product.slug || product.id}`}
       className="bg-white rounded-xl border border-[#bdcaba]/30 overflow-hidden shadow-[0px_4px_20px_rgba(15,23,42,0.05)] hover:shadow-[0px_8px_30px_rgba(15,23,42,0.1)] hover:-translate-y-1 transition-all duration-300 group flex flex-col"
     >
       {/* Imagen */}

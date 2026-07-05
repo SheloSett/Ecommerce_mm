@@ -84,7 +84,7 @@ export default function Navbar() {
   };
 
   const handleSelectSuggestion = (product) => {
-    navigate(`/producto/${product.id}`);
+    navigate(`/producto/${product.slug || product.id}`);
     setSearch("");
     setShowSuggestions(false);
   };

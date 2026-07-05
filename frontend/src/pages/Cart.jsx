@@ -118,7 +118,7 @@ export default function Cart() {
                     {/* Info del producto */}
                     <div className="min-w-0">
                       <Link
-                        to={`/producto/${item.id}`}
+                        to={`/producto/${item.slug || item.id}`}
                         className={`font-bold text-sm transition-colors line-clamp-2 leading-tight ${
                           isOut
                             ? "text-[#565e74]"

@@ -60,7 +60,7 @@ export default function AdminFlyer() {
     const rows = selectedProducts.map((p) => {
       const price = getPrice(p);
       const imgUrl = p.images?.[0] ? getImageUrl(p.images[0]) : null;
-      const productUrl = `${origin}/producto/${p.id}`;
+      const productUrl = `${origin}/producto/${p.slug || p.id}`;
       return `
         <a class="product-card" href="${productUrl}" target="_blank">
           <div class="product-img">

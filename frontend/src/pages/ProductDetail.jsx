@@ -345,7 +345,7 @@ export default function ProductDetail() {
     ? product.description.replace(/<[^>]+>/g, "").slice(0, 160)
     : `Comprá ${product.name} en IGWT Store. Envíos a todo Argentina.`;
   const metaImage = product.images?.[0] ? getImageUrl(product.images[0]) : undefined;
-  const metaUrl   = `${SITE_URL}/producto/${product.id}`;
+  const metaUrl   = `${SITE_URL}/producto/${product.slug || product.id}`;
 
   return (
     <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">

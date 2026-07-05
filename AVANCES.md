@@ -262,6 +262,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 122- bug del boton del catalogo en carrito ✅
 
+123- URLs de producto con slug legible (SEO) en vez del id: /producto/cargador-usb en vez de /producto/123. Backend acepta slug O id (fallback para links viejos/QR/PDF). Se genera al crear (anti-colisión -2,-3) y se mantiene estable al renombrar. ✅
+
 ##
 
 
