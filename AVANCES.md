@@ -272,6 +272,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 127- costo editable en venta manual: campo Costo por línea autocompletado con el costo real del producto/variante. Si el admin lo cambia, al registrar pregunta si actualizar también el costo en la base de datos (Aceptar = actualiza producto/variante; Cancelar = solo para esa venta). El costo queda guardado en el ítem del pedido. ✅
 
+128- catálogo: 40 productos por página (antes 20) + mini-carrusel en las cards (flechas y puntitos para pasar las fotos sin entrar al producto) + modal de cantidad al tocar Agregar en TODOS los productos (con variantes pide opciones+cantidad como siempre; sin variantes pide solo la cantidad, con tope en el stock disponible). ✅
+
 ##
 
 

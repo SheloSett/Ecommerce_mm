@@ -173,7 +173,8 @@ export default function Catalog() {
 
   const fetchProducts = useCallback(() => {
     setLoading(true);
-    const params = { page: currentPage, limit: 20, visibleFor };
+    // Antes: limit: 20 — el cliente pidió 40 productos por página
+    const params = { page: currentPage, limit: 40, visibleFor };
     if (currentCategory) params.category = currentCategory;
     if (currentSearch)   params.search   = currentSearch;
     if (currentOnSale)   params.onSale   = "true";

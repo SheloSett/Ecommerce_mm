@@ -27,6 +27,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const [selectedAttrs, setSelectedAttrs] = useState({});  // { [attrName]: value }
   const [addingVariant, setAddingVariant] = useState(false);
   const [variantQty, setVariantQty] = useState(1);
+  // imgIdx: índice de la foto visible en la card — permite pasar el carrusel sin entrar al producto
+  const [imgIdx, setImgIdx] = useState(0);
 
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
@@ -82,8 +84,79 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     }) || null;
   })();
 
+  // modalHasAttrs: el modal muestra selectores de variantes; si no, es solo de cantidad
+  const modalHasAttrs = fullProduct?.attributes?.length > 0;
+  // Tope de cantidad para productos SIN variantes (lo que queda de stock menos lo ya carriteado)
+  const noVariantMax = product.stockUnlimited ? null : Math.max(0, (product.stock || 0) - cartQty);
+  // Botón "Agregar" del modal deshabilitado: cargando, agregando, o (con variantes) opciones incompletas/sin stock
+  const modalAddDisabled = addingVariant || loadingProduct || (modalHasAttrs
+    ? (!allAttrsSelected || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0))
+    : !fullProduct);
+
+  // Cuerpo del modal para productos SIN variantes: solo selector de cantidad (+ aviso de tiers)
+  const QtyOnlyBody = () => (
+    <>
+      {(() => {
+        const tiers = isMayorista ? fullProduct?.wholesalePriceTiers : fullProduct?.priceTiers;
+        const hasTiers = Array.isArray(tiers) && tiers.length > 0;
+        if (!hasTiers) return null;
+        return (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 flex items-center justify-between gap-3">
+            <p className="text-xs text-blue-700 font-medium leading-snug">
+              💰 Este producto tiene mejores precios llevando cantidad
+            </p>
+            <Link
+              to={`/producto/${product.slug || product.id}`}
+              onClick={() => setVariantModal(false)}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 whitespace-nowrap underline underline-offset-2 transition-colors flex-shrink-0"
+            >
+              Ver publicación →
+            </Link>
+          </div>
+        );
+      })()}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Cantidad</span>
+          <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); setVariantQty((q) => Math.max(1, q - 1)); }}
+              className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-bold text-base transition-colors"
+            >−</button>
+            <span className="px-4 py-1.5 text-sm font-semibold text-slate-800 min-w-[2.5rem] text-center">{variantQty}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.preventDefault(); setVariantQty((q) => (noVariantMax != null && q >= noVariantMax) ? q : q + 1); }}
+              className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-bold text-base transition-colors"
+            >+</button>
+          </div>
+        </div>
+        <span className="text-xs text-slate-400 whitespace-nowrap">
+          {product.stockUnlimited ? "Stock disponible" : `Stock: ${noVariantMax}`}
+        </span>
+      </div>
+    </>
+  );
+
   const handleAddVariantToCart = async (e) => {
     e.preventDefault();
+    // Producto SIN variantes: el modal es solo de cantidad — agrega directo con la qty elegida
+    const hasAttrs = fullProduct?.attributes?.length > 0;
+    if (!hasAttrs) {
+      setAddingVariant(true);
+      try {
+        await addItem(fullProduct || product, variantQty);
+        toast.success(`"${product.name}" ×${variantQty} agregado al carrito`);
+        setVariantModal(false); // sin opciones que seguir eligiendo — se cierra
+      } catch (err) {
+        toast.error(err.response?.data?.error || "No se pudo agregar al carrito");
+      } finally {
+        setAddingVariant(false);
+        setVariantQty(1);
+      }
+      return;
+    }
     if (!allAttrsSelected) {
       toast.error("Seleccioná todas las opciones");
       return;
@@ -127,16 +200,59 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       navigate("/login");
       return;
     }
-    // Si tiene variantes activas, mostrar modal en lugar de agregar directo
-    if (hasActiveVariants) {
-      setVariantModal(true);
-      return;
-    }
-    addItem(product);
-    toast.success(`"${product.name}" agregado al carrito`);
+    // Antes: solo los productos con variantes abrían el modal; sin variantes se agregaba directo:
+    // if (hasActiveVariants) {
+    //   setVariantModal(true);
+    //   return;
+    // }
+    // addItem(product);
+    // toast.success(`"${product.name}" agregado al carrito`);
+    // Ahora TODOS los productos abren el modal: con variantes pide opciones + cantidad,
+    // sin variantes pide solo la cantidad deseada (pedido del cliente).
+    setVariantModal(true);
   };
 
-  const img = product.images?.[0];
+  // Antes: const img = product.images?.[0];
+  // Ahora la card muestra la foto del índice actual del mini-carrusel (flechas en la imagen).
+  const imgs = product.images || [];
+  const img = imgs[imgIdx] ?? imgs[0];
+
+  // Flechas del mini-carrusel de la card (preventDefault: la card es un <Link>)
+  const prevImg = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    setImgIdx((i) => (i - 1 + imgs.length) % imgs.length);
+  };
+  const nextImg = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    setImgIdx((i) => (i + 1) % imgs.length);
+  };
+
+  // Controles superpuestos del carrusel: flechas + puntitos (solo si hay más de una foto)
+  const CarouselControls = () => imgs.length > 1 ? (
+    <>
+      <button
+        type="button"
+        onClick={prevImg}
+        aria-label="Foto anterior"
+        className="absolute left-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/85 shadow hover:bg-white transition-colors text-slate-600"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+      </button>
+      <button
+        type="button"
+        onClick={nextImg}
+        aria-label="Foto siguiente"
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 z-10 w-7 h-7 flex items-center justify-center rounded-full bg-white/85 shadow hover:bg-white transition-colors text-slate-600"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+      </button>
+      <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 z-10 flex gap-1">
+        {imgs.map((_, i) => (
+          <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === imgIdx ? "bg-[#00873a]" : "bg-slate-300"}`} />
+        ))}
+      </div>
+    </>
+  ) : null;
 
   // ── Vista lista ────────────────────────────────────────────────────────────
   if (viewMode === "list") {
@@ -153,7 +269,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                 : <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-2xl flex-shrink-0">📦</div>}
               <div className="flex-1 min-w-0">
                 <Link to={`/producto/${product.slug || product.id}`} onClick={() => setVariantModal(false)} className="font-bold text-slate-900 text-sm leading-tight line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</Link>
-                <p className="text-xs text-slate-400 mt-0.5">Elegí las opciones para agregar al carrito</p>
+                <p className="text-xs text-slate-400 mt-0.5">{hasActiveVariants ? "Elegí las opciones para agregar al carrito" : "Elegí la cantidad para agregar al carrito"}</p>
               </div>
               <button onClick={(e) => { e.preventDefault(); setVariantModal(false); }} className="flex-shrink-0 text-slate-400 hover:text-slate-600 transition-colors p-1">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -259,6 +375,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                     </div>
                   </div>
                 </>
+              ) : fullProduct ? (
+                /* Producto SIN variantes: el modal pide solo la cantidad deseada */
+                <QtyOnlyBody />
               ) : (
                 <p className="text-sm text-slate-400 text-center py-4">No se pudieron cargar las opciones</p>
               )}
@@ -273,7 +392,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               </button>
               <button
                 onClick={handleAddVariantToCart}
-                disabled={!allAttrsSelected || addingVariant || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0)}
+                disabled={modalAddDisabled}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-[#00873a] text-white text-sm font-bold hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {addingVariant ? (
@@ -298,6 +417,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           ) : (
             <div className="w-full h-full flex items-center justify-center text-5xl text-slate-200">📦</div>
           )}
+          {/* Mini-carrusel: flechas + puntitos para pasar las fotos sin entrar al producto */}
+          <CarouselControls />
           {/* Badge % OFF — se muestra para minoristas (salePrice) o mayoristas (wholesaleSalePrice) */}
           {(() => {
             const isMay = customer?.type === "MAYORISTA";
@@ -434,7 +555,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               >
                 {product.name}
               </Link>
-              <p className="text-xs text-slate-400 mt-0.5">Elegí las opciones para agregar al carrito</p>
+              <p className="text-xs text-slate-400 mt-0.5">{hasActiveVariants ? "Elegí las opciones para agregar al carrito" : "Elegí la cantidad para agregar al carrito"}</p>
             </div>
             <button
               onClick={(e) => { e.preventDefault(); setVariantModal(false); }}
@@ -541,6 +662,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                   </div>
                 </div>
               </>
+            ) : fullProduct ? (
+              /* Producto SIN variantes: el modal pide solo la cantidad deseada */
+              <QtyOnlyBody />
             ) : (
               <p className="text-sm text-slate-400 text-center py-4">No se pudieron cargar las opciones</p>
             )}
@@ -556,7 +680,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             </button>
             <button
               onClick={handleAddVariantToCart}
-              disabled={!allAttrsSelected || addingVariant || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0)}
+              disabled={modalAddDisabled}
               className="flex-1 px-4 py-2.5 rounded-xl bg-[#00873a] text-white text-sm font-bold hover:brightness-110 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {addingVariant ? (
@@ -590,6 +714,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             📦
           </div>
         )}
+
+        {/* Mini-carrusel: flechas + puntitos para pasar las fotos sin entrar al producto */}
+        <CarouselControls />
 
         {/* Botón favorito */}
         <button
