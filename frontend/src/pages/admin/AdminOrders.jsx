@@ -99,7 +99,8 @@ export default function AdminOrders() {
     // salesChannel: canal por el que llegó el cliente (solo en ventas manuales; las web se marcan automáticamente como "WEB")
     salesChannel: "MOSTRADOR",
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-    items: [{ productId: "", productName: "", price: "", quantity: 1 }],
+    // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
+    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }],
   });
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [savingManual, setSavingManual] = useState(false);
@@ -131,7 +132,10 @@ export default function AdminOrders() {
         if (!item.productId) return item;
         const prod = allProducts.find((p) => p.id === item.productId);
         if (!prod) return item;
-        return { ...item, price: getPriceForType(prod, cust.type) };
+        // Si la línea tiene variante elegida, usar su precio para el nuevo tipo de cliente
+        const variant = item.variantId ? (variantOptionsCache[item.productId] || []).find?.((v) => v.id === item.variantId) : null;
+        // Antes: return { ...item, price: getPriceForType(prod, cust.type) };
+        return { ...item, price: variant ? getVariantPriceForType(prod, variant, cust.type) : getPriceForType(prod, cust.type) };
       });
       return {
         ...prev,
@@ -172,7 +176,7 @@ export default function AdminOrders() {
   };
 
   const addManualItem = () =>
-    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1 }] }));
+    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }] }));
 
   const removeManualItem = (idx) =>
     setManualForm((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
@@ -190,12 +194,60 @@ export default function AdminOrders() {
     return product.price;
   };
 
+  // Precio efectivo de una variante según tipo de cliente (mismo criterio que el checkout:
+  // si la variante define precio base para ese tipo, se usa su grupo completo — su oferta solo
+  // si la define ella; si no define precio, cae al precio del producto padre).
+  const getVariantPriceForType = (product, variant, type) => {
+    if (type === "MAYORISTA") {
+      if (variant?.wholesalePrice != null) {
+        return (variant.wholesaleSalePrice != null && variant.wholesaleSalePrice < variant.wholesalePrice)
+          ? variant.wholesaleSalePrice
+          : variant.wholesalePrice;
+      }
+      return getPriceForType(product, type);
+    }
+    if (variant?.price != null) {
+      return (variant.salePrice != null && variant.salePrice < variant.price)
+        ? variant.salePrice
+        : variant.price;
+    }
+    return getPriceForType(product, type);
+  };
+
   const selectProduct = (idx, product) => {
     setManualItem(idx, "productId", product.id);
     setManualItem(idx, "productName", product.name);
     // Usa el precio según el tipo de cliente activo al momento de seleccionar
     setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+    // Al cambiar de producto se descarta la variante que hubiera elegida antes
+    setManualItem(idx, "variantId", "");
+    setManualItem(idx, "variantLabel", "");
     setProductSearch((p) => ({ ...p, [idx]: "" }));
+    // Si el producto tiene variantes activas, cargarlas al caché (mismo mecanismo que el
+    // panel de asignación de cotizaciones) para mostrar el selector de variante en la línea.
+    if ((product._count?.variants ?? 0) > 0 && variantOptionsCache[product.id] === undefined) {
+      setVariantOptionsCache((prev) => ({ ...prev, [product.id]: null })); // null = cargando
+      productsApi.getById(product.id).then((res) => {
+        const variants = (res.data.variants || []).filter((v) => v.active);
+        setVariantOptionsCache((prev) => ({ ...prev, [product.id]: variants }));
+      }).catch(() => {
+        setVariantOptionsCache((prev) => ({ ...prev, [product.id]: [] }));
+      });
+    }
+  };
+
+  // Selección de variante en una línea de la venta manual: guarda id + label y ajusta el precio
+  const selectManualVariant = (idx, product, variant) => {
+    if (!variant) {
+      setManualItem(idx, "variantId", "");
+      setManualItem(idx, "variantLabel", "");
+      setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+      return;
+    }
+    const combo = Array.isArray(variant.combination) ? variant.combination : [];
+    setManualItem(idx, "variantId", variant.id);
+    setManualItem(idx, "variantLabel", combo.map((c) => `${c.name}: ${c.value}`).join(" / "));
+    setManualItem(idx, "price", getVariantPriceForType(product, variant, manualForm.customerType));
   };
 
   // Al cambiar el tipo de cliente, actualiza los precios de todos los ítems que ya tienen producto cargado
@@ -205,7 +257,10 @@ export default function AdminOrders() {
         if (!item.productId) return item;
         const prod = allProducts.find((p) => p.id === item.productId);
         if (!prod) return item;
-        return { ...item, price: getPriceForType(prod, newType) };
+        // Si la línea tiene variante elegida, usar su precio para el nuevo tipo de cliente
+        const variant = item.variantId ? (variantOptionsCache[item.productId] || []).find?.((v) => v.id === item.variantId) : null;
+        // Antes: return { ...item, price: getPriceForType(prod, newType) };
+        return { ...item, price: variant ? getVariantPriceForType(prod, variant, newType) : getPriceForType(prod, newType) };
       });
       return { ...prev, customerType: newType, items: updatedItems };
     });
@@ -219,6 +274,16 @@ export default function AdminOrders() {
     e.preventDefault();
     if (manualForm.items.some((it) => !it.productId)) {
       toast.error("Seleccioná un producto en cada línea");
+      return;
+    }
+    // Productos con variantes: exigir que se elija una (el stock se descuenta por variante)
+    const missingVariant = manualForm.items.find((it) => {
+      if (!it.productId || it.variantId) return false;
+      const variants = variantOptionsCache[it.productId];
+      return Array.isArray(variants) && variants.length > 0;
+    });
+    if (missingVariant) {
+      toast.error(`Elegí la variante de "${missingVariant.productName}"`);
       return;
     }
     setSavingManual(true);
@@ -240,6 +305,9 @@ export default function AdminOrders() {
           productId: it.productId,
           quantity:  parseInt(it.quantity),
           price:     parseFloat(it.price),
+          // variantId: variante elegida (si el producto tiene variantes). El backend valida
+          // pertenencia/stock y guarda el label — el descuento de stock va sobre la variante.
+          variantId: it.variantId || undefined,
         })),
       });
       toast.success("Venta registrada correctamente");
@@ -254,7 +322,7 @@ export default function AdminOrders() {
         customerType: "MINORISTA",
         salesChannel: "MOSTRADOR",
         paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-        items: [{ productId: "", productName: "", price: "", quantity: 1 }],
+        items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }],
       });
       fetchOrders();
     } catch (err) {
@@ -1993,6 +2061,9 @@ export default function AdminOrders() {
                               setProductSearch((p) => ({ ...p, [idx]: e.target.value }));
                               setManualItem(idx, "productId", "");
                               setManualItem(idx, "productName", "");
+                              // Al deseleccionar el producto también se limpia la variante
+                              setManualItem(idx, "variantId", "");
+                              setManualItem(idx, "variantLabel", "");
                             }}
                             placeholder="Buscar producto por nombre o SKU..."
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2024,6 +2095,42 @@ export default function AdminOrders() {
                             </div>
                           )}
                         </div>
+
+                        {/* Selector de variante — solo si el producto elegido tiene variantes activas */}
+                        {item.productId && (() => {
+                          const prod = allProducts.find((p) => p.id === item.productId);
+                          const variants = variantOptionsCache[item.productId];
+                          if (variants === null) {
+                            return <p className="text-xs text-slate-400">Cargando variantes...</p>;
+                          }
+                          if (!Array.isArray(variants) || variants.length === 0) return null;
+                          return (
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">
+                                Variante * <span className="text-amber-600 font-semibold">(el stock se descuenta de la variante)</span>
+                              </label>
+                              <select
+                                value={item.variantId || ""}
+                                onChange={(e) => {
+                                  const v = variants.find((vv) => vv.id === parseInt(e.target.value));
+                                  selectManualVariant(idx, prod, v || null);
+                                }}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">— Seleccionar variante —</option>
+                                {variants.map((v) => {
+                                  const combo = Array.isArray(v.combination) ? v.combination : [];
+                                  const label = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
+                                  return (
+                                    <option key={v.id} value={v.id} disabled={!v.stockUnlimited && v.stock <= 0}>
+                                      {label} (stock: {v.stockUnlimited ? "∞" : v.stock}){!v.stockUnlimited && v.stock <= 0 ? " — sin stock" : ""}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex gap-2">
                           <div className="flex-1">

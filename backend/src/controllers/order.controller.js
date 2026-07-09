@@ -1780,21 +1780,57 @@ async function createManualOrder(req, res) {
         return res.status(400).json({ error: `Cantidad o precio inválido para "${product.name}"` });
       }
 
-      // Verificar stock (solo si no es ilimitado)
-      if (!product.stockUnlimited && product.stock < qty) {
+      // Variante (opcional): si la venta manual indica variantId, validar que exista, pertenezca
+      // al producto y esté activa. El stock se controla y descuenta sobre la VARIANTE, no el padre.
+      let selectedVariant = null;
+      let variantLabel = null;
+      if (item.variantId) {
+        selectedVariant = await prisma.productVariant.findUnique({ where: { id: parseInt(item.variantId) } });
+        if (!selectedVariant || selectedVariant.productId !== product.id || !selectedVariant.active) {
+          return res.status(400).json({ error: `Variante inválida para "${product.name}"` });
+        }
+        // Label legible desde la combinación (mismo formato que el checkout: "Color: Negro / Talle: M")
+        const combo = Array.isArray(selectedVariant.combination) ? selectedVariant.combination : [];
+        variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null;
+        if (!selectedVariant.stockUnlimited && selectedVariant.stock < qty) {
+          return res.status(400).json({
+            error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${selectedVariant.stock}`,
+          });
+        }
+      } else if (!product.stockUnlimited && product.stock < qty) {
+        // Verificar stock del producto (solo si no es ilimitado y no se vende una variante)
         return res.status(400).json({
           error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
         });
       }
 
       total += price * qty;
-      orderItems.push({ productId: product.id, quantity: qty, price });
+      // Antes: orderItems.push({ productId: product.id, quantity: qty, price });
+      // Ahora también persiste la variante elegida (id + label + sku) igual que las ventas web.
+      orderItems.push({
+        productId:    product.id,
+        quantity:     qty,
+        price,
+        variantId:    selectedVariant ? selectedVariant.id : null,
+        variantLabel,
+        variantSku:   selectedVariant?.sku || null,
+      });
     }
 
     // Crear la orden y descontar stock en una transacción
     const order = await prisma.$transaction(async (tx) => {
-      // Descontar stock
+      // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no
       for (const item of orderItems) {
+        if (item.variantId) {
+          const variant = await tx.productVariant.findUnique({ where: { id: item.variantId } });
+          if (variant && !variant.stockUnlimited) {
+            await tx.productVariant.update({
+              where: { id: item.variantId },
+              data:  { stock: Math.max(0, variant.stock - item.quantity) },
+            });
+          }
+          continue; // con variante NO se toca el stock del producto padre
+        }
         const product = await tx.product.findUnique({ where: { id: item.productId } });
         if (!product.stockUnlimited) {
           await tx.product.update({
@@ -1827,6 +1863,13 @@ async function createManualOrder(req, res) {
         },
       });
     });
+
+    // Sincronizar publicación de los productos afectados (igual que las ventas web):
+    // si el producto/variantes quedaron sin stock, se despublica automáticamente.
+    const affectedIds = [...new Set(orderItems.map((i) => i.productId))];
+    for (const pid of affectedIds) {
+      try { await syncProductVisibility(pid); } catch (_) { /* no bloquear la venta por esto */ }
+    }
 
     res.status(201).json(order);
   } catch (err) {

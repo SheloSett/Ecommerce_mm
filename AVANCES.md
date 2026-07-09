@@ -264,6 +264,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 123- URLs de producto con slug legible (SEO) en vez del id: /producto/cargador-usb en vez de /producto/123. Backend acepta slug O id (fallback para links viejos/QR/PDF). Se genera al crear (anti-colisión -2,-3) y se mantiene estable al renombrar. ✅
 
+124- venta manual con variantes: al registrar una venta manual, si el producto tiene variantes aparece el selector (con stock por variante) y el precio se autocompleta con el de la variante según minorista/mayorista. El stock se descuenta de la variante (no del padre) y la variante queda en el detalle/impresión del pedido. ✅
+
 ##
 
 
