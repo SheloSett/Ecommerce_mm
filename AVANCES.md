@@ -266,6 +266,12 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 124- venta manual con variantes: al registrar una venta manual, si el producto tiene variantes aparece el selector (con stock por variante) y el precio se autocompleta con el de la variante según minorista/mayorista. El stock se descuenta de la variante (no del padre) y la variante queda en el detalle/impresión del pedido. ✅
 
+125- proveedor por variante: cada variante puede tener su propio proveedor (si no define, usa el del producto). La orden de compra agrupa por el proveedor de la variante. ✅
+
+126- hover en miniaturas del detalle de producto: al pasar el mouse por una miniatura se muestra en el visor grande sin necesidad de click. ✅
+
+127- costo editable en venta manual: campo Costo por línea autocompletado con el costo real del producto/variante. Si el admin lo cambia, al registrar pregunta si actualizar también el costo en la base de datos (Aceptar = actualiza producto/variante; Cancelar = solo para esa venta). El costo queda guardado en el ítem del pedido. ✅
+
 ##
 
 

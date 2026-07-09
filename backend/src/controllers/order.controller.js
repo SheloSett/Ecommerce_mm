@@ -1770,6 +1770,8 @@ async function createManualOrder(req, res) {
     // Verificar stock y armar items con el precio que fijó el admin
     let total = 0;
     const orderItems = [];
+    // costUpdates: ítems donde el admin confirmó actualizar el costo maestro en la base
+    const costUpdates = [];
 
     for (const item of items) {
       const product = await prisma.product.findUnique({ where: { id: parseInt(item.productId) } });
@@ -1809,12 +1811,29 @@ async function createManualOrder(req, res) {
       }
 
       total += price * qty;
+
+      // Costo del ítem: lo fija el admin en el modal (autocompletado con el costo real del
+      // producto/variante). Se guarda en el OrderItem, igual que en "Modificando pedido".
+      const itemCost  = item.cost !== undefined && item.cost !== null && item.cost !== "" ? parseFloat(item.cost) : null;
+      const validCost = itemCost != null && !isNaN(itemCost) && itemCost >= 0 ? itemCost : null;
+
+      // updateProductCost: el admin confirmó el cartel → además actualizar el costo maestro
+      // en la base (de la variante si la venta es de una variante, sino del producto padre).
+      if (item.updateProductCost === true && validCost != null) {
+        costUpdates.push({
+          productId: product.id,
+          variantId: selectedVariant ? selectedVariant.id : null,
+          cost:      validCost,
+        });
+      }
+
       // Antes: orderItems.push({ productId: product.id, quantity: qty, price });
       // Ahora también persiste la variante elegida (id + label + sku) igual que las ventas web.
       orderItems.push({
         productId:    product.id,
         quantity:     qty,
         price,
+        cost:         validCost,
         variantId:    selectedVariant ? selectedVariant.id : null,
         variantLabel,
         variantSku:   selectedVariant?.sku || null,
@@ -1823,6 +1842,15 @@ async function createManualOrder(req, res) {
 
     // Crear la orden y descontar stock en una transacción
     const order = await prisma.$transaction(async (tx) => {
+      // Actualizar el costo maestro de los productos/variantes que el admin confirmó en el cartel
+      for (const cu of costUpdates) {
+        if (cu.variantId) {
+          await tx.productVariant.update({ where: { id: cu.variantId }, data: { cost: cu.cost } });
+        } else {
+          await tx.product.update({ where: { id: cu.productId }, data: { cost: cu.cost } });
+        }
+      }
+
       // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no
       for (const item of orderItems) {
         if (item.variantId) {

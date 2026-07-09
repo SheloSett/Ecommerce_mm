@@ -100,7 +100,8 @@ export default function AdminOrders() {
     salesChannel: "MOSTRADOR",
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
-    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }],
+    // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
+    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
   });
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [savingManual, setSavingManual] = useState(false);
@@ -176,7 +177,7 @@ export default function AdminOrders() {
   };
 
   const addManualItem = () =>
-    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }] }));
+    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }] }));
 
   const removeManualItem = (idx) =>
     setManualForm((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
@@ -219,6 +220,8 @@ export default function AdminOrders() {
     setManualItem(idx, "productName", product.name);
     // Usa el precio según el tipo de cliente activo al momento de seleccionar
     setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+    // Autocompletar el costo con el dato real del producto (editable por el admin)
+    setManualItem(idx, "cost", product.cost != null ? String(product.cost) : "");
     // Al cambiar de producto se descarta la variante que hubiera elegida antes
     setManualItem(idx, "variantId", "");
     setManualItem(idx, "variantLabel", "");
@@ -236,18 +239,22 @@ export default function AdminOrders() {
     }
   };
 
-  // Selección de variante en una línea de la venta manual: guarda id + label y ajusta el precio
+  // Selección de variante en una línea de la venta manual: guarda id + label y ajusta precio y costo
   const selectManualVariant = (idx, product, variant) => {
     if (!variant) {
       setManualItem(idx, "variantId", "");
       setManualItem(idx, "variantLabel", "");
       setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+      setManualItem(idx, "cost", product.cost != null ? String(product.cost) : "");
       return;
     }
     const combo = Array.isArray(variant.combination) ? variant.combination : [];
     setManualItem(idx, "variantId", variant.id);
     setManualItem(idx, "variantLabel", combo.map((c) => `${c.name}: ${c.value}`).join(" / "));
     setManualItem(idx, "price", getVariantPriceForType(product, variant, manualForm.customerType));
+    // Costo: el de la variante si tiene uno propio, sino el del producto padre
+    const effCost = variant.cost != null ? variant.cost : product.cost;
+    setManualItem(idx, "cost", effCost != null ? String(effCost) : "");
   };
 
   // Al cambiar el tipo de cliente, actualiza los precios de todos los ítems que ya tienen producto cargado
@@ -286,6 +293,39 @@ export default function AdminOrders() {
       toast.error(`Elegí la variante de "${missingVariant.productName}"`);
       return;
     }
+
+    // Costo por ítem: si el admin lo modificó respecto al de la base, preguntar si quiere
+    // actualizar también el costo del producto/variante en la base de datos (cartel por ítem).
+    const fmtCost = (n) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
+    const itemsPayload = manualForm.items.map((it) => {
+      const prod    = allProducts.find((p) => p.id === it.productId);
+      const variant = it.variantId ? (variantOptionsCache[it.productId] || []).find?.((v) => v.id === it.variantId) : null;
+      // Costo guardado en la base: el de la variante si tiene propio, sino el del producto
+      const storedCost = variant ? (variant.cost != null ? variant.cost : prod?.cost ?? null) : (prod?.cost ?? null);
+      const newCost    = it.cost === "" || it.cost == null ? null : parseFloat(it.cost);
+      let updateProductCost = false;
+      if (newCost != null && !isNaN(newCost) && newCost !== storedCost) {
+        const target = variant ? `la variante "${it.variantLabel}" de "${it.productName}"` : `"${it.productName}"`;
+        updateProductCost = window.confirm(
+          `El costo de ${target} en la base es ${storedCost != null ? fmtCost(storedCost) : "— (sin costo)"} y pusiste ${fmtCost(newCost)}.\n\n` +
+          `¿Querés actualizar el costo en la base de datos y dejarlo en ${fmtCost(newCost)}?\n\n` +
+          `Aceptar = actualiza el producto en la base\nCancelar = usa este costo SOLO para esta venta`
+        );
+      }
+      return {
+        productId: it.productId,
+        quantity:  parseInt(it.quantity),
+        price:     parseFloat(it.price),
+        // variantId: variante elegida (si el producto tiene variantes). El backend valida
+        // pertenencia/stock y guarda el label — el descuento de stock va sobre la variante.
+        variantId: it.variantId || undefined,
+        // cost: costo de este ítem para ESTA venta (queda en el OrderItem, como en "Modificando pedido")
+        cost:      newCost != null && !isNaN(newCost) ? newCost : undefined,
+        // updateProductCost: además actualiza el costo maestro del producto/variante en la base
+        updateProductCost: updateProductCost || undefined,
+      };
+    });
+
     setSavingManual(true);
     try {
       const nameToSend = customerMode === "street"
@@ -301,14 +341,15 @@ export default function AdminOrders() {
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
-        items: manualForm.items.map((it) => ({
-          productId: it.productId,
-          quantity:  parseInt(it.quantity),
-          price:     parseFloat(it.price),
-          // variantId: variante elegida (si el producto tiene variantes). El backend valida
-          // pertenencia/stock y guarda el label — el descuento de stock va sobre la variante.
-          variantId: it.variantId || undefined,
-        })),
+        // Antes se armaba acá el map de items; ahora se usa itemsPayload (armado arriba con
+        // costo + confirmación de actualización de costo en la base):
+        // items: manualForm.items.map((it) => ({
+        //   productId: it.productId,
+        //   quantity:  parseInt(it.quantity),
+        //   price:     parseFloat(it.price),
+        //   variantId: it.variantId || undefined,
+        // })),
+        items: itemsPayload,
       });
       toast.success("Venta registrada correctamente");
       setManualModal(false);
@@ -322,7 +363,7 @@ export default function AdminOrders() {
         customerType: "MINORISTA",
         salesChannel: "MOSTRADOR",
         paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-        items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "" }],
+        items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
       });
       fetchOrders();
     } catch (err) {
@@ -2061,9 +2102,10 @@ export default function AdminOrders() {
                               setProductSearch((p) => ({ ...p, [idx]: e.target.value }));
                               setManualItem(idx, "productId", "");
                               setManualItem(idx, "productName", "");
-                              // Al deseleccionar el producto también se limpia la variante
+                              // Al deseleccionar el producto también se limpian la variante y el costo
                               setManualItem(idx, "variantId", "");
                               setManualItem(idx, "variantLabel", "");
+                              setManualItem(idx, "cost", "");
                             }}
                             placeholder="Buscar producto por nombre o SKU..."
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2133,6 +2175,20 @@ export default function AdminOrders() {
                         })()}
 
                         <div className="flex gap-2">
+                          {/* Costo: autocompletado con el costo real del producto/variante, editable.
+                              Si difiere del de la base, al registrar se pregunta si actualizarlo. */}
+                          <div className="w-28">
+                            <label className="block text-xs text-slate-500 mb-1">Costo</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.cost}
+                              onChange={(e) => setManualItem(idx, "cost", e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="—"
+                            />
+                          </div>
                           <div className="flex-1">
                             <label className="block text-xs text-slate-500 mb-1">Precio unitario *</label>
                             <input
