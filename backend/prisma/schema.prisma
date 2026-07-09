@@ -424,6 +424,7 @@ model Supplier {
   phone     String?   // Teléfono de contacto del proveedor (opcional)
   products  Product[] // Inverso de Product.supplier
   purchases Purchase[] // Inverso de Purchase.supplierRef
+  variants  ProductVariant[] // Inverso de ProductVariant.supplier (proveedor por variante)
   createdAt DateTime  @default(now())
 
   @@map("suppliers")
@@ -590,6 +591,11 @@ model ProductVariant {
   // variante puntual está guardada en un módulo/estante distinto al del resto del artículo.
   module             String?            // Módulo del depósito (override del producto)
   shelf              String?            // Estante del depósito (override del producto)
+  // Proveedor a nivel variante (opcional, solo admin) — mismo patrón que module/shelf:
+  // si es null se usa el proveedor del producto padre. Sirve cuando las variantes de un
+  // producto se compran a proveedores distintos. onDelete: SetNull igual que Product.supplier.
+  supplierId         Int?
+  supplier           Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   // Visibilidad de la variante. Por defecto AMBOS en variantes nuevas, pero la migración inicial
   // setea las variantes existentes a MINORISTA para preservar el comportamiento previo (donde
   // mayoristas no veían variantes por un hard-code en el frontend).

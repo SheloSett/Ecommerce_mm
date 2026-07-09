@@ -100,8 +100,9 @@ export default function ProductDetail() {
     return () => clearInterval(autoplayRef.current);
   }, [totalImages]);
 
-  // Al clickear miniatura, resetea con dirección relativa
+  // Al clickear (o pasar el mouse por) una miniatura, resetea con dirección relativa
   const handleSelectImage = (i) => {
+    if (i === selectedImage) return; // ya está seleccionada — evita re-animar en cada hover
     resetTimer(() => {
       setSlideDir(i > selectedImage ? "next" : "prev");
       setSelectedImage(i);
@@ -393,6 +394,8 @@ export default function ProductDetail() {
                     <button
                       key={i}
                       onClick={() => handleSelectImage(i)}
+                      // Hover sobre la miniatura = mostrarla en el visor grande (sin necesidad de click)
+                      onMouseEnter={() => handleSelectImage(i)}
                       className={`w-full aspect-square rounded-lg overflow-hidden p-1 bg-white transition-colors ${
                         selectedImage === i
                           ? "border-2 border-[#00873a]"

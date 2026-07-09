@@ -46,7 +46,9 @@ export default function AdminPurchaseOrder() {
   const groups = useMemo(() => {
     const map = new Map();
     for (const item of (order?.items || [])) {
-      const sup  = item.product?.supplier;
+      // Proveedor de la VARIANTE si lo tiene (item.variant lo adjunta el backend), sino el del producto.
+      // Antes: const sup = item.product?.supplier;
+      const sup  = item.variant?.supplier ?? item.product?.supplier;
       const key  = sup?.id != null ? `s${sup.id}` : "none";
       const name = sup?.name || "Sin proveedor";
       if (!map.has(key)) map.set(key, { key, name, items: [] });

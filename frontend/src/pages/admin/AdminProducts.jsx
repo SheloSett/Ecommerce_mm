@@ -2119,6 +2119,7 @@ export default function AdminProducts() {
                         basePrice={editingProduct.price}
                         baseWholesalePrice={editingProduct.wholesalePrice}
                         productImages={editingProduct.images || []}
+                        suppliers={suppliers}
                       />
                     </div>
                   )}

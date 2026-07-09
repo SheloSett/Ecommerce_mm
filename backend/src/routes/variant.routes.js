@@ -218,6 +218,7 @@ router.put("/:id", authMiddleware, async (req, res) => {
       price, salePrice, wholesalePrice, wholesaleSalePrice,
       cost, sku, active, image, images, visibility,
       module, shelf, // ubicación en depósito a nivel variante (override del producto)
+      supplierId,    // proveedor a nivel variante (override del producto; vacío → usa el del producto)
     } = req.body;
 
     // Helper para parsear precios: null/empty string → null, valor numérico → float
@@ -247,6 +248,8 @@ router.put("/:id", authMiddleware, async (req, res) => {
     // Ubicación en depósito: vacío → null (para que el fallback al producto funcione con ??)
     if (module         !== undefined) data.module         = module ? String(module).trim() : null;
     if (shelf          !== undefined) data.shelf          = shelf  ? String(shelf).trim()  : null;
+    // Proveedor por variante: vacío → null (usa el del producto padre)
+    if (supplierId     !== undefined) data.supplierId     = supplierId ? parseInt(supplierId) : null;
 
     const variant = await prisma.productVariant.update({ where: { id }, data });
     if (stock !== undefined || stockUnlimited !== undefined) {

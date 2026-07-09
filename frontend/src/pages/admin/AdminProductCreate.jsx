@@ -311,7 +311,7 @@ export default function AdminProductCreate() {
             </div>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} productImages={savedProduct.images || []} />
+            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} productImages={savedProduct.images || []} suppliers={suppliers} />
           </div>
         </div>
       </AdminLayout>

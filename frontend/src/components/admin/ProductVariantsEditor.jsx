@@ -5,7 +5,8 @@ import toast from "react-hot-toast";
 const formatPrice = (n) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
 
-export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, productImages = [] }) {
+// suppliers: lista de proveedores para el override por variante (vacío = usa el del producto)
+export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, productImages = [], suppliers = [] }) {
   const [attributes, setAttributes] = useState([]);
   const [variants,   setVariants]   = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -231,6 +232,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         // Ubicación en depósito (override opcional del producto)
         module:             v.module ?? "",
         shelf:              v.shelf  ?? "",
+        // Proveedor por variante (override opcional; "" = usa el del producto)
+        supplierId:         v.supplierId != null ? String(v.supplierId) : "",
         // Visibilidad heredada del atributo (read-only en esta fila)
         visibility:         attrVisibility,
         // images: array de URLs de las fotos del producto asignadas a esta variante.
@@ -289,6 +292,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         // Ubicación en depósito (override del producto; vacío → el backend lo guarda como null)
         module:             e.module ?? "",
         shelf:              e.shelf  ?? "",
+        // Proveedor por variante (vacío → null en el backend = usa el del producto)
+        supplierId:         e.supplierId ?? "",
         visibility:         e.visibility || "AMBOS",
         images:             e.images || [],
         image:              e.images && e.images.length > 0 ? e.images[0] : null,
@@ -670,7 +675,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                 <th className="px-3 py-2.5 text-center w-56">Precios</th>
                 <th className="px-3 py-2.5 text-center w-28">Costo</th>
                 <th className="px-3 py-2.5 text-center w-32">SKU</th>
-                <th className="px-3 py-2.5 text-center w-36">Ubicación</th>
+                {/* Antes: "Ubicación" — ahora también incluye el proveedor por variante */}
+                <th className="px-3 py-2.5 text-center w-40">Ubicación / Prov.</th>
                 <th className="px-3 py-2.5 w-24"></th>
               </tr>
             </thead>
@@ -882,6 +888,18 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                               className="w-1/2 px-2 py-1 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           </div>
+                          {/* Proveedor por variante — override opcional del proveedor del producto */}
+                          <select
+                            value={e.supplierId}
+                            onChange={(ev) => setEditing((p) => ({ ...p, [v.id]: { ...e, supplierId: ev.target.value } }))}
+                            className="w-full mt-1 px-1 py-1 bg-white border border-slate-300 text-slate-800 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            title="Proveedor de esta variante (vacío = usa el del producto)"
+                          >
+                            <option value="">Prov. del producto</option>
+                            {suppliers.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
                           <p className="text-[9px] text-slate-400 mt-0.5 text-center leading-tight">vacío = usa la del producto</p>
                         </td>
                         {/* Acciones — edit */}
@@ -960,7 +978,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         </td>
                         {/* SKU — view */}
                         <td className="px-4 py-3 text-center text-slate-500 dark:text-slate-400 text-xs">{v.sku || "—"}</td>
-                        {/* Ubicación — view. Muestra módulo/estante propios de la variante (si tiene). */}
+                        {/* Ubicación / Proveedor — view. Muestra módulo/estante y proveedor propios de la variante (si tiene). */}
                         <td className="px-4 py-3 text-center text-xs">
                           {(v.module || v.shelf) ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30 font-semibold">
@@ -968,6 +986,15 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                             </span>
                           ) : (
                             <span className="text-slate-400 dark:text-slate-500">Usa la del producto</span>
+                          )}
+                          {/* Proveedor propio de la variante (si tiene). El nombre se resuelve de la lista
+                              de proveedores del admin (el GET de variantes devuelve solo supplierId). */}
+                          {v.supplierId != null && (
+                            <div className="mt-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/30 font-semibold">
+                                🚚 {suppliers.find((s) => s.id === v.supplierId)?.name || `Prov. #${v.supplierId}`}
+                              </span>
+                            </div>
                           )}
                         </td>
                         {/* Acciones — view */}

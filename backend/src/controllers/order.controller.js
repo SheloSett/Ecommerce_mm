@@ -42,10 +42,14 @@ async function attachVariantDetails(orders) {
   if (variantIds.length === 0) return;
   const variants = await prisma.productVariant.findMany({
     where:  { id: { in: variantIds } },
-    select: { id: true, module: true, shelf: true, cost: true, images: true },
+    // supplier: proveedor por variante (override del producto) — lo usa la orden de compra
+    // para agrupar por el proveedor real de la variante cuando lo tiene.
+    // Antes: select: { id: true, module: true, shelf: true, cost: true, images: true },
+    select: { id: true, module: true, shelf: true, cost: true, images: true, supplier: { select: { id: true, name: true } } },
   });
   const map = {};
-  for (const v of variants) map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images };
+  // Antes: map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images };
+  for (const v of variants) map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images, supplier: v.supplier };
   for (const o of list) {
     for (const i of (o.items || [])) {
       if (i.variantId && map[i.variantId]) i.variant = map[i.variantId];
