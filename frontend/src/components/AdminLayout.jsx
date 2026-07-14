@@ -43,6 +43,31 @@ export default function AdminLayout({ children, title }) {
   const allNavItems = [
     { path: "/admin",            label: "Dashboard",  icon: "📊", permission: "finanzas" },
     {
+      path: "/admin/ordenes",
+      label: "Órdenes",
+      icon: "🛒",
+      permission: "ordenes",
+      // Cuando el sidebar está colapsado muestra la suma total de ambos contadores
+      badge: badges.cotizaciones + badges.ordenesPendientes,
+      subItems: [
+        { label: "Todos los pedidos", tab: "",             badge: badges.ordenesPendientes },
+        { label: "Cotizaciones",      tab: "cotizaciones", badge: badges.cotizaciones },
+      ],
+    },
+    {
+      path: "/admin/clientes",
+      label: "Clientes",
+      icon: "👥",
+      badge: badges.clientes + badges.solicitudesMayorista,
+      permission: "clientes",
+      subItems: [
+        { label: "Lista de Clientes",      tab: "",          badge: badges.clientes },
+        { label: "Solicitudes Mayorista",  tab: "mayorista", badge: badges.solicitudesMayorista },
+        { label: "Carritos Activos",       tab: "carts" },
+        { label: "Cambios de Email",       tab: "emails" },
+      ],
+    },
+    {
       path: "/admin/productos",
       label: "Productos",
       icon: "📦",
@@ -58,19 +83,8 @@ export default function AdminLayout({ children, title }) {
       ],
     },
     { path: "/admin/categorias", label: "Categorías", icon: "🏷️",  permission: "categorias" },
+
     { path: "/admin/metricas",   label: "Métricas",   icon: "📈",  permission: "metricas" },
-    {
-      path: "/admin/ordenes",
-      label: "Órdenes",
-      icon: "🛒",
-      permission: "ordenes",
-      // Cuando el sidebar está colapsado muestra la suma total de ambos contadores
-      badge: badges.cotizaciones + badges.ordenesPendientes,
-      subItems: [
-        { label: "Todos los pedidos", tab: "",             badge: badges.ordenesPendientes },
-        { label: "Cotizaciones",      tab: "cotizaciones", badge: badges.cotizaciones },
-      ],
-    },
     { path: "/admin/caja",         label: "Caja",            icon: "💰",  permission: "caja" },
     {
       path: "/admin/compras",
@@ -85,19 +99,7 @@ export default function AdminLayout({ children, title }) {
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
-    {
-      path: "/admin/clientes",
-      label: "Clientes",
-      icon: "👥",
-      badge: badges.clientes + badges.solicitudesMayorista,
-      permission: "clientes",
-      subItems: [
-        { label: "Lista de Clientes",      tab: "",          badge: badges.clientes },
-        { label: "Solicitudes Mayorista",  tab: "mayorista", badge: badges.solicitudesMayorista },
-        { label: "Carritos Activos",       tab: "carts" },
-        { label: "Cambios de Email",       tab: "emails" },
-      ],
-    },
+
     // Usuarios movido a Configuración → sección "Usuarios"
   ];
 
