@@ -232,6 +232,22 @@ async function getProducts(req, res) {
           // _count.variants: cuántas variantes visibles para el cliente tiene, para que el
           // frontend decida si mostrar modal de selección o agregar directo desde la card.
           _count: { select: { variants: { where: variantsCountWhere } } },
+          // Variantes visibles (solo campos de precio/stock + combination): se usan para que la
+          // card muestre el precio de la PRIMERA variante DISPONIBLE, en el mismo orden en que el
+          // cliente ve las opciones en el detalle (posición de los valores del atributo — NO por
+          // createdAt: al regenerar variantes las fechas quedan desordenadas).
+          // Antes la card mostraba el precio base del producto, que podía no corresponder a
+          // ninguna variante comprable (ej: base $19.999 pero la única con stock sale $30.999).
+          variants: {
+            where: variantsCountWhere,
+            select: { combination: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, stock: true, stockUnlimited: true },
+          },
+          // Atributos con sus valores ordenados por posición — solo para ordenar las variantes
+          // como en el detalle (se quitan de la respuesta en el map de abajo).
+          attributes: {
+            select: { name: true, values: { select: { value: true }, orderBy: { position: "asc" } } },
+            orderBy: { position: "asc" },
+          },
         },
         // Antes: orderBy: { createdAt: "desc" } (fijo). Ahora según sortOrder/sortPrice.
         orderBy,
@@ -243,7 +259,45 @@ async function getProducts(req, res) {
 
     res.json({
       // Catálogo público: nunca exponer ubicación de depósito ni proveedor
-      products: products.map(stripAdminProductFields),
+      // Antes: products: products.map(stripAdminProductFields),
+      // Ahora, además, el precio de la card sale de la primera variante DISPONIBLE (en su orden):
+      // si la primera no tiene stock se usa la siguiente, etc. Mismo criterio de grupos que el
+      // checkout: si la variante define precio base del grupo (min/may), TODO el grupo sale de la
+      // variante (su oferta solo si la define — no se hereda la del padre).
+      products: products.map((p) => {
+        const { variants: cardVariants, attributes: cardAttrs, ...rest } = p;
+        const out = { ...rest };
+        if (Array.isArray(cardVariants) && cardVariants.length > 0) {
+          // Orden "como se ve en el detalle": clave lexicográfica por posición del valor de cada
+          // atributo (los atributos y valores ya vienen ordenados por position asc).
+          const sortKey = (v) => {
+            const combo = Array.isArray(v.combination) ? v.combination : [];
+            return (cardAttrs || []).map((a) => {
+              const c = combo.find((x) => x.name === a.name);
+              const idx = a.values.findIndex((val) => val.value === c?.value);
+              return idx === -1 ? 999 : idx;
+            });
+          };
+          const sorted = [...cardVariants].sort((a, b) => {
+            const ka = sortKey(a), kb = sortKey(b);
+            for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+              const d = (ka[i] ?? 0) - (kb[i] ?? 0);
+              if (d !== 0) return d;
+            }
+            return 0;
+          });
+          const avail = sorted.find((v) => v.stockUnlimited || v.stock > 0) || sorted[0];
+          if (avail.price != null) {
+            out.price     = avail.price;
+            out.salePrice = avail.salePrice;
+          }
+          if (avail.wholesalePrice != null) {
+            out.wholesalePrice     = avail.wholesalePrice;
+            out.wholesaleSalePrice = avail.wholesaleSalePrice;
+          }
+        }
+        return stripAdminProductFields(out);
+      }),
       pagination: {
         total,
         page: parseInt(page),

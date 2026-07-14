@@ -93,6 +93,54 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     ? (!allAttrsSelected || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0))
     : !fullProduct);
 
+  // Precio unitario efectivo del producto (según tipo de cliente, con oferta si aplica)
+  const productEffectivePrice = (() => {
+    if (isMayorista && product.wholesalePrice) {
+      return (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice)
+        ? product.wholesaleSalePrice
+        : product.wholesalePrice;
+    }
+    return (product.salePrice && product.salePrice < product.price) ? product.salePrice : product.price;
+  })();
+
+  // Precio unitario dentro del modal: el de la variante elegida (si define precio propio) o el del producto
+  const modalUnitPrice = (() => {
+    if (modalHasAttrs) {
+      if (!allAttrsSelected || !activeVariant) return null; // hasta no elegir todo, el precio varía
+      if (isMayorista) {
+        if (activeVariant.wholesalePrice != null) {
+          return (activeVariant.wholesaleSalePrice != null && activeVariant.wholesaleSalePrice < activeVariant.wholesalePrice)
+            ? activeVariant.wholesaleSalePrice
+            : activeVariant.wholesalePrice;
+        }
+      } else {
+        if (activeVariant.price != null) {
+          return (activeVariant.salePrice != null && activeVariant.salePrice < activeVariant.price)
+            ? activeVariant.salePrice
+            : activeVariant.price;
+        }
+      }
+      return productEffectivePrice; // variante sin precio propio → hereda el del producto
+    }
+    return productEffectivePrice;
+  })();
+
+  // Bloque de precio del modal: precio unitario + subtotal en chico (precio × cantidad)
+  const ModalPriceInfo = () => {
+    if (modalUnitPrice == null) return null;
+    return (
+      <div className="flex items-end justify-between gap-3 pt-1 border-t border-slate-100 mt-1">
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-2">Precio</p>
+          <p className="text-lg font-bold text-slate-900">{formatPrice(modalUnitPrice)}</p>
+        </div>
+        <p className="text-xs text-slate-500 pb-1">
+          Subtotal: <span className="font-semibold text-slate-700">{formatPrice(modalUnitPrice * variantQty)}</span>
+        </p>
+      </div>
+    );
+  };
+
   // Cuerpo del modal para productos SIN variantes: solo selector de cantidad (+ aviso de tiers)
   const QtyOnlyBody = () => (
     <>
@@ -136,6 +184,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           {product.stockUnlimited ? "Stock disponible" : `Stock: ${noVariantMax}`}
         </span>
       </div>
+      {/* Precio unitario + subtotal según la cantidad elegida */}
+      <ModalPriceInfo />
     </>
   );
 
@@ -374,6 +424,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                       >+</button>
                     </div>
                   </div>
+                  {/* Precio de la variante elegida + subtotal según cantidad */}
+                  <ModalPriceInfo />
                 </>
               ) : fullProduct ? (
                 /* Producto SIN variantes: el modal pide solo la cantidad deseada */
@@ -661,6 +713,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                     >+</button>
                   </div>
                 </div>
+                {/* Precio de la variante elegida + subtotal según cantidad */}
+                <ModalPriceInfo />
               </>
             ) : fullProduct ? (
               /* Producto SIN variantes: el modal pide solo la cantidad deseada */

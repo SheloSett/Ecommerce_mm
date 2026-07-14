@@ -274,6 +274,10 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 128- catálogo: 40 productos por página (antes 20) + mini-carrusel en las cards (flechas y puntitos para pasar las fotos sin entrar al producto) + modal de cantidad al tocar Agregar en TODOS los productos (con variantes pide opciones+cantidad como siempre; sin variantes pide solo la cantidad, con tope en el stock disponible). ✅
 
+129- la card del catálogo muestra el precio de la primera variante DISPONIBLE (en el orden del detalle): si la primera no tiene stock usa la siguiente (antes mostraba el precio base aunque la única variante comprable fuera más cara). El modal de agregar muestra el precio de la variante elegida y un subtotal chiquito (precio × cantidad). ✅
+
+130- venta manual: "+ Agregar línea" movido abajo de la última línea (antes había que subir hasta arriba) + las sugerencias del buscador de producto muestran la FOTO junto al nombre y precio. ✅
+
 ##
 
 

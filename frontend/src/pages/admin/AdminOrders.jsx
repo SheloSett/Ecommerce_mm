@@ -2079,9 +2079,11 @@ export default function AdminOrders() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Productos</p>
+                  {/* "+ Agregar línea" movido abajo de la última línea (pedido del cliente: con
+                      varias líneas era tedioso volver a subir hasta acá). Antes:
                   <button type="button" onClick={addManualItem} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
                     + Agregar línea
-                  </button>
+                  </button> */}
                 </div>
                 <div className="space-y-2">
                   {manualForm.items.map((item, idx) => {
@@ -2111,7 +2113,8 @@ export default function AdminOrders() {
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                           {filtered.length > 0 && !item.productId && (
-                            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-48 overflow-y-auto">
+                            /* max-h-48 → max-h-64: las sugerencias ahora incluyen foto y son más altas */
+                            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-64 overflow-y-auto">
                               {filtered.map((p) => {
                                 // Muestra el precio que corresponde al tipo de cliente seleccionado
                                 const displayPrice = getPriceForType(p, manualForm.customerType);
@@ -2123,7 +2126,19 @@ export default function AdminOrders() {
                                     onClick={() => selectProduct(idx, p)}
                                     className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex justify-between items-center gap-2"
                                   >
-                                    <span className="font-medium text-slate-700 truncate">{p.name}</span>
+                                    {/* Foto + nombre: la miniatura ayuda a identificar el producto de un vistazo */}
+                                    <span className="flex items-center gap-2 min-w-0">
+                                      {p.images?.[0] ? (
+                                        <img
+                                          src={getImageUrl(p.images[0])}
+                                          alt=""
+                                          className="w-9 h-9 rounded-lg object-cover border border-slate-200 flex-shrink-0"
+                                        />
+                                      ) : (
+                                        <span className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-base flex-shrink-0">📦</span>
+                                      )}
+                                      <span className="font-medium text-slate-700 truncate">{p.name}</span>
+                                    </span>
                                     <span className="text-slate-500 text-xs shrink-0 flex items-center gap-1">
                                       {/* Muestra etiqueta del tipo de precio para que quede claro */}
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isMayorista ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
@@ -2232,6 +2247,14 @@ export default function AdminOrders() {
                       </div>
                     );
                   })}
+                  {/* "+ Agregar línea" al final: queda siempre debajo del último producto cargado */}
+                  <button
+                    type="button"
+                    onClick={addManualItem}
+                    className="w-full py-2 border-2 border-dashed border-slate-300 rounded-xl text-xs text-blue-600 hover:text-blue-800 hover:border-blue-400 font-medium transition-colors"
+                  >
+                    + Agregar línea
+                  </button>
                 </div>
               </div>
 
