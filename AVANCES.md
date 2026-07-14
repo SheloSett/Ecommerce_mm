@@ -278,6 +278,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 130- venta manual: "+ Agregar línea" movido abajo de la última línea (antes había que subir hasta arriba) + las sugerencias del buscador de producto muestran la FOTO junto al nombre y precio. ✅
 
+131- venta manual: al tocar Cancelar/✕ con datos cargados pide confirmación ("se borrará todo lo cargado"): Aceptar = cierra y limpia todo (al reabrir arranca vacío); Cancelar = seguís en el modal con los datos. Antes cerraba sin avisar y al reabrir quedaba todo lo viejo cargado. ✅
+
 ##
 
 

@@ -277,6 +277,42 @@ export default function AdminOrders() {
     (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
   );
 
+  // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
+  const resetManualForm = () => {
+    setCustomerMode("new");
+    setSelectedCustomer(null);
+    setCustomerSearch("");
+    setCustomerResults([]);
+    setProductSearch({}); // antes no se limpiaba: quedaba texto de búsqueda viejo en las líneas
+    setManualForm({
+      customerId: null,
+      customerName: "", customerEmail: "", customerPhone: "",
+      customerType: "MINORISTA",
+      salesChannel: "MOSTRADOR",
+      paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
+      items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
+    });
+  };
+
+  // Cierra el modal de venta manual. Si hay datos cargados, pide confirmación:
+  // Aceptar = se borra todo y se cierra; Cancelar = se queda en el modal con los datos intactos.
+  const closeManualModal = () => {
+    const dirty =
+      manualForm.customerId || manualForm.customerName || manualForm.customerEmail ||
+      manualForm.customerPhone || manualForm.notes ||
+      manualForm.items.some((it) => it.productId || it.productName || it.price || it.cost) ||
+      Object.values(productSearch).some((s) => s);
+    if (dirty) {
+      const ok = window.confirm(
+        "Si salís se va a borrar todo lo que cargaste en esta venta.\n\n" +
+        "Aceptar = salir y borrar lo cargado\nCancelar = seguir con la venta"
+      );
+      if (!ok) return;
+    }
+    resetManualForm();
+    setManualModal(false);
+  };
+
   const handleSaveManual = async (e) => {
     e.preventDefault();
     if (manualForm.items.some((it) => !it.productId)) {
@@ -353,18 +389,13 @@ export default function AdminOrders() {
       });
       toast.success("Venta registrada correctamente");
       setManualModal(false);
-      setCustomerMode("new");
-      setSelectedCustomer(null);
-      setCustomerSearch("");
-      setCustomerResults([]);
-      setManualForm({
-        customerId: null,
-        customerName: "", customerEmail: "", customerPhone: "",
-        customerType: "MINORISTA",
-        salesChannel: "MOSTRADOR",
-        paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-        items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
-      });
+      // Reset movido al helper resetManualForm (se comparte con el cierre por Cancelar/✕). Antes:
+      // setCustomerMode("new");
+      // setSelectedCustomer(null);
+      // setCustomerSearch("");
+      // setCustomerResults([]);
+      // setManualForm({ ... });
+      resetManualForm();
       fetchOrders();
     } catch (err) {
       toast.error(err.response?.data?.error || "Error al guardar la venta");
@@ -1899,7 +1930,8 @@ export default function AdminOrders() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="font-bold text-slate-800 text-lg">Nueva venta manual</h2>
-              <button onClick={() => setManualModal(false)} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+              {/* Antes: onClick={() => setManualModal(false)} — cerraba sin avisar y dejaba datos viejos cargados */}
+              <button onClick={closeManualModal} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
             </div>
             <form onSubmit={handleSaveManual} className="px-6 py-5 space-y-5">
               {/* Datos del cliente */}
@@ -2318,7 +2350,8 @@ export default function AdminOrders() {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setManualModal(false)}
+                    // Antes: onClick={() => setManualModal(false)} — cerraba sin avisar y dejaba datos viejos cargados
+                    onClick={closeManualModal}
                     className="px-5 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
                   >
                     Cancelar
