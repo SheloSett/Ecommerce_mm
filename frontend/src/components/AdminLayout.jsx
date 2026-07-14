@@ -109,6 +109,14 @@ export default function AdminLayout({ children, title }) {
   const isActive = (path) =>
     path === "/admin" ? location.pathname === "/admin" : location.pathname.startsWith(path);
 
+  // Apertura manual de submenús (flechita): guarda el override del usuario por path.
+  // Sin override, el submenú se abre solo cuando la sección está activa (comportamiento original).
+  const [openMenus, setOpenMenus] = useState({});
+  const submenuOpen = (item) =>
+    openMenus[item.path] !== undefined ? openMenus[item.path] : isActive(item.path);
+  const toggleSubmenu = (item) =>
+    setOpenMenus((prev) => ({ ...prev, [item.path]: !submenuOpen(item) }));
+
   // Contenido del sidebar extraído para reutilizarlo (se renderiza igual en desktop y mobile)
   const sidebarContent = (
     <>
@@ -150,10 +158,28 @@ export default function AdminLayout({ children, title }) {
                     {item.badge > 99 ? "99+" : item.badge}
                   </span>
                 )}
+                {/* Flechita para abrir/cerrar el submenú a mano (solo ítems con subItems).
+                    stopPropagation + preventDefault: que el click en la flecha NO navegue. */}
+                {item.subItems && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSubmenu(item); }}
+                    className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                    aria-label={submenuOpen(item) ? "Cerrar submenú" : "Abrir submenú"}
+                  >
+                    <svg
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${submenuOpen(item) ? "rotate-180" : ""}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                )}
               </Link>
 
-              {/* Sub-ítems: solo se muestran cuando el ítem padre está activo */}
-              {active && item.subItems && (
+              {/* Sub-ítems: se muestran si el usuario los abrió con la flechita, o (por defecto)
+                  cuando el ítem padre está activo. Antes: {active && item.subItems && (...)} */}
+              {item.subItems && submenuOpen(item) && (
                 <div className="mt-1 ml-4 pl-4 border-l border-slate-700 space-y-0.5">
                   {item.subItems.map((sub) => {
                     // sub.href = ruta fija (ej: /admin/productos/nuevo)

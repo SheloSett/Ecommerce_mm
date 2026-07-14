@@ -401,13 +401,30 @@ async function getProductsAdmin(req, res) {
           // Proveedor asignado (solo admin) — para preseleccionarlo al editar y mostrarlo en el listado
           supplier: { select: { id: true, name: true } },
         },
-        orderBy: { createdAt: "desc" },
+        // Antes: orderBy: { createdAt: "desc" } siempre. Con búsqueda eso mezclaba los resultados
+        // sin criterio visible (aparecían "CABLE..." antes que "ADAPTADOR..." buscando "a").
+        // Ahora: buscando → alfabético (y abajo se priorizan los que EMPIEZAN con el término);
+        // sin búsqueda → más nuevo primero, como siempre.
+        orderBy: search ? { name: "asc" } : { createdAt: "desc" },
         // skip,                    // Comentado: con all=true no paginamos en el server; el admin pagina en el cliente.
         // take: parseInt(limit),   // Comentado: así el capital y los tabs "Sin stock/Quiebre" cuentan TODOS los productos.
         ...(noPaginate ? {} : { skip, take: parseInt(limit) }),
       }),
       prisma.product.count({ where }),
     ]);
+
+    // Con búsqueda: priorizar los productos cuyo nombre EMPIEZA con el término tipeado
+    // (insensible a mayúsculas y tildes); el resto queda alfabético (ya viene name asc de la DB).
+    if (search) {
+      const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const term = norm(search);
+      products.sort((a, b) => {
+        const aStarts = norm(a.name).startsWith(term) ? 0 : 1;
+        const bStarts = norm(b.name).startsWith(term) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return norm(a.name).localeCompare(norm(b.name));
+      });
+    }
 
     // Unidades vendidas por producto (solo órdenes APPROVED)
     const productIds = products.map((p) => p.id);

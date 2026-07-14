@@ -2119,12 +2119,23 @@ export default function AdminOrders() {
                 </div>
                 <div className="space-y-2">
                   {manualForm.items.map((item, idx) => {
+                    // Antes: .filter(...).slice(0, 6) sin ordenar — las sugerencias salían en el
+                    // orden de carga (más nuevo primero) y buscando "a" aparecían "CABLE..." antes
+                    // que "ADAPTADOR...". Ahora: primero los que EMPIEZAN con lo tipeado, después
+                    // el resto alfabético (insensible a mayúsculas y tildes).
+                    const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+                    const term = normName(productSearch[idx] || "");
                     const filtered = (allProducts || []).filter((p) =>
                       productSearch[idx]
                         ? p.name.toLowerCase().includes(productSearch[idx].toLowerCase()) ||
                           (p.sku && p.sku.toLowerCase().includes(productSearch[idx].toLowerCase()))
                         : false
-                    ).slice(0, 6);
+                    ).sort((a, b) => {
+                      const aStarts = normName(a.name).startsWith(term) ? 0 : 1;
+                      const bStarts = normName(b.name).startsWith(term) ? 0 : 1;
+                      if (aStarts !== bStarts) return aStarts - bStarts;
+                      return normName(a.name).localeCompare(normName(b.name));
+                    }).slice(0, 6);
 
                     return (
                       <div key={idx} className="bg-slate-50 rounded-xl p-3 space-y-2">
