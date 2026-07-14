@@ -2123,7 +2123,7 @@ export default function AdminOrders() {
                     // orden de carga (más nuevo primero) y buscando "a" aparecían "CABLE..." antes
                     // que "ADAPTADOR...". Ahora: primero los que EMPIEZAN con lo tipeado, después
                     // el resto alfabético (insensible a mayúsculas y tildes).
-                    const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+                    const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
                     const term = normName(productSearch[idx] || "");
                     const filtered = (allProducts || []).filter((p) =>
                       productSearch[idx]

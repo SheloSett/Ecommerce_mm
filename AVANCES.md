@@ -280,6 +280,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 131- venta manual: al tocar Cancelar/✕ con datos cargados pide confirmación ("se borrará todo lo cargado"): Aceptar = cierra y limpia todo (al reabrir arranca vacío); Cancelar = seguís en el modal con los datos. Antes cerraba sin avisar y al reabrir quedaba todo lo viejo cargado. ✅
 
+132- búsqueda con orden por relevancia (admin productos + sugerencias de venta manual): primero los productos cuyo nombre EMPIEZA con lo tipeado, después el resto alfabético (insensible a mayúsculas/tildes). Antes ordenaba por fecha de creación y buscando "a" salían los "Cable..." antes que los "Adaptador...". ✅
+
 ##
 
 
