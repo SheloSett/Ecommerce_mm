@@ -145,6 +145,18 @@ export default function AdminLayout({ children, title }) {
             <div key={item.path}>
               <Link
                 to={item.path}
+                // Pedido del cliente: tocar CUALQUIER parte del ítem padre (no solo la flechita)
+                // cierra el submenú si está abierto (sin navegar). Si está cerrado, navega y se
+                // abre como siempre (submenuOpen default = sección activa).
+                onClick={(e) => {
+                  if (item.subItems && submenuOpen(item)) {
+                    e.preventDefault();
+                    toggleSubmenu(item);
+                  } else if (item.subItems) {
+                    // Estaba cerrado (quizás por un override manual): navegar Y abrirlo.
+                    setOpenMenus((prev) => ({ ...prev, [item.path]: true }));
+                  }
+                }}
                 className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                   active
                     ? "bg-blue-600 text-white"
