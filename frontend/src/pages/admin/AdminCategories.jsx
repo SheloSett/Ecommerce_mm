@@ -32,6 +32,8 @@ export default function AdminCategories() {
   const [name, setName] = useState("");
   // parentId: null = categoría raíz; número = subcategoría del padre seleccionado
   const [parentId, setParentId] = useState("");
+  // hidden: los productos de esta categoría no se mezclan en el listado general del catálogo
+  const [hidden, setHidden] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Modal "ver productos vinculados" a una categoría
@@ -72,6 +74,7 @@ export default function AdminCategories() {
     setEditingCat(null);
     setName("");
     setParentId("");
+    setHidden(false);
     setShowModal(true);
   };
 
@@ -80,6 +83,7 @@ export default function AdminCategories() {
     setName(cat.name);
     // Si la categoría tiene padre, pre-seleccionarlo en el dropdown
     setParentId(cat.parentId ? String(cat.parentId) : "");
+    setHidden(cat.hidden === true);
     setShowModal(true);
   };
 
@@ -90,7 +94,7 @@ export default function AdminCategories() {
     setSaving(true);
     try {
       // parentId vacío se envía como null (categoría raíz)
-      const data = { name, parentId: parentId ? parseInt(parentId) : null };
+      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden };
 
       if (editingCat) {
         await categoriesApi.update(editingCat.id, data);
@@ -162,7 +166,18 @@ export default function AdminCategories() {
                   <>
                     {/* Fila de categoría principal */}
                     <tr key={cat.id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-3 font-semibold text-slate-800">{cat.name}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-800">
+                        {cat.name}
+                        {/* Badge para las categorías ocultas del catálogo general */}
+                        {cat.hidden && (
+                          <span
+                            className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 align-middle"
+                            title="Sus productos no aparecen en el catálogo general — solo eligiendo esta categoría o buscándolos"
+                          >
+                            🙈 Oculta
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-mono text-slate-500 text-xs hidden sm:table-cell">{cat.slug}</td>
                       <td className="px-4 py-3 table-cell">
                         <CountBadge count={cat._count?.products || 0} onClick={() => openProducts(cat)} />
@@ -192,6 +207,14 @@ export default function AdminCategories() {
                           <div className="flex items-center gap-2 pl-4 border-l-2 border-blue-200">
                             <span className="text-blue-400 text-xs">↳</span>
                             <span className="text-slate-700 font-medium">{sub.name}</span>
+                            {sub.hidden && (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200"
+                                title="Sus productos no aparecen en el catálogo general — solo eligiendo esta categoría o buscándolos"
+                              >
+                                🙈 Oculta
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-2.5 font-mono text-slate-400 text-xs hidden sm:table-cell">{sub.slug}</td>
@@ -321,6 +344,29 @@ export default function AdminCategories() {
                 <p className="text-xs text-slate-400 mt-1">
                   Si seleccionás una categoría padre, esta se creará como subcategoría.
                 </p>
+              </div>
+
+              {/* Ocultar del catálogo general: los productos de esta categoría no se mezclan con
+                  el resto. Solo se acceden eligiendo esta categoría o buscándolos. */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hidden}
+                    onChange={(e) => setHidden(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-700">
+                      Ocultar del catálogo general
+                    </span>
+                    <span className="block text-xs text-slate-400 mt-0.5 leading-snug">
+                      Sus productos no aparecen en “Todos los productos” ni navegando el catálogo.
+                      La categoría sigue visible en los filtros: elegirla es la forma de verlos.
+                      La búsqueda los encuentra igual.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="flex gap-3">

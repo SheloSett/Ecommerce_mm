@@ -159,6 +159,24 @@ async function getProducts(req, res) {
       }
     }
 
+    // Categorías ocultas (hidden=true): sus productos NO se mezclan con el resto en el listado
+    // general. Solo se excluyen cuando NO se eligió una categoría y NO hay búsqueda, así:
+    //   - eligiendo la categoría oculta → se ven (el filtro de arriba manda)
+    //   - buscándolos → se ven
+    //   - "Todos los productos" / navegación general → no aparecen
+    // Se excluye solo si TODAS sus categorías son ocultas (si además está en una visible, se muestra).
+    if (!category && !search) {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { categories: { none: {} } },                // sin categorías → se muestra
+            { categories: { some: { hidden: false } } },  // tiene al menos una categoría visible
+          ],
+        },
+      ];
+    }
+
     if (featured === "true") {
       where.featured = true;
     }
@@ -1136,6 +1154,20 @@ async function getProductFacets(req, res) {
           { sku:  { contains: search, mode: "insensitive" } },
         ];
       }
+    }
+
+    // Mismo criterio que getProducts: los productos que solo están en categorías ocultas no
+    // participan del listado general, así los filtros de atributos reflejan lo que se ve.
+    if (!category && !search) {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { categories: { none: {} } },
+            { categories: { some: { hidden: false } } },
+          ],
+        },
+      ];
     }
 
     if (onSale === "true") {

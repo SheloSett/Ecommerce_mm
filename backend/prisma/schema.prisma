@@ -33,6 +33,10 @@ model Category {
   parent    Category?  @relation("SubCategories", fields: [parentId], references: [id])
   children  Category[] @relation("SubCategories")
   products  Product[]  // M2M implícita — inverso de Product.categories
+  // hidden: si true, los productos que SOLO pertenecen a esta categoría NO se muestran en el listado
+  // general del catálogo (ni "Todos", ni navegando otras categorías). Igual aparece en el filtro de
+  // categorías (elegirla es la forma de acceder a esos productos) y siguen apareciendo en la búsqueda.
+  hidden    Boolean    @default(false)
   createdAt DateTime   @default(now())
 
   @@map("categories")

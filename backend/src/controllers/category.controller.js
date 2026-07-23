@@ -80,7 +80,8 @@ async function getCategories(req, res) {
 // Acepta parentId opcional para crear una subcategoría
 async function createCategory(req, res) {
   try {
-    const { name, parentId } = req.body;
+    // hidden: oculta los productos de esta categoría del listado general del catálogo
+    const { name, parentId, hidden } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: "El nombre es requerido" });
@@ -106,6 +107,7 @@ async function createCategory(req, res) {
         slug,
         // parentId puede ser null (categoría raíz) o un entero (subcategoría)
         parentId: parentId ? parseInt(parentId) : null,
+        hidden: hidden === true || hidden === "true",
       },
     });
 
@@ -124,7 +126,8 @@ async function createCategory(req, res) {
 async function updateCategory(req, res) {
   try {
     const { id } = req.params;
-    const { name, parentId } = req.body;
+    // hidden: oculta los productos de esta categoría del listado general del catálogo
+    const { name, parentId, hidden } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: "El nombre es requerido" });
@@ -155,6 +158,8 @@ async function updateCategory(req, res) {
         slug,
         // parentId: null elimina el padre (convierte en categoría raíz); número asigna padre
         parentId: parentId ? parseInt(parentId) : null,
+        // Solo se toca si vino en el body (undefined = no modificar)
+        ...(hidden !== undefined ? { hidden: hidden === true || hidden === "true" } : {}),
       },
     });
 
