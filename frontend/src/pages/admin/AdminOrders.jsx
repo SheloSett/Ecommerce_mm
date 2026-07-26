@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import { ordersApi, productsApi, customersApi, getImageUrl } from "../../services/api";
+import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from "../../services/api";
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 
@@ -87,6 +87,12 @@ export default function AdminOrders() {
   const [variantAssignments, setVariantAssignments]  = useState({}); // { [itemId]: [{variantId, quantity}] }
   const [priceUpdateTarget, setPriceUpdateTarget] = useState("minorista"); // "minorista" | "mayorista" | "ambos"
   const [updatingProductPrice, setUpdatingProductPrice] = useState(false);
+  // ── Vista de cotizaciones: proveedor por ítem + agregar producto ─────────────
+  const [suppliers, setSuppliers] = useState([]);           // lista para el select de proveedor
+  const [savingSupplier, setSavingSupplier] = useState(null); // productId en guardado
+  // addProductSel: { [orderId]: { product, search, quantity } } — buscador de "agregar producto"
+  const [addProductSel, setAddProductSel] = useState({});
+  const [addingProduct, setAddingProduct] = useState(null);   // orderId en guardado
 
   // ── Modal Nueva Venta Manual ─────────────────────────────────────────────────
   const [manualModal, setManualModal] = useState(false);
@@ -452,6 +458,20 @@ export default function AdminOrders() {
     fetchOrders();
   }, [page, filterStatus, filterSearch, filterSort, filterType, isCotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // En la vista de cotizaciones necesitamos proveedores (select por ítem) y el catálogo
+  // (buscador de "agregar producto"). Se cargan una sola vez al entrar a esa vista.
+  useEffect(() => {
+    if (!isCotizaciones) return;
+    if (suppliers.length === 0) {
+      suppliersApi.getAll().then((res) => setSuppliers(res.data || [])).catch(() => {});
+    }
+    if (allProducts.length === 0) {
+      productsApi.getAllAdmin({ all: true })
+        .then((res) => setAllProducts(res.data.products || res.data || []))
+        .catch(() => {});
+    }
+  }, [isCotizaciones]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Al expandir una cotización PENDING, auto-cargar variantes de cada item sin variantId asignada.
   // Esto permite saber de antemano cuáles items necesitan asignación y deshabilitar el botón Aprobar.
   useEffect(() => {
@@ -571,6 +591,48 @@ export default function AdminOrders() {
       toast.error("Error al eliminar");
     } finally {
       setSavingItem(null);
+    }
+  };
+
+  // ── Proveedor por ítem (vista de cotizaciones) ───────────────────────────────
+  // Cambia el proveedor del PRODUCTO (es el que usa la orden de compra para agrupar).
+  const handleChangeItemSupplier = async (orderId, productId, supplierId) => {
+    setSavingSupplier(productId);
+    try {
+      await productsApi.quickUpdate(productId, { supplierId: supplierId === "" ? null : supplierId });
+      const sup = suppliers.find((s) => String(s.id) === String(supplierId)) || null;
+      // Actualizar en memoria todos los ítems (de cualquier orden) que usen ese producto
+      setOrders((prev) => prev.map((o) => ({
+        ...o,
+        items: (o.items || []).map((it) => it.productId === productId
+          ? { ...it, product: { ...it.product, supplierId: sup?.id ?? null, supplier: sup ? { id: sup.id, name: sup.name } : null } }
+          : it),
+      })));
+      toast.success(sup ? `Proveedor: ${sup.name}` : "Proveedor quitado");
+    } catch {
+      toast.error("No se pudo cambiar el proveedor");
+    } finally {
+      setSavingSupplier(null);
+    }
+  };
+
+  // ── Agregar un producto a una cotización ya creada ───────────────────────────
+  const handleAddProductToOrder = async (orderId) => {
+    const sel = addProductSel[orderId];
+    if (!sel?.product) { toast.error("Elegí un producto"); return; }
+    const qty = parseInt(sel.quantity) || 1;
+    setAddingProduct(orderId);
+    try {
+      await ordersApi.addItem(orderId, { productId: sel.product.id, quantity: qty });
+      // Refrescamos del server: el backend recalcula total y snapshot
+      await fetchOrders();
+      setDirtyOrders((prev) => new Set(prev).add(orderId));
+      setAddProductSel((prev) => ({ ...prev, [orderId]: { product: null, search: "", quantity: 1 } }));
+      toast.success("Producto agregado a la cotización");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo agregar el producto");
+    } finally {
+      setAddingProduct(null);
     }
   };
 
@@ -981,9 +1043,17 @@ export default function AdminOrders() {
                       <span>🕐 {formatDate(order.createdAt)}</span>
                     </div>
 
-                    {/* Items editables */}
+                    {/* Items editables — ordenados por PROVEEDOR (los sin proveedor, al final) */}
                     <div className="space-y-2">
-                      {order.items?.map((item) => {
+                      {[...(order.items || [])].sort((a, b) => {
+                        const sa = a.product?.supplier?.name || "";
+                        const sb = b.product?.supplier?.name || "";
+                        if (!sa && sb) return 1;   // sin proveedor va al final
+                        if (sa && !sb) return -1;
+                        if (sa !== sb) return sa.localeCompare(sb);
+                        // Mismo proveedor: alfabético por nombre de producto
+                        return (a.product?.name || "").localeCompare(b.product?.name || "");
+                      }).map((item) => {
                         const img = item.product?.images?.[0];
                         const isEditing = editingQty[item.id] !== undefined;
                         const isSaving  = savingItem === item.id;
@@ -1001,24 +1071,60 @@ export default function AdminOrders() {
                           && productHasVariants;
 
                         return (
-                          <div key={item.id} className="bg-slate-50 rounded-xl p-3 space-y-2">
-                          {/* Fila 1: imagen + nombre */}
-                          <div className="flex items-center gap-3">
-                            {/* Imagen */}
-                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0">
+                          <div key={item.id} className="bg-slate-50 rounded-xl p-4 space-y-3">
+                          {/* Fila 1: imagen + nombre (card más grande, pedido del cliente) */}
+                          <div className="flex items-start gap-4">
+                            {/* Imagen — antes w-10 h-10, ahora más grande para ver bien el producto */}
+                            <div className="w-24 h-24 rounded-xl overflow-hidden bg-white border border-slate-200 flex-shrink-0">
                               {img
-                                ? <img src={getImageUrl(img)} alt="" className="w-full h-full object-cover" />
-                                : <div className="w-full h-full flex items-center justify-center text-sm">📦</div>
+                                ? <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain p-1" />
+                                : <div className="w-full h-full flex items-center justify-center text-3xl">📦</div>
                               }
                             </div>
 
-                            {/* Nombre y precio estático */}
+                            {/* Nombre (link al detalle público) y precio estático */}
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-800 truncate">{item.product?.name || "Producto"}</p>
+                              {/* Antes: <p ...>{item.product?.name}</p> — ahora es link a la vista del CLIENTE */}
+                              {item.product?.slug || item.productId ? (
+                                <a
+                                  href={`/producto/${item.product?.slug || item.productId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-base font-semibold text-slate-800 hover:text-blue-600 hover:underline transition-colors inline-flex items-start gap-1"
+                                  title="Ver la publicación como la ve el cliente"
+                                >
+                                  <span>{item.product?.name || "Producto"}</span>
+                                  <svg className="w-3.5 h-3.5 mt-1 flex-shrink-0 opacity-60" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                  </svg>
+                                </a>
+                              ) : (
+                                <p className="text-base font-semibold text-slate-800">{item.product?.name || "Producto"}</p>
+                              )}
                               {item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
-                                <p key={vi} className="text-xs text-slate-500">{v}</p>
+                                <p key={vi} className="text-xs text-slate-500 mt-0.5">{v}</p>
                               ))}
-                              <p className="text-xs text-slate-400">{formatPrice(displayPrice)} c/u</p>
+                              <p className="text-sm text-slate-400 mt-1">{formatPrice(displayPrice)} c/u</p>
+
+                              {/* Proveedor del producto — editable (otro proveedor puede tener el mismo artículo) */}
+                              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                <span className="text-xs text-slate-400">🚚 Proveedor:</span>
+                                <select
+                                  value={item.product?.supplierId ?? ""}
+                                  disabled={savingSupplier === item.productId || !item.productId}
+                                  onChange={(e) => handleChangeItemSupplier(order.id, item.productId, e.target.value)}
+                                  className="text-xs border border-slate-300 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 max-w-[14rem]"
+                                  title="Cambia el proveedor del producto (afecta la orden de compra)"
+                                >
+                                  <option value="">— Sin proveedor —</option>
+                                  {suppliers.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+                                {savingSupplier === item.productId && (
+                                  <span className="text-xs text-slate-400">guardando...</span>
+                                )}
+                              </div>
                             </div>
 
                             {/* Eliminar item — siempre visible arriba a la derecha */}
@@ -1028,7 +1134,7 @@ export default function AdminOrders() {
                               className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
                               title="Eliminar item"
                             >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                               </svg>
                             </button>
@@ -1191,6 +1297,87 @@ export default function AdminOrders() {
                           </div>
                         );
                       })}
+
+                      {/* ── Agregar un producto a esta cotización ────────────────────── */}
+                      {order.status !== "CANCELLED" && (() => {
+                        const sel = addProductSel[order.id] || { product: null, search: "", quantity: 1 };
+                        const isAdding = addingProduct === order.id;
+                        // Mismo criterio de relevancia que la venta manual: primero los que EMPIEZAN
+                        // con lo tipeado, después el resto alfabético (insensible a mayúsculas/tildes).
+                        const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                        const term = normName(sel.search);
+                        const matches = !sel.search ? [] : (allProducts || []).filter((p) =>
+                          p.name.toLowerCase().includes(sel.search.toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(sel.search.toLowerCase()))
+                        ).sort((a, b) => {
+                          const aS = normName(a.name).startsWith(term) ? 0 : 1;
+                          const bS = normName(b.name).startsWith(term) ? 0 : 1;
+                          if (aS !== bS) return aS - bS;
+                          return normName(a.name).localeCompare(normName(b.name));
+                        }).slice(0, 6);
+
+                        return (
+                          <div className="border-2 border-dashed border-slate-300 rounded-xl p-3 space-y-2">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Agregar producto</p>
+                            <div className="flex gap-2 flex-wrap items-start">
+                              <div className="relative flex-1 min-w-[14rem]">
+                                <input
+                                  value={sel.product ? sel.product.name : sel.search}
+                                  onChange={(e) => setAddProductSel((prev) => ({
+                                    ...prev,
+                                    [order.id]: { ...sel, product: null, search: e.target.value },
+                                  }))}
+                                  placeholder="Buscar producto por nombre o SKU..."
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                {matches.length > 0 && !sel.product && (
+                                  <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-20 mt-1 max-h-64 overflow-y-auto">
+                                    {matches.map((p) => (
+                                      <button
+                                        key={p.id}
+                                        type="button"
+                                        onClick={() => setAddProductSel((prev) => ({
+                                          ...prev,
+                                          [order.id]: { ...sel, product: p, search: p.name },
+                                        }))}
+                                        className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 flex items-center gap-2"
+                                      >
+                                        {p.images?.[0]
+                                          ? <img src={getImageUrl(p.images[0])} alt="" className="w-9 h-9 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
+                                          : <span className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-base flex-shrink-0">📦</span>}
+                                        <span className="font-medium text-slate-700 truncate flex-1">{p.name}</span>
+                                        <span className="text-xs text-slate-500 shrink-0">{formatPrice(p.price)}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <input
+                                type="number"
+                                min="1"
+                                value={sel.quantity}
+                                onChange={(e) => setAddProductSel((prev) => ({
+                                  ...prev,
+                                  [order.id]: { ...sel, quantity: e.target.value },
+                                }))}
+                                className="w-20 px-3 py-2 border border-slate-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                title="Cantidad"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAddProductToOrder(order.id)}
+                                disabled={!sel.product || isAdding}
+                                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              >
+                                {isAdding ? "Agregando..." : "+ Agregar"}
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              El precio se toma del producto según el tipo de cliente; después podés editarlo en la línea.
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Acciones */}

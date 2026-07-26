@@ -901,7 +901,7 @@ async function updateProduct(req, res) {
 async function quickUpdateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active, cost, sku } = req.body;
+    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active, cost, sku, supplierId } = req.body;
 
     const existing = await prisma.product.findUnique({ where: { id: parseInt(id) } });
     if (!existing) {
@@ -961,6 +961,11 @@ async function quickUpdateProduct(req, res) {
     // cost y sku faltaban — el frontend los manda en la edición rápida pero antes se ignoraban
     if (cost !== undefined && cost !== "") updateData.cost = parseFloat(cost);
     if (sku !== undefined) updateData.sku = sku || null;
+    // supplierId: permite cambiar el proveedor del producto sin abrir la edición completa
+    // (se usa desde la vista de cotizaciones). "" o null = sin proveedor asignado.
+    if (supplierId !== undefined) {
+      updateData.supplierId = supplierId === "" || supplierId === null ? null : parseInt(supplierId);
+    }
 
     const product = await prisma.product.update({
       where: { id: parseInt(id) },
@@ -970,6 +975,8 @@ async function quickUpdateProduct(req, res) {
         categories: {
           include: { parent: { select: { id: true, name: true } } },
         },
+        // supplier: para que el front pueda refrescar el chip de proveedor al vuelo
+        supplier: { select: { id: true, name: true } },
       },
     });
 

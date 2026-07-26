@@ -121,7 +121,16 @@ async function getOrders(req, res) {
           items: {
             include: {
               // module/shelf: ubicación en depósito — se imprime en la orden desde el listado (ruta admin-only)
-              product: { select: { id: true, name: true, images: true, module: true, shelf: true } },
+              // slug: para linkear al detalle PÚBLICO del producto desde la cotización
+              // supplier: proveedor del producto — se muestra y se puede cambiar desde la cotización
+              // Antes: product: { select: { id: true, name: true, images: true, module: true, shelf: true } },
+              product: {
+                select: {
+                  id: true, name: true, images: true, module: true, shelf: true,
+                  slug: true, supplierId: true,
+                  supplier: { select: { id: true, name: true } },
+                },
+              },
             },
           },
           // Incluir datos del cupón para mostrar en detalle y en impresión
@@ -1076,7 +1085,17 @@ async function addItemToOrder(req, res) {
     if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
     const qty = parseInt(quantity);
-    let finalPrice        = priceOverride ? parseFloat(priceOverride) : product.price;
+    // El stock solo se toca si el pedido ya está APPROVED (mismo criterio que updateOrderItem y
+    // deleteOrderItem). En una COTIZACIÓN PENDING el stock se descuenta recién al aprobarla, así que
+    // descontarlo acá provocaba un doble descuento.
+    const isApproved = order.status === "APPROVED";
+    // Precio por defecto según el tipo de cliente de la orden (una cotización mayorista debe tomar
+    // el precio mayorista, no el minorista). Si el admin manda price, ese manda.
+    const isMayoristaOrder = order.customerType === "MAYORISTA";
+    const productBasePrice = isMayoristaOrder
+      ? (product.wholesaleSalePrice ?? product.wholesalePrice ?? product.salePrice ?? product.price)
+      : (product.salePrice ?? product.price);
+    let finalPrice        = priceOverride ? parseFloat(priceOverride) : productBasePrice;
     let variantLabel      = null;
     let variantSku        = null;
     let resolvedVariantId = null;
@@ -1087,12 +1106,16 @@ async function addItemToOrder(req, res) {
       if (!variant.stockUnlimited && variant.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${variant.stock}` });
       }
-      if (!variant.stockUnlimited) {
+      if (isApproved && !variant.stockUnlimited) {
         await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, variant.stock - qty) } });
         await syncProductVisibility(product.id);
       }
       resolvedVariantId = variant.id;
-      finalPrice   = priceOverride ? parseFloat(priceOverride) : (variant.price ?? product.price);
+      // Precio de la variante según tipo de cliente, con fallback al del producto
+      const variantBasePrice = isMayoristaOrder
+        ? (variant.wholesaleSalePrice ?? variant.wholesalePrice ?? null)
+        : (variant.salePrice ?? variant.price ?? null);
+      finalPrice   = priceOverride ? parseFloat(priceOverride) : (variantBasePrice ?? productBasePrice);
       const combo  = Array.isArray(variant.combination) ? variant.combination : JSON.parse(String(variant.combination || "[]"));
       variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
       variantSku   = variant.sku || null;
@@ -1100,14 +1123,16 @@ async function addItemToOrder(req, res) {
       if (!product.stockUnlimited && product.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${product.stock}` });
       }
-      if (!product.stockUnlimited) {
+      if (isApproved && !product.stockUnlimited) {
         await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, product.stock - qty) } });
         await syncProductVisibility(product.id);
       }
     }
 
-    // Guardar el snapshot ANTES de crear el nuevo item para que refleje el estado previo a la modificación
-    await saveOriginalAndMarkModified(orderId, order);
+    // Guardar el snapshot ANTES de crear el nuevo item para que refleje el estado previo a la
+    // modificación. Solo aplica a pedidos ya aprobados (una cotización PENDING todavía se está
+    // armando: no es una "modificación post-pago" que el cliente deba ver como tal).
+    if (isApproved) await saveOriginalAndMarkModified(orderId, order);
 
     await prisma.orderItem.create({
       data: { orderId, productId: product.id, quantity: qty, price: finalPrice, variantId: resolvedVariantId, variantLabel, variantSku },

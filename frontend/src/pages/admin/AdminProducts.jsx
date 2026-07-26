@@ -176,6 +176,9 @@ export default function AdminProducts() {
   const activeTab = searchParams.get("tab") || "all";
   const isSinStock      = activeTab === "sinstock";
   const isQuiebreStock  = activeTab === "quiebrestock";
+  // Filtros derivados del capital: contabilizados (aportan al total) e ilimitados (stock ∞, no sumados)
+  const isContabilizados = activeTab === "contabilizados";
+  const isIlimitados     = activeTab === "ilimitados";
 
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -373,6 +376,26 @@ export default function AdminProducts() {
 
   const removeKeepImage = (img) => {
     setKeepImages((prev) => prev.filter((i) => i !== img));
+  };
+
+  // ── Reordenar las imágenes ya guardadas (drag & drop) ──────────────────────
+  // El ORDEN del array keepImages es el orden que se guarda en la BD: la primera imagen
+  // es la portada (images[0] es la que usan las cards del catálogo, el carrito y los emails).
+  // El backend ya respeta el orden en que llegan los keepImages del FormData, así que
+  // alcanza con reordenar acá — no hace falta ningún campo nuevo.
+  const [dragImgIdx, setDragImgIdx]         = useState(null); // índice que se está arrastrando
+  const [dragOverImgIdx, setDragOverImgIdx] = useState(null); // índice sobre el que está parado (feedback visual)
+
+  // Mueve la imagen de la posición `from` a la posición `to`.
+  const moveKeepImage = (from, to) => {
+    setKeepImages((prev) => {
+      if (from == null || to == null || from === to) return prev;
+      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1); // saca la que se arrastra
+      next.splice(to, 0, moved);            // la inserta en la nueva posición
+      return next;
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -796,8 +819,11 @@ export default function AdminProducts() {
   // Lista filtrada por el tab activo (Sin stock / Quiebre) sobre TODOS los productos cargados.
   const filteredProducts = products.filter((p) => {
     const { stock: es, unlimited: eu } = effectiveStock(p);
-    if (isSinStock)     return !eu && es <= 0;
-    if (isQuiebreStock) return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
+    if (isSinStock)      return !eu && es <= 0;
+    if (isQuiebreStock)  return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
+    // Filtros del capital (mismo criterio que la tarjeta): capitalStatus lo calcula el backend.
+    if (isContabilizados) return p.capitalStatus === "counted";
+    if (isIlimitados)     return p.capitalStatus === "unlimited";
     return true;
   });
   // Paginación en el cliente: 50 por página. Clampeamos la página actual por si el filtro achicó la lista.
@@ -833,18 +859,34 @@ export default function AdminProducts() {
                 </p>
               </div>
               <div className="flex flex-col gap-1 text-sm sm:text-right">
-                <span className="text-slate-300">
-                  <span className="font-semibold text-white">{counted.length}</span> producto{counted.length !== 1 ? "s" : ""} contabilizados
-                </span>
+                {/* Clickeable: filtra la lista a los productos contabilizados (con stock finito y costo) */}
+                <button
+                  type="button"
+                  onClick={() => setSearchParams({ tab: "contabilizados" })}
+                  title="Ver solo los productos contabilizados"
+                  className={`text-left sm:text-right hover:underline cursor-pointer transition-colors ${
+                    isContabilizados ? "text-white font-semibold" : "text-slate-300 hover:text-white"
+                  }`}
+                >
+                  <span className="font-semibold text-white">{counted.length}</span> producto{counted.length !== 1 ? "s" : ""} contabilizados&nbsp;›
+                </button>
                 {sinCosto > 0 && (
                   <span className="text-amber-400 font-medium">
                     ⚠ {sinCosto} sin costo — no incluidos
                   </span>
                 )}
                 {infinitos > 0 && (
-                  <span className="text-slate-400">
-                    ∞ {infinitos} con stock ilimitado — no incluidos
-                  </span>
+                  // Clickeable: filtra la lista a los productos con stock ilimitado (no sumados al capital)
+                  <button
+                    type="button"
+                    onClick={() => setSearchParams({ tab: "ilimitados" })}
+                    title="Ver solo los productos con stock ilimitado"
+                    className={`text-left sm:text-right hover:underline cursor-pointer transition-colors ${
+                      isIlimitados ? "text-white font-semibold" : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    ∞ {infinitos} con stock ilimitado — no incluidos&nbsp;›
+                  </button>
                 )}
               </div>
             </div>
@@ -889,9 +931,12 @@ export default function AdminProducts() {
         {/* Pestañas de filtro */}
         {(() => {
           const tabs = [
-            { key: "all",          label: "Todos" },
-            { key: "sinstock",     label: "Sin stock" },
-            { key: "quiebrestock", label: "Quiebre de stock" },
+            { key: "all",            label: "Todos" },
+            { key: "sinstock",       label: "Sin stock" },
+            { key: "quiebrestock",   label: "Quiebre de stock" },
+            // Filtros del capital (también se llegan clickeando los números de la tarjeta de arriba)
+            { key: "contabilizados", label: "Contabilizados" },
+            { key: "ilimitados",     label: "Stock ilimitado" },
           ];
           // Quiebre de stock: stock entre 1 y stockBreak. Productos en 0 ya están en "Sin stock".
           const lowStockCount = products.filter(p => { const { stock: es, unlimited: eu } = effectiveStock(p); return p.stockBreak != null && !eu && es > 0 && es <= p.stockBreak; }).length;
@@ -2024,6 +2069,9 @@ export default function AdminProducts() {
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Imágenes actuales
                   </label>
+
+                  {/* VERSIÓN ANTERIOR (comentada): las miniaturas eran fijas, no se podía cambiar el orden.
+                      Se reemplaza por la grilla de abajo con drag & drop + flechas para reordenar.
                   <div className="flex flex-wrap gap-2">
                     {keepImages.map((img) => (
                       <div key={img} className="relative group">
@@ -2042,7 +2090,88 @@ export default function AdminProducts() {
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
+                  */}
+
+                  <div className="flex flex-wrap gap-3">
+                    {keepImages.map((img, idx) => (
+                      <div
+                        key={img}
+                        // draggable: arrastrar la miniatura para reordenar (desktop).
+                        draggable
+                        onDragStart={() => setDragImgIdx(idx)}
+                        // preventDefault en dragOver es OBLIGATORIO para que el drop se habilite.
+                        onDragOver={(e) => { e.preventDefault(); setDragOverImgIdx(idx); }}
+                        onDragLeave={() => setDragOverImgIdx((cur) => (cur === idx ? null : cur))}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          moveKeepImage(dragImgIdx, idx);
+                          setDragImgIdx(null);
+                          setDragOverImgIdx(null);
+                        }}
+                        // dragEnd limpia el estado aunque se suelte fuera de una miniatura válida.
+                        onDragEnd={() => { setDragImgIdx(null); setDragOverImgIdx(null); }}
+                        className={`select-none cursor-grab active:cursor-grabbing transition-all ${
+                          dragImgIdx === idx ? "opacity-40" : ""
+                        } ${
+                          dragOverImgIdx === idx && dragImgIdx !== idx ? "scale-105" : ""
+                        }`}
+                        title="Arrastrá para cambiar el orden"
+                      >
+                        <div className={`relative group rounded-lg ${
+                          dragOverImgIdx === idx && dragImgIdx !== idx ? "ring-2 ring-blue-500" : ""
+                        }`}>
+                          <img
+                            src={getImageUrl(img)}
+                            alt=""
+                            // pointer-events-none: evita que el navegador arrastre la imagen sola
+                            // (su drag nativo) en vez del contenedor con la lógica de reordenar.
+                            className="w-20 h-20 object-cover rounded-lg border border-slate-200 pointer-events-none"
+                          />
+                          {/* La primera del array es la portada: la que se ve en el catálogo y el carrito */}
+                          {idx === 0 && (
+                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-white text-[10px] font-medium text-center py-0.5 rounded-b-lg pointer-events-none">
+                              Portada
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeKeepImage(img)}
+                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Flechas: alternativa al drag para celular/tablet, donde el drag & drop
+                            de HTML5 no funciona (los eventos touch no disparan dragstart). */}
+                        <div className="flex justify-center gap-1 mt-1">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveKeepImage(idx, idx - 1)}
+                            className="w-8 h-6 flex items-center justify-center rounded border border-slate-200 bg-white text-slate-600 text-xs hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Mover a la izquierda"
+                          >
+                            ‹
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === keepImages.length - 1}
+                            onClick={() => moveKeepImage(idx, idx + 1)}
+                            className="w-8 h-6 flex items-center justify-center rounded border border-slate-200 bg-white text-slate-600 text-xs hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Mover a la derecha"
+                          >
+                            ›
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Antes: "Hover en la imagen y click en ✕ para eliminarla."
+                      Se amplía el texto para explicar también el reordenamiento. */}
+                  <p className="text-xs text-slate-400 mt-2">
+                    Arrastrá las fotos (o usá ‹ ›) para cambiar el orden. La primera es la portada.
                     Hover en la imagen y click en ✕ para eliminarla.
                   </p>
                 </div>
