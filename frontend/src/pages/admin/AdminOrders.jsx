@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from "../../services/api";
@@ -93,6 +93,39 @@ export default function AdminOrders() {
   // addProductSel: { [orderId]: { product, search, quantity } } — buscador de "agregar producto"
   const [addProductSel, setAddProductSel] = useState({});
   const [addingProduct, setAddingProduct] = useState(null);   // orderId en guardado
+
+  // ── Scroll horizontal de la tabla de pedidos (flechas laterales) ─────────────
+  // En pantallas chicas la tabla es más ancha que el viewport. Estas flechas la desplazan
+  // sin tener que bajar hasta la barra de scroll del fondo (no se pierde la fila que se mira).
+  const tableScrollRef = useRef(null);
+  // canLeft/canRight: si hay desborde hacia ese lado. left/right (px): posición fija de cada flecha,
+  // alineada a los bordes reales de la tabla (respeta el sidebar en pantallas grandes).
+  const [tableArrows, setTableArrows] = useState({ canLeft: false, canRight: false, left: 0, right: 0 });
+  const updateTableArrows = () => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const canLeft  = el.scrollLeft > 4;
+    const canRight = el.scrollLeft < el.scrollWidth - el.clientWidth - 4;
+    const rect = el.getBoundingClientRect();
+    const left  = rect.left;
+    const right = window.innerWidth - rect.right;
+    setTableArrows((prev) =>
+      (prev.canLeft === canLeft && prev.canRight === canRight && prev.left === left && prev.right === right)
+        ? prev : { canLeft, canRight, left, right });
+  };
+  const scrollTableBy = (dir) => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(240, el.clientWidth * 0.7), behavior: "smooth" });
+  };
+  // Recalcular al cargar pedidos, al redimensionar y al hacer scroll de la página
+  useEffect(() => {
+    updateTableArrows();
+    const on = () => updateTableArrows();
+    window.addEventListener("resize", on);
+    window.addEventListener("scroll", on, { passive: true });
+    return () => { window.removeEventListener("resize", on); window.removeEventListener("scroll", on); };
+  }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Modal Nueva Venta Manual ─────────────────────────────────────────────────
   const [manualModal, setManualModal] = useState(false);
@@ -796,7 +829,54 @@ export default function AdminOrders() {
     }
   };
 
-  const handlePrint = (order) => {
+  // Estilos compartidos de la impresión de órdenes (individual y masiva).
+  const ORDER_PRINT_STYLES = `
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #1e293b; background: #f1f5f9; }
+    .page { max-width: 720px; margin: 0 auto 16px; background: #fff; padding: 28px; }
+    .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 2px solid #1e40af; margin-bottom: 16px; }
+    .logo-name { font-size: 18px; font-weight: 900; color: #1e40af; }
+    .order-badge { background: #1e40af; color: #fff; border-radius: 8px; padding: 5px 14px; font-size: 16px; font-weight: 900; }
+    .order-date { font-size: 10px; color: #94a3b8; text-align: right; margin-top: 4px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+    .card-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 8px; }
+    .row { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+    .row-label { font-size: 10px; color: #94a3b8; min-width: 72px; flex-shrink: 0; }
+    .row-value { font-size: 12px; font-weight: 600; color: #1e293b; }
+    .section-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; }
+    .totals-table { margin-left: auto; width: 260px; margin-top: 10px; border-top: 1px solid #e2e8f0; }
+    .note-box { border-radius: 6px; padding: 7px 10px; margin-bottom: 10px; font-size: 11px; }
+    .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e2e8f0; color: #cbd5e1; font-size: 9px; text-align: center; }
+    @media print {
+      body { background: #fff; }
+      .page { padding: 16px; max-width: 100%; margin: 0; }
+      .page:not(:last-child) { page-break-after: always; }
+      .print-btn { display: none !important; }
+    }
+  `;
+
+  // Abre una ventana de impresión con uno o más bloques <div class="page">.
+  const openOrdersPrint = (title, pagesHtml) => {
+    const html = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8" /><title>${title}</title><style>${ORDER_PRINT_STYLES}</style></head>
+<body>
+<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999">
+  <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
+</div>
+${pagesHtml}
+</body></html>`;
+    const blob = new Blob([html], { type: "text/html" });
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, "_blank", "width=820,height=760");
+    if (win) win.onload = () => { win.focus(); URL.revokeObjectURL(url); };
+  };
+
+  // Construye el bloque <div class="page">…</div> de UNA orden. Reutilizado por la impresión
+  // individual (handlePrint) y la masiva (handleBulkPrint) — así en la masiva cada orden queda en
+  // su propia hoja, SIN mezclarse (page-break entre ellas, ver ORDER_PRINT_STYLES).
+  const buildOrderPageHTML = (order) => {
     const status  = STATUS_CONFIG[order.status]  || { label: order.status };
     const payment = PAYMENT_LABEL[order.paymentMethod] || { label: order.paymentMethod, icon: "" };
     const type    = TYPE_LABEL[order.customerType]     || { label: order.customerType, color: "" };
@@ -843,42 +923,7 @@ export default function AdminOrders() {
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA 21%</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : ""}
       <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`;
 
-    const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <title>Orden #${order.id} — IGWT Store</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #1e293b; background: #f1f5f9; }
-    .page { max-width: 720px; margin: 0 auto; background: #fff; padding: 28px; }
-    .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 2px solid #1e40af; margin-bottom: 16px; }
-    .logo-name { font-size: 18px; font-weight: 900; color: #1e40af; }
-    .order-badge { background: #1e40af; color: #fff; border-radius: 8px; padding: 5px 14px; font-size: 16px; font-weight: 900; }
-    .order-date { font-size: 10px; color: #94a3b8; text-align: right; margin-top: 4px; }
-    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
-    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
-    .card-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 8px; }
-    .row { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
-    .row-label { font-size: 10px; color: #94a3b8; min-width: 72px; flex-shrink: 0; }
-    .row-value { font-size: 12px; font-weight: 600; color: #1e293b; }
-    .section-title { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 800; margin-bottom: 6px; }
-    table { width: 100%; border-collapse: collapse; }
-    .totals-table { margin-left: auto; width: 260px; margin-top: 10px; border-top: 1px solid #e2e8f0; }
-    .note-box { border-radius: 6px; padding: 7px 10px; margin-bottom: 10px; font-size: 11px; }
-    .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e2e8f0; color: #cbd5e1; font-size: 9px; text-align: center; }
-    @media print {
-      body { background: #fff; }
-      .page { padding: 16px; max-width: 100%; }
-      .print-btn { display: none !important; }
-    }
-  </style>
-</head>
-<body>
-<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999">
-  <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
-</div>
-<div class="page">
+    return `<div class="page">
 
   <div class="header">
     <div>
@@ -920,14 +965,27 @@ export default function AdminOrders() {
   </table>
 
   <div class="footer">Generado el ${new Date().toLocaleString("es-AR")} · IGWT Store</div>
-</div>
-</body>
-</html>`;
+</div>`;
+  };
 
-    const blob = new Blob([html], { type: "text/html" });
-    const url  = URL.createObjectURL(blob);
-    const win  = window.open(url, "_blank", "width=820,height=760");
-    win.onload = () => { win.focus(); URL.revokeObjectURL(url); };
+  // Impresión de UNA orden
+  const handlePrint = (order) => {
+    openOrdersPrint(`Orden #${order.id} — IGWT Store`, buildOrderPageHTML(order));
+  };
+
+  // Impresión MASIVA: todas las órdenes seleccionadas, cada una en su hoja (sin mezclarse).
+  const handleBulkPrint = () => {
+    const selected = orders.filter((o) => checkedIds.includes(o.id));
+    if (selected.length === 0) return;
+    const pages = selected.map(buildOrderPageHTML).join("\n");
+    openOrdersPrint(`${selected.length} órdenes — IGWT Store`, pages);
+  };
+
+  // OC combinada: abre la orden de compra CONSOLIDADA de todas las órdenes seleccionadas
+  // (productos agrupados por proveedor, sumando cantidades entre las ventas).
+  const handleBulkOC = () => {
+    if (checkedIds.length === 0) return;
+    navigate(`/admin/ordenes/oc-multiple?ids=${checkedIds.join(",")}`);
   };
 
   const handleDelete = async (order) => {
@@ -1562,29 +1620,51 @@ export default function AdminOrders() {
 
         {/* Barra de acciones masivas (aparece solo si hay algo seleccionado) */}
         {checkedIds.length > 0 && (
-          <div className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-xl px-5 py-3">
-            <span className="text-sm font-semibold text-red-700">
+          // Antes esta barra era roja (solo servía para borrar). Ahora también imprime y genera la
+          // OC combinada, así que se vuelve neutral.
+          <div className="flex items-center gap-3 flex-wrap bg-slate-100 border border-slate-300 rounded-xl px-5 py-3">
+            <span className="text-sm font-semibold text-slate-700">
               {checkedIds.length} orden{checkedIds.length > 1 ? "es" : ""} seleccionada{checkedIds.length > 1 ? "s" : ""}
             </span>
-            <button
-              onClick={handleBulkDelete}
-              disabled={bulkDeleting}
-              className="btn-danger text-sm py-1.5 px-4 ml-auto"
-            >
-              {bulkDeleting ? "Eliminando..." : `Eliminar ${checkedIds.length} seleccionadas`}
-            </button>
-            <button
-              onClick={() => setCheckedIds([])}
-              className="text-sm text-slate-500 hover:text-slate-800"
-            >
-              Cancelar
-            </button>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              {/* Imprimir todas juntas — cada orden en su hoja, sin mezclarse */}
+              <button
+                onClick={handleBulkPrint}
+                className="text-sm py-1.5 px-4 rounded-lg font-semibold bg-slate-700 text-white hover:bg-slate-800 transition-colors flex items-center gap-1.5"
+                title="Imprimir las órdenes seleccionadas (cada una en su hoja)"
+              >
+                🖨️ Imprimir {checkedIds.length}
+              </button>
+              {/* OC combinada — productos de todas las órdenes agrupados por proveedor */}
+              <button
+                onClick={handleBulkOC}
+                className="text-sm py-1.5 px-4 rounded-lg font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors flex items-center gap-1.5"
+                title="Orden de compra combinada: junta los productos de todas las órdenes por proveedor"
+              >
+                🛒 OC combinada
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="btn-danger text-sm py-1.5 px-4"
+              >
+                {bulkDeleting ? "Eliminando..." : `Eliminar ${checkedIds.length}`}
+              </button>
+              <button
+                onClick={() => setCheckedIds([])}
+                className="text-sm text-slate-500 hover:text-slate-800"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         )}
 
         {/* Tabla */}
+        {/* Wrapper relativo (sin overflow) para poder anclar las flechas laterales con sticky */}
+        <div className="relative">
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
+          <div ref={tableScrollRef} onScroll={updateTableArrows} className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-200 bg-slate-50">
@@ -1796,6 +1876,36 @@ export default function AdminOrders() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Flechas laterales para el scroll horizontal — position: fixed, centradas verticalmente,
+            siempre a mano sin bajar hasta la barra del fondo (no se pierde la fila que se mira).
+            Aparecen solo si hay desborde hacia ese lado (canLeft / canRight). */}
+        {tableArrows.canLeft && (
+          <button
+            type="button"
+            onClick={() => scrollTableBy(-1)}
+            aria-label="Desplazar la tabla a la izquierda"
+            // Centrada SOBRE el borde izquierdo de la tabla (mitad en el margen de afuera) para no
+            // tapar los datos. clamp a 22px para que nunca se salga de la pantalla en mobile.
+            style={{ left: `${Math.max(tableArrows.left, 22)}px`, top: "50%", transform: "translate(-50%, -50%)" }}
+            className="fixed z-40 w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-xl ring-1 ring-slate-200 text-slate-700 hover:bg-slate-50 hover:scale-110 transition-all"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          </button>
+        )}
+        {tableArrows.canRight && (
+          <button
+            type="button"
+            onClick={() => scrollTableBy(1)}
+            aria-label="Desplazar la tabla a la derecha"
+            // Centrada SOBRE el borde derecho de la tabla (mitad en el margen de afuera).
+            style={{ right: `${Math.max(tableArrows.right, 22)}px`, top: "50%", transform: "translate(50%, -50%)" }}
+            className="fixed z-40 w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-xl ring-1 ring-slate-200 text-slate-700 hover:bg-slate-50 hover:scale-110 transition-all"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+          </button>
+        )}
         </div>
 
         {/* Paginación */}

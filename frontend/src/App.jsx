@@ -56,6 +56,7 @@ import AdminReturns from "./pages/admin/AdminReturns";
 // import AdminUsers from "./pages/admin/AdminUsers";
 import AdminOrderDetail from "./pages/admin/AdminOrderDetail";
 import AdminPurchaseOrder from "./pages/admin/AdminPurchaseOrder";
+import AdminPurchaseOrderBulk from "./pages/admin/AdminPurchaseOrderBulk";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
@@ -151,6 +152,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="ordenes"><AdminOrders /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          {/* OC combinada de varias órdenes (?ids=1,2,3). Va ANTES de "/admin/ordenes/:id" —
+              igual React Router prioriza el segmento estático "oc-multiple" sobre el dinámico :id. */}
+          <Route
+            path="/admin/ordenes/oc-multiple"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="ordenes"><AdminPurchaseOrderBulk /></RequirePermission>
               </ProtectedRoute>
             }
           />
