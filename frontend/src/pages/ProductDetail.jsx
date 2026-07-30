@@ -559,10 +559,14 @@ export default function ProductDetail() {
               // };
               // const basePrice     = isMayoristaUI ? pick("wholesalePrice", "wholesalePrice") : pick("price", "price");
               // const baseSalePrice = isMayoristaUI ? pick("wholesaleSalePrice", "wholesaleSalePrice") : pick("salePrice", "salePrice");
-              const pickGroup = (baseField, saleField) =>
-                activeVariant && activeVariant[baseField] != null
-                  ? { base: activeVariant[baseField], sale: activeVariant[saleField] }
-                  : { base: product[baseField], sale: product[saleField] };
+              // Base: si la variante define su precio, se usa; si no, cae al del producto.
+              // OFERTA: es SIEMPRE propia de la variante — nunca se hereda la del producto. Una variante
+              // sin oferta cargada NO muestra descuento aunque el producto tenga oferta base. (Antes la
+              // heredaba y una variante sin oferta aparecía con el % OFF del producto.)
+              const pickGroup = (baseField, saleField) => ({
+                base: activeVariant && activeVariant[baseField] != null ? activeVariant[baseField] : product[baseField],
+                sale: activeVariant ? activeVariant[saleField] : product[saleField],
+              });
               const priceGroup = isMayoristaUI
                 ? pickGroup("wholesalePrice", "wholesaleSalePrice")
                 : pickGroup("price", "salePrice");
@@ -665,10 +669,12 @@ export default function ProductDetail() {
               //   activeVariant && activeVariant[varField] != null ? activeVariant[varField] : product[productField];
               // const baseUnit = isMayorista ? pickField("wholesalePrice", "wholesalePrice") : pickField("price", "price");
               // const saleUnit = isMayorista ? pickField("wholesaleSalePrice", "wholesaleSalePrice") : pickField("salePrice", "salePrice");
-              const pickTierGroup = (baseField, saleField) =>
-                activeVariant && activeVariant[baseField] != null
-                  ? { base: activeVariant[baseField], sale: activeVariant[saleField] }
-                  : { base: product[baseField], sale: product[saleField] };
+              // Misma regla que el bloque de precio de arriba: base cae al producto, pero la OFERTA es
+              // propia de la variante (no se hereda la del producto).
+              const pickTierGroup = (baseField, saleField) => ({
+                base: activeVariant && activeVariant[baseField] != null ? activeVariant[baseField] : product[baseField],
+                sale: activeVariant ? activeVariant[saleField] : product[saleField],
+              });
               const tierGroup = isMayorista
                 ? pickTierGroup("wholesalePrice", "wholesaleSalePrice")
                 : pickTierGroup("price", "salePrice");
