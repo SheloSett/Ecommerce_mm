@@ -449,6 +449,28 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
   const comboLabel = (combination) =>
     Array.isArray(combination) ? combination.map((c) => `${c.name}: ${c.value}`).join(" · ") : "";
 
+  // Orden de las variantes por el ORDEN de los valores de cada atributo (posición), no por createdAt
+  // (que es lo que devuelve el backend y queda desordenado tras regenerar combinaciones).
+  // Ranking: para cada atributo, en qué posición está el valor de la variante en la lista del atributo.
+  const attrValueRank = {}; // { [nombreAtributo]: { [valor]: índice } }
+  attributes.forEach((attr) => {
+    attrValueRank[attr.name] = {};
+    attr.values.forEach((val, idx) => { attrValueRank[attr.name][val.value] = idx; });
+  });
+  const sortedVariants = [...variants].sort((a, b) => {
+    const ca = Array.isArray(a.combination) ? a.combination : [];
+    const cb = Array.isArray(b.combination) ? b.combination : [];
+    // Compara atributo por atributo en el orden en que están definidos (el 1º manda, luego el 2º, etc.)
+    for (const attr of attributes) {
+      const va = ca.find((c) => c.name === attr.name)?.value;
+      const vb = cb.find((c) => c.name === attr.name)?.value;
+      const ra = attrValueRank[attr.name]?.[va] ?? 999;
+      const rb = attrValueRank[attr.name]?.[vb] ?? 999;
+      if (ra !== rb) return ra - rb;
+    }
+    return 0;
+  });
+
   // ── Helpers de UI ──────────────────────────────────────────────────────────
   // Badge pequeño para visibility — funciona en ambos temas con variantes dark:
   const VisibilityBadge = ({ visibility }) => {
@@ -786,7 +808,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
               </tr>
             </thead>
             <tbody>
-              {variants.map((v, i) => {
+              {sortedVariants.map((v, i) => {
                 const e = editing[v.id];
                 return (
                   <Fragment key={v.id}>
