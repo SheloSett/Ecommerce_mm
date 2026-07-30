@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 const { sendAbandonedCartEmail } = require("../services/email.service");
+// Precio efectivo (variante > producto por grupo + tiers), compartido con el checkout.
+const { effectiveUnitPrice } = require("../utils/pricing");
 
 const prisma = new PrismaClient();
 
@@ -183,25 +185,23 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
 
     if (existing) {
       const newQty = existing.quantity + quantity;
-      // Recalcular precio según el nuevo total de cantidad y los tiers del producto
+      // Recalcular precio según el nuevo total. Antes solo miraba el producto (precio + tiers),
+      // ignorando la variante → con variantes daba precios mal. Ahora usa el helper: variante > producto.
       const productData = await prisma.product.findUnique({
         where:  { id: productId },
         select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
       });
+      const variantData = existing.variantId
+        ? await prisma.productVariant.findUnique({
+            where:  { id: existing.variantId },
+            select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
+          })
+        : null;
       const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
       const isMayorista = customer?.type === "MAYORISTA";
-      const basePrice = isMayorista && productData?.wholesalePrice
-        ? (productData.wholesaleSalePrice ?? productData.wholesalePrice)
-        : (productData?.salePrice ?? productData?.price ?? existing.price);
-      let newPrice = basePrice;
-      // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
-      const activeTiers = isMayorista ? productData?.wholesalePriceTiers : productData?.priceTiers;
-      if (Array.isArray(activeTiers) && activeTiers.length > 0) {
-        const applicableTier = [...activeTiers]
-          .sort((a, b) => b.minQty - a.minQty)
-          .find((t) => newQty >= t.minQty);
-        if (applicableTier) newPrice = parseFloat(applicableTier.price);
-      }
+      const newPrice = productData
+        ? effectiveUnitPrice({ product: productData, variant: variantData, isMayorista, quantity: newQty })
+        : existing.price;
       await prisma.cartItem.update({
         where: { id: existing.id },
         data:  { quantity: newQty, price: parseFloat(newPrice) },
@@ -255,25 +255,20 @@ router.patch("/my/items/:itemId", authMiddleware, customerMiddleware, async (req
       // Si la cantidad baja a 0 o menos, eliminar el item directamente
       await prisma.cartItem.delete({ where: { id: itemId } });
     } else {
-      // Recalcular el precio según la nueva cantidad y los tiers del producto
-      // El precio base depende del tipo de cliente (mayorista o minorista)
+      // Recalcular el precio según la nueva cantidad. Antes solo miraba el producto (precio + tiers),
+      // ignorando la variante → precios mal en productos con variantes. Ahora usa el helper: variante > producto.
       const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
       const isMayorista = customer?.type === "MAYORISTA";
       const product = item.product;
-      const basePrice = isMayorista && product?.wholesalePrice
-        ? (product.wholesaleSalePrice ?? product.wholesalePrice)
-        : (product?.salePrice ?? product?.price ?? item.price);
-
-      // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
-      // Aplicar el tier con mayor minQty que no supere la nueva cantidad
-      let newPrice = basePrice;
-      const activeTiers = isMayorista ? product?.wholesalePriceTiers : product?.priceTiers;
-      if (Array.isArray(activeTiers) && activeTiers.length > 0) {
-        const applicableTier = [...activeTiers]
-          .sort((a, b) => b.minQty - a.minQty)
-          .find((t) => quantity >= t.minQty);
-        if (applicableTier) newPrice = parseFloat(applicableTier.price);
-      }
+      const variantData = item.variantId
+        ? await prisma.productVariant.findUnique({
+            where:  { id: item.variantId },
+            select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
+          })
+        : null;
+      const newPrice = product
+        ? effectiveUnitPrice({ product, variant: variantData, isMayorista, quantity })
+        : item.price;
 
       await prisma.cartItem.update({ where: { id: itemId }, data: { quantity: parseInt(quantity), price: parseFloat(newPrice) } });
     }

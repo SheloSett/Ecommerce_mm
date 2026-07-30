@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { variantsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 
@@ -236,6 +236,14 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         supplierId:         v.supplierId != null ? String(v.supplierId) : "",
         // Visibilidad heredada del atributo (read-only en esta fila)
         visibility:         attrVisibility,
+        // Descuentos por cantidad PROPIOS de la variante (los del producto NO se heredan si hay variantes).
+        // Guardamos los valores como string para los inputs; el backend los parsea al guardar.
+        priceTiers:         Array.isArray(v.priceTiers)
+                              ? v.priceTiers.map((t) => ({ minQty: String(t.minQty), price: String(t.price) }))
+                              : [],
+        wholesalePriceTiers: Array.isArray(v.wholesalePriceTiers)
+                              ? v.wholesalePriceTiers.map((t) => ({ minQty: String(t.minQty), price: String(t.price) }))
+                              : [],
         // images: array de URLs de las fotos del producto asignadas a esta variante.
         // Fallback al campo viejo 'image' (string único) para variantes anteriores a la migración.
         images:             Array.isArray(v.images) && v.images.length > 0
@@ -297,6 +305,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         visibility:         e.visibility || "AMBOS",
         images:             e.images || [],
         image:              e.images && e.images.length > 0 ? e.images[0] : null,
+        // Descuentos por cantidad de la variante (el backend filtra tramos vacíos/ inválidos).
+        priceTiers:          e.priceTiers || [],
+        wholesalePriceTiers: e.wholesalePriceTiers || [],
       };
       const res = await variantsApi.updateVariant(id, payload);
       setVariants((prev) => prev.map((v) => (v.id === id ? res.data : v)));
@@ -307,6 +318,100 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
     } finally {
       setSavingVariant(null);
     }
+  };
+
+  // ── Descuentos por cantidad (tiers) por variante ─────────────────────────────
+  // Cada tier es { minQty, price } (strings mientras se editan). Operan sobre editing[id][fieldKey],
+  // donde fieldKey es "priceTiers" (minorista) o "wholesalePriceTiers" (mayorista).
+  const addTier = (id, fieldKey) => {
+    setEditing((p) => {
+      const e = p[id]; if (!e) return p;
+      return { ...p, [id]: { ...e, [fieldKey]: [...(e[fieldKey] || []), { minQty: "", price: "" }] } };
+    });
+  };
+  const updateTier = (id, fieldKey, idx, key, value) => {
+    setEditing((p) => {
+      const e = p[id]; if (!e) return p;
+      const tiers = [...(e[fieldKey] || [])];
+      tiers[idx] = { ...tiers[idx], [key]: value };
+      return { ...p, [id]: { ...e, [fieldKey]: tiers } };
+    });
+  };
+  const removeTier = (id, fieldKey, idx) => {
+    setEditing((p) => {
+      const e = p[id]; if (!e) return p;
+      return { ...p, [id]: { ...e, [fieldKey]: (e[fieldKey] || []).filter((_, i) => i !== idx) } };
+    });
+  };
+
+  // Copia los descuentos por cantidad de esta variante a TODAS las demás (los persiste directo).
+  // No toca precios/stock de las otras variantes: el PUT solo actualiza los campos que recibe.
+  const copyTiersToAll = async (sourceId) => {
+    const e = editing[sourceId];
+    if (!e) return;
+    const others = variants.filter((v) => v.id !== sourceId);
+    if (others.length === 0) { toast("No hay otras variantes a las que copiar"); return; }
+    if (!confirm("¿Copiar estos descuentos por cantidad a TODAS las demás variantes? Se sobrescriben los que ya tengan.")) return;
+    setSavingVariant(sourceId);
+    try {
+      await Promise.all(
+        others.map((v) => variantsApi.updateVariant(v.id, {
+          priceTiers:          e.priceTiers || [],
+          wholesalePriceTiers: e.wholesalePriceTiers || [],
+        }))
+      );
+      const varsRes = await variantsApi.getVariants(productId);
+      setVariants(varsRes.data);
+      toast.success("Descuentos copiados a todas las variantes");
+    } catch {
+      toast.error("Error al copiar los descuentos");
+    } finally {
+      setSavingVariant(null);
+    }
+  };
+
+  // Render de una columna de tiers (minorista o mayorista). Es una FUNCIÓN (no componente) para que
+  // los inputs no pierdan el foco en cada tecla al re-renderizar.
+  const renderTierColumn = (id, e, fieldKey, label, accentCls) => {
+    const tiers = e[fieldKey] || [];
+    return (
+      <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5">
+        <p className={`text-[11px] font-bold mb-1.5 ${accentCls}`}>{label}</p>
+        {tiers.length === 0 ? (
+          <p className="text-[11px] text-slate-400 italic mb-1.5">Sin descuentos — precio normal siempre.</p>
+        ) : (
+          <div className="space-y-1 mb-1.5">
+            {tiers.map((t, idx) => (
+              <div key={idx} className="flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-400 shrink-0">Desde</span>
+                <input
+                  type="number" min="1" placeholder="Cant." value={t.minQty}
+                  onChange={(ev) => updateTier(id, fieldKey, idx, "minQty", ev.target.value)}
+                  className="w-16 px-1.5 py-1 bg-white border border-slate-300 text-slate-800 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <span className="text-[10px] text-slate-400 shrink-0">u. →</span>
+                <input
+                  type="number" min="0" step="0.01" placeholder="Precio c/u" value={t.price}
+                  onChange={(ev) => updateTier(id, fieldKey, idx, "price", ev.target.value)}
+                  className="flex-1 min-w-0 px-1.5 py-1 bg-white border border-slate-300 text-slate-800 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeTier(id, fieldKey, idx)}
+                  className="text-slate-400 hover:text-red-500 text-sm leading-none px-1 shrink-0"
+                  title="Quitar tramo"
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => addTier(id, fieldKey)}
+          className="text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400 font-semibold"
+        >+ Agregar tramo</button>
+      </div>
+    );
   };
 
   // ── Eliminar todo ────────────────────────────────────────────────────────────
@@ -684,7 +789,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
               {variants.map((v, i) => {
                 const e = editing[v.id];
                 return (
-                  <tr key={v.id} className={`border-b border-slate-200/50 dark:border-slate-700/50 ${i % 2 === 0 ? "bg-transparent" : "bg-slate-50/50 dark:bg-slate-900/20"}`}>
+                  <Fragment key={v.id}>
+                  <tr className={`border-b border-slate-200/50 dark:border-slate-700/50 ${i % 2 === 0 ? "bg-transparent" : "bg-slate-50/50 dark:bg-slate-900/20"}`}>
                     <td className="px-4 py-3 text-slate-700 dark:text-slate-200 font-medium">{comboLabel(v.combination)}</td>
 
                     {e ? (
@@ -1010,6 +1116,40 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                       </>
                     )}
                   </tr>
+
+                  {/* Fila expandida: descuentos por cantidad PROPIOS de la variante (solo en modo edición).
+                      Los productos con variantes ignoran los descuentos del producto padre, así que cada
+                      variante define los suyos acá. */}
+                  {e && (
+                    <tr className="border-b border-slate-200 dark:border-slate-700 bg-blue-50/40 dark:bg-slate-900/40">
+                      <td colSpan={8} className="px-4 py-3">
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 mb-2">
+                          🏷️ Descuentos por cantidad de esta variante
+                          <span className="font-normal text-slate-400">(precio unitario al comprar X o más)</span>
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {(e.visibility === "MINORISTA" || e.visibility === "AMBOS") &&
+                            renderTierColumn(v.id, e, "priceTiers", "Minorista", "text-blue-600 dark:text-blue-400")}
+                          {(e.visibility === "MAYORISTA" || e.visibility === "AMBOS") &&
+                            renderTierColumn(v.id, e, "wholesalePriceTiers", "Mayorista", "text-purple-600 dark:text-purple-400")}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+                          <p className="text-[10px] text-slate-400">
+                            Recordá tocar ✓ para guardar esta variante. «Copiar a todas» guarda las demás al instante.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => copyTiersToAll(v.id)}
+                            disabled={savingVariant === v.id}
+                            className="text-[11px] font-semibold px-3 py-1.5 rounded-md border border-blue-300 text-blue-700 hover:bg-blue-100 dark:border-blue-500/40 dark:text-blue-300 dark:hover:bg-blue-500/10 disabled:opacity-50 transition-colors whitespace-nowrap"
+                          >
+                            ⧉ Copiar descuentos a todas las variantes
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

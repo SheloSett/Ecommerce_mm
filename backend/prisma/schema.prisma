@@ -590,6 +590,11 @@ model ProductVariant {
   wholesalePrice     Float?
   wholesaleSalePrice Float?
   cost               Float?             // costo de la variante (sobrescribe el costo del producto padre)
+  // Descuentos por cantidad a nivel VARIANTE (mismo formato que Product.priceTiers: [{minQty, price}]).
+  // Si el producto tiene variantes, los descuentos por cantidad se toman de la VARIANTE elegida
+  // (no del producto). Una variante sin tiers no aplica descuento por cantidad (usa su precio normal).
+  priceTiers          Json?             // descuentos por cantidad minoristas de la variante
+  wholesalePriceTiers Json?             // descuentos por cantidad mayoristas de la variante
   // Ubicación física en el depósito a nivel variante (opcional, solo admin).
   // Si está vacío, se usa la ubicación del producto padre (fallback). Sirve para cuando una
   // variante puntual está guardada en un módulo/estante distinto al del resto del artículo.

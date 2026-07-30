@@ -1072,9 +1072,13 @@ export default function AdminCustomers() {
                               </div>
                             )}
 
-                            {/* Nombre y precio unitario */}
+                            {/* Nombre, variante y precio unitario */}
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                              {/* Variante elegida (si el producto tiene). variantLabel: "Longitud: 10M", "Rojo / 2m", etc. */}
+                              {item.variantLabel && (
+                                <p className="text-xs text-blue-600 font-medium truncate">🔧 {item.variantLabel.split(" | ").join(" · ")}</p>
+                              )}
                               <p className="text-xs text-slate-400">
                                 ${item.price.toLocaleString("es-AR", { minimumFractionDigits: 2 })} c/u
                               </p>

@@ -25,6 +25,8 @@ const {
 } = require("../services/email.service");
 
 const prisma = new PrismaClient();
+// Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
+const { effectiveUnitPrice } = require("../utils/pricing");
 
 // Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
 // costo e imágenes. A diferencia del precio o la etiqueta de variante (que se congelan al
@@ -269,58 +271,25 @@ async function createOrder(req, res) {
         }
       }
 
-      // Si el item tiene variante, traerla ANTES del cálculo de precio: las variantes pueden definir
-      // sus propios precios. Antes esto se buscaba después (solo para el SKU) y el precio se calculaba
-      // únicamente con el producto padre → una variante con precio propio se cobraba mal.
+      // Si el item tiene variante, traerla ANTES del cálculo de precio (precios/ofertas/tiers propios).
       let selectedVariant = null;
       if (item.variantId) {
         selectedVariant = await prisma.productVariant.findUnique({
           where: { id: parseInt(item.variantId) },
-          select: { sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true },
+          select: {
+            sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true,
+            priceTiers: true, wholesalePriceTiers: true,
+          },
         });
       }
 
-      // Lógica de precios (fallback por GRUPO, no por campo):
-      // - Si la variante define su precio base para el tipo de cliente, TODO el grupo sale de la
-      //   variante: su oferta se usa solo si la variante la define (vacía = SIN oferta; NO se hereda
-      //   la oferta del producto padre — eso mostraba/cobraba ofertas absurdas, ej. variante $14.999
-      //   con la oferta $1.000 del padre).
-      // - Si la variante no define precio base, se usa el grupo completo del producto padre.
-      let effectivePrice = product.price;
-      if (isMayorista) {
-        if (selectedVariant?.wholesalePrice != null) {
-          effectivePrice = selectedVariant.wholesalePrice;
-          if (selectedVariant.wholesaleSalePrice != null && selectedVariant.wholesaleSalePrice < selectedVariant.wholesalePrice) {
-            effectivePrice = selectedVariant.wholesaleSalePrice;
-          }
-        } else if (product.wholesalePrice) {
-          effectivePrice = product.wholesalePrice;
-          // Si hay precio de oferta mayorista válido, tiene prioridad sobre el precio mayorista base
-          if (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice) {
-            effectivePrice = product.wholesaleSalePrice;
-          }
-        }
-      } else {
-        if (selectedVariant?.price != null) {
-          effectivePrice = selectedVariant.price;
-          if (selectedVariant.salePrice != null && selectedVariant.salePrice < selectedVariant.price) {
-            effectivePrice = selectedVariant.salePrice;
-          }
-        } else if (product.salePrice && product.salePrice < product.price) {
-          effectivePrice = product.salePrice;
-        }
-      }
-
-      // Descuentos por cantidad: se aplica el tier del tipo de cliente correspondiente.
-      // Mayorista usa wholesalePriceTiers; minorista usa priceTiers.
-      const activeTiers = isMayorista ? product.wholesalePriceTiers : product.priceTiers;
-      const tierPrice = applyPriceTier(activeTiers, item.quantity);
-      if (tierPrice !== null) effectivePrice = tierPrice;
-
-      // SEGURIDAD: el precio SIEMPRE se calcula server-side a partir de la BD.
-      // Nunca se acepta un precio enviado por el cliente — cualquier customPrice del body se ignora.
-      // (El campo customPrice solo lo puede aplicar el ADMIN al editar una cotización desde el panel.)
-      const finalPrice = effectivePrice;
+      // Precio efectivo (variante > producto por grupo + descuentos por cantidad) calculado por el
+      // helper compartido con el carrito. Antes el cálculo era manual acá y los tiers salían SIEMPRE
+      // del producto → con variantes daba precios y % de descuento absurdos.
+      // SEGURIDAD: el precio SIEMPRE se calcula server-side; jamás se acepta el precio del cliente.
+      const finalPrice = effectiveUnitPrice({
+        product, variant: selectedVariant, isMayorista, quantity: item.quantity,
+      });
 
       total += finalPrice * item.quantity;
 

@@ -219,10 +219,22 @@ router.put("/:id", authMiddleware, async (req, res) => {
       cost, sku, active, image, images, visibility,
       module, shelf, // ubicación en depósito a nivel variante (override del producto)
       supplierId,    // proveedor a nivel variante (override del producto; vacío → usa el del producto)
+      priceTiers, wholesalePriceTiers, // descuentos por cantidad PROPIOS de la variante
     } = req.body;
 
     // Helper para parsear precios: null/empty string → null, valor numérico → float
     const parsePrice = (v) => (v === "" || v === null || v === undefined) ? undefined : parseFloat(v);
+
+    // Helper para parsear tiers: [{minQty, price}] con enteros/floats válidos y >0, ordenados por minQty.
+    // undefined (no enviado) → no tocar; array vacío o inválido → [] (sin descuentos por cantidad).
+    const parseTiers = (raw) => {
+      if (raw === undefined) return undefined;
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .map((t) => ({ minQty: parseInt(t?.minQty), price: parseFloat(t?.price) }))
+        .filter((t) => Number.isFinite(t.minQty) && t.minQty > 0 && Number.isFinite(t.price) && t.price > 0)
+        .sort((a, b) => a.minQty - b.minQty);
+    };
 
     const data = {};
     if (stock          !== undefined) data.stock          = parseInt(stock);
@@ -250,6 +262,11 @@ router.put("/:id", authMiddleware, async (req, res) => {
     if (shelf          !== undefined) data.shelf          = shelf  ? String(shelf).trim()  : null;
     // Proveedor por variante: vacío → null (usa el del producto padre)
     if (supplierId     !== undefined) data.supplierId     = supplierId ? parseInt(supplierId) : null;
+    // Descuentos por cantidad propios de la variante (los del producto NO se heredan si hay variantes)
+    const parsedTiers = parseTiers(priceTiers);
+    if (parsedTiers !== undefined) data.priceTiers = parsedTiers;
+    const parsedWholesaleTiers = parseTiers(wholesalePriceTiers);
+    if (parsedWholesaleTiers !== undefined) data.wholesalePriceTiers = parsedWholesaleTiers;
 
     const variant = await prisma.productVariant.update({ where: { id }, data });
     if (stock !== undefined || stockUnlimited !== undefined) {

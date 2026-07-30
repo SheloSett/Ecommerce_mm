@@ -263,12 +263,21 @@ export default function ProductDetail() {
     : (!activeUnlimited && !isMayorista && availableStock === 0);
 
   // Devuelve el tier que corresponde a una cantidad dada (el de mayor minQty que no la supere)
-  // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers
+  // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers.
+  // CON VARIANTES: los descuentos salen SOLO de la variante seleccionada (los del producto padre NO se
+  // heredan — sus precios eran absolutos y no aplican a las variantes). Sin variante elegida → sin descuento.
   const getTierForQty = (qty) => {
-    const tiers = isMayorista
-      ? (product?.wholesalePriceTiers?.length > 0 ? product.wholesalePriceTiers : null)
-      : (product?.priceTiers?.length > 0 ? product.priceTiers : null);
-    if (!tiers) return null;
+    let tiers = null;
+    if (hasVariants) {
+      if (activeVariant) {
+        tiers = isMayorista
+          ? (activeVariant.wholesalePrice != null ? activeVariant.wholesalePriceTiers : null)
+          : (activeVariant.price          != null ? activeVariant.priceTiers          : null);
+      }
+    } else {
+      tiers = isMayorista ? product?.wholesalePriceTiers : product?.priceTiers;
+    }
+    if (!Array.isArray(tiers) || tiers.length === 0) return null;
     // parseInt/parseFloat para defender contra valores string guardados en DB antes del fix del backend
     return [...tiers]
       .sort((a, b) => parseInt(b.minQty) - parseInt(a.minQty))
@@ -280,6 +289,13 @@ export default function ProductDetail() {
     setQuantity(newQty);
     setSelectedTier(getTierForQty(newQty));
   };
+
+  // Al cambiar de variante o de tipo de cliente, recalcular el tramo por cantidad vigente:
+  // como los descuentos ahora son propios de cada variante, el tramo aplicable puede cambiar
+  // (o desaparecer). Sin esto quedaría "pegado" el precio de otra variante.
+  useEffect(() => {
+    setSelectedTier(getTierForQty(quantity));
+  }, [activeVariant?.id, isMayorista]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddToCart = async () => {
     if (!product) return;
@@ -630,9 +646,17 @@ export default function ProductDetail() {
             {/* Mayoristas ven wholesalePriceTiers; minoristas ven priceTiers */}
             {(() => {
               const isMayorista = customer?.type === "MAYORISTA";
-              const activeTiers = isMayorista
-                ? (product.wholesalePriceTiers && product.wholesalePriceTiers.length > 0 ? product.wholesalePriceTiers : null)
-                : (product.priceTiers && product.priceTiers.length > 0 ? product.priceTiers : null);
+              // CON VARIANTES: los descuentos salen SOLO de la variante seleccionada (los del producto
+              // padre NO se heredan). Sin variantes: del producto. Sin variante elegida: no se muestra tabla.
+              // Antes tomaba siempre product.(wholesale)priceTiers, ignorando la variante → precios mal.
+              const tierSource = hasVariants
+                ? (activeVariant
+                    ? (isMayorista
+                        ? (activeVariant.wholesalePrice != null ? activeVariant.wholesalePriceTiers : null)
+                        : (activeVariant.price          != null ? activeVariant.priceTiers          : null))
+                    : null)
+                : (isMayorista ? product.wholesalePriceTiers : product.priceTiers);
+              const activeTiers = Array.isArray(tierSource) && tierSource.length > 0 ? tierSource : null;
               // El % OFF se calcula contra el precio efectivo (variante > producto) para que sea consistente.
               // Fallback por GRUPO (igual que el bloque de precio de arriba): si la variante define su
               // precio base, la oferta solo puede venir de la variante — no se hereda la del padre.
