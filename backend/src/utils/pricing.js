@@ -1,11 +1,13 @@
 // Cálculo del precio unitario efectivo — fuente ÚNICA de verdad, compartida por el checkout
 // (order.controller) y el carrito (cart.routes) para que no se desincronicen.
 //
-// Reglas:
-//  - Fallback por GRUPO: si la variante define su precio base para el tipo de cliente, TODO sale de
-//    la variante (base, oferta y tiers). Si no lo define, se usa el grupo del producto padre.
-//  - Productos CON variantes IGNORAN los tiers del producto: si hay variante, los descuentos por
-//    cantidad solo pueden venir de la variante (vacío = sin descuento, precio normal de la variante).
+// Reglas (cada componente se resuelve por separado, NO por grupo entero):
+//  - Precio BASE: si la variante define su precio, se usa; si no, cae al del producto.
+//  - OFERTA: es propia de la variante. Si hay variante NO se hereda la del producto (variante sin
+//    oferta = sin descuento, aunque el producto tenga oferta base).
+//  - Descuentos por cantidad (TIERS): son propios de la variante. Si hay variante, salen SIEMPRE de la
+//    variante — INDEPENDIENTE de si define su precio base (una variante que hereda la base del producto
+//    igual puede tener sus propios tramos). Nunca se heredan los del producto.
 //  - La oferta (sale) reemplaza al base si es menor. Un tier por cantidad, si aplica, gana sobre todo.
 //
 // product/variant: objetos con price/salePrice/wholesalePrice/wholesaleSalePrice/priceTiers/
@@ -14,25 +16,15 @@ function effectiveUnitPrice({ product, variant, isMayorista, quantity }) {
   let base, sale, tiers;
 
   if (isMayorista) {
-    if (variant && variant.wholesalePrice != null) {
-      base = variant.wholesalePrice; sale = variant.wholesaleSalePrice; tiers = variant.wholesalePriceTiers;
-    } else {
-      base = product.wholesalePrice != null ? product.wholesalePrice : product.price;
-      // La OFERTA es propia de la variante: si hay variante NO se hereda la del producto (variante sin
-      // oferta = sin descuento, aunque el producto tenga oferta base). El precio base sí cae al del producto.
-      sale = variant ? variant.wholesaleSalePrice : product.wholesaleSalePrice;
-      // Si hay variante (aunque no defina mayorista) NO se heredan los tiers del producto.
-      tiers = variant ? null : product.wholesalePriceTiers;
-    }
+    base  = variant && variant.wholesalePrice != null
+              ? variant.wholesalePrice
+              : (product.wholesalePrice != null ? product.wholesalePrice : product.price);
+    sale  = variant ? variant.wholesaleSalePrice : product.wholesaleSalePrice;
+    tiers = variant ? variant.wholesalePriceTiers : product.wholesalePriceTiers;
   } else {
-    if (variant && variant.price != null) {
-      base = variant.price; sale = variant.salePrice; tiers = variant.priceTiers;
-    } else {
-      base = product.price;
-      // Oferta propia de la variante (ver comentario arriba): sin oferta en la variante = sin descuento.
-      sale = variant ? variant.salePrice : product.salePrice;
-      tiers = variant ? null : product.priceTiers;
-    }
+    base  = variant && variant.price != null ? variant.price : product.price;
+    sale  = variant ? variant.salePrice : product.salePrice;
+    tiers = variant ? variant.priceTiers : product.priceTiers;
   }
 
   let price = base;

@@ -269,10 +269,10 @@ export default function ProductDetail() {
   const getTierForQty = (qty) => {
     let tiers = null;
     if (hasVariants) {
+      // Los descuentos salen de la variante seleccionada, tenga o no precio base propio
+      // (una variante que hereda la base del producto igual puede tener sus propios tramos).
       if (activeVariant) {
-        tiers = isMayorista
-          ? (activeVariant.wholesalePrice != null ? activeVariant.wholesalePriceTiers : null)
-          : (activeVariant.price          != null ? activeVariant.priceTiers          : null);
+        tiers = isMayorista ? activeVariant.wholesalePriceTiers : activeVariant.priceTiers;
       }
     } else {
       tiers = isMayorista ? product?.wholesalePriceTiers : product?.priceTiers;
@@ -655,9 +655,7 @@ export default function ProductDetail() {
               // Antes tomaba siempre product.(wholesale)priceTiers, ignorando la variante → precios mal.
               const tierSource = hasVariants
                 ? (activeVariant
-                    ? (isMayorista
-                        ? (activeVariant.wholesalePrice != null ? activeVariant.wholesalePriceTiers : null)
-                        : (activeVariant.price          != null ? activeVariant.priceTiers          : null))
+                    ? (isMayorista ? activeVariant.wholesalePriceTiers : activeVariant.priceTiers)
                     : null)
                 : (isMayorista ? product.wholesalePriceTiers : product.priceTiers);
               const activeTiers = Array.isArray(tierSource) && tierSource.length > 0 ? tierSource : null;
