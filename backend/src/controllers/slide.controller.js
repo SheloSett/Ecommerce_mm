@@ -5,6 +5,16 @@ const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
 const prisma = new PrismaClient();
 
+// Transformación panorámica para banners del hero (1920x600 recomendado).
+// crop "limit": solo achica si excede el tamaño, nunca recorta ni rellena —
+// a diferencia de la transformación cuadrada usada para fotos de producto.
+const SLIDE_EAGER = {
+  width: 1920, height: 600,
+  crop: "limit",
+  quality: "auto",
+  fetch_format: "webp",
+};
+
 // GET /api/slides — Listar slides activos (público, para el carrusel)
 async function getSlides(req, res) {
   try {
@@ -29,7 +39,7 @@ async function createSlide(req, res) {
       return res.status(400).json({ error: "La imagen es requerida" });
     }
 
-    const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides");
+    const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides", SLIDE_EAGER);
 
     const slide = await prisma.slide.create({
       data: {
@@ -67,7 +77,7 @@ async function updateSlide(req, res) {
 
     // Si se subió nueva imagen, subir a Cloudinary y eliminar la anterior
     if (req.file) {
-      const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides");
+      const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides", SLIDE_EAGER);
       data.image = uploaded.secure_url;
       // Eliminar imagen anterior: Cloudinary si es URL, disco si es path local (slide viejo)
       if (existing.image?.startsWith("http")) {

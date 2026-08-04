@@ -155,7 +155,10 @@ export default function Home() {
 
       {/* ── Carrusel hero ─────────────────────────────────────────────────── */}
       {slides.length > 0 ? (
-        <section className="relative w-full overflow-hidden bg-[#0b1c30]" style={{ height: "420px" }}>
+        <section
+          className="relative w-full overflow-hidden bg-[#0b1c30]"
+          style={{ aspectRatio: "1920 / 600", minHeight: "220px" }}
+        >
           {/* Slides */}
           {slides.map((slide, idx) => (
             <div
@@ -172,7 +175,7 @@ export default function Home() {
                 aria-hidden="true"
                 className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
               />
-              {/* Imagen principal: object-cover para que ocupe todo el ancho del banner (1920×600px recomendado) */}
+              {/* Imagen principal: el contenedor ya respeta la proporción 1920×600, así que cover no recorta nada */}
               <img
                 src={getImageUrl(slide.image)}
                 alt={slide.title || ""}

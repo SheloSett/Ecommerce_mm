@@ -291,11 +291,11 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
       const payload = {
         stock:              parseInt(e.stock) || 0,
         stockUnlimited:     e.stockUnlimited,
-        price:              isMin ? (e.price              === "" ? "" : (parseFloat(e.price)              || "")) : null,
-        salePrice:          isMin ? (e.salePrice          === "" ? "" : (parseFloat(e.salePrice)          || "")) : null,
-        wholesalePrice:     isMay ? (e.wholesalePrice     === "" ? "" : (parseFloat(e.wholesalePrice)     || "")) : null,
-        wholesaleSalePrice: isMay ? (e.wholesaleSalePrice === "" ? "" : (parseFloat(e.wholesaleSalePrice) || "")) : null,
-        cost:               e.cost  === "" ? "" : (parseFloat(e.cost)  || ""),
+        price:              isMin ? (e.price              === "" ? "" : parseFloat(e.price)) : null,
+        salePrice:          isMin ? (e.salePrice          === "" ? "" : parseFloat(e.salePrice)) : null,
+        wholesalePrice:     isMay ? (e.wholesalePrice     === "" ? "" : parseFloat(e.wholesalePrice)) : null,
+        wholesaleSalePrice: isMay ? (e.wholesaleSalePrice === "" ? "" : parseFloat(e.wholesaleSalePrice)) : null,
+        cost:               e.cost  === "" ? "" : parseFloat(e.cost),
         sku:                e.sku,
         // Ubicación en depósito (override del producto; vacío → el backend lo guarda como null)
         module:             e.module ?? "",
@@ -313,8 +313,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
       setVariants((prev) => prev.map((v) => (v.id === id ? res.data : v)));
       cancelEdit(id);
       toast.success("Variante guardada");
-    } catch {
-      toast.error("Error al guardar variante");
+    } catch (err) {
+      console.error(err);
+      toast.error(err.response?.data?.error || "Error al guardar variante");
     } finally {
       setSavingVariant(null);
     }

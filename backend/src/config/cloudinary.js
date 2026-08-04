@@ -7,28 +7,29 @@ cloudinary.config({
   secure:     true,
 });
 
+// Transformación default: pensada para fotos de producto (cuadradas, fondo blanco).
+// c_pad: ajusta al cuadrado manteniendo proporción + rellena con fondo blanco.
+// webp + q_auto: menor peso sin pérdida visible de calidad.
+const PRODUCT_EAGER = {
+  width: 1200, height: 1200,
+  crop: "pad",
+  background: "white",
+  quality: "auto",
+  fetch_format: "webp",
+};
+
 // Sube un buffer a Cloudinary y retorna el secure_url de la versión transformada.
 // eager genera la versión procesada de forma síncrona antes de responder.
-// c_limit: achica si supera 1200x1200 pero no agranda imágenes más chicas.
-// webp + q_auto: menor peso sin pérdida visible de calidad.
-function uploadBuffer(buffer, folder = "ecommerce") {
+// eagerTransform: por defecto usa PRODUCT_EAGER (cuadrado); pasar una transformación
+// distinta para imágenes con otra proporción (ej. banners panorámicos) evita que
+// se recorten/pixelen al forzarlas a un cuadrado que no les corresponde.
+function uploadBuffer(buffer, folder = "ecommerce", eagerTransform = PRODUCT_EAGER) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         folder,
         resource_type: "image",
-        eager: [
-          // c_pad: ajusta al cuadrado manteniendo proporción + rellena con fondo blanco
-          // Paso 1: encuadrar con fondo blanco en 1200x1200
-          // Paso 2: convertir a WebP con calidad automática
-          {
-            width: 1200, height: 1200,
-            crop: "pad",
-            background: "white",
-            quality: "auto",
-            fetch_format: "webp",
-          },
-        ],
+        eager: [eagerTransform],
         eager_async: false,
       },
       (error, result) => {
