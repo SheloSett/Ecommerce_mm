@@ -159,7 +159,7 @@ export const ordersApi = {
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
   publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
   // Admin: aprobar cotización
-  approveCotizacion: (orderId, adminNotes, variantAssignments = []) => api.post(`/orders/${orderId}/approve`, { adminNotes, variantAssignments }),
+  approveCotizacion: (orderId, adminNotes, variantAssignments = [], notify = true) => api.post(`/orders/${orderId}/approve`, { adminNotes, variantAssignments, notify }),
   // Cliente: cancelar su cotización con motivo
   cancelCotizacion: (orderId, reason) => customerAuthApi.post(`/orders/${orderId}/cancel-by-customer`, { reason }),
   // Cliente: obtener una cotización propia por ID (para la página de pago)

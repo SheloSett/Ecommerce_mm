@@ -1336,7 +1336,8 @@ async function publishCotizacion(req, res) {
 async function approveCotizacion(req, res) {
   try {
     const orderId = parseInt(req.params.id);
-    const { adminNotes, variantAssignments = [] } = req.body;
+    // notify: si es false, se aprueba SIN crear la notificación in-app al cliente (default true).
+    const { adminNotes, variantAssignments = [], notify = true } = req.body;
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -1436,12 +1437,15 @@ async function approveCotizacion(req, res) {
       data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, total },
     });
 
-    await createNotification(
-      order.customerId,
-      orderId,
-      "COTIZACION_APROBADA",
-      `¡Tu cotización #${orderId} fue aprobada! Ya podés proceder con el pago.${adminNotes ? " Nota: " + adminNotes : ""}`
-    );
+    // Solo notificar al cliente si notify !== false ("Aprobar sin notificar" lo saltea).
+    if (notify !== false) {
+      await createNotification(
+        order.customerId,
+        orderId,
+        "COTIZACION_APROBADA",
+        `¡Tu cotización #${orderId} fue aprobada! Ya podés proceder con el pago.${adminNotes ? " Nota: " + adminNotes : ""}`
+      );
+    }
 
     res.json(updated);
   } catch (err) {
@@ -1768,6 +1772,40 @@ async function createManualOrder(req, res) {
     const costUpdates = [];
 
     for (const item of items) {
+      // ── Ítem LIBRE (producto que no está en la base) ────────────────────────────
+      // El admin a veces vende algo puntual que consigue pero no trabaja y no quiere registrar
+      // como producto. Estos ítems llegan SIN productId, solo con un nombre escrito a mano.
+      // Se guardan en el OrderItem con productId=null + productName (snapshot), aprovechando que
+      // el schema ya lo permite (misma columna que usa el "borrado forzado" de un producto con ventas).
+      // NO tocan stock ni la tabla de productos, y no admiten variante ni "actualizar costo maestro".
+      const isFreeItem = item.productId === undefined || item.productId === null || item.productId === "";
+      if (isFreeItem) {
+        const freeName = (item.productName || "").trim();
+        if (!freeName) {
+          return res.status(400).json({ error: "Falta el nombre del producto libre en una de las líneas" });
+        }
+        const qtyFree   = parseInt(item.quantity);
+        const priceFree = parseFloat(item.price);
+        if (!qtyFree || qtyFree <= 0 || isNaN(priceFree) || priceFree < 0) {
+          return res.status(400).json({ error: `Cantidad o precio inválido para "${freeName}"` });
+        }
+        const costFreeRaw = item.cost !== undefined && item.cost !== null && item.cost !== "" ? parseFloat(item.cost) : null;
+        const costFree    = costFreeRaw != null && !isNaN(costFreeRaw) && costFreeRaw >= 0 ? costFreeRaw : null;
+
+        total += priceFree * qtyFree;
+        orderItems.push({
+          productId:    null,
+          productName:  freeName, // se muestra en todas las vistas vía hydrateDeletedProducts
+          quantity:     qtyFree,
+          price:        priceFree,
+          cost:         costFree,
+          variantId:    null,
+          variantLabel: null,
+          variantSku:   null,
+        });
+        continue;
+      }
+
       const product = await prisma.product.findUnique({ where: { id: parseInt(item.productId) } });
       if (!product) {
         return res.status(400).json({ error: `Producto no encontrado: ${item.productId}` });
@@ -1847,6 +1885,8 @@ async function createManualOrder(req, res) {
 
       // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no
       for (const item of orderItems) {
+        // Ítem libre (productId null): no existe en la base, no hay stock que descontar.
+        if (!item.productId) continue;
         if (item.variantId) {
           const variant = await tx.productVariant.findUnique({ where: { id: item.variantId } });
           if (variant && !variant.stockUnlimited) {
@@ -1892,10 +1932,15 @@ async function createManualOrder(req, res) {
 
     // Sincronizar publicación de los productos afectados (igual que las ventas web):
     // si el producto/variantes quedaron sin stock, se despublica automáticamente.
-    const affectedIds = [...new Set(orderItems.map((i) => i.productId))];
+    // filter(Boolean): descarta los ítems libres (productId null) que no corresponden a ningún producto.
+    const affectedIds = [...new Set(orderItems.map((i) => i.productId).filter(Boolean))];
     for (const pid of affectedIds) {
       try { await syncProductVisibility(pid); } catch (_) { /* no bloquear la venta por esto */ }
     }
+
+    // Reconstruir el "product" de los ítems libres desde su productName, así la respuesta ya
+    // trae nombre para mostrar sin esperar al refetch de la lista (mismas vistas que producto borrado).
+    hydrateDeletedProducts(order);
 
     res.status(201).json(order);
   } catch (err) {

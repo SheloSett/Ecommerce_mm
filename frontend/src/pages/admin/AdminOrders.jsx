@@ -140,7 +140,7 @@ export default function AdminOrders() {
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
-    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
+    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
   });
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [savingManual, setSavingManual] = useState(false);
@@ -216,7 +216,7 @@ export default function AdminOrders() {
   };
 
   const addManualItem = () =>
-    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }] }));
+    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }] }));
 
   const removeManualItem = (idx) =>
     setManualForm((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
@@ -227,6 +227,27 @@ export default function AdminOrders() {
       items[idx] = { ...items[idx], [field]: value };
       return { ...p, items };
     });
+
+  // Alterna una línea entre "producto del catálogo" y "producto libre" (algo puntual que se consigue
+  // pero no está registrado). Al cambiar de modo se limpia todo lo específico del otro modo
+  // (producto elegido, variante, costo, texto de búsqueda) para no arrastrar datos incoherentes.
+  const toggleCustomItem = (idx) => {
+    setProductSearch((p) => ({ ...p, [idx]: "" }));
+    setManualForm((p) => {
+      const items = [...p.items];
+      const wasCustom = items[idx].isCustom;
+      items[idx] = {
+        ...items[idx],
+        isCustom:     !wasCustom,
+        productId:    "",
+        productName:  "", // en modo libre lo escribe el admin; en modo catálogo lo pone el producto
+        variantId:    "",
+        variantLabel: "",
+        cost:         "",
+      };
+      return { ...p, items };
+    });
+  };
 
   // Devuelve el precio correcto según el tipo de cliente seleccionado en el form
   const getPriceForType = (product, type) => {
@@ -329,7 +350,7 @@ export default function AdminOrders() {
       customerType: "MINORISTA",
       salesChannel: "MOSTRADOR",
       paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-      items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "" }],
+      items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
     });
   };
 
@@ -354,13 +375,20 @@ export default function AdminOrders() {
 
   const handleSaveManual = async (e) => {
     e.preventDefault();
-    if (manualForm.items.some((it) => !it.productId)) {
-      toast.error("Seleccioná un producto en cada línea");
+    // Antes: if (manualForm.items.some((it) => !it.productId)) { ... "Seleccioná un producto..." }
+    // Ahora una línea es válida si tiene producto del catálogo (productId) O es un producto libre
+    // con nombre escrito. Solo se rechaza la línea vacía (sin producto y sin nombre libre).
+    const emptyLine = manualForm.items.some((it) =>
+      it.isCustom ? !it.productName.trim() : !it.productId
+    );
+    if (emptyLine) {
+      toast.error("Completá cada línea: elegí un producto o escribí el nombre del producto libre");
       return;
     }
-    // Productos con variantes: exigir que se elija una (el stock se descuenta por variante)
+    // Productos con variantes: exigir que se elija una (el stock se descuenta por variante).
+    // Los productos libres no tienen variantes → se saltan.
     const missingVariant = manualForm.items.find((it) => {
-      if (!it.productId || it.variantId) return false;
+      if (it.isCustom || !it.productId || it.variantId) return false;
       const variants = variantOptionsCache[it.productId];
       return Array.isArray(variants) && variants.length > 0;
     });
@@ -373,6 +401,17 @@ export default function AdminOrders() {
     // actualizar también el costo del producto/variante en la base de datos (cartel por ítem).
     const fmtCost = (n) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
     const itemsPayload = manualForm.items.map((it) => {
+      // Producto libre: no hay producto en la base, se manda solo el nombre + precio/costo/cantidad.
+      // No aplica el cartel de "actualizar costo maestro" (no hay producto que actualizar).
+      if (it.isCustom) {
+        const c = it.cost === "" || it.cost == null ? undefined : parseFloat(it.cost);
+        return {
+          productName: it.productName.trim(),
+          quantity:    parseInt(it.quantity),
+          price:       parseFloat(it.price),
+          cost:        c != null && !isNaN(c) ? c : undefined,
+        };
+      }
       const prod    = allProducts.find((p) => p.id === it.productId);
       const variant = it.variantId ? (variantOptionsCache[it.productId] || []).find?.((v) => v.id === it.variantId) : null;
       // Costo guardado en la base: el de la variante si tiene propio, sino el del producto
@@ -739,7 +778,8 @@ export default function AdminOrders() {
     setNoteText("");
   };
 
-  const handleConfirmAction = async () => {
+  // notify: true = aprobar/publicar y notificar al cliente; false = solo aprobar (sin notificación)
+  const handleConfirmAction = async (notify = true) => {
     if (!noteModal) return;
     const { orderId, action } = noteModal;
     setPublishing(orderId);
@@ -760,8 +800,8 @@ export default function AdminOrders() {
             }
           }
         }
-        await ordersApi.approveCotizacion(orderId, noteText, itemAssignments);
-        toast.success("Cotización aprobada — el cliente fue notificado");
+        await ordersApi.approveCotizacion(orderId, noteText, itemAssignments, notify);
+        toast.success(notify ? "Cotización aprobada — el cliente fue notificado" : "Cotización aprobada (sin notificar al cliente)");
       }
       fetchOrders();
     } catch (err) {
@@ -1494,7 +1534,7 @@ ${pagesHtml}
               </h3>
               <p className="text-sm text-slate-500">
                 {noteModal.action === "approve"
-                  ? "El cliente recibirá una notificación y podrá proceder con el pago."
+                  ? "Podés aprobarla notificando al cliente (recibe un aviso y puede pagar) o sin notificar (solo cambia el estado)."
                   : "El cliente recibirá una notificación con los cambios en su cotización."}
               </p>
               <div>
@@ -1509,16 +1549,28 @@ ${pagesHtml}
                   rows={3}
                 />
               </div>
-              <div className="flex gap-3">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={() => { setNoteModal(null); setNoteText(""); }}
-                  className="flex-1 px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                  disabled={publishing === noteModal.orderId}
+                  className="flex-1 min-w-[6rem] px-4 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
                 >
                   Cancelar
                 </button>
+                {/* Solo en aprobar: aprobar SIN mandarle la notificación al cliente */}
+                {noteModal.action === "approve" && (
+                  <button
+                    onClick={() => handleConfirmAction(false)}
+                    disabled={publishing === noteModal.orderId}
+                    className="flex-1 min-w-[9rem] px-4 py-2 rounded-xl text-sm font-bold border-2 border-green-600 text-green-700 hover:bg-green-50 disabled:opacity-60"
+                  >
+                    Aprobar sin notificar
+                  </button>
+                )}
                 <button
-                  onClick={handleConfirmAction}
-                  className={`flex-1 px-4 py-2 rounded-xl text-sm font-bold text-white ${
+                  onClick={() => handleConfirmAction(true)}
+                  disabled={publishing === noteModal.orderId}
+                  className={`flex-1 min-w-[9rem] px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60 ${
                     noteModal.action === "approve" ? "bg-green-600 hover:bg-green-700" : "bg-blue-600 hover:bg-blue-700"
                   }`}
                 >
@@ -2436,7 +2488,34 @@ ${pagesHtml}
 
                     return (
                       <div key={idx} className="bg-slate-50 rounded-xl p-3 space-y-2">
-                        {/* Buscador de producto */}
+                        {/* Toggle: alterna esta línea entre "producto del catálogo" y "producto libre".
+                            El producto libre sirve para algo puntual que se consigue pero no se trabaja
+                            y no se quiere registrar en el catálogo. */}
+                        <div className="flex justify-end -mb-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleCustomItem(idx)}
+                            className="text-[11px] font-medium text-blue-600 hover:text-blue-800"
+                          >
+                            {item.isCustom ? "↩ Elegir del catálogo" : "✎ Producto libre (no está en mi catálogo)"}
+                          </button>
+                        </div>
+
+                        {item.isCustom ? (
+                          /* Modo producto libre: nombre escrito a mano, sin búsqueda ni variantes */
+                          <div>
+                            <input
+                              value={item.productName}
+                              onChange={(e) => setManualItem(idx, "productName", e.target.value)}
+                              placeholder="Nombre del producto (ej: Cargador USB-C 65W)"
+                              className="w-full px-3 py-2 border border-amber-300 bg-amber-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                            <p className="text-[11px] text-amber-600 mt-1">
+                              Producto puntual: se anota en la venta pero no se registra en tu catálogo ni afecta el stock.
+                            </p>
+                          </div>
+                        ) : (
+                        /* Buscador de producto */
                         <div className="relative">
                           <input
                             value={item.productName || productSearch[idx] || ""}
@@ -2492,6 +2571,7 @@ ${pagesHtml}
                             </div>
                           )}
                         </div>
+                        )}
 
                         {/* Selector de variante — solo si el producto elegido tiene variantes activas */}
                         {item.productId && (() => {
@@ -2579,7 +2659,8 @@ ${pagesHtml}
                             </button>
                           </div>
                         </div>
-                        {item.productId && item.price && item.quantity && (
+                        {/* Antes: item.productId && ... — ahora también muestra el subtotal de los productos libres */}
+                        {(item.productId || item.isCustom) && item.price && item.quantity && (
                           <p className="text-xs text-slate-500 text-right">
                             Subtotal: {formatPrice(parseFloat(item.price) * parseInt(item.quantity))}
                           </p>
