@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# COMPOSE DE PRODUCCIÓN (VPS) — SOLO LA APP (backend + frontend)
+# ──────────────────────────────────────────────────────────────────────────────
+# El Postgres NO está acá a propósito: sigue corriendo bare-metal en el VPS
+# (localhost:5432), con todos tus datos, INTACTO. Este compose solo conteneriza
+# el backend (reemplaza a PM2) y el frontend (nginx interno servido detrás del
+# nginx del VPS que tiene el SSL).
+#
+# Uso (desde ~/Ecommerce_mm):
+#   docker compose -f deploy/docker-compose.vps.yml up -d --build
+#   docker compose -f deploy/docker-compose.vps.yml logs -f
+#   docker compose -f deploy/docker-compose.vps.yml down
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: igwtstore-backend:vps
+    container_name: igwtstore_backend
+    restart: unless-stopped
+
+    # network_mode host: el contenedor comparte la red del VPS. Así llega al Postgres
+    # bare-metal por localhost:5432 EXACTAMENTE como lo hacía PM2 — sin tocar pg_hba.conf
+    # ni la base, y sin cambiar la DATABASE_URL. También publica el 4000 directo en el host,
+    # que es lo que ya proxyea tu nginx (/api → localhost:4000).
+    network_mode: host
+
+    # Toma las variables del mismo backend/.env que ya usás en el VPS (DATABASE_URL a
+    # localhost:5432, JWT_SECRET, MP_ACCESS_TOKEN, SMTP_*, CLOUDINARY_*, FRONTEND_URL, etc.).
+    env_file:
+      - ../backend/.env
+    environment:
+      PORT: 4000
+
+    # Las imágenes subidas viven FUERA del contenedor para sobrevivir a los redeploys.
+    # Es la misma carpeta que ya usás; no se pierde nada.
+    volumes:
+      - ../backend/uploads:/app/uploads
+
+    # IMPORTANTE — override del CMD del Dockerfile:
+    # El Dockerfile por defecto corre `prisma db push --accept-data-loss` en cada arranque
+    # (pensado para contenedores frescos de dev). Sobre tu base REAL eso es peligroso, así que
+    # en producción NO lo corremos: acá solo arrancamos el server. Las migraciones de schema
+    # se hacen a mano contra el Postgres bare-metal cuando haga falta (ver DEPLOY.md).
+    command: ["node", "src/index.js"]
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        # URL del backend horneada en el build de Vite. Default a tu dominio; se puede
+        # sobreescribir exportando VITE_API_URL antes de levantar el compose.
+        VITE_API_URL: ${VITE_API_URL:-https://igwtstore.com.ar}
+    image: igwtstore-frontend:vps
+    container_name: igwtstore_frontend
+    restart: unless-stopped
+
+    # El nginx interno del contenedor (SPA + assets) se publica SOLO en localhost:8080.
+    # El nginx del VPS (que termina el SSL) hace de proxy a este puerto. No se expone
+    # al exterior directamente: nadie entra por el 8080 desde internet.
+    ports:
+      - "127.0.0.1:8080:80"
