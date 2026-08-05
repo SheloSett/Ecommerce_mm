@@ -234,12 +234,17 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       }
       return null;
     })();
-    await addItem(fullProduct, variantQty, variantPrice, activeVariant?.id || null, variantLabel);
-    toast.success(`"${product.name}"${variantLabel ? ` (${variantLabel})` : ""} ×${variantQty} agregado al carrito`);
-    setAddingVariant(false);
-    // No cerramos el modal: el cliente puede seguir eligiendo otra variante
-    setSelectedAttrs({});
-    setVariantQty(1);
+    try {
+      await addItem(fullProduct, variantQty, variantPrice, activeVariant?.id || null, variantLabel);
+      toast.success(`"${product.name}"${variantLabel ? ` (${variantLabel})` : ""} ×${variantQty} agregado al carrito`);
+      // No cerramos el modal: el cliente puede seguir eligiendo otra variante
+      setSelectedAttrs({});
+      setVariantQty(1);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo agregar al carrito");
+    } finally {
+      setAddingVariant(false);
+    }
   };
 
   const handleAddToCart = (e) => {

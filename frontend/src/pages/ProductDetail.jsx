@@ -322,8 +322,12 @@ export default function ProductDetail() {
     // Si hay variante, el precio efectivo ya está calculado arriba (effectivePrice) y considera
     // la variante + tipo de cliente. Si además hay tier price (descuento por cantidad), ese tiene prioridad.
     const priceToCharge = tierPrice !== null ? tierPrice : (activeVariant ? effectivePrice : null);
-    await addItem(product, safeQty, priceToCharge, activeVariant?.id || null, variantLabel);
-    toast.success(`${safeQty}x "${product.name}"${variantLabel ? ` (${variantLabel})` : ""} agregado al carrito`);
+    try {
+      await addItem(product, safeQty, priceToCharge, activeVariant?.id || null, variantLabel);
+      toast.success(`${safeQty}x "${product.name}"${variantLabel ? ` (${variantLabel})` : ""} agregado al carrito`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo agregar el producto al carrito");
+    }
   };
 
   if (loading) {

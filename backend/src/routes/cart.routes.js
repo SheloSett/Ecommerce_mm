@@ -164,6 +164,26 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     const { productId, name, price, image, variantId, variantLabel } = req.body;
     const quantity = parseInt(req.body.quantity) || 1;
 
+    // El producto (y su variante, si aplica) deben seguir activos al momento de agregar.
+    // Sin esto, un cliente con la página de detalle abierta desde antes podía agregar al
+    // carrito un producto que el admin ya despublicó, mostrando "agregado" como si nada.
+    const product = await prisma.product.findUnique({
+      where:  { id: parseInt(productId) },
+      select: { id: true, active: true },
+    });
+    if (!product || !product.active) {
+      return res.status(404).json({ error: "Este producto ya no está disponible" });
+    }
+    if (variantId) {
+      const variant = await prisma.productVariant.findUnique({
+        where:  { id: parseInt(variantId) },
+        select: { id: true, active: true, productId: true },
+      });
+      if (!variant || !variant.active || variant.productId !== product.id) {
+        return res.status(404).json({ error: "Esta variante ya no está disponible" });
+      }
+    }
+
     // Upsert del carrito: crea si no existe, actualiza updatedAt si ya existe
     const cart = await prisma.cart.upsert({
       where:  { customerId },
