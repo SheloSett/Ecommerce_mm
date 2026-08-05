@@ -18,4 +18,4 @@ Disallow: /cotizaciones
 Disallow: /pagar/
 Disallow: /pago/
 
-Sitemap: https://igwtstore.com.ar/sitemap.xml
+Sitemap: https://igwtstore.com.ar/api/sitemap.xml
