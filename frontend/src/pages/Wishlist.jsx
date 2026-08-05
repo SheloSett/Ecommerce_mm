@@ -14,12 +14,14 @@ export default function Wishlist() {
   const { wishlist, remove } = useWishlist();
   const navigate = useNavigate();
 
-  // Auto-eliminar productos sin stock o desactivados al cargar la lista
+  // Auto-eliminar productos desactivados al cargar la lista.
+  // No usamos p.stock: en productos con variantes ese campo del padre queda
+  // siempre en 0 (el stock real vive en las variantes), así que "active" es
+  // la única señal confiable — se mantiene sincronizada por syncProductVisibility
+  // en el backend (variantes, edición de producto y órdenes).
   useEffect(() => {
     wishlist.forEach((p) => {
-      const sinStock = p.stock === 0 && p.stock !== -1;
-      const inactivo = p.active === false;
-      if (sinStock || inactivo) remove(p.id);
+      if (p.active === false) remove(p.id);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wishlist.length]);

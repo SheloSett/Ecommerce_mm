@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import toast from "react-hot-toast";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { wishlistApi } from "../services/api";
 
@@ -56,7 +57,9 @@ export function WishlistProvider({ children }) {
           } else {
             await wishlistApi.add(product.id);
           }
-        } catch {
+        } catch (err) {
+          console.error(err);
+          toast.error(err.response?.data?.error || "No se pudo actualizar favoritos");
           // Revertir si falló
           setWishlist((prev) =>
             already ? [...prev, product] : prev.filter((p) => p.id !== product.id)
@@ -77,7 +80,7 @@ export function WishlistProvider({ children }) {
       setWishlist((prev) => prev.filter((p) => p.id !== id));
       if (customer) {
         try { await wishlistApi.remove(id); }
-        catch { /* el item ya no está en la UI, silenciar el error */ }
+        catch (err) { console.error(err); /* el item ya no está en la UI, no revertimos */ }
       }
     },
     [customer]
