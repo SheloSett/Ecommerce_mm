@@ -58,8 +58,9 @@ services:
     container_name: igwtstore_frontend
     restart: unless-stopped
 
-    # El nginx interno del contenedor (SPA + assets) se publica SOLO en localhost:8080.
+    # El nginx interno del contenedor (SPA + assets) se publica SOLO en localhost:8090.
     # El nginx del VPS (que termina el SSL) hace de proxy a este puerto. No se expone
-    # al exterior directamente: nadie entra por el 8080 desde internet.
+    # al exterior directamente: nadie entra por el 8090 desde internet.
+    # (Se usa 8090 y no 8080 porque en el VPS el 8080 ya estaba ocupado por otro servicio.)
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8090:80"
