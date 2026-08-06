@@ -250,6 +250,25 @@ async function handleWebhook(req, res) {
           }
         }
 
+        // Registrar el uso del cupón AHORA que el pago está confirmado (no al crear la orden).
+        // Antes el uso se registraba al crear la orden y un pago rechazado/abandonado igual consumía
+        // el cupón (los de un solo uso quedaban inutilizables). Idempotente: el findFirst evita
+        // duplicar el registro si MercadoPago reenvía el webhook.
+        if (order.couponId) {
+          try {
+            const already = await prisma.couponUsage.findFirst({ where: { orderId: order.id } });
+            if (!already) {
+              await prisma.couponUsage.create({
+                data: {
+                  couponId:      order.couponId,
+                  orderId:       order.id,
+                  customerEmail: (order.customerEmail || "").toLowerCase(),
+                },
+              });
+            }
+          } catch (err) { console.error("[WEBHOOK] Error registrando uso de cupón:", err.message); }
+        }
+
         // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
         // y enviar confirmación al cliente. No bloqueamos la respuesta del webhook si fallan.
         try {

@@ -79,6 +79,32 @@ function hydrateDeletedProducts(orders) {
   return orders;
 }
 
+// Registra el uso del cupon de una orden recien APROBADA (pago confirmado). Idempotente: si ya
+// existe un registro para esa orden, no crea otro (protege ante webhooks repetidos de MP o doble
+// cambio de estado). Se llama desde updateOrderStatus y desde el webhook cuando la orden pasa a
+// APPROVED. Antes el uso se registraba al crear la orden, y un pago fallido/abandonado lo consumia.
+async function recordCouponUsageOnApproval(orderId) {
+  try {
+    const order = await prisma.order.findUnique({
+      where:  { id: orderId },
+      select: { couponId: true, customerEmail: true },
+    });
+    if (!order?.couponId) return; // la orden no usó cupón
+    const already = await prisma.couponUsage.findFirst({ where: { orderId } });
+    if (already) return; // ya registrado (webhook/estado repetido)
+    await prisma.couponUsage.create({
+      data: {
+        couponId:      order.couponId,
+        orderId,
+        customerEmail: (order.customerEmail || "").toLowerCase(),
+      },
+    });
+  } catch (e) {
+    // No bloquear la aprobación de la orden por un error al registrar el uso del cupón.
+    console.error("recordCouponUsageOnApproval error:", e.message);
+  }
+}
+
 // GET /api/orders - Listar órdenes (solo admin)
 async function getOrders(req, res) {
   try {
@@ -429,15 +455,21 @@ async function createOrder(req, res) {
     });
 
     // Registrar uso del cupón si se aplicó uno
-    if (appliedCoupon) {
-      await prisma.couponUsage.create({
-        data: {
-          couponId: appliedCoupon.id,
-          orderId: order.id,
-          customerEmail: customerEmail.toLowerCase(),
-        },
-      });
-    }
+    // COMENTADO: antes el uso del cupón se registraba acá, al CREAR la orden. Problema: en MercadoPago
+    // la orden queda PENDING hasta que el webhook confirme el pago; si el pago se rechazaba o el cliente
+    // abandonaba el checkout, el cupón quedaba "gastado" igual (sobre todo los de un solo uso).
+    // Ahora el uso se registra recién cuando la orden pasa a APPROVED (pago confirmado), vía
+    // recordCouponUsageOnApproval(), llamado desde updateOrderStatus y desde el webhook de MP.
+    // El cupón aplicado sigue guardado en la orden (couponId/couponDiscount), solo se difiere el conteo.
+    // if (appliedCoupon) {
+    //   await prisma.couponUsage.create({
+    //     data: {
+    //       couponId: appliedCoupon.id,
+    //       orderId: order.id,
+    //       customerEmail: customerEmail.toLowerCase(),
+    //     },
+    //   });
+    // }
 
     // Para cotizaciones: reservar stock inmediatamente al crear la orden.
     // SOLO para productos sin variantes — para productos con variantes el stock se descuenta
@@ -675,6 +707,12 @@ async function updateOrderStatus(req, res) {
         }
       }
 
+    }
+
+    // Registrar el uso del cupón ahora que la orden está aprobada (pago confirmado).
+    // Antes se registraba al crear la orden y un pago fallido igual lo consumía. Idempotente.
+    if (status === "APPROVED" && existing.status !== "APPROVED") {
+      await recordCouponUsageOnApproval(existing.id);
     }
 
     // Al aprobar un pedido de un cliente MAYORISTA, resetear su contador de restock
