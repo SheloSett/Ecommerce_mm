@@ -1,12 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const { PrismaClient } = require("@prisma/client");
-const { authMiddleware } = require("../middleware/auth.middleware");
+// FIX seguridad: se agrega adminMiddleware. Antes las rutas de gastos solo tenían authMiddleware
+// (token válido) → cualquier cliente logueado podía listar/crear/borrar gastos del negocio.
+const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
 
 const prisma = new PrismaClient();
 
 // GET /api/gastos - listar gastos con filtros opcionales: type, dateFrom, dateTo
-router.get("/", authMiddleware, async (req, res) => {
+router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { type, dateFrom, dateTo } = req.query;
     const where = {};
@@ -29,7 +31,7 @@ router.get("/", authMiddleware, async (req, res) => {
 });
 
 // POST /api/gastos - crear un gasto
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { amount, description, type, date, subtype, productId, variantId, quantity } = req.body;
     if (!amount || !description || !type) {
@@ -85,7 +87,7 @@ router.post("/", authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/gastos/:id - eliminar un gasto
-router.delete("/:id", authMiddleware, async (req, res) => {
+router.delete("/:id", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.gasto.delete({ where: { id } });
