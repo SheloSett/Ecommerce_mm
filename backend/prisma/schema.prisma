@@ -48,6 +48,9 @@ model Product {
   description     String?
   price           Float
   cost                 Float?  // Precio de costo (interno, solo visible para el admin)
+  // Moneda del costo y de todos los precios de este producto (ARS o USD). Sin conversión automática:
+  // cambiar la moneda NO recalcula los precios ya cargados.
+  currency             Currency @default(ARS)
   ivaRate              Float   @default(21) // Alícuota de IVA aplicable: 10.5 o 21 (%)
   salePrice            Float?  // Precio oferta minorista (debe ser < price)
   wholesalePrice       Float?  // Precio mayorista para clientes tipo MAYORISTA
@@ -106,6 +109,13 @@ enum CustomerVisibility {
   AMBOS
   MAYORISTA
   MINORISTA
+}
+
+// Moneda en la que están cargados el costo/precios de un producto o variante.
+// Sin conversión automática entre monedas en ningún punto del sistema.
+enum Currency {
+  ARS
+  USD
 }
 
 model Order {
@@ -205,6 +215,9 @@ model OrderItem {
   // modificación del pedido y usado en la orden de compra. Si es null, se usa el costo del
   // producto/variante (fallback). No afecta el costo maestro del producto.
   cost         Float?
+  // currency: moneda en la que se vendió esta línea (snapshot, igual que price/cost). Necesario porque
+  // un pedido puede mezclar ítems ARS y USD (ver PaymentMethod.A_CONVENIR).
+  currency     Currency @default(ARS)
   variantId    Int?    // ID de la variante seleccionada (null si sin variante)
   variantLabel String? // Ej: "Color: Negro / RGB: Si" — guardado al momento del pedido
   variantSku   String? // SKU de la variante seleccionada al momento del pedido
@@ -250,6 +263,9 @@ enum PaymentMethod {
   EFECTIVO
   TRANSFERENCIA
   COTIZACION
+  // A_CONVENIR: pedido minorista con algún ítem en USD — no puede pagarse por los métodos de arriba,
+  // el admin contacta al cliente y arregla el pago por fuera del sistema.
+  A_CONVENIR
 }
 
 model Customer {
@@ -401,6 +417,8 @@ model Gasto {
   amount      Float
   description String
   type        GastoType
+  // currency: moneda del gasto (ARS o USD). Default ARS porque históricamente todos los gastos eran en pesos.
+  currency    Currency   @default(ARS)
   // subtype: "GASTO" (gasto normal) o "RMA" (devolución/reparación de producto)
   subtype     String     @default("GASTO")
   // productId: referencia al producto devuelto (solo cuando subtype = "RMA")
@@ -590,6 +608,8 @@ model ProductVariant {
   wholesalePrice     Float?
   wholesaleSalePrice Float?
   cost               Float?             // costo de la variante (sobrescribe el costo del producto padre)
+  // Moneda de la variante. null → hereda la moneda del producto padre (mismo patrón que supplierId/module/shelf).
+  currency           Currency?
   // Descuentos por cantidad a nivel VARIANTE (mismo formato que Product.priceTiers: [{minQty, price}]).
   // Si el producto tiene variantes, los descuentos por cantidad se toman de la VARIANTE elegida
   // (no del producto). Una variante sin tiers no aplica descuento por cantidad (usa su precio normal).

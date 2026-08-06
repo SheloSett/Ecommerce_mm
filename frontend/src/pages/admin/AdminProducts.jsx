@@ -13,6 +13,7 @@ const EMPTY_FORM = {
   name: "",
   description: "",
   cost: "",
+  currency: "ARS",
   price: "",
   ivaRate: "21",
   salePrice: "",
@@ -329,6 +330,7 @@ export default function AdminProducts() {
       name: product.name,
       description: product.description || "",
       cost: product.cost?.toString() || "",
+      currency: product.currency || "ARS",
       price: product.price.toString(),
       ivaRate: product.ivaRate?.toString() || "21",
       salePrice: product.salePrice?.toString() || "",
@@ -436,6 +438,7 @@ export default function AdminProducts() {
       formData.append("name", form.name.toUpperCase()); // título siempre en mayúsculas
       formData.append("description", form.description);
       formData.append("cost", form.cost);
+      formData.append("currency", form.currency || "ARS");
       formData.append("price", effPrice);
       formData.append("ivaRate", form.ivaRate || "21");
       formData.append("salePrice", form.salePrice);
@@ -991,6 +994,7 @@ export default function AdminProducts() {
               const qv = quickEditValues[p.id] || {};
               const isSaving = quickEditSaving.has(p.id);
               const sku = p.sku || nameToSku(p.name);
+              const pCurrencyLabel = p.currency === "USD" ? "USD" : "$";
 
               return (
                 <div key={p.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
@@ -1193,6 +1197,9 @@ export default function AdminProducts() {
                                     const combinationLabel = Array.isArray(v.combination)
                                       ? v.combination.map((c) => c.value).join(" / ")
                                       : "—";
+                                    // Moneda efectiva de la variante (variante > producto) — solo lectura acá,
+                                    // la edición de moneda vive en el editor de variantes del modal.
+                                    const vCurrencyLabel = (v.currency || p.currency || "ARS") === "USD" ? "USD" : "$";
                                     return (
                                       <tr key={v.id} className="border-t border-slate-100">
                                         {/* Variante: imagen + combinación + SKU */}
@@ -1228,7 +1235,7 @@ export default function AdminProducts() {
                                         {/* Costo variante */}
                                         <td className="px-4 py-3">
                                           <div className="flex items-center gap-1">
-                                            <span className="text-slate-400 text-sm">$</span>
+                                            <span className="text-slate-400 text-sm">{vCurrencyLabel}</span>
                                             <input type="number" step="0.01" min="0" value={vv.cost ?? ""} onChange={(e) => setVariantField(v.id, "cost", e.target.value)} placeholder="Base" className="w-24 px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" />
                                           </div>
                                         </td>
@@ -1241,12 +1248,12 @@ export default function AdminProducts() {
                                               <>
                                                 <div className="flex items-center gap-1">
                                                   <span className="text-[10px] text-slate-500 w-10 shrink-0">Min</span>
-                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <span className="text-slate-400 text-xs">{vCurrencyLabel}</span>
                                                   <input type="number" step="0.01" min="0" value={vv.price ?? ""} onChange={(e) => setVariantField(v.id, "price", e.target.value)} placeholder="Base" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
                                                 </div>
                                                 <div className="flex items-center gap-1">
                                                   <span className="text-[10px] text-red-500 w-10 shrink-0">Of.Min</span>
-                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <span className="text-slate-400 text-xs">{vCurrencyLabel}</span>
                                                   <input type="number" step="0.01" min="0" value={vv.salePrice ?? ""} onChange={(e) => setVariantField(v.id, "salePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
                                                 </div>
                                               </>
@@ -1256,12 +1263,12 @@ export default function AdminProducts() {
                                               <>
                                                 <div className="flex items-center gap-1">
                                                   <span className="text-[10px] text-purple-600 w-10 shrink-0">May</span>
-                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <span className="text-slate-400 text-xs">{vCurrencyLabel}</span>
                                                   <input type="number" step="0.01" min="0" value={vv.wholesalePrice ?? ""} onChange={(e) => setVariantField(v.id, "wholesalePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
                                                 </div>
                                                 <div className="flex items-center gap-1">
                                                   <span className="text-[10px] text-red-500 w-10 shrink-0">Of.May</span>
-                                                  <span className="text-slate-400 text-xs">$</span>
+                                                  <span className="text-slate-400 text-xs">{vCurrencyLabel}</span>
                                                   <input type="number" step="0.01" min="0" value={vv.wholesaleSalePrice ?? ""} onChange={(e) => setVariantField(v.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="flex-1 px-2 py-1 border border-slate-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs placeholder-slate-300" />
                                                 </div>
                                               </>
@@ -1318,15 +1325,15 @@ export default function AdminProducts() {
                                 )}
                               </td>
                               {/* Costo base del producto */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Precio minorista base del producto */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
                               {/* Oferta minorista */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Precio mayorista */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Oferta mayorista */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">$</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* SKU base del producto */}
                               <td className="px-2 xl:px-4 py-4"><input type="text" value={qv.sku ?? ""} onChange={(e) => setQuickField(p.id, "sku", e.target.value)} placeholder="SKU" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></td>
                               <td className="px-2 xl:px-4 py-4">
@@ -1692,14 +1699,16 @@ export default function AdminProducts() {
                 </div>
               </div>
 
-              {/* Costo (interno) + Alícuota IVA en la misma fila */}
-              <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+              {/* Costo (interno) + Moneda + Alícuota IVA en la misma fila */}
+              <div className="grid grid-cols-[1fr_auto_auto] gap-3 items-end">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
                     Costo * <span className="normal-case font-normal text-slate-400">— solo visible para el admin</span>
                   </label>
                   <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 h-9">
-                    <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                    <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">
+                      {form.currency === "USD" ? "USD" : "$"}
+                    </span>
                     <input
                       type="number"
                       step="0.01"
@@ -1710,6 +1719,31 @@ export default function AdminProducts() {
                       required
                       className="flex-1 px-3 py-2 text-sm focus:outline-none"
                     />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Moneda</label>
+                  <div className="flex gap-2">
+                    {[{ value: "ARS", label: "ARS" }, { value: "USD", label: "USD" }].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          const hasPrices = [form.cost, form.price, form.salePrice, form.wholesalePrice, form.wholesaleSalePrice].some((v) => v);
+                          if (opt.value !== form.currency && hasPrices) {
+                            toast("Cambiaste la moneda — los precios no se convierten automáticamente, revisalos.", { icon: "⚠️" });
+                          }
+                          setForm({ ...form, currency: opt.value });
+                        }}
+                        className={`px-3 h-9 rounded-lg border-2 text-sm font-semibold transition-colors whitespace-nowrap ${
+                          form.currency === opt.value
+                            ? "border-blue-500 bg-blue-50 text-blue-700"
+                            : "border-slate-200 text-slate-600 hover:border-slate-300"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div>
@@ -1749,7 +1783,9 @@ export default function AdminProducts() {
                       {label}{required && " *"}
                     </label>
                     <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400">
-                      <span className="px-2 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                      <span className="px-2 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">
+                        {form.currency === "USD" ? "USD" : "$"}
+                      </span>
                       <input
                         type="number"
                         step="0.01"
@@ -2247,6 +2283,7 @@ export default function AdminProducts() {
                         productId={editingProduct.id}
                         basePrice={editingProduct.price}
                         baseWholesalePrice={editingProduct.wholesalePrice}
+                        baseCurrency={editingProduct.currency || "ARS"}
                         productImages={editingProduct.images || []}
                         suppliers={suppliers}
                       />

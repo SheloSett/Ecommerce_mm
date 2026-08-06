@@ -7,6 +7,7 @@ import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, couponsApi, shippingApi, getImageUrl } from "../services/api";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 
 // Provincias argentinas con sus códigos para el selector de Correo Argentino
 const PROVINCES = [
@@ -123,8 +124,15 @@ export default function Checkout() {
   const [shippingRate, setShippingRate] = useState(null);
   const [rateLoading, setRateLoading]   = useState(false);
 
-  const formatPrice = (price) =>
-    new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  // formatPrice sigue siendo ARS por defecto (subtotal/IVA/envío/total siempre se calculan en pesos);
+  // los montos en USD usan formatPriceWithCurrency(monto, "USD") explícitamente donde corresponde.
+  const formatPrice = (price) => formatPriceWithCurrency(price, "ARS");
+
+  // cartHasUsd: solo aplica a minoristas — mayoristas siempre pasan por COTIZACION sin importar
+  // la moneda de los ítems, así que este gating no les afecta.
+  const cartHasUsd  = !isMayorista && items.some((i) => i.currency === "USD");
+  const subtotalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const subtotalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
 
   const subtotal       = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const couponDiscount = couponResult?.discountAmount || 0;
@@ -242,7 +250,9 @@ export default function Checkout() {
           variantId:    i.variantId   || null,
           variantLabel: i.variantLabel || null,
         })),
-        paymentMethod: isMayorista ? "COTIZACION" : paymentMethod,
+        // Si el carrito tiene algún ítem en USD, el servidor va a forzar A_CONVENIR de todas formas
+        // (ver createOrder) — se manda así también para que la UI post-creación ya lo refleje.
+        paymentMethod: isMayorista ? "COTIZACION" : (cartHasUsd ? "A_CONVENIR" : paymentMethod),
         shippingMethod,
         // Incluir dirección y costo si el método es Correo Argentino
         ...(shippingMethod === "CORREO_ARGENTINO" ? {
@@ -256,7 +266,10 @@ export default function Checkout() {
 
       const order = orderRes.data;
 
-      if (paymentMethod === "MERCADOPAGO" && !isMayorista) {
+      // Se chequea el paymentMethod que confirmó el SERVIDOR (order.paymentMethod), no el estado
+      // local: el backend puede forzar A_CONVENIR aunque localmente estuviera seleccionado MP
+      // (ver createOrder — el enforcement de USD es server-side, no confía en el cliente).
+      if (order.paymentMethod === "MERCADOPAGO" && !isMayorista) {
         // ── Flujo MercadoPago: redirigir al gateway ──────────────────────────
         // IMPORTANTE: en dev usar sandboxInitPoint (test); en prod usar initPoint (real).
         const prefRes    = await paymentsApi.createPreference(order.id);
@@ -279,7 +292,8 @@ export default function Checkout() {
 
   // ── Pantalla de éxito (no-MP) ────────────────────────────────────────────────
   if (successOrder) {
-    const isCotizacion = successOrder.paymentMethod === "COTIZACION";
+    const isCotizacion  = successOrder.paymentMethod === "COTIZACION";
+    const isACConvenir  = successOrder.paymentMethod === "A_CONVENIR";
     return (
       <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
         <Navbar />
@@ -291,18 +305,20 @@ export default function Checkout() {
                 className="material-symbols-outlined text-[48px] text-[#006b2c]"
                 style={{ fontVariationSettings: "'FILL' 1" }}
               >
-                {isCotizacion ? "description" : "check_circle"}
+                {isCotizacion ? "description" : isACConvenir ? "handshake" : "check_circle"}
               </span>
             </div>
 
             {/* Título */}
             <div>
               <h1 className="text-2xl font-extrabold text-[#0b1c30]">
-                {isCotizacion ? "¡Cotización enviada!" : "¡Pedido confirmado!"}
+                {isCotizacion ? "¡Cotización enviada!" : isACConvenir ? "¡Pedido registrado!" : "¡Pedido confirmado!"}
               </h1>
               <p className="text-[#565e74] mt-2 text-sm leading-relaxed">
                 {isCotizacion
                   ? "Recibimos tu solicitud de cotización. Te contactaremos a la brevedad para coordinar precio y entrega."
+                  : isACConvenir
+                  ? "Tu pedido incluye artículos con precio en dólares, así que el pago se coordina directamente con nosotros. Te contactaremos a la brevedad."
                   : successOrder.paymentMethod === "TRANSFERENCIA"
                   ? "Recibimos tu pedido. Realizá la transferencia y envianos el comprobante para confirmar."
                   : "Recibimos tu pedido. Nos pondremos en contacto para coordinar el pago y la entrega."}
@@ -323,7 +339,7 @@ export default function Checkout() {
                       <span className="text-xs text-[#0051d5] ml-1">({item.variantLabel})</span>
                     )}
                   </div>
-                  <span className="font-semibold text-[#0b1c30] shrink-0">{formatPrice(item.price * item.quantity)}</span>
+                  <span className="font-semibold text-[#0b1c30] shrink-0">{formatPriceWithCurrency(item.price * item.quantity, item.currency)}</span>
                 </div>
               ))}
               {/* Cupón aplicado */}
@@ -347,7 +363,7 @@ export default function Checkout() {
               )}
               <div className="border-t border-[#bdcaba]/30 pt-2 flex justify-between font-bold text-[#0b1c30]">
                 <span>{isCotizacion ? "Total estimado" : "Total"}</span>
-                <span>{formatPrice(successOrder.total)}</span>
+                <span>{isACConvenir ? "A convenir" : formatPrice(successOrder.total)}</span>
               </div>
             </div>
 
@@ -600,8 +616,28 @@ export default function Checkout() {
                 </div>
               )}
 
+              {/* ── MINORISTA con ítems en USD: "A convenir" — no puede pagar por MP/Efectivo/Transferencia ── */}
+              {!isMayorista && cartHasUsd && (
+                <div className="p-6 rounded-xl border-2 border-[#006b2c] bg-[#006b2c]/5">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span
+                      className="material-symbols-outlined text-[#006b2c]"
+                      style={{ fontVariationSettings: "'FILL' 1" }}
+                    >
+                      handshake
+                    </span>
+                    <h3 className="font-semibold text-[#0b1c30]">Pago a convenir</h3>
+                  </div>
+                  <p className="text-sm text-[#3e4a3d] leading-relaxed">
+                    Tu carrito incluye productos con precio en dólares — no se pueden pagar por
+                    MercadoPago, efectivo o transferencia directamente. Registramos tu pedido y te
+                    contactamos a la brevedad para coordinar el pago y la entrega.
+                  </p>
+                </div>
+              )}
+
               {/* ── MINORISTA: Método de pago ──────────────────────────────────── */}
-              {!isMayorista && (
+              {!isMayorista && !cartHasUsd && (
                 <section className="bg-white border border-[#bdcaba]/30 rounded-xl p-6 shadow-[0px_4px_20px_rgba(15,23,42,0.05)]">
                   <div className="flex items-center gap-2 mb-6">
                     <span className="material-symbols-outlined text-[#006b2c]">payments</span>
@@ -992,10 +1028,27 @@ export default function Checkout() {
 
                   {/* Cálculos */}
                   <div className="space-y-2 pt-1">
-                    <div className="flex justify-between text-sm text-[#565e74]">
-                      <span>Subtotal ({items.reduce((s, i) => s + i.quantity, 0)} productos)</span>
-                      <span>{formatPrice(subtotal)}</span>
-                    </div>
+                    {cartHasUsd ? (
+                      // Carrito con ítems en USD: subtotales separados por moneda, sin mezclar
+                      // (no hay conversión automática en el sistema — ver PaymentMethod.A_CONVENIR).
+                      <>
+                        {subtotalArs > 0 && (
+                          <div className="flex justify-between text-sm text-[#565e74]">
+                            <span>Subtotal ARS</span>
+                            <span>{formatPrice(subtotalArs)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-sm text-[#565e74]">
+                          <span>Subtotal USD</span>
+                          <span>{formatPriceWithCurrency(subtotalUsd, "USD")}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex justify-between text-sm text-[#565e74]">
+                        <span>Subtotal ({items.reduce((s, i) => s + i.quantity, 0)} productos)</span>
+                        <span>{formatPrice(subtotal)}</span>
+                      </div>
+                    )}
 
                     {couponDiscount > 0 && (
                       <div className="flex justify-between text-sm text-[#006b2c] font-semibold">
@@ -1038,7 +1091,7 @@ export default function Checkout() {
                       <div className="text-xs text-[#565e74]/70 italic">Costo de envío: ingresá el CP para cotizar</div>
                     )}
 
-                    {isMayorista && (
+                    {(isMayorista || cartHasUsd) && (
                       <div className="flex justify-between text-sm text-[#006b2c] font-semibold">
                         <span>Precio final</span>
                         <span>A convenir</span>
@@ -1047,7 +1100,9 @@ export default function Checkout() {
 
                     <div className="flex justify-between font-bold text-lg text-[#0b1c30] border-t border-[#bdcaba]/40 pt-3">
                       <span>{isMayorista ? "Total estimado" : "Total"}</span>
-                      <span className="text-[#006b2c]">{formatPrice(finalTotal)}</span>
+                      {cartHasUsd
+                        ? <span className="text-[#006b2c]">A convenir</span>
+                        : <span className="text-[#006b2c]">{formatPrice(finalTotal)}</span>}
                     </div>
                   </div>
 
@@ -1078,6 +1133,8 @@ export default function Checkout() {
                         <span>
                           {isMayorista
                             ? "Enviar cotización"
+                            : cartHasUsd
+                            ? "Confirmar pedido · a convenir"
                             : paymentMethod === "MERCADOPAGO"
                             ? `Pagar ${formatPrice(finalTotal)} con MercadoPago`
                             : `Confirmar pedido · ${formatPrice(finalTotal)}`}

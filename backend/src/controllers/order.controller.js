@@ -20,13 +20,15 @@ const {
   sendOrderNotificationToAdmin,
   sendCotizacionToCustomer,
   sendCotizacionToAdmin,
+  sendACConvenirToCustomer,
+  sendACConvenirToAdmin,
   sendOrderPaymentStatusEmail,
   sendOrderFulfillmentEmail,
 } = require("../services/email.service");
 
 const prisma = new PrismaClient();
 // Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
-const { effectiveUnitPrice } = require("../utils/pricing");
+const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 
 // Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
 // costo e imágenes. A diferencia del precio o la etiqueta de variante (que se congelan al
@@ -235,9 +237,11 @@ async function createOrder(req, res) {
       return res.status(400).json({ error: "Datos de la orden incompletos" });
     }
 
-    // Métodos de pago válidos; MERCADOPAGO es el default si no se especifica
-    const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION"];
-    const method = paymentMethod && validMethods.includes(paymentMethod) ? paymentMethod : "MERCADOPAGO";
+    // Métodos de pago válidos; MERCADOPAGO es el default si no se especifica.
+    // A_CONVENIR se resuelve MÁS ABAJO (server-side, después de conocer los ítems) — no se confía
+    // en lo que mande el cliente para esto, igual que isMayorista tampoco se confía del cliente.
+    const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION", "A_CONVENIR"];
+    let method = paymentMethod && validMethods.includes(paymentMethod) ? paymentMethod : "MERCADOPAGO";
 
     // Verificar stock y calcular total
     let total = 0;
@@ -304,7 +308,7 @@ async function createOrder(req, res) {
           where: { id: parseInt(item.variantId) },
           select: {
             sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true,
-            priceTiers: true, wholesalePriceTiers: true,
+            priceTiers: true, wholesalePriceTiers: true, currency: true,
           },
         });
       }
@@ -331,14 +335,28 @@ async function createOrder(req, res) {
       // }
       const variantSku = selectedVariant?.sku || null;
 
+      // Moneda efectiva de este ítem (variante > producto) — snapshot, igual que price/cost.
+      const itemCurrency = effectiveCurrency({ product, variant: selectedVariant });
+
       orderItems.push({
         productId:    product.id,
         quantity:     item.quantity,
         price:        finalPrice,
+        currency:     itemCurrency,
         variantId:    item.variantId ? parseInt(item.variantId) : null,
         variantLabel: item.variantLabel || null,
         variantSku,
       });
+    }
+
+    // Si el cliente es minorista y algún ítem del carrito está en USD, el pedido NO puede pagarse
+    // por MercadoPago/Efectivo/Transferencia (no hay conversión automática en el sistema) — se
+    // fuerza a A_CONVENIR para que el admin contacte al cliente y arregle el pago manualmente.
+    // Recalculado SIEMPRE server-side (nunca se confía en el paymentMethod que mande el cliente),
+    // igual que isMayorista.
+    const hasUsdItem = orderItems.some((i) => i.currency === "USD");
+    if (!isMayorista && hasUsdItem) {
+      method = "A_CONVENIR";
     }
 
     // Validar compra mínima para clientes mayoristas
@@ -502,6 +520,7 @@ async function createOrder(req, res) {
         productId: i.productId,
         name:      i.product?.name || "",
         price:     i.price,
+        currency:  i.currency,
         quantity:  i.quantity,
         image:     i.product?.images?.[0] || null,
       }));
@@ -524,12 +543,17 @@ async function createOrder(req, res) {
     // - MERCADOPAGO: los emails se manejan via webhook cuando el pago se confirma
     // - EFECTIVO / TRANSFERENCIA: confirmar al cliente y notificar al admin
     // - COTIZACION: enviar cotización al cliente y notificar al admin
+    // - A_CONVENIR: rama PROPIA — NO sumar a la de EFECTIVO/TRANSFERENCIA, esos templates
+    //   asumen uno de esos dos métodos y mostrarían mal la etiqueta y datos bancarios de más.
     if (method === "EFECTIVO" || method === "TRANSFERENCIA") {
       sendOrderConfirmationToCustomer(order).catch(() => {}); // fire-and-forget
       sendOrderNotificationToAdmin(order).catch(() => {});
     } else if (method === "COTIZACION") {
       sendCotizacionToCustomer(order).catch(() => {}); // fire-and-forget
       sendCotizacionToAdmin(order).catch(() => {});
+    } else if (method === "A_CONVENIR") {
+      sendACConvenirToCustomer(order).catch(() => {}); // fire-and-forget
+      sendACConvenirToAdmin(order).catch(() => {});
     }
 
     res.status(201).json(order);
@@ -776,20 +800,26 @@ async function getStats(req, res) {
     }
     const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
 
+    // Los pedidos que incluyen algún ítem en USD quedan FUERA de las cifras en pesos: Order.total es
+    // una suma cruda de los ítems sin distinguir moneda, así que un ítem de USD 25 le sumaría "25" al
+    // total como si fueran pesos. Esos pedidos se contabilizan aparte en getStatsUsd (cuadro en dólares).
+    // Los pedidos 100% en pesos —o sea todos los que existían antes de esta función— no cambian en nada.
+    const noUsdItems = { items: { none: { currency: "USD" } } };
+
     const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems] =
       await Promise.all([
         prisma.order.count({ where: { ...orderDateWhere } }),
         prisma.order.count({ where: { status: "APPROVED", ...orderDateWhere } }),
         prisma.order.count({ where: { status: "PENDING", ...orderDateWhere } }),
         prisma.order.aggregate({
-          where: { status: "APPROVED", ...orderDateWhere },
+          where: { status: "APPROVED", ...orderDateWhere, ...noUsdItems },
           _sum: { total: true },
         }),
         prisma.product.count({ where: { active: true } }),
         // Traer todos los items de órdenes APPROVED con el costo del producto
         // para calcular ganancia bruta = ingresos - costo
         prisma.orderItem.findMany({
-          where: { order: { status: "APPROVED", ...orderDateWhere } },
+          where: { order: { status: "APPROVED", ...orderDateWhere, ...noUsdItems } },
           include: { product: { select: { cost: true } } },
         }),
       ]);
@@ -818,6 +848,47 @@ async function getStats(req, res) {
   } catch (err) {
     console.error("getStats error:", err);
     res.status(500).json({ error: "Error al obtener estadísticas" });
+  }
+}
+
+// GET /api/orders/stats-usd - Estadísticas SOLO de lo vendido en dólares (admin)
+// Mismo shape de respuesta que getStats para poder reusar el mismo render en el dashboard.
+// A diferencia de getStats (que suma Order.total), acá la suma es a nivel de ÍTEM y filtrada por
+// currency = USD: un pedido puede mezclar ítems en pesos y en dólares, y solo las líneas en dólares
+// entran acá. Sin conversión: estos montos NUNCA se mezclan con los del cuadro en pesos.
+async function getStatsUsd(req, res) {
+  try {
+    const { dateFrom, dateTo } = req.query;
+    const dateFilter = {};
+    if (dateFrom) dateFilter.gte = new Date(dateFrom);
+    if (dateTo) {
+      const end = new Date(dateTo);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.lte = end;
+    }
+    const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+
+    const usdItems = await prisma.orderItem.findMany({
+      where: { currency: "USD", order: { status: "APPROVED", ...orderDateWhere } },
+      include: { product: { select: { cost: true } } },
+    });
+
+    const totalRevenue = usdItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    // Mismo criterio de costo que getStats: el snapshot del ítem manda, y solo cae al costo maestro
+    // del producto si el ítem no lo tiene. ?? (no ||) para respetar un costo de 0.
+    const totalCost = usdItems.reduce((sum, item) => {
+      const unitCost = item.cost ?? item.product?.cost ?? 0;
+      return sum + item.quantity * unitCost;
+    }, 0);
+
+    res.json({
+      totalRevenue,
+      totalCost,
+      totalProfit: totalRevenue - totalCost,
+    });
+  } catch (err) {
+    console.error("getStatsUsd error:", err);
+    res.status(500).json({ error: "Error al obtener estadísticas en dólares" });
   }
 }
 
@@ -948,6 +1019,7 @@ async function saveOriginalAndMarkModified(orderId, order) {
         productId: i.productId,
         name:      i.product?.name || "",
         price:     i.price,
+        currency:  i.currency,
         quantity:  i.quantity,
         image:     i.product?.images?.[0] || null,
       })),
@@ -1318,6 +1390,7 @@ async function buildSnapshot(orderId) {
     productId: i.productId,
     name:      i.product?.name || "",
     price:     i.price,
+    currency:  i.currency,
     quantity:  i.quantity,
     image:     i.product?.images?.[0] || null,
   }));
@@ -1997,7 +2070,7 @@ async function updateOrderFields(req, res) {
     const data = {};
 
     if (paymentMethod) {
-      const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION"];
+      const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION", "A_CONVENIR"];
       if (!validMethods.includes(paymentMethod)) {
         return res.status(400).json({ error: "Método de pago inválido" });
       }
@@ -2309,7 +2382,7 @@ async function markOrderSeen(req, res) {
 }
 
 module.exports = {
-  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
+  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getStatsUsd, getMetrics, deleteOrder,
   getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,

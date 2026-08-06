@@ -3,10 +3,7 @@ import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import { getImageUrl } from "../services/api";
-
-function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
-}
+import { formatPrice } from "../utils/formatPrice";
 
 // Drawer lateral del carrito de compras
 export default function CartDrawer({ open, onClose }) {
@@ -110,7 +107,7 @@ export default function CartDrawer({ open, onClose }) {
                       </span>
                     )}
                     <p className="text-[#006b2c] font-bold text-sm mt-1">
-                      {formatPrice(item.price)}
+                      {formatPrice(item.price, item.currency)}
                     </p>
 
                     {/* Controles de cantidad + eliminar */}

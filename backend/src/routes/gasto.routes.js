@@ -10,9 +10,12 @@ const prisma = new PrismaClient();
 // GET /api/gastos - listar gastos con filtros opcionales: type, dateFrom, dateTo
 router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { type, dateFrom, dateTo } = req.query;
+    const { type, dateFrom, dateTo, currency } = req.query;
     const where = {};
     if (type && ["PERSONAL", "NEGOCIO"].includes(type)) where.type = type;
+    // currency: filtra los gastos por moneda. Sin este parámetro devuelve TODOS (pesos + dólares),
+    // que es lo que necesita la vista de Caja; el dashboard sí lo manda para no mezclar cuadros.
+    if (currency && ["ARS", "USD"].includes(currency)) where.currency = currency;
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.gte = new Date(dateFrom);
@@ -33,7 +36,7 @@ router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
 // POST /api/gastos - crear un gasto
 router.post("/", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { amount, description, type, date, subtype, productId, variantId, quantity } = req.body;
+    const { amount, description, type, date, subtype, productId, variantId, quantity, currency } = req.body;
     if (!amount || !description || !type) {
       return res.status(400).json({ error: "Monto, descripción y tipo son requeridos" });
     }
@@ -49,6 +52,7 @@ router.post("/", authMiddleware, adminMiddleware, async (req, res) => {
         amount:      parseFloat(amount),
         description,
         type,
+        currency:    ["ARS", "USD"].includes(currency) ? currency : "ARS",
         subtype:     validSubtype,
         productId:   parsedProductId,
         variantId:   parsedVariantId,

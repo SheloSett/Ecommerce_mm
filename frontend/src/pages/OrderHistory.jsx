@@ -7,6 +7,7 @@ import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -17,7 +18,7 @@ function formatDate(dateStr) {
 }
 
 function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  return formatPriceWithCurrency(price, "ARS");
 }
 
 const PAYMENT_LABEL = {
@@ -25,6 +26,7 @@ const PAYMENT_LABEL = {
   TRANSFERENCIA: "Transferencia bancaria",
   MERCADOPAGO:   "MercadoPago",
   COTIZACION:    "Cotización",
+  A_CONVENIR:    "A convenir",
 };
 
 const SHIPPING_LABEL = {
@@ -146,6 +148,10 @@ function getStatusDisplay(order) {
 function exportOrderExcel(order, customer) {
   const isMayorista = customer?.type === "MAYORISTA";
   const subtotal = order.total + (order.couponDiscount || 0) - (order.ivaAmount || 0);
+  // Ítems ARS y USD mezclados (A_CONVENIR) → el TOTAL único en pesos sería incorrecto.
+  const hasUsd   = order.items.some((i) => i.currency === "USD");
+  const totalArs = order.items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalUsd = order.items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
 
   const headerRows = [
     ["Pedido #", order.id],
@@ -165,22 +171,28 @@ function exportOrderExcel(order, customer) {
 
   const itemRows = order.items.map((item) => [
     item.product?.name || "Producto eliminado",
-    formatPrice(item.price),
+    formatPriceWithCurrency(item.price, item.currency),
     item.quantity,
-    formatPrice(item.price * item.quantity),
+    formatPriceWithCurrency(item.price * item.quantity, item.currency),
   ]);
 
-  const totalsRows = [
-    [],
-    ["", "", "", "Subtotal", formatPrice(subtotal)],
-    ...(order.couponDiscount > 0
-      ? [["", "", "", `Descuento (${order.coupon?.code || "cupón"})`, `−${formatPrice(order.couponDiscount)}`]]
-      : []),
-    ...(isMayorista && order.ivaAmount > 0
-      ? [["", "", "", "IVA", formatPrice(order.ivaAmount)]]
-      : []),
-    ["", "", "", "TOTAL", formatPrice(order.total)],
-  ];
+  const totalsRows = hasUsd
+    ? [
+        [],
+        ...(totalArs > 0 ? [["", "", "", "TOTAL ARS", formatPrice(totalArs)]] : []),
+        ["", "", "", "TOTAL USD", formatPriceWithCurrency(totalUsd, "USD")],
+      ]
+    : [
+        [],
+        ["", "", "", "Subtotal", formatPrice(subtotal)],
+        ...(order.couponDiscount > 0
+          ? [["", "", "", `Descuento (${order.coupon?.code || "cupón"})`, `−${formatPrice(order.couponDiscount)}`]]
+          : []),
+        ...(isMayorista && order.ivaAmount > 0
+          ? [["", "", "", "IVA", formatPrice(order.ivaAmount)]]
+          : []),
+        ["", "", "", "TOTAL", formatPrice(order.total)],
+      ];
 
   const wsData = [...headerRows, itemHeader, ...itemRows, ...totalsRows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -196,6 +208,10 @@ function exportOrderPDF(order, customer) {
   const hasDiscount = (order.couponDiscount || 0) > 0;
   const hasIva      = order.wantsInvoice && (order.ivaAmount || 0) > 0;
   const subtotalSinDesc = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
+  // Ítems ARS y USD mezclados (A_CONVENIR) → el TOTAL único en pesos sería incorrecto.
+  const hasUsdPdf   = (order.items || []).some((i) => i.currency === "USD");
+  const totalArsPdf = (order.items || []).filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalUsdPdf = (order.items || []).filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
 
   const itemCards = (order.items || []).map((item) => {
     const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
@@ -209,20 +225,25 @@ function exportOrderPDF(order, customer) {
           ${imgHtml}
           <div>
             <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto eliminado"}</div>
-            <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
+            <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
           </div>
         </div>
       </td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPrice(item.price * item.quantity)}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPriceWithCurrency(item.price * item.quantity, item.currency)}</td>
     </tr>`;
   }).join("");
 
-  const totalRows = [
-    `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>`,
-    hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : "",
-    hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : "",
-    `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`,
-  ].join("");
+  const totalRows = hasUsdPdf
+    ? [
+        totalArsPdf > 0 ? `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL ARS</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(totalArsPdf)}</td></tr>` : "",
+        `<tr ${totalArsPdf > 0 ? "" : 'style="border-top:2px solid #1e293b"'}><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL USD</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPriceWithCurrency(totalUsdPdf, "USD")}</td></tr>`,
+      ].join("")
+    : [
+        `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>`,
+        hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : "",
+        hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : "",
+        `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`,
+      ].join("");
 
   const statusLabel  = order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada";
   const paymentLabel = PAYMENT_LABEL[order.paymentMethod] || order.paymentMethod;
@@ -421,6 +442,11 @@ export default function OrderHistory() {
               const { label: statusLabel, cls: statusCls } = getStatusDisplay(order);
               const firstTwo   = order.items.slice(0, 2);
               const extraCount = order.items.length - 2;
+              // Un pedido puede tener ítems ARS y USD mezclados (A_CONVENIR) — sin conversión
+              // automática, un total único en pesos sería incorrecto si hay algo en dólares.
+              const hasUsd   = order.items.some((i) => i.currency === "USD");
+              const totalArs = hasUsd ? order.items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0) : null;
+              const totalUsd = hasUsd ? order.items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0) : null;
 
               return (
                 <div
@@ -460,9 +486,16 @@ export default function OrderHistory() {
                         </span>
                       </div>
                       <div className="flex flex-col items-end">
-                        <span className="text-2xl font-bold text-[#0b1c30]">
-                          {formatPrice(order.total)}
-                        </span>
+                        {hasUsd ? (
+                          <div className="text-right">
+                            {totalArs > 0 && <p className="text-lg font-bold text-[#0b1c30]">{formatPrice(totalArs)}</p>}
+                            <p className="text-lg font-bold text-[#0b1c30]">{formatPriceWithCurrency(totalUsd, "USD")}</p>
+                          </div>
+                        ) : (
+                          <span className="text-2xl font-bold text-[#0b1c30]">
+                            {formatPrice(order.total)}
+                          </span>
+                        )}
                         <span className="text-xs text-[#565e74]">
                           {order.items.length} producto{order.items.length !== 1 ? "s" : ""}
                         </span>
@@ -632,11 +665,11 @@ export default function OrderHistory() {
                                 </div>
                               )}
                               <p className="text-xs text-[#565e74]">
-                                {formatPrice(item.price)} × {item.quantity}
+                                {formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}
                               </p>
                             </div>
                             <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">
-                              {formatPrice(item.price * item.quantity)}
+                              {formatPriceWithCurrency(item.price * item.quantity, item.currency)}
                             </p>
                           </div>
                         );
@@ -664,9 +697,18 @@ export default function OrderHistory() {
                             <span>+{formatPrice(iva)}</span>
                           </div>
                         )}
-                        <div className="flex justify-between text-sm font-bold text-[#0b1c30] pt-1 border-t border-[#bdcaba]/30">
-                          <span>Total</span>
-                          <span>{formatPrice(order.total)}</span>
+                        <div className="flex flex-col gap-0.5 pt-1 border-t border-[#bdcaba]/30">
+                          <div className="flex justify-between text-sm font-bold text-[#0b1c30]">
+                            <span>Total</span>
+                            {hasUsd
+                              ? (totalArs > 0 ? <span>{formatPrice(totalArs)}</span> : <span>{formatPriceWithCurrency(totalUsd, "USD")}</span>)
+                              : <span>{formatPrice(order.total)}</span>}
+                          </div>
+                          {hasUsd && totalArs > 0 && (
+                            <div className="flex justify-end text-sm font-bold text-[#0b1c30]">
+                              <span>{formatPriceWithCurrency(totalUsd, "USD")}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 

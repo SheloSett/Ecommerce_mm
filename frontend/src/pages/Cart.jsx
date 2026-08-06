@@ -5,10 +5,7 @@ import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import { getImageUrl } from "../services/api";
-
-function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
-}
+import { formatPrice } from "../utils/formatPrice";
 
 export default function Cart() {
   const { items, totalPrice, removeItem, updateQuantity } = useCart();
@@ -159,7 +156,7 @@ export default function Cart() {
                           isOut ? "text-[#565e74]" : "text-[#006b2c]"
                         }`}
                       >
-                        {formatPrice(item.price)}{" "}
+                        {formatPrice(item.price, item.currency)}{" "}
                         <span className="font-normal text-xs text-[#565e74]">c/u</span>
                       </p>
                       {/* Controles de cantidad en mobile */}
@@ -191,7 +188,7 @@ export default function Cart() {
                     {/* Subtotal — desktop */}
                     <div className="hidden md:flex justify-end">
                       <span className="font-extrabold text-[#0b1c30] text-base">
-                        {formatPrice(subtotal)}
+                        {formatPrice(subtotal, item.currency)}
                       </span>
                     </div>
 

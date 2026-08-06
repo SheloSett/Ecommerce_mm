@@ -9,6 +9,7 @@ export function saveRecent(product) {
       name:               product.name,
       images:             product.images,
       price:              product.price,
+      currency:           product.currency,
       salePrice:          product.salePrice,
       wholesalePrice:     product.wholesalePrice,
       wholesaleSalePrice: product.wholesaleSalePrice,

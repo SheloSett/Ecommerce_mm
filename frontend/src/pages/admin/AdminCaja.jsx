@@ -2,16 +2,14 @@ import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { gastosApi, productsApi } from "../../services/api";
 import toast from "react-hot-toast";
+import { formatPrice } from "../../utils/formatPrice";
 
 const TABS = [
   { key: "NEGOCIO",  label: "Gastos del Negocio",  color: "blue" },
   { key: "PERSONAL", label: "Gastos Personales",    color: "purple" },
 ];
 
-const EMPTY_FORM = { amount: "", description: "", date: new Date().toISOString().slice(0, 10) };
-
-const formatPrice = (n) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n);
+const EMPTY_FORM = { amount: "", description: "", currency: "ARS", date: new Date().toISOString().slice(0, 10) };
 
 const formatDate = (d) =>
   new Date(d).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -69,7 +67,8 @@ export default function AdminCaja() {
     setRmaVariants([]);
     const product = products.find((p) => String(p.id) === String(id));
     if (product) {
-      setForm((f) => ({ ...f, amount: String(product.cost * rmaQty) }));
+      // El monto sale del costo del producto → la moneda del gasto es la del producto, no se elige a mano.
+      setForm((f) => ({ ...f, amount: String(product.cost * rmaQty), currency: product.currency || "ARS" }));
       if ((product._count?.variants ?? 0) > 0) {
         setLoadingVariants(true);
         try {
@@ -159,7 +158,10 @@ export default function AdminCaja() {
   };
 
   const filtered = gastos.filter((g) => g.type === tab);
-  const total = filtered.reduce((acc, g) => acc + g.amount, 0);
+  // Los totales se separan por moneda: sin conversión automática, sumar pesos y dólares juntos
+  // daría un número sin sentido.
+  const totalArs = filtered.filter((g) => (g.currency || "ARS") !== "USD").reduce((acc, g) => acc + g.amount, 0);
+  const totalUsd = filtered.filter((g) => g.currency === "USD").reduce((acc, g) => acc + g.amount, 0);
   const activeTab = TABS.find((t) => t.key === tab);
 
   return (
@@ -214,13 +216,26 @@ export default function AdminCaja() {
               /* ── Formulario GASTO ── */
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-slate-500">Monto $</label>
+                  <label className="text-xs font-medium text-slate-500">
+                    Monto {form.currency === "USD" ? "USD" : "$"}
+                  </label>
                   <input
                     type="number" min="0" step="0.01" placeholder="0.00"
                     value={form.amount}
                     onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
                     className="w-full sm:w-36 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                   />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-slate-500">Moneda</label>
+                  <select
+                    value={form.currency}
+                    onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+                    className="w-full sm:w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="ARS">ARS</option>
+                    <option value="USD">USD</option>
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1 flex-1">
                   <label className="text-xs font-medium text-slate-500">Descripción</label>
@@ -265,7 +280,7 @@ export default function AdminCaja() {
                     <option value="">{loadingProds ? "Cargando productos..." : "— Seleccioná un producto —"}</option>
                     {products.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} — costo unitario: {formatPrice(p.cost)}
+                        {p.name} — costo unitario: {formatPrice(p.cost, p.currency)}
                       </option>
                     ))}
                   </select>
@@ -305,7 +320,10 @@ export default function AdminCaja() {
                     />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="text-xs font-medium text-slate-500">Monto total $</label>
+                    {/* La moneda la hereda del producto (el monto sale de su costo) — no se elige acá */}
+                    <label className="text-xs font-medium text-slate-500">
+                      Monto total {form.currency === "USD" ? "USD" : "$"}
+                    </label>
                     {/* Monto auto-calculado (costo × cantidad), editable por si hay diferencia */}
                     <input
                       type="number" min="0" step="0.01" placeholder="0.00"
@@ -345,8 +363,13 @@ export default function AdminCaja() {
           <div>
             <p className="text-sm text-slate-500 font-medium">{activeTab.label}</p>
             <p className={`text-3xl font-extrabold ${tab === "NEGOCIO" ? "text-blue-700" : "text-purple-700"}`}>
-              {formatPrice(total)}
+              {formatPrice(totalArs)}
             </p>
+            {totalUsd > 0 && (
+              <p className={`text-xl font-extrabold ${tab === "NEGOCIO" ? "text-blue-700" : "text-purple-700"}`}>
+                {formatPrice(totalUsd, "USD")}
+              </p>
+            )}
           </div>
           <span className="text-4xl opacity-30">{tab === "NEGOCIO" ? "🏢" : "👤"}</span>
         </div>
@@ -386,7 +409,7 @@ export default function AdminCaja() {
                         {g.description}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatPrice(g.amount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatPrice(g.amount, g.currency)}</td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => handleDelete(g.id)}

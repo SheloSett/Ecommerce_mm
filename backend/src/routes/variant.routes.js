@@ -220,7 +220,7 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
     const {
       stock, stockUnlimited,
       price, salePrice, wholesalePrice, wholesaleSalePrice,
-      cost, sku, active, image, images, visibility,
+      cost, currency, sku, active, image, images, visibility,
       module, shelf, // ubicación en depósito a nivel variante (override del producto)
       supplierId,    // proveedor a nivel variante (override del producto; vacío → usa el del producto)
       priceTiers, wholesalePriceTiers, // descuentos por cantidad PROPIOS de la variante
@@ -248,6 +248,8 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
     if (wholesalePrice     !== undefined) data.wholesalePrice     = wholesalePrice     === "" || wholesalePrice     === null ? null : parseFloat(wholesalePrice);
     if (wholesaleSalePrice !== undefined) data.wholesaleSalePrice = wholesaleSalePrice === "" || wholesaleSalePrice === null ? null : parseFloat(wholesaleSalePrice);
     if (cost           !== undefined) data.cost           = cost  === "" || cost  === null ? null : parseFloat(cost);
+    // Moneda de la variante: vacío/null → hereda la del producto padre (mismo criterio que supplierId)
+    if (currency       !== undefined) data.currency       = (currency === "" || currency === null) ? null : currency;
     if (sku            !== undefined) data.sku            = sku || null;
     if (active         !== undefined) data.active         = active === "true" || active === true;
     // Visibilidad: validar contra el enum CustomerVisibility

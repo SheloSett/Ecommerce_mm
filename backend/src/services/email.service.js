@@ -31,6 +31,15 @@ function formatARS(amount) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(amount ?? 0);
 }
 
+// Formatea un monto según su moneda (ARS o USD) — sin conversión, igual que formatPrice.js del
+// frontend. Se usa para renderizar ítems de pedido que pueden estar en USD (ver OrderItem.currency).
+function formatMoney(amount, currency) {
+  if (currency === "USD") {
+    return `USD ${Number(amount ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return formatARS(amount);
+}
+
 // Resuelve la ruta local de una imagen de producto.
 // Las imágenes se guardan en la DB como "/uploads/filename.jpg" → extrae solo el filename.
 function resolveImagePath(imageName) {
@@ -251,7 +260,7 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
 
       // Precio unitario
       doc.fillColor("#475569").fontSize(9).font("Helvetica")
-        .text(formatARS(item.price), cx, rowY + rowH / 2 - 5, { width: cols.price, align: "right" });
+        .text(formatMoney(item.price, item.currency), cx, rowY + rowH / 2 - 5, { width: cols.price, align: "right" });
       cx += cols.price;
 
       // Cantidad
@@ -260,7 +269,7 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
 
       // Subtotal
       doc.fillColor("#1e293b").font("Helvetica-Bold")
-        .text(formatARS(item.price * item.quantity), cx, rowY + rowH / 2 - 5, {
+        .text(formatMoney(item.price * item.quantity, item.currency), cx, rowY + rowH / 2 - 5, {
           width: cols.subtotal - 8, align: "right",
         });
 
@@ -380,9 +389,9 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
         <td style="padding:10px 12px;color:#94a3b8;font-size:12px;text-align:center;">${idx + 1}</td>
         <td style="padding:8px 12px;">${imgCell}</td>
         <td style="padding:10px 12px;font-weight:600;color:#1e293b;font-size:13px;">${name}</td>
-        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatARS(item.price)}</td>
+        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatMoney(item.price, item.currency)}</td>
         <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:center;">${item.quantity}</td>
-        <td style="padding:10px 12px;font-weight:700;color:#1e293b;font-size:13px;text-align:right;">${formatARS(item.price * item.quantity)}</td>
+        <td style="padding:10px 12px;font-weight:700;color:#1e293b;font-size:13px;text-align:right;">${formatMoney(item.price * item.quantity, item.currency)}</td>
       </tr>`;
   }).join("");
 
@@ -757,6 +766,84 @@ async function sendCotizacionToAdmin(order) {
       ],
     });
     console.log(`[EMAIL] Cotización #${order.id} notificada al admin`);
+  } catch (err) {
+    console.error("[EMAIL ERROR]", err.message);
+  }
+}
+
+// ─── Emails "A convenir" (minorista con algún ítem en USD) ──────────────────
+// El pedido queda registrado pero el pago se coordina a mano — NUNCA se muestran datos
+// bancarios acá (showBankDetails: false explícito), a diferencia de TRANSFERENCIA.
+
+// Confirmación al cliente
+async function sendACConvenirToCustomer(order) {
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Pedido a convenir #${order.id} a ${order.customerEmail}`);
+    return;
+  }
+
+  try {
+    const { html, attachments: imgAttachments } = buildOrderHtml(order, {
+      title: "¡Pedido recibido! Pago a coordinar 🤝",
+      subtitle: "Tu pedido incluye artículos con precio en dólares, así que el pago se coordina directamente con nosotros.",
+      footer: "Nos pondremos en contacto a la brevedad para coordinar el pago y la entrega. ¡Gracias por elegirnos!",
+      type: "Pedido",
+      showBankDetails: false,
+    });
+    const pdfBuffer = await buildOrderPdf(order, "Pedido", false);
+
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: order.customerEmail,
+      subject: `Pedido #${order.id} recibido — a coordinar pago — IGWT Store`,
+      html,
+      attachments: [
+        ...imgAttachments,
+        { filename: `pedido-${order.id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
+      ],
+    });
+    console.log(`[EMAIL] Pedido a convenir #${order.id} enviado a ${order.customerEmail}`);
+  } catch (err) {
+    console.error("[EMAIL ERROR]", err.message);
+  }
+}
+
+// Notificación al admin
+async function sendACConvenirToAdmin(order) {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (!adminEmail) {
+    console.log(`[EMAIL OMITIDO] Nuevo pedido a convenir #${order.id} de ${order.customerName}`);
+    return;
+  }
+
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL OMITIDO - SMTP no configurado] Nuevo pedido a convenir #${order.id} de ${order.customerName}`);
+    return;
+  }
+
+  try {
+    const { html, attachments: imgAttachments } = buildOrderHtml(order, {
+      title: `Nuevo pedido a convenir #${order.id}`,
+      subtitle: `Cliente: <strong>${order.customerName}</strong> (${order.customerEmail}) · Tiene ítems en USD — hay que coordinar el pago manualmente.`,
+      footer: "Ingresá al panel de administración para contactar al cliente y actualizar el método de pago.",
+      type: "Pedido",
+      showBankDetails: false,
+    });
+    const pdfBuffer = await buildOrderPdf(order, "Pedido", false);
+
+    await transporter.sendMail({
+      from: `"IGWT Store" <${process.env.SMTP_USER}>`,
+      to: adminEmail,
+      subject: `Nuevo pedido a convenir #${order.id} — ${order.customerName}`,
+      html,
+      attachments: [
+        ...imgAttachments,
+        { filename: `pedido-${order.id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
+      ],
+    });
+    console.log(`[EMAIL] Pedido a convenir #${order.id} notificado al admin`);
   } catch (err) {
     console.error("[EMAIL ERROR]", err.message);
   }
@@ -1225,9 +1312,9 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
           <p style="margin:0;font-weight:600;color:#1e293b;font-size:13px;">${item.name}</p>
           ${variantHtml}
         </td>
-        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatARS(item.price)}</td>
+        <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatMoney(item.price, item.currency)}</td>
         <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:center;">${item.quantity}</td>
-        <td style="padding:10px 12px;font-weight:700;color:#1e293b;font-size:13px;text-align:right;">${formatARS(item.price * item.quantity)}</td>
+        <td style="padding:10px 12px;font-weight:700;color:#1e293b;font-size:13px;text-align:right;">${formatMoney(item.price * item.quantity, item.currency)}</td>
       </tr>`;
   }).join("");
 
@@ -1606,6 +1693,8 @@ module.exports = {
   sendOrderNotificationToAdmin,
   sendCotizacionToCustomer,
   sendCotizacionToAdmin,
+  sendACConvenirToCustomer,
+  sendACConvenirToAdmin,
   sendReturnRequestConfirmation,
   sendReturnRequestApproved,
   sendReturnRequestRejected,

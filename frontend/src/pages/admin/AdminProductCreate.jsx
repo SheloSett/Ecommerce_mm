@@ -12,6 +12,7 @@ const EMPTY_FORM = {
   name: "",
   description: "",
   cost: "",
+  currency: "ARS",
   price: "",
   ivaRate: "21",
   salePrice: "",
@@ -227,6 +228,7 @@ export default function AdminProductCreate() {
       formData.append("name", form.name.toUpperCase()); // título siempre en mayúsculas
       formData.append("description", form.description);
       formData.append("cost", form.cost);
+      formData.append("currency", form.currency || "ARS");
       formData.append("price", effPrice);
       formData.append("ivaRate", form.ivaRate || "21");
       formData.append("salePrice", form.salePrice);
@@ -311,7 +313,7 @@ export default function AdminProductCreate() {
             </div>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} productImages={savedProduct.images || []} suppliers={suppliers} />
+            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} baseCurrency={savedProduct.currency || "ARS"} productImages={savedProduct.images || []} suppliers={suppliers} />
           </div>
         </div>
       </AdminLayout>
@@ -454,14 +456,16 @@ export default function AdminProductCreate() {
             </div>
           </div>
 
-          {/* Costo + Alícuota IVA: apilados en mobile, en la misma fila desde sm */}
-          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+          {/* Costo + Moneda + Alícuota IVA: apilados en mobile, en la misma fila desde sm */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3 items-end">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
                 Costo * <span className="normal-case font-normal text-slate-400">— solo visible para el admin</span>
               </label>
               <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400 h-9">
-                <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                <span className="px-3 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">
+                  {form.currency === "USD" ? "USD" : "$"}
+                </span>
                 <input
                   type="number"
                   step="0.01"
@@ -472,6 +476,31 @@ export default function AdminProductCreate() {
                   required
                   className="flex-1 px-3 py-2 text-sm focus:outline-none"
                 />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Moneda</label>
+              <div className="flex gap-2">
+                {[{ value: "ARS", label: "ARS" }, { value: "USD", label: "USD" }].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      const hasPrices = [form.cost, form.price, form.salePrice, form.wholesalePrice, form.wholesaleSalePrice].some((v) => v);
+                      if (opt.value !== form.currency && hasPrices) {
+                        toast("Cambiaste la moneda — los precios no se convierten automáticamente, revisalos.", { icon: "⚠️" });
+                      }
+                      setForm({ ...form, currency: opt.value });
+                    }}
+                    className={`px-3 h-9 rounded-lg border-2 text-sm font-semibold transition-colors whitespace-nowrap ${
+                      form.currency === opt.value
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-slate-200 text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
             </div>
             <div>
@@ -511,7 +540,9 @@ export default function AdminProductCreate() {
                   {label}{required && " *"}
                 </label>
                 <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-400">
-                  <span className="px-2 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">$</span>
+                  <span className="px-2 py-2 bg-slate-50 text-slate-400 text-sm border-r border-slate-300">
+                    {form.currency === "USD" ? "USD" : "$"}
+                  </span>
                   <input
                     type="number"
                     step="0.01"

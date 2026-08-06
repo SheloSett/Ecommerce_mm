@@ -5,7 +5,7 @@ const { PrismaClient } = require("@prisma/client");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 const { sendAbandonedCartEmail } = require("../services/email.service");
 // Precio efectivo (variante > producto por grupo + tiers), compartido con el checkout.
-const { effectiveUnitPrice } = require("../utils/pricing");
+const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 
 const prisma = new PrismaClient();
 
@@ -119,7 +119,7 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
           // active y stockUnlimited son necesarios para distinguir "sin stock" de "stock ilimitado"
           // o "producto despublicado" (regla de negocio: productos sin stock se ocultan en la web,
           // PERO en el carrito mostramos un aviso porque el item ya estaba agregado)
-          include: { product: { select: { stock: true, stockUnlimited: true, active: true, ivaRate: true } } },
+          include: { product: { select: { stock: true, stockUnlimited: true, active: true, ivaRate: true, currency: true } } },
         },
       },
     });
@@ -131,7 +131,7 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
     const variants = variantIds.length > 0
       ? await prisma.productVariant.findMany({
           where:  { id: { in: variantIds } },
-          select: { id: true, stock: true, stockUnlimited: true, active: true },
+          select: { id: true, stock: true, stockUnlimited: true, active: true, currency: true },
         })
       : [];
     const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
@@ -147,7 +147,12 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
       } else if (!item.product.stockUnlimited && item.product.stock <= 0) {
         outOfStock = true;
       }
-      return { ...item, outOfStock };
+      // currency: moneda efectiva del ítem (variante > producto), para que el checkout sepa si
+      // este ítem obliga a ir por "A convenir" (ver PaymentMethod.A_CONVENIR).
+      const currency = item.product
+        ? effectiveCurrency({ product: item.product, variant: item.variantId ? variantMap[item.variantId] : null })
+        : "ARS";
+      return { ...item, outOfStock, currency };
     });
 
     res.json({ ...cart, items: itemsWithStock });
@@ -247,7 +252,7 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     // Retornar carrito completo con stock e ivaRate del producto para validaciones en el frontend
     const updatedCart = await prisma.cart.findUnique({
       where:   { customerId },
-      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true, ivaRate: true } } } } },
+      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true, ivaRate: true, currency: true } } } } },
     });
 
     res.json(updatedCart);

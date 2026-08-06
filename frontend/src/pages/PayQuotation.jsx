@@ -5,9 +5,10 @@ import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
 // ordersApi.applyCoupon se usa para aplicar cupones a cotizaciones aprobadas
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 
 function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  return formatPriceWithCurrency(price, "ARS");
 }
 
 function IconMP() {
@@ -78,6 +79,9 @@ export default function PayQuotation() {
   }, [id, customer?.id, loadingCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalAPagar = quote?.total ?? 0;
+  // Una cotización puede incluir ítems en USD (sin conversión automática) — se avisa junto al
+  // total para que quede claro que ese monto no representa el total real si hay ítems en dólares.
+  const quoteHasUsd = (quote?.items || []).some((i) => i.currency === "USD");
 
   // handleApplyCoupon — MOVIDO: el cupón se aplica al crear la cotización en Checkout.jsx
   // const handleApplyCoupon = async () => { ... };
@@ -214,11 +218,11 @@ export default function PayQuotation() {
                   <div className="flex-1 min-w-0">
                     {/* Antes: text-slate-800 / text-slate-400 */}
                     <p className="text-sm font-medium text-[#0b1c30] truncate">{item.name}</p>
-                    <p className="text-xs text-[#565e74]">{formatPrice(item.price)} × {item.quantity}</p>
+                    <p className="text-xs text-[#565e74]">{formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}</p>
                   </div>
                   {/* Antes: text-slate-700 */}
                   <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">
-                    {formatPrice(item.price * item.quantity)}
+                    {formatPriceWithCurrency(item.price * item.quantity, item.currency)}
                   </p>
                 </div>
               ))}
@@ -232,6 +236,11 @@ export default function PayQuotation() {
                 <span className="font-semibold text-[#0b1c30]">Total a pagar</span>
                 <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalAPagar)}</span>
               </div>
+              {quoteHasUsd && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                  ⚠️ Esta cotización incluye ítems con precio en dólares (ver detalle arriba) — el monto de arriba está en pesos y puede no reflejar el total real. Coordinalo con la tienda antes de pagar.
+                </p>
+              )}
             </div>
 
             {/* Cupón de descuento — REMOVIDO: ahora se ingresa al enviar la cotización (Checkout.jsx) */}

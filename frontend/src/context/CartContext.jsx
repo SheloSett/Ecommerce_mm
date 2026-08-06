@@ -24,6 +24,10 @@ const mapItem = (dbItem) => ({
   stock:        dbItem.product?.stock ?? -1,
   // ivaRate: alícuota del producto (10.5 o 21%). Default 21 si no viene del backend.
   ivaRate:      dbItem.product?.ivaRate ?? 21,
+  // currency: moneda efectiva del ítem (variante > producto). GET /me ya la resuelve y la manda
+  // en dbItem.currency; el POST de agregar solo trae el campo crudo del producto (sin resolver
+  // variante) — se usa como fallback hasta el próximo fetchCart().
+  currency:     dbItem.currency ?? dbItem.product?.currency ?? "ARS",
   variantId:    dbItem.variantId    ?? null,
   variantLabel: dbItem.variantLabel ?? null,
   // outOfStock viene del backend: true si el producto/variante no tiene stock

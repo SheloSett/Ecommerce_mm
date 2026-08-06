@@ -6,6 +6,7 @@ import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -16,7 +17,7 @@ function formatDate(dateStr) {
 }
 
 function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  return formatPriceWithCurrency(price, "ARS");
 }
 
 // Devuelve label, clase de badge y si la card debe tener borde verde
@@ -171,6 +172,11 @@ export default function QuotationHistory() {
             {quotes.map((quote) => {
               const isExpanded = expandedId === quote.id;
               const items      = quote.items || [];
+              // Una cotización puede tener ítems en ARS y USD mezclados (sin conversión automática) —
+              // si hay alguno en USD, el total único en pesos sería incorrecto: se separa por moneda.
+              const hasUsd     = items.some((i) => i.currency === "USD");
+              const totalArs   = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+              const totalUsd   = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
               const isActive   =
                 quote.status !== "CANCELLED" &&
                 quote.status !== "REJECTED" &&
@@ -217,12 +223,24 @@ export default function QuotationHistory() {
                     {/* Fecha + total */}
                     <div className="mb-6">
                       <p className="text-sm text-[#565e74] mb-1">{formatDate(quote.createdAt)}</p>
-                      <p className="text-2xl font-bold text-[#0b1c30]">
-                        {quote.status === "APPROVED" ? "Total: " : "Total estimado: "}
-                        <span className={cardBorder ? "text-[#006b2c]" : ""}>
-                          {formatPrice(quote.total)}
-                        </span>
-                      </p>
+                      {hasUsd ? (
+                        <div className={cardBorder ? "text-[#006b2c]" : "text-[#0b1c30]"}>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#565e74] mb-1">
+                            {quote.status === "APPROVED" ? "Total" : "Total estimado"} (por moneda)
+                          </p>
+                          {totalArs > 0 && (
+                            <p className="text-lg font-bold">{formatPrice(totalArs)}</p>
+                          )}
+                          <p className="text-lg font-bold">{formatPriceWithCurrency(totalUsd, "USD")}</p>
+                        </div>
+                      ) : (
+                        <p className="text-2xl font-bold text-[#0b1c30]">
+                          {quote.status === "APPROVED" ? "Total: " : "Total estimado: "}
+                          <span className={cardBorder ? "text-[#006b2c]" : ""}>
+                            {formatPrice(quote.total)}
+                          </span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Nota del admin */}
@@ -345,11 +363,11 @@ export default function QuotationHistory() {
                                 </div>
                               )}
                               <p className="text-xs text-[#565e74]">
-                                {formatPrice(item.price)} × {item.quantity}
+                                {formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}
                               </p>
                             </div>
                             <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">
-                              {formatPrice(item.price * item.quantity)}
+                              {formatPriceWithCurrency(item.price * item.quantity, item.currency)}
                             </p>
                           </div>
                         ))

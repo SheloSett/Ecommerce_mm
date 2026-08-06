@@ -1,6 +1,6 @@
 const express = require("express");
 const {
-  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getMetrics, deleteOrder,
+  getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getStatsUsd, getMetrics, deleteOrder,
   getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
@@ -38,6 +38,8 @@ router.get("/badge-counts", authMiddleware, adminMiddleware, getBadgeCounts);
 
 // Admin: ver y gestionar órdenes
 router.get("/stats", authMiddleware, adminMiddleware, getStats);
+// Estadísticas de lo vendido en dólares — cuadro aparte del dashboard, sin mezclar con los pesos
+router.get("/stats-usd", authMiddleware, adminMiddleware, getStatsUsd);
 router.get("/metrics", authMiddleware, adminMiddleware, getMetrics);
 router.get("/", authMiddleware, adminMiddleware, getOrders);
 router.get("/:id", authMiddleware, adminMiddleware, getOrder);

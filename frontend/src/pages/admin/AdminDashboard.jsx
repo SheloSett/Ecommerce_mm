@@ -4,6 +4,7 @@ import AdminLayout from "../../components/AdminLayout";
 import FitText from "../../components/FitText";
 import { useAuth } from "../../context/AuthContext";
 import { ordersApi, gastosApi } from "../../services/api";
+import { formatPrice as formatMoney } from "../../utils/formatPrice";
 
 const STATUS_LABEL = {
   PENDING: { label: "Pendiente", color: "bg-yellow-100 text-yellow-800" },
@@ -24,6 +25,14 @@ export default function AdminDashboard() {
   const [statsYear, setStatsYear]   = useState(null);
   const [gastosYear, setGastosYear] = useState([]);
   const [loading, setLoading]       = useState(true);
+  // Cuadro paralelo en DÓLARES: mismas métricas pero solo de lo vendido/gastado en USD.
+  // Nunca se mezcla ni se convierte contra los montos en pesos de arriba.
+  const [statsUsd, setStatsUsd]         = useState(null);
+  const [gastosUsd, setGastosUsd]       = useState([]);
+  const [statsUsdPrev, setStatsUsdPrev] = useState(null);
+  const [gastosUsdPrev, setGastosUsdPrev] = useState([]);
+  const [statsUsdYear, setStatsUsdYear] = useState(null);
+  const [gastosUsdYear, setGastosUsdYear] = useState([]);
 
   useEffect(() => {
     const now = new Date();
@@ -40,16 +49,28 @@ export default function AdminDashboard() {
     const yearFrom = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
     const yearTo   = now.toISOString().slice(0, 10);
 
+    // Los gastos ahora piden currency explícito: sin el filtro, un gasto en dólares se sumaría
+    // a los totales en pesos (antes no hacía falta porque todos los gastos eran en pesos).
     Promise.all([
       ordersApi.getStats({ dateFrom: curFrom,  dateTo: curTo }),
       ordersApi.getAll({ limit: 5 }),
-      gastosApi.getAll({ dateFrom: curFrom,  dateTo: curTo }),
+      gastosApi.getAll({ dateFrom: curFrom,  dateTo: curTo,  currency: "ARS" }),
       ordersApi.getStats({ dateFrom: prevFrom, dateTo: prevTo }),
-      gastosApi.getAll({ dateFrom: prevFrom, dateTo: prevTo }),
+      gastosApi.getAll({ dateFrom: prevFrom, dateTo: prevTo, currency: "ARS" }),
       ordersApi.getStats({ dateFrom: yearFrom, dateTo: yearTo }),
-      gastosApi.getAll({ dateFrom: yearFrom, dateTo: yearTo }),
+      gastosApi.getAll({ dateFrom: yearFrom, dateTo: yearTo, currency: "ARS" }),
+      // Cuadro en dólares (mismos 3 períodos)
+      ordersApi.getStatsUsd({ dateFrom: curFrom,  dateTo: curTo }),
+      gastosApi.getAll({ dateFrom: curFrom,  dateTo: curTo,  currency: "USD" }),
+      ordersApi.getStatsUsd({ dateFrom: prevFrom, dateTo: prevTo }),
+      gastosApi.getAll({ dateFrom: prevFrom, dateTo: prevTo, currency: "USD" }),
+      ordersApi.getStatsUsd({ dateFrom: yearFrom, dateTo: yearTo }),
+      gastosApi.getAll({ dateFrom: yearFrom, dateTo: yearTo, currency: "USD" }),
     ])
-      .then(([statsRes, ordersRes, gastosRes, statsPrevRes, gastosPrevRes, statsYearRes, gastosYearRes]) => {
+      .then(([
+        statsRes, ordersRes, gastosRes, statsPrevRes, gastosPrevRes, statsYearRes, gastosYearRes,
+        statsUsdRes, gastosUsdRes, statsUsdPrevRes, gastosUsdPrevRes, statsUsdYearRes, gastosUsdYearRes,
+      ]) => {
         setStats(statsRes.data);
         setRecentOrders(ordersRes.data.orders);
         setGastos(gastosRes.data);
@@ -57,13 +78,19 @@ export default function AdminDashboard() {
         setGastosPrev(gastosPrevRes.data);
         setStatsYear(statsYearRes.data);
         setGastosYear(gastosYearRes.data);
+        setStatsUsd(statsUsdRes.data);
+        setGastosUsd(gastosUsdRes.data);
+        setStatsUsdPrev(statsUsdPrevRes.data);
+        setGastosUsdPrev(gastosUsdPrevRes.data);
+        setStatsUsdYear(statsUsdYearRes.data);
+        setGastosUsdYear(gastosUsdYearRes.data);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const formatPrice = (price) =>
-    new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  const formatPrice    = (price) => formatMoney(price, "ARS");
+  const formatPriceUsd = (price) => formatMoney(price, "USD");
 
   const formatDate = (dateStr) =>
     new Date(dateStr).toLocaleDateString("es-AR", {
@@ -258,6 +285,65 @@ export default function AdminDashboard() {
                   <TotalRow label="= Total neto" value={formatPrice(year.total)} pos={year.total} />
                 </div>
 
+              </div>
+            );
+          })()}
+
+          {/* ── Resumen en DÓLARES ────────────────────────────────────────────
+              Cuadro paralelo al de pesos: mismas métricas pero solo de lo vendido y gastado en USD.
+              No se mezcla ni se convierte contra los pesos — son dos cajas independientes.
+              Solo aparece si hay algo en dólares (ventas o gastos) en alguno de los 3 períodos. */}
+          {canSeeFinances && (() => {
+            const cur  = calcMetrics(statsUsd,     gastosUsd);
+            const prev = calcMetrics(statsUsdPrev, gastosUsdPrev);
+            const year = calcMetrics(statsUsdYear, gastosUsdYear);
+            if (!cur || !prev || !year) return null;
+            // Sin movimientos en dólares en ningún período → no mostrar la sección (no ensuciar el dashboard)
+            const hayMovimientos = [cur, prev, year].some((m) => m.ventas !== 0 || m.costo !== 0 || m.gastosNeg !== 0 || m.gastosPer !== 0);
+            if (!hayMovimientos) return null;
+
+            const Row = ({ label, value, red }) => (
+              <div className="flex items-center justify-between text-xs gap-2">
+                <span className="text-slate-500 shrink-0">{label}</span>
+                <FitText max={12} min={9} className={`font-semibold text-right flex-1 ${red ? "text-red-500" : "text-slate-700"}`}>{value}</FitText>
+              </div>
+            );
+
+            const TotalRow = ({ label, value, pos }) => (
+              <div className="flex items-center justify-between text-sm font-bold border-t border-slate-200 pt-2 gap-2 mt-1">
+                <span className="text-slate-700 shrink-0">{label}</span>
+                <FitText max={14} min={10} className={`font-bold text-right flex-1 ${pos >= 0 ? "text-emerald-600" : "text-red-600"}`}>{value}</FitText>
+              </div>
+            );
+
+            const Card = ({ title, subtitle, m }) => (
+              <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold text-amber-600 uppercase tracking-widest">{title}</p>
+                  <span className="text-xs text-slate-400 capitalize">{subtitle}</span>
+                </div>
+                <Row label="Ventas"               value={formatPriceUsd(m.ventas)} />
+                <Row label="Costo"                value={`−${formatPriceUsd(m.costo)}`} red />
+                <Row label="Ganancia bruta"       value={formatPriceUsd(m.bruta)} />
+                <Row label="🏢 Gastos negocio"     value={`−${formatPriceUsd(m.gastosNeg)}`} red />
+                <Row label="Ganancia local"       value={formatPriceUsd(m.local)} />
+                <Row label="👤 Gastos personales"  value={`−${formatPriceUsd(m.gastosPer)}`} red />
+                <TotalRow label="= Total neto" value={formatPriceUsd(m.total)} pos={m.total} />
+              </div>
+            );
+
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">💵</span>
+                  <h2 className="font-bold text-slate-800">Resumen en dólares</h2>
+                  <span className="text-xs text-slate-400">— separado de los montos en pesos, sin conversión</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Card title="Este mes"          subtitle="USD" m={cur} />
+                  <Card title="Mes anterior"      subtitle={prevMonthName()} m={prev} />
+                  <Card title="Acumulado del año" subtitle={String(new Date().getFullYear())} m={year} />
+                </div>
               </div>
             );
           })()}

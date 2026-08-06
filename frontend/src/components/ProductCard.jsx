@@ -6,6 +6,7 @@ import { useWishlist } from "../context/WishlistContext";
 import { getImageUrl, productsApi } from "../services/api";
 import FitText from "./FitText";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 
 // Convierte HTML del editor rico a texto plano para la card.
 // Usar el DOM en vez de regex para decodificar también entidades (&amp; → &, &nbsp; → espacio, etc.)
@@ -30,23 +31,31 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   // imgIdx: índice de la foto visible en la card — permite pasar el carrusel sin entrar al producto
   const [imgIdx, setImgIdx] = useState(0);
 
-  const formatPrice = (price) =>
-    new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  // Moneda del producto (ya viene resuelta desde el backend: si el precio de la card sale de una
+  // variante, currency también sale de esa variante — ver getProducts en product.controller.js).
+  const formatPrice = (price) => formatPriceWithCurrency(price, product.currency || "ARS");
 
   // Cantidad actual de este producto en el carrito
   const cartQty = items.find((i) => i.id === product.id)?.quantity || 0;
 
   const isMayorista = customer?.type === "MAYORISTA";
-  // hasActiveVariants: ahora se basa solo en _count.variants — el backend YA filtra el conteo
-  // según la visibilidad de la variante y el tipo de cliente (visibleFor query param).
+  // hasActiveVariants: variantes VISIBLES para este cliente — se basa en _count.variants, que el
+  // backend filtra según la visibilidad de la variante y el tipo de cliente (visibleFor query param).
   // Antes había un hard-code !isMayorista que bloqueaba mayoristas; ahora la decisión es del admin
   // al setear la visibility de cada variante (MINORISTA / MAYORISTA / AMBOS).
+  // Se usa solo para decidir el texto del modal ("elegí opciones" vs "elegí cantidad").
   const hasActiveVariants = (product._count?.variants ?? 0) > 0;
-  // hasVariants: si el producto tiene variantes visibles para este cliente
-  const hasVariants = (product._count?.variants ?? 0) > 0;
+  // hasVariants: si el producto USA variantes, sin importar si son visibles para este cliente.
+  // product.hasVariants lo manda el backend sin filtrar por visibilidad (ver getProducts).
+  // OJO: no usar _count.variants acá — si TODAS las variantes de un producto son, por ej.,
+  // solo-MINORISTA, un cliente MAYORISTA vería _count.variants = 0 aunque el producto tenga
+  // variantes con stock real, y product.stock (del padre) nunca se sincroniza cuando hay
+  // variantes, así que caería siempre en "Sin stock" por error.
+  const hasVariants = product.hasVariants ?? (product._count?.variants ?? 0) > 0;
 
-  // Sin stock: si el producto tiene variantes, el backend garantiza que aparece solo si hay stock.
-  // Para MAYORISTA con variantes: product.stock es 0 (suma vacía), pero hay stock por variante — no mostrar "Sin stock".
+  // Sin stock: si el producto tiene variantes (visibles o no para este cliente), el padre no
+  // tiene un stock confiable — no lo marcamos sin stock (el backend ya garantiza que solo listó
+  // el producto si hay stock en algún lado, visible o no, para permitir pedir cotización).
   // Para productos sin variantes: si stockUnlimited es true nunca está sin stock; si no, chequear.
   const outOfStock = hasVariants
     ? false
@@ -125,6 +134,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     return productEffectivePrice;
   })();
 
+  // Moneda del precio mostrado en el modal: la de la variante activa si define una propia,
+  // si no la del producto completo (fullProduct, que puede diferir de `product` — el de la card).
+  const modalUnitCurrency = activeVariant?.currency || fullProduct?.currency || product.currency || "ARS";
+
   // Bloque de precio del modal: precio unitario + subtotal en chico (precio × cantidad)
   const ModalPriceInfo = () => {
     if (modalUnitPrice == null) return null;
@@ -132,10 +145,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       <div className="flex items-end justify-between gap-3 pt-1 border-t border-slate-100 mt-1">
         <div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-2">Precio</p>
-          <p className="text-lg font-bold text-slate-900">{formatPrice(modalUnitPrice)}</p>
+          <p className="text-lg font-bold text-slate-900">{formatPriceWithCurrency(modalUnitPrice, modalUnitCurrency)}</p>
         </div>
         <p className="text-xs text-slate-500 pb-1">
-          Subtotal: <span className="font-semibold text-slate-700">{formatPrice(modalUnitPrice * variantQty)}</span>
+          Subtotal: <span className="font-semibold text-slate-700">{formatPriceWithCurrency(modalUnitPrice * variantQty, modalUnitCurrency)}</span>
         </p>
       </div>
     );

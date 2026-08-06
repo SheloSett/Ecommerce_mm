@@ -20,6 +20,7 @@ const PAYMENT_LABEL = {
   TRANSFERENCIA: { label: "Transferencia", icon: "🏦" },
   MERCADOPAGO:   { label: "MercadoPago",   icon: "💳" },
   COTIZACION:    { label: "Cotización",    icon: "📋" },
+  A_CONVENIR:    { label: "A convenir",    icon: "🤝" },
 };
 
 // Etiquetas para canal de venta

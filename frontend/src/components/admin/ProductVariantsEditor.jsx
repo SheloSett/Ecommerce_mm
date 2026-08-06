@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef, Fragment } from "react";
 import { variantsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
-
-const formatPrice = (n) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
+import { formatPrice } from "../../utils/formatPrice";
 
 // suppliers: lista de proveedores para el override por variante (vacío = usa el del producto)
-export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, productImages = [], suppliers = [] }) {
+// baseCurrency: moneda del producto padre (ARS/USD) — fallback cuando la variante no define la suya.
+export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, baseCurrency = "ARS", productImages = [], suppliers = [] }) {
   const [attributes, setAttributes] = useState([]);
   const [variants,   setVariants]   = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -228,6 +227,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesalePrice:     v.wholesalePrice     != null ? String(v.wholesalePrice)     : "",
         wholesaleSalePrice: v.wholesaleSalePrice != null ? String(v.wholesaleSalePrice) : "",
         cost:               v.cost  != null ? String(v.cost)  : "",
+        // Moneda propia de la variante. null = hereda la del producto (NO se le pone default acá).
+        currency:           v.currency ?? null,
         sku:                v.sku ?? "",
         // Ubicación en depósito (override opcional del producto)
         module:             v.module ?? "",
@@ -296,6 +297,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesalePrice:     isMay ? (e.wholesalePrice     === "" ? "" : parseFloat(e.wholesalePrice)) : null,
         wholesaleSalePrice: isMay ? (e.wholesaleSalePrice === "" ? "" : parseFloat(e.wholesaleSalePrice)) : null,
         cost:               e.cost  === "" ? "" : parseFloat(e.cost),
+        // "" → el backend lo interpreta como null (hereda la moneda del producto)
+        currency:           e.currency || "",
         sku:                e.sku,
         // Ubicación en depósito (override del producto; vacío → el backend lo guarda como null)
         module:             e.module ?? "",
@@ -935,13 +938,31 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         {/* Precios — edit. Muestra solo los inputs relevantes según visibility heredada del atributo */}
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-1">
+                            {/* Moneda de esta variante — vacío = usa la del producto (baseCurrency) */}
+                            <select
+                              value={e.currency ?? ""}
+                              onChange={(ev) => {
+                                const newCurrency = ev.target.value || null;
+                                const hasPrices = [e.cost, e.price, e.salePrice, e.wholesalePrice, e.wholesaleSalePrice].some((val) => val);
+                                if (newCurrency !== e.currency && hasPrices) {
+                                  toast("Cambiaste la moneda — los precios no se convierten automáticamente, revisalos.", { icon: "⚠️" });
+                                }
+                                setEditing((p) => ({ ...p, [v.id]: { ...e, currency: newCurrency } }));
+                              }}
+                              className="w-full mb-1 px-1 py-1 bg-white border border-slate-300 text-slate-800 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              title="Moneda de esta variante (vacío = usa la del producto)"
+                            >
+                              <option value="">Moneda del producto ({baseCurrency})</option>
+                              <option value="ARS">ARS</option>
+                              <option value="USD">USD</option>
+                            </select>
                             {/* Precios minorista — visibles si visibility es MINORISTA o AMBOS */}
                             {(e.visibility === "MINORISTA" || e.visibility === "AMBOS") && (
                               <>
                                 <div className="flex items-center gap-1">
                                   <span className="text-[10px] text-slate-500 w-12 shrink-0">Min</span>
                                   <input
-                                    type="number" min="0" step="0.01" placeholder={`Base: ${formatPrice(basePrice)}`}
+                                    type="number" min="0" step="0.01" placeholder={`Base: ${formatPrice(basePrice, e.currency || baseCurrency)}`}
                                     value={e.price}
                                     onChange={(ev) => setEditing((p) => ({ ...p, [v.id]: { ...e, price: ev.target.value } }))}
                                     className="flex-1 px-2 py-1 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1080,30 +1101,38 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         {/* Visibilidad de la variante ya NO se muestra acá — el badge está en el atributo arriba */}
                         {/* Precios — view. Lista compacta de los precios definidos */}
                         <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300">
-                          <div className="flex flex-col gap-0.5 text-xs">
-                            {(v.visibility === "MINORISTA" || v.visibility === "AMBOS" || !v.visibility) && (
-                              <div>
-                                <span className="text-slate-400 dark:text-slate-500 mr-1">Base minorista:</span>
-                                {v.price != null ? formatPrice(v.price) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
-                                {v.salePrice != null && (
-                                  <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.salePrice)})</span>
+                          {(() => {
+                            const vCurrency = v.currency || baseCurrency || "ARS";
+                            return (
+                              <div className="flex flex-col gap-0.5 text-xs">
+                                {vCurrency === "USD" && (
+                                  <span className="self-center text-[9px] font-bold text-amber-600 dark:text-amber-400">USD</span>
+                                )}
+                                {(v.visibility === "MINORISTA" || v.visibility === "AMBOS" || !v.visibility) && (
+                                  <div>
+                                    <span className="text-slate-400 dark:text-slate-500 mr-1">Base minorista:</span>
+                                    {v.price != null ? formatPrice(v.price, vCurrency) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
+                                    {v.salePrice != null && (
+                                      <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.salePrice, vCurrency)})</span>
+                                    )}
+                                  </div>
+                                )}
+                                {(v.visibility === "MAYORISTA" || v.visibility === "AMBOS") && (
+                                  <div>
+                                    <span className="text-purple-500 dark:text-purple-400 mr-1">Base mayorista:</span>
+                                    {v.wholesalePrice != null ? formatPrice(v.wholesalePrice, vCurrency) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
+                                    {v.wholesaleSalePrice != null && (
+                                      <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.wholesaleSalePrice, vCurrency)})</span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                            {(v.visibility === "MAYORISTA" || v.visibility === "AMBOS") && (
-                              <div>
-                                <span className="text-purple-500 dark:text-purple-400 mr-1">Base mayorista:</span>
-                                {v.wholesalePrice != null ? formatPrice(v.wholesalePrice) : <span className="text-slate-400 dark:text-slate-500">Base</span>}
-                                {v.wholesaleSalePrice != null && (
-                                  <span className="text-red-500 dark:text-red-400 ml-1">(of: {formatPrice(v.wholesaleSalePrice)})</span>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                            );
+                          })()}
                         </td>
                         {/* Costo — view */}
                         <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300">
-                          {v.cost != null ? formatPrice(v.cost) : <span className="text-slate-400 dark:text-slate-500 text-xs">Base</span>}
+                          {v.cost != null ? formatPrice(v.cost, v.currency || baseCurrency || "ARS") : <span className="text-slate-400 dark:text-slate-500 text-xs">Base</span>}
                         </td>
                         {/* SKU — view */}
                         <td className="px-4 py-3 text-center text-slate-500 dark:text-slate-400 text-xs">{v.sku || "—"}</td>

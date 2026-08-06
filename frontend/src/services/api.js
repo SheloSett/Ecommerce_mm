@@ -139,6 +139,8 @@ export const ordersApi = {
   // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
   updateFields: (id, fields) => api.patch(`/orders/${id}/fields`, fields),
   getStats:      (params) => api.get("/orders/stats",        { params: params || {} }),
+  // Estadísticas de lo vendido en dólares (cuadro aparte del dashboard, sin mezclar con pesos)
+  getStatsUsd:   (params) => api.get("/orders/stats-usd",    { params: params || {} }),
   getMetrics:    (params) => api.get("/orders/metrics",      { params: params || {} }),
   getBadgeCounts: ()     => api.get("/orders/badge-counts"),
   markSeen:      (id)    => api.patch(`/orders/${id}/seen`),

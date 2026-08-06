@@ -41,4 +41,10 @@ function effectiveUnitPrice({ product, variant, isMayorista, quantity }) {
   return price;
 }
 
-module.exports = { effectiveUnitPrice };
+// Moneda efectiva de un ítem: la variante gana si la definió, si no cae al producto.
+// Misma precedencia que effectiveUnitPrice, para que precio y moneda nunca se desincronicen.
+function effectiveCurrency({ product, variant }) {
+  return (variant && variant.currency != null) ? variant.currency : (product.currency || "ARS");
+}
+
+module.exports = { effectiveUnitPrice, effectiveCurrency };

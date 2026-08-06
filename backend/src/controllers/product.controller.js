@@ -275,7 +275,7 @@ async function getProducts(req, res) {
           // ninguna variante comprable (ej: base $19.999 pero la única con stock sale $30.999).
           variants: {
             where: variantsCountWhere,
-            select: { combination: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, stock: true, stockUnlimited: true },
+            select: { combination: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, stock: true, stockUnlimited: true, currency: true },
           },
           // Atributos con sus valores ordenados por posición — solo para ordenar las variantes
           // como en el detalle (se quitan de la respuesta en el map de abajo).
@@ -302,6 +302,15 @@ async function getProducts(req, res) {
       products: products.map((p) => {
         const { variants: cardVariants, attributes: cardAttrs, ...rest } = p;
         const out = { ...rest };
+        // hasVariants: si el producto tiene atributos/variantes configurados, SIN filtrar por
+        // visibilidad (a diferencia de _count.variants, que solo cuenta las visibles para este
+        // cliente). Hace falta esta señal aparte porque un producto puede tener TODAS sus variantes
+        // restringidas a un tipo de cliente (ej: solo MINORISTA) — para el otro tipo, _count.variants
+        // da 0, pero el producto sigue "usando variantes" y su campo stock (del padre) no es
+        // confiable (nunca se sincroniza cuando hay variantes). Sin esta señal, la card lo mostraba
+        // como "Sin stock" aunque las variantes SÍ tuvieran stock, solo por no ser visibles para el
+        // tipo de cliente actual.
+        out.hasVariants = Array.isArray(cardAttrs) && cardAttrs.length > 0;
         if (Array.isArray(cardVariants) && cardVariants.length > 0) {
           // Orden "como se ve en el detalle": clave lexicográfica por posición del valor de cada
           // atributo (los atributos y valores ya vienen ordenados por position asc).
@@ -329,6 +338,12 @@ async function getProducts(req, res) {
           if (avail.wholesalePrice != null) {
             out.wholesalePrice     = avail.wholesalePrice;
             out.wholesaleSalePrice = avail.wholesaleSalePrice;
+          }
+          // La moneda tiene que viajar junto con el precio: si el precio de la card salió de esta
+          // variante, la moneda también (si no, un producto ARS con una variante en USD mostraría
+          // el precio de la variante con el símbolo de pesos).
+          if (avail.price != null || avail.wholesalePrice != null) {
+            out.currency = avail.currency ?? p.currency ?? "ARS";
           }
         }
         return stripAdminProductFields(out);
@@ -656,7 +671,7 @@ async function enforceCarouselLimit(field, excludeId = null) {
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
+    const { name, description, price, cost, currency, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
     const priceTiers = parseTiers(priceTiersRaw);
     const wholesalePriceTiers = parseTiers(wholesalePriceTiersRaw);
     // categoryIds puede venir como string (1 sola) o array (varias) desde FormData
@@ -701,6 +716,7 @@ async function createProduct(req, res) {
         description: description || null,
         price: parseFloat(price),
         cost: cost ? parseFloat(cost) : null,
+        currency: ["ARS", "USD"].includes(currency) ? currency : "ARS",
         ivaRate: ivaRate ? parseFloat(ivaRate) : 21,
         salePrice: salePrice ? parseFloat(salePrice) : null,
         wholesalePrice: wholesalePrice ? parseFloat(wholesalePrice) : null,
@@ -747,7 +763,7 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
+    const { name, description, price, cost, currency, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
     // undefined → no tocar (allowUndefined=true); null/[] → borrar tiers
     const priceTiersUpdate = parseTiers(priceTiersRaw, true);
     const wholesalePriceTiersUpdate = parseTiers(wholesalePriceTiersRaw, true);
@@ -848,6 +864,7 @@ async function updateProduct(req, res) {
         description: description !== undefined ? description : existing.description,
         price: price ? parseFloat(price) : existing.price,
         cost: cost !== undefined ? (cost ? parseFloat(cost) : null) : existing.cost,
+        currency: ["ARS", "USD"].includes(currency) ? currency : existing.currency,
         ivaRate: ivaRate !== undefined ? parseFloat(ivaRate) : existing.ivaRate,
         salePrice: salePrice !== undefined ? (salePrice ? parseFloat(salePrice) : null) : existing.salePrice,
         wholesalePrice: wholesalePrice !== undefined ? (wholesalePrice ? parseFloat(wholesalePrice) : null) : existing.wholesalePrice,
@@ -918,7 +935,7 @@ async function updateProduct(req, res) {
 async function quickUpdateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active, cost, sku, supplierId } = req.body;
+    const { price, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, active, cost, currency, sku, supplierId } = req.body;
 
     const existing = await prisma.product.findUnique({ where: { id: parseInt(id) } });
     if (!existing) {
@@ -977,6 +994,7 @@ async function quickUpdateProduct(req, res) {
     if (active !== undefined) updateData.active = Boolean(active);
     // cost y sku faltaban — el frontend los manda en la edición rápida pero antes se ignoraban
     if (cost !== undefined && cost !== "") updateData.cost = parseFloat(cost);
+    if (currency !== undefined && ["ARS", "USD"].includes(currency)) updateData.currency = currency;
     if (sku !== undefined) updateData.sku = sku || null;
     // supplierId: permite cambiar el proveedor del producto sin abrir la edición completa
     // (se usa desde la vista de cotizaciones). "" o null = sin proveedor asignado.
@@ -1101,7 +1119,10 @@ async function bulkPriceAdjust(req, res) {
         ? tiers.map((t) => ({ ...t, price: Math.round(parseFloat(t.price) * factor * 100) / 100 }))
         : tiers;
 
+    // Solo productos en ARS: un % de ajuste (pensado para inflación en pesos) no tiene sentido
+    // aplicado a un precio ya cargado en USD — esos quedan afuera del ajuste masivo.
     const products = await prisma.product.findMany({
+      where: { currency: "ARS" },
       select: {
         id: true,
         price: true,

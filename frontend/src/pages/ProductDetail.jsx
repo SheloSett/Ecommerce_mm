@@ -6,6 +6,7 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, getImageUrl } from "../services/api";
 import { saveRecent } from "../utils/recentlyViewed";
+import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import toast from "react-hot-toast";
@@ -202,8 +203,10 @@ export default function ProductDetail() {
 
   const navigate = useNavigate();
 
-  const formatPrice = (price) =>
-    new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  // Moneda efectiva: la de la variante activa si define una propia, si no la del producto.
+  // Sin conversión — un producto/variante en USD se muestra "USD X" tal cual (ver formatPrice.js).
+  const effectiveCurrency = activeVariant?.currency || product?.currency || "ARS";
+  const formatPrice = (price) => formatPriceWithCurrency(price, effectiveCurrency);
 
   const isMayorista = customer?.type === "MAYORISTA";
 
