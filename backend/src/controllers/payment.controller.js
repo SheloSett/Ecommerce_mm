@@ -1,4 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
+const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
 
@@ -9,6 +10,45 @@ const mp = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
   options: { timeout: 5000 },
 });
+
+// Valida la firma "x-signature" que manda MercadoPago (HMAC-SHA256 sobre un manifest con el
+// data.id de la URL + el header x-request-id + el timestamp de la firma). Sirve para asegurar que
+// el webhook viene de verdad de MP y no de alguien que conoce la URL.
+// Devuelve: true (firma válida) | false (firma inválida) | null (no se puede validar).
+// DISEÑO DEFENSIVO: si no está configurado MP_WEBHOOK_SECRET, devuelve null y el webhook se procesa
+// igual que antes (no rompemos los pagos que ya funcionan). La validación se ACTIVA sola recién
+// cuando pongas MP_WEBHOOK_SECRET en el .env con el mismo valor que configures en el panel de MP.
+function verifyMpSignature(req) {
+  const secret = process.env.MP_WEBHOOK_SECRET;
+  if (!secret) return null; // sin secret → no validar (comportamiento previo, no romper pagos)
+
+  const signature = req.headers["x-signature"];
+  const requestId = req.headers["x-request-id"];
+  if (!signature) return false;
+
+  // x-signature tiene forma "ts=1700000000,v1=<hash hex>"
+  const parts = Object.fromEntries(
+    signature.split(",").map((kv) => kv.split("=").map((s) => (s || "").trim()))
+  );
+  const ts = parts.ts;
+  const v1 = parts.v1;
+  if (!ts || !v1) return false;
+
+  // data.id viene del query string; MP lo pide en minúsculas si es alfanumérico.
+  const dataId = (req.query["data.id"] || req.query.id || "").toString().toLowerCase();
+
+  // Manifest EXACTO que arma y firma MercadoPago.
+  const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
+  const computed  = crypto.createHmac("sha256", secret).update(manifest).digest("hex");
+
+  try {
+    // Comparación en tiempo constante (evita timing attacks). Si los largos difieren, timingSafeEqual
+    // tira excepción → lo tratamos como firma inválida.
+    return crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(v1, "hex"));
+  } catch {
+    return false;
+  }
+}
 
 // POST /api/payments/create-preference
 // Crea una preferencia de pago en MercadoPago para una orden existente
@@ -155,6 +195,17 @@ async function handleWebhook(req, res) {
     if (!paymentId) {
       console.log("[MP WEBHOOK] paymentId no encontrado, ignorando");
       return res.sendStatus(200);
+    }
+
+    // Validar la firma de MercadoPago (solo si MP_WEBHOOK_SECRET está configurado).
+    // sigResult: true = firma OK | false = firma inválida (rechazar) | null = no configurado (procesar igual).
+    const sigResult = verifyMpSignature(req);
+    if (sigResult === false) {
+      console.warn("[MP WEBHOOK] firma x-signature inválida — se ignora la notificación");
+      return res.sendStatus(401);
+    }
+    if (sigResult === null) {
+      console.warn("[MP WEBHOOK] MP_WEBHOOK_SECRET no configurado; se procesa el webhook SIN validar firma");
     }
 
     console.log("[MP WEBHOOK] procesando paymentId:", paymentId);
