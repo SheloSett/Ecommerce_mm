@@ -117,8 +117,25 @@ async function getProducts(req, res) {
         {
           OR: [
             { stockUnlimited: true },
-            // Sin variantes visibles para este cliente: verificar product.stock directo
-            { AND: [{ variants: { none: { active: true, visibility: { in: visibleSet } } } }, { stock: { gt: 0 } }] },
+            // Sin variantes visibles para este cliente (ej: mayorista con variantes solo-minorista):
+            // el producto IGUAL debe aparecer en catálogo/búsqueda para que pueda pedir COTIZACIÓN.
+            // El admin le asigna después el/los color(es) y cantidades al aprobar la cotización, y ahí
+            // se descuenta el stock. Por eso alcanza con que haya stock EN ALGÚN lado: el base > 0 O
+            // alguna variante activa con stock (aunque esa variante no sea visible para este cliente).
+            // Antes: { AND: [{ variants: { none: {...} } }, { stock: { gt: 0 } }] }
+            //   ↑ exigía stock BASE > 0, pero en productos con variantes el stock base es 0 → el
+            //     mayorista nunca veía el producto en el catálogo (solo entrando por la URL directa).
+            {
+              AND: [
+                { variants: { none: { active: true, visibility: { in: visibleSet } } } },
+                {
+                  OR: [
+                    { stock: { gt: 0 } },
+                    { variants: { some: { active: true, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
+                  ],
+                },
+              ],
+            },
             // Con variantes visibles para este cliente: al menos una con stock
             { variants: { some: { active: true, visibility: { in: visibleSet }, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
           ],
