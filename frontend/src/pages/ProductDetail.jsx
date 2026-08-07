@@ -203,9 +203,11 @@ export default function ProductDetail() {
 
   const navigate = useNavigate();
 
-  // Moneda efectiva: la de la variante activa si define una propia, si no la del producto.
-  // Sin conversión — un producto/variante en USD se muestra "USD X" tal cual (ver formatPrice.js).
-  const effectiveCurrency = activeVariant?.currency || product?.currency || "ARS";
+  // Moneda del producto — vale para todos sus precios, incluidos los de las variantes (la variante
+  // define el número, no la unidad). Sin conversión: un producto en USD se muestra "USD X" tal cual
+  // (ver formatPrice.js). Antes: activeVariant?.currency || product?.currency || "ARS", que cambiaba
+  // el símbolo al elegir una variante con moneda propia.
+  const effectiveCurrency = product?.currency || "ARS";
   const formatPrice = (price) => formatPriceWithCurrency(price, effectiveCurrency);
 
   const isMayorista = customer?.type === "MAYORISTA";

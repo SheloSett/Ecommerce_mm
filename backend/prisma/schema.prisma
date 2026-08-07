@@ -111,8 +111,10 @@ enum CustomerVisibility {
   MINORISTA
 }
 
-// Moneda en la que están cargados el costo/precios de un producto o variante.
-// Sin conversión automática entre monedas en ningún punto del sistema.
+// Moneda en la que están cargados el costo/precios de un PRODUCTO (y sus variantes, que siempre
+// heredan la del producto), o de un gasto. Sin conversión automática entre monedas en ningún punto.
+// Antes decía "de un producto o variante": la variante ya no tiene moneda propia (ver
+// ProductVariant.currency, deprecado).
 enum Currency {
   ARS
   USD
@@ -608,7 +610,15 @@ model ProductVariant {
   wholesalePrice     Float?
   wholesaleSalePrice Float?
   cost               Float?             // costo de la variante (sobrescribe el costo del producto padre)
-  // Moneda de la variante. null → hereda la moneda del producto padre (mismo patrón que supplierId/module/shelf).
+  // DEPRECADO — NO USAR. La moneda es una propiedad del PRODUCTO, no de la variante.
+  // Modelo vigente: el producto define la UNIDAD (Product.currency) y la variante define el NÚMERO
+  // (su precio/costo, expresados siempre en la moneda del producto).
+  // Por qué se dejó de usar: la variante podía pisar la moneda SIN pisar el precio, y ahí el precio
+  // heredado del padre quedaba etiquetado con la otra moneda — un producto en USD 25 con una variante
+  // en ARS sin precio propio se cobraba AR$25. El mismo cruce rompía el costo (el costo maestro del
+  // producto se sumaba a un total en la otra moneda).
+  // La columna se mantiene para no tirar datos con un push destructivo, pero el código la ignora por
+  // completo: no se lee (ver effectiveCurrency en utils/pricing.js) ni se escribe (ver variant.routes.js).
   currency           Currency?
   // Descuentos por cantidad a nivel VARIANTE (mismo formato que Product.priceTiers: [{minQty, price}]).
   // Si el producto tiene variantes, los descuentos por cantidad se toman de la VARIANTE elegida

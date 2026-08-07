@@ -11,9 +11,19 @@ export default function CartDrawer({ open, onClose }) {
   const { customer } = useCustomerAuth();
   const { mayoristaMinimoCompra } = useSiteConfig();
   const isMayorista = customer?.type === "MAYORISTA";
-  const minimoActivo = isMayorista && mayoristaMinimoCompra > 0;
-  const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;
-  const progreso = minimoActivo ? Math.min(100, (totalPrice / mayoristaMinimoCompra) * 100) : 100;
+  // Totales por moneda — mismo criterio que Cart.jsx y el Checkout: totalPrice suma pesos y dólares
+  // en el mismo número, así que en un carrito mixto no representa nada y no se puede mostrar solo.
+  const hasUsd   = items.some((i) => i.currency === "USD");
+  const totalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+
+  // Mínimo mayorista: solo existe en pesos. Con algún ítem en dólares no se exige (mismo criterio
+  // que Cart.jsx y createOrder). Apagar minimoActivo también destraba el botón de checkout.
+  // Antes: const minimoActivo = isMayorista && mayoristaMinimoCompra > 0;
+  const minimoActivo = isMayorista && mayoristaMinimoCompra > 0 && !hasUsd;
+  // Antes: const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;  (mezclaba monedas)
+  const llegaAlMinimo = totalArs >= mayoristaMinimoCompra;
+  const progreso = minimoActivo ? Math.min(100, (totalArs / mayoristaMinimoCompra) * 100) : 100;
   const navigate = useNavigate();
 
   const handleCheckout = () => {
@@ -165,7 +175,7 @@ export default function CartDrawer({ open, onClose }) {
                   <span className={llegaAlMinimo ? "text-[#006b2c]" : "text-amber-600"}>
                     {llegaAlMinimo
                       ? "✓ Mínimo de compra alcanzado"
-                      : `Faltan ${formatPrice(mayoristaMinimoCompra - totalPrice)} para el mínimo`}
+                      : `Faltan ${formatPrice(mayoristaMinimoCompra - totalArs)} para el mínimo`}
                   </span>
                   <span className="text-[#565e74]">{formatPrice(mayoristaMinimoCompra)}</span>
                 </div>
@@ -180,11 +190,31 @@ export default function CartDrawer({ open, onClose }) {
               </div>
             )}
 
-            {/* Total */}
-            <div className="flex justify-between items-center">
-              <span className="text-[#565e74] font-medium text-sm">Total</span>
-              <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalPrice)}</span>
-            </div>
+            {/* Total — Antes: siempre formatPrice(totalPrice), que en un carrito mixto mostraba
+                la suma de pesos y dólares con símbolo de pesos. */}
+            {hasUsd ? (
+              <div className="space-y-1">
+                {totalArs > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-[#565e74] font-medium">Subtotal ARS</span>
+                    <span className="font-bold text-[#0b1c30]">{formatPrice(totalArs)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-[#565e74] font-medium">Subtotal USD</span>
+                  <span className="font-bold text-[#0b1c30]">{formatPrice(totalUsd, "USD")}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1 border-t border-[#bdcaba]/30">
+                  <span className="text-[#565e74] font-medium text-sm">Total</span>
+                  <span className="text-base font-bold text-[#006b2c]">A convenir</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-between items-center">
+                <span className="text-[#565e74] font-medium text-sm">Total</span>
+                <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalPrice)}</span>
+              </div>
+            )}
 
             {/* Ver carrito completo */}
             <Link

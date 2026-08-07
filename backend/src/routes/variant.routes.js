@@ -220,7 +220,9 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
     const {
       stock, stockUnlimited,
       price, salePrice, wholesalePrice, wholesaleSalePrice,
-      cost, currency, sku, active, image, images, visibility,
+      // `currency` ya NO se desestructura del body: la moneda es del producto, no de la variante
+      // (ver ProductVariant.currency en schema.prisma, deprecada). Antes: cost, currency, sku, ...
+      cost, sku, active, image, images, visibility,
       module, shelf, // ubicación en depósito a nivel variante (override del producto)
       supplierId,    // proveedor a nivel variante (override del producto; vacío → usa el del producto)
       priceTiers, wholesalePriceTiers, // descuentos por cantidad PROPIOS de la variante
@@ -248,8 +250,11 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
     if (wholesalePrice     !== undefined) data.wholesalePrice     = wholesalePrice     === "" || wholesalePrice     === null ? null : parseFloat(wholesalePrice);
     if (wholesaleSalePrice !== undefined) data.wholesaleSalePrice = wholesaleSalePrice === "" || wholesaleSalePrice === null ? null : parseFloat(wholesaleSalePrice);
     if (cost           !== undefined) data.cost           = cost  === "" || cost  === null ? null : parseFloat(cost);
-    // Moneda de la variante: vacío/null → hereda la del producto padre (mismo criterio que supplierId)
-    if (currency       !== undefined) data.currency       = (currency === "" || currency === null) ? null : currency;
+    // COMENTADO: la variante ya no tiene moneda propia. Si el body trae `currency` se IGNORA en
+    // silencio — no se escribe la columna. Dejarlo activo permitiría reintroducir el problema que
+    // motivó el cambio (variante con moneda propia pero precio heredado del padre → el número del
+    // padre se cobraba en la otra moneda). La moneda se cambia desde el producto.
+    // if (currency       !== undefined) data.currency       = (currency === "" || currency === null) ? null : currency;
     if (sku            !== undefined) data.sku            = sku || null;
     if (active         !== undefined) data.active         = active === "true" || active === true;
     // Visibilidad: validar contra el enum CustomerVisibility

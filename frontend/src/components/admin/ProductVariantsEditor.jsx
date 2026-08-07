@@ -4,7 +4,9 @@ import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
 
 // suppliers: lista de proveedores para el override por variante (vacío = usa el del producto)
-// baseCurrency: moneda del producto padre (ARS/USD) — fallback cuando la variante no define la suya.
+// baseCurrency: moneda del producto (ARS/USD). Es LA moneda de todos los precios y costos de sus
+// variantes — la variante define el número, el producto la unidad. Antes esto era solo un "fallback
+// cuando la variante no define la suya", pero la moneda por variante se eliminó (ver schema.prisma).
 export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, baseCurrency = "ARS", productImages = [], suppliers = [] }) {
   const [attributes, setAttributes] = useState([]);
   const [variants,   setVariants]   = useState([]);
@@ -227,8 +229,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesalePrice:     v.wholesalePrice     != null ? String(v.wholesalePrice)     : "",
         wholesaleSalePrice: v.wholesaleSalePrice != null ? String(v.wholesaleSalePrice) : "",
         cost:               v.cost  != null ? String(v.cost)  : "",
-        // Moneda propia de la variante. null = hereda la del producto (NO se le pone default acá).
-        currency:           v.currency ?? null,
+        // COMENTADO: la variante ya no tiene moneda propia — usa siempre la del producto
+        // (baseCurrency). Si en la DB quedó algún valor viejo en esta columna, se ignora.
+        // currency:           v.currency ?? null,
         sku:                v.sku ?? "",
         // Ubicación en depósito (override opcional del producto)
         module:             v.module ?? "",
@@ -297,8 +300,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         wholesalePrice:     isMay ? (e.wholesalePrice     === "" ? "" : parseFloat(e.wholesalePrice)) : null,
         wholesaleSalePrice: isMay ? (e.wholesaleSalePrice === "" ? "" : parseFloat(e.wholesaleSalePrice)) : null,
         cost:               e.cost  === "" ? "" : parseFloat(e.cost),
-        // "" → el backend lo interpreta como null (hereda la moneda del producto)
-        currency:           e.currency || "",
+        // COMENTADO: ya no se manda la moneda al guardar la variante. El backend tampoco la lee
+        // (ver variant.routes.js) — la moneda se edita desde el producto.
+        // currency:           e.currency || "",
         sku:                e.sku,
         // Ubicación en depósito (override del producto; vacío → el backend lo guarda como null)
         module:             e.module ?? "",
@@ -938,31 +942,25 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         {/* Precios — edit. Muestra solo los inputs relevantes según visibility heredada del atributo */}
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-1">
-                            {/* Moneda de esta variante — vacío = usa la del producto (baseCurrency) */}
-                            <select
-                              value={e.currency ?? ""}
-                              onChange={(ev) => {
-                                const newCurrency = ev.target.value || null;
-                                const hasPrices = [e.cost, e.price, e.salePrice, e.wholesalePrice, e.wholesaleSalePrice].some((val) => val);
-                                if (newCurrency !== e.currency && hasPrices) {
-                                  toast("Cambiaste la moneda — los precios no se convierten automáticamente, revisalos.", { icon: "⚠️" });
-                                }
-                                setEditing((p) => ({ ...p, [v.id]: { ...e, currency: newCurrency } }));
-                              }}
-                              className="w-full mb-1 px-1 py-1 bg-white border border-slate-300 text-slate-800 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              title="Moneda de esta variante (vacío = usa la del producto)"
-                            >
-                              <option value="">Moneda del producto ({baseCurrency})</option>
-                              <option value="ARS">ARS</option>
-                              <option value="USD">USD</option>
-                            </select>
+                            {/* COMENTADO: acá había un <select> de moneda POR VARIANTE, con las opciones
+                                "Moneda del producto (X)" / ARS / USD, más un toast avisando que los
+                                precios no se convertían solos. Se quitó junto con la moneda por
+                                variante: la variante define el número, el producto la unidad. Los
+                                precios de esta fila se cargan siempre en la moneda del producto, que
+                                se muestra abajo como referencia y se edita desde la ficha del producto. */}
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500 mb-1">
+                              Precios en <span className="font-bold text-slate-600 dark:text-slate-300">{baseCurrency}</span> (moneda del producto)
+                            </div>
                             {/* Precios minorista — visibles si visibility es MINORISTA o AMBOS */}
                             {(e.visibility === "MINORISTA" || e.visibility === "AMBOS") && (
                               <>
+                                {/* Antes el placeholder era formatPrice(basePrice, e.currency || baseCurrency):
+                                    el precio del PRODUCTO se mostraba con la moneda de la VARIANTE, o sea el
+                                    número del padre etiquetado con otra unidad. Ahora siempre baseCurrency. */}
                                 <div className="flex items-center gap-1">
                                   <span className="text-[10px] text-slate-500 w-12 shrink-0">Min</span>
                                   <input
-                                    type="number" min="0" step="0.01" placeholder={`Base: ${formatPrice(basePrice, e.currency || baseCurrency)}`}
+                                    type="number" min="0" step="0.01" placeholder={`Base: ${formatPrice(basePrice, baseCurrency)}`}
                                     value={e.price}
                                     onChange={(ev) => setEditing((p) => ({ ...p, [v.id]: { ...e, price: ev.target.value } }))}
                                     className="flex-1 px-2 py-1 bg-white border border-slate-300 text-slate-800 placeholder:text-slate-400 dark:bg-slate-900/50 dark:border-slate-600 dark:text-slate-100 dark:placeholder:text-slate-500 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1102,7 +1100,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         {/* Precios — view. Lista compacta de los precios definidos */}
                         <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300">
                           {(() => {
-                            const vCurrency = v.currency || baseCurrency || "ARS";
+                            // Antes: v.currency || baseCurrency || "ARS" — la variante podía imponer
+                            // su moneda. Hoy todos los precios de la fila están en la del producto.
+                            const vCurrency = baseCurrency || "ARS";
                             return (
                               <div className="flex flex-col gap-0.5 text-xs">
                                 {vCurrency === "USD" && (
@@ -1132,7 +1132,8 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                         </td>
                         {/* Costo — view */}
                         <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-300">
-                          {v.cost != null ? formatPrice(v.cost, v.currency || baseCurrency || "ARS") : <span className="text-slate-400 dark:text-slate-500 text-xs">Base</span>}
+                          {/* Antes: formatPrice(v.cost, v.currency || baseCurrency || "ARS") */}
+                          {v.cost != null ? formatPrice(v.cost, baseCurrency || "ARS") : <span className="text-slate-400 dark:text-slate-500 text-xs">Base</span>}
                         </td>
                         {/* SKU — view */}
                         <td className="px-4 py-3 text-center text-slate-500 dark:text-slate-400 text-xs">{v.sku || "—"}</td>

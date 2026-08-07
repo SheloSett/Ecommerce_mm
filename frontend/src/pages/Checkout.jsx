@@ -131,8 +131,19 @@ export default function Checkout() {
   // cartHasUsd: solo aplica a minoristas — mayoristas siempre pasan por COTIZACION sin importar
   // la moneda de los ítems, así que este gating no les afecta.
   const cartHasUsd  = !isMayorista && items.some((i) => i.currency === "USD");
+  // hayUsdEnCarrito: sin filtrar por tipo de cliente. Se usa para el mínimo mayorista, que SÍ le
+  // aplica a los mayoristas — por eso no se puede reusar cartHasUsd acá.
+  const hayUsdEnCarrito = items.some((i) => i.currency === "USD");
   const subtotalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
   const subtotalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+
+  // Mínimo de compra mayorista: existe solo en pesos, así que se mide contra la parte en pesos y no
+  // se exige si hay algún ítem en dólares (mismo criterio que el carrito y que createOrder).
+  // Antes se comparaba `subtotal` (suma cruda que mezcla monedas) contra el mínimo en los 3 lugares
+  // de abajo: el aviso, el disabled del botón y la validación al enviar.
+  // Declarado DESPUÉS de subtotalArs a propósito: son const, leerlo antes tira ReferenceError.
+  const exigirMinimo = isMayorista && mayoristaMinimoCompra > 0 && !hayUsdEnCarrito;
+  const faltaMinimo  = exigirMinimo && subtotalArs < mayoristaMinimoCompra;
 
   const subtotal       = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const couponDiscount = couponResult?.discountAmount || 0;
@@ -230,7 +241,8 @@ export default function Checkout() {
         return;
       }
     }
-    if (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra) {
+    // Antes: if (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)
+    if (faltaMinimo) {
       toast.error(`El pedido mínimo mayorista es ${formatPrice(mayoristaMinimoCompra)}`);
       return;
     }
@@ -901,8 +913,9 @@ export default function Checkout() {
                 </div>
               </section>
 
-              {/* Aviso de compra mínima mayorista */}
-              {isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra && (
+              {/* Aviso de compra mínima mayorista.
+                  Antes: isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra */}
+              {faltaMinimo && (
                 <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 flex items-start gap-3 text-sm">
                   <span
                     className="material-symbols-outlined text-amber-600 flex-shrink-0"
@@ -914,7 +927,7 @@ export default function Checkout() {
                     <p className="font-semibold text-amber-800">Mínimo de compra no alcanzado</p>
                     <p className="text-amber-700 mt-0.5">
                       El pedido mínimo mayorista es <strong>{formatPrice(mayoristaMinimoCompra)}</strong>.
-                      Te faltan <strong>{formatPrice(mayoristaMinimoCompra - subtotal)}</strong> para continuar.
+                      Te faltan <strong>{formatPrice(mayoristaMinimoCompra - subtotalArs)}</strong> para continuar.
                     </p>
                   </div>
                 </div>
@@ -1112,7 +1125,8 @@ export default function Checkout() {
                     disabled={
                       loading ||
                       rateLoading ||
-                      (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra) ||
+                      // Antes: (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)
+                      faltaMinimo ||
                       // Bloquear si eligió Correo Argentino pero aún no hay cotización confirmada
                       (shippingMethod === "CORREO_ARGENTINO" && (!shippingRate || shippingCost === 0))
                     }

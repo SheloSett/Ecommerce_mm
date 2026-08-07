@@ -335,8 +335,11 @@ async function createOrder(req, res) {
       // }
       const variantSku = selectedVariant?.sku || null;
 
-      // Moneda efectiva de este ítem (variante > producto) — snapshot, igual que price/cost.
-      const itemCurrency = effectiveCurrency({ product, variant: selectedVariant });
+      // Moneda de este ítem — snapshot al momento de la venta, igual que price/cost.
+      // Sale del PRODUCTO: la variante no tiene moneda propia (define el número, no la unidad).
+      // Antes se le pasaban también variant/isMayorista/quantity, cuando la moneda podía venir de la
+      // variante y había que averiguar de dónde salía el precio; ya no hace falta (ver pricing.js).
+      const itemCurrency = effectiveCurrency({ product });
 
       orderItems.push({
         productId:    product.id,
@@ -359,11 +362,23 @@ async function createOrder(req, res) {
       method = "A_CONVENIR";
     }
 
-    // Validar compra mínima para clientes mayoristas
-    if (isMayorista) {
+    // Validar compra mínima para clientes mayoristas.
+    // El mínimo está configurado SOLO en pesos (no hay mínimo en dólares por ahora), así que:
+    //  - Pedido 100% en pesos → se exige el mínimo como siempre.
+    //  - Pedido con algún ítem en USD → NO se exige. No hay contra qué medir la parte en dólares
+    //    (el sistema no convierte monedas) y exigir el mínimo solo sobre la parte en pesos dejaría
+    //    afuera a un mayorista que gasta mucho, pero en dólares. Se lo deja comprar.
+    // Cuando se agregue un mínimo en dólares, este es el lugar: compararlo contra totalUsd.
+    // Antes `total` (suma cruda que mezcla monedas) se comparaba contra el mínimo, así que un ítem
+    // de USD 300 hacía "alcanzar" un mínimo de $300.
+    const totalArs = orderItems
+      .filter((i) => i.currency !== "USD")
+      .reduce((sum, i) => sum + i.price * i.quantity, 0);
+    if (isMayorista && !hasUsdItem) {
       const configRows = await prisma.siteConfig.findMany({ where: { key: "mayoristaMinimoCompra" } });
       const minimo = parseFloat(configRows[0]?.value || "0");
-      if (minimo > 0 && total < minimo) {
+      // Antes: if (minimo > 0 && total < minimo) {
+      if (minimo > 0 && totalArs < minimo) {
         return res.status(400).json({
           error: `El pedido no llega al monto mínimo mayorista de ${new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(minimo)}`,
         });
@@ -785,6 +800,18 @@ async function updateOrderStatus(req, res) {
   }
 }
 
+// Costo maestro del producto, pero SOLO si está cargado en la moneda que se está sumando.
+// El costo de un producto vive en la moneda del producto (Product.currency), y esa moneda no tiene
+// por qué coincidir con la de la línea vendida: una variante puede tener moneda propia distinta a la
+// del padre. Cuando no coinciden devolvemos 0 en vez de mezclar pesos con dólares en el mismo total
+// (el sistema no convierte monedas en ningún punto). El costo real de esas líneas se registra
+// guardando el snapshot OrderItem.cost, que siempre gana sobre este fallback.
+function costoMaestroEnMoneda(product, expectedCurrency) {
+  if (!product) return 0;
+  if ((product.currency || "ARS") !== expectedCurrency) return 0;
+  return product.cost ?? 0;
+}
+
 // GET /api/orders/stats - Estadísticas para el dashboard (admin)
 // Soporta filtro por fecha: ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
 async function getStats(req, res) {
@@ -805,8 +832,12 @@ async function getStats(req, res) {
     // total como si fueran pesos. Esos pedidos se contabilizan aparte en getStatsUsd (cuadro en dólares).
     // Los pedidos 100% en pesos —o sea todos los que existían antes de esta función— no cambian en nada.
     const noUsdItems = { items: { none: { currency: "USD" } } };
+    // Contracara de noUsdItems: pedidos que SÍ mezclan monedas. Sus líneas en pesos son plata real
+    // facturada en pesos y antes desaparecían de los dos cuadros del dashboard (acá quedaban afuera
+    // por tener un ítem USD, y en getStatsUsd no entran porque ahí solo se suman las líneas en USD).
+    const hasUsdItems = { items: { some: { currency: "USD" } } };
 
-    const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems] =
+    const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems, mixedArsItems] =
       await Promise.all([
         prisma.order.count({ where: { ...orderDateWhere } }),
         prisma.order.count({ where: { status: "APPROVED", ...orderDateWhere } }),
@@ -818,20 +849,44 @@ async function getStats(req, res) {
         prisma.product.count({ where: { active: true } }),
         // Traer todos los items de órdenes APPROVED con el costo del producto
         // para calcular ganancia bruta = ingresos - costo
+        // COMENTADO: filtraba por PEDIDO (noUsdItems), así que un pedido mixto perdía también el
+        // costo de sus líneas en pesos. Ahora se filtra por MONEDA DE LA LÍNEA: entran todas las
+        // líneas en pesos, vengan de un pedido 100% en pesos o de uno mixto. Para los pedidos que ya
+        // existían (todos ARS) el conjunto es exactamente el mismo, así que los números no cambian.
+        // prisma.orderItem.findMany({
+        //   where: { order: { status: "APPROVED", ...orderDateWhere, ...noUsdItems } },
+        //   include: { product: { select: { cost: true } } },
+        // }),
         prisma.orderItem.findMany({
-          where: { order: { status: "APPROVED", ...orderDateWhere, ...noUsdItems } },
-          include: { product: { select: { cost: true } } },
+          where: { currency: "ARS", order: { status: "APPROVED", ...orderDateWhere } },
+          // product.currency: para no sumar un costo maestro cargado en dólares a un total en pesos
+          include: { product: { select: { cost: true, currency: true } } },
+        }),
+        // Líneas en PESOS de los pedidos mixtos, para recuperar su facturación (ver abajo).
+        prisma.orderItem.findMany({
+          where: { currency: "ARS", order: { status: "APPROVED", ...orderDateWhere, ...hasUsdItems } },
+          select: { price: true, quantity: true },
         }),
       ]);
 
-    const revenue = totalRevenue._sum.total || 0;
+    // Facturación en pesos = total de los pedidos 100% en pesos (Order.total, que ya trae cupón e IVA
+    // aplicados) + las líneas en pesos de los pedidos mixtos. Para esas líneas se suma precio × cantidad
+    // en crudo: el cupón y el IVA de un pedido mixto están calculados sobre un total que mezcla monedas,
+    // así que prorratearlos daría un número inventado. Es una aproximación conservadora, pero muy
+    // preferible a que esa plata no aparezca en ningún lado.
+    const mixedArsRevenue = mixedArsItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    const revenue = (totalRevenue._sum.total || 0) + mixedArsRevenue;
     // Costo total = suma de (cantidad × costo unitario) por cada item
     const totalCost = approvedItems.reduce((sum, item) => {
       // Antes: solo item.product?.cost (costo MAESTRO), ignorando el costo guardado en la orden.
       // return sum + item.quantity * (item.product?.cost || 0);
       // Ahora: usa item.cost (snapshot del costo de ESE pedido) y solo cae al del producto si es null.
       // Se usa ?? (no ||) para respetar un costo guardado de 0.
-      const unitCost = item.cost ?? item.product?.cost ?? 0;
+      // COMENTADO: el fallback al costo maestro no miraba la moneda del producto. Un producto cargado
+      // en USD con una variante en pesos deja líneas ARS cuyo costo maestro está en dólares → ese
+      // número se sumaba tal cual a un total en pesos.
+      // const unitCost = item.cost ?? item.product?.cost ?? 0;
+      const unitCost = item.cost ?? costoMaestroEnMoneda(item.product, "ARS");
       return sum + item.quantity * unitCost;
     }, 0);
     const totalProfit = revenue - totalCost;
@@ -870,14 +925,22 @@ async function getStatsUsd(req, res) {
 
     const usdItems = await prisma.orderItem.findMany({
       where: { currency: "USD", order: { status: "APPROVED", ...orderDateWhere } },
-      include: { product: { select: { cost: true } } },
+      // product.currency: hace falta para no contar un costo cargado en pesos como si fuera en dólares
+      include: { product: { select: { cost: true, currency: true } } },
     });
 
     const totalRevenue = usdItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     // Mismo criterio de costo que getStats: el snapshot del ítem manda, y solo cae al costo maestro
     // del producto si el ítem no lo tiene. ?? (no ||) para respetar un costo de 0.
+    // COMENTADO: el fallback tomaba el costo del producto sin mirar su moneda. Una variante en USD
+    // bajo un producto cargado en ARS deja líneas en dólares cuyo costo maestro está en pesos → se
+    // sumaban esos pesos al costo en dólares e inflaban la ganancia del cuadro USD.
+    // const totalCost = usdItems.reduce((sum, item) => {
+    //   const unitCost = item.cost ?? item.product?.cost ?? 0;
+    //   return sum + item.quantity * unitCost;
+    // }, 0);
     const totalCost = usdItems.reduce((sum, item) => {
-      const unitCost = item.cost ?? item.product?.cost ?? 0;
+      const unitCost = item.cost ?? costoMaestroEnMoneda(item.product, "USD");
       return sum + item.quantity * unitCost;
     }, 0);
 

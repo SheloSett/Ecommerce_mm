@@ -134,9 +134,12 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     return productEffectivePrice;
   })();
 
-  // Moneda del precio mostrado en el modal: la de la variante activa si define una propia,
-  // si no la del producto completo (fullProduct, que puede diferir de `product` — el de la card).
-  const modalUnitCurrency = activeVariant?.currency || fullProduct?.currency || product.currency || "ARS";
+  // Moneda del precio mostrado en el modal: la del producto. La variante no tiene moneda propia
+  // (define el número, no la unidad), así que da igual cuál esté seleccionada.
+  // Antes: activeVariant?.currency || fullProduct?.currency || product.currency || "ARS"
+  // Se sigue prefiriendo fullProduct sobre product: fullProduct es la ficha completa que trae el
+  // modal, y `product` el resumen de la card, que puede estar desactualizado.
+  const modalUnitCurrency = fullProduct?.currency || product.currency || "ARS";
 
   // Bloque de precio del modal: precio unitario + subtotal en chico (precio × cantidad)
   const ModalPriceInfo = () => {
