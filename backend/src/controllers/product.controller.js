@@ -581,6 +581,15 @@ async function getProduct(req, res) {
       ? { active: true, visibility: { in: ["AMBOS", visibleFor] } }
       : { active: true };
 
+    // Los ATRIBUTOS se devuelven SIN filtrar por visibilidad, a propósito — no es un olvido.
+    // Tentación: filtrarlos igual que las variantes, para que un MAYORISTA no reciba el atributo
+    // "Color" que es solo-MINORISTA. Pero el frontend usa attributes.length como señal de "este
+    // producto USA variantes", y de esa señal depende el stock: cuando un producto tiene variantes,
+    // product.stock (el del padre) no se sincroniza y no es confiable. Si el atributo desapareciera,
+    // el detalle mostraría "Sin stock" en esos productos (el bug que arregló b278e95).
+    // Que el cliente reciba el atributo NO significa que se le muestre el selector: para eso está
+    // la regla "hay atributos Y hay variantes visibles", que aplican tanto ProductDetail como
+    // ProductCard antes de pedir que elija una opción.
     const product = await prisma.product.findUnique({
       where,
       include: {
