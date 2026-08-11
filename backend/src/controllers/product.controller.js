@@ -290,7 +290,8 @@ async function getProducts(req, res) {
           // ninguna variante comprable (ej: base $19.999 pero la única con stock sale $30.999).
           variants: {
             where: variantsCountWhere,
-            select: { combination: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, stock: true, stockUnlimited: true, currency: true },
+            // `currency: true` se sacó del select: la moneda de la card sale del producto.
+            select: { combination: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, stock: true, stockUnlimited: true },
           },
           // Atributos con sus valores ordenados por posición — solo para ordenar las variantes
           // como en el detalle (se quitan de la respuesta en el map de abajo).
@@ -353,12 +354,13 @@ async function getProducts(req, res) {
             out.wholesalePrice     = avail.wholesalePrice;
             out.wholesaleSalePrice = avail.wholesaleSalePrice;
           }
-          // La moneda tiene que viajar junto con el precio: si el precio de la card salió de esta
-          // variante, la moneda también (si no, un producto ARS con una variante en USD mostraría
-          // el precio de la variante con el símbolo de pesos).
-          if (avail.price != null || avail.wholesalePrice != null) {
-            out.currency = avail.currency ?? p.currency ?? "ARS";
-          }
+          // COMENTADO: la moneda ya no viaja con el precio de la variante, porque la variante no
+          // tiene moneda propia — define el número, no la unidad. `out.currency` ya trae la del
+          // producto (viene en el spread de `rest`), que es la correcta para cualquier precio de
+          // este producto, salga de la base o de una variante.
+          // if (avail.price != null || avail.wholesalePrice != null) {
+          //   out.currency = avail.currency ?? p.currency ?? "ARS";
+          // }
         }
         return stripAdminProductFields(out);
     });
@@ -623,6 +625,15 @@ async function getProduct(req, res) {
       ? { active: true, visibility: { in: ["AMBOS", visibleFor] } }
       : { active: true };
 
+    // Los ATRIBUTOS se devuelven SIN filtrar por visibilidad, a propósito — no es un olvido.
+    // Tentación: filtrarlos igual que las variantes, para que un MAYORISTA no reciba el atributo
+    // "Color" que es solo-MINORISTA. Pero el frontend usa attributes.length como señal de "este
+    // producto USA variantes", y de esa señal depende el stock: cuando un producto tiene variantes,
+    // product.stock (el del padre) no se sincroniza y no es confiable. Si el atributo desapareciera,
+    // el detalle mostraría "Sin stock" en esos productos (el bug que arregló b278e95).
+    // Que el cliente reciba el atributo NO significa que se le muestre el selector: para eso está
+    // la regla "hay atributos Y hay variantes visibles", que aplican tanto ProductDetail como
+    // ProductCard antes de pedir que elija una opción.
     const product = await prisma.product.findUnique({
       where,
       include: {

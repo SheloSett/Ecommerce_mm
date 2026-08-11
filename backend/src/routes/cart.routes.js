@@ -131,7 +131,11 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
     const variants = variantIds.length > 0
       ? await prisma.productVariant.findMany({
           where:  { id: { in: variantIds } },
-          select: { id: true, stock: true, stockUnlimited: true, active: true, currency: true },
+          // Solo stock/estado: la moneda del ítem sale del PRODUCTO, no de la variante.
+          // Este select llegó a incluir currency y todos los campos de precio, cuando effectiveCurrency
+          // necesitaba saber si el precio salía de la variante o se heredaba del padre. Al pasar la
+          // moneda a ser propiedad del producto dejaron de usarse, así que no se traen de la DB.
+          select: { id: true, stock: true, stockUnlimited: true, active: true },
         })
       : [];
     const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
@@ -147,11 +151,9 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
       } else if (!item.product.stockUnlimited && item.product.stock <= 0) {
         outOfStock = true;
       }
-      // currency: moneda efectiva del ítem (variante > producto), para que el checkout sepa si
-      // este ítem obliga a ir por "A convenir" (ver PaymentMethod.A_CONVENIR).
-      const currency = item.product
-        ? effectiveCurrency({ product: item.product, variant: item.variantId ? variantMap[item.variantId] : null })
-        : "ARS";
+      // currency: moneda del ítem (la del producto), para que el checkout sepa si este ítem obliga
+      // a ir por "A convenir" (ver PaymentMethod.A_CONVENIR).
+      const currency = item.product ? effectiveCurrency({ product: item.product }) : "ARS";
       return { ...item, outOfStock, currency };
     });
 

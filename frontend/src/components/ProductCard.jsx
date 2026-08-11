@@ -31,8 +31,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   // imgIdx: índice de la foto visible en la card — permite pasar el carrusel sin entrar al producto
   const [imgIdx, setImgIdx] = useState(0);
 
-  // Moneda del producto (ya viene resuelta desde el backend: si el precio de la card sale de una
-  // variante, currency también sale de esa variante — ver getProducts en product.controller.js).
+  // Moneda del producto. Vale para todos sus precios, incluidos los que salen de una variante:
+  // la variante define el número, el producto la unidad (ver effectiveCurrency en utils/pricing.js).
   const formatPrice = (price) => formatPriceWithCurrency(price, product.currency || "ARS");
 
   // Cantidad actual de este producto en el carrito
@@ -93,8 +93,15 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     }) || null;
   })();
 
-  // modalHasAttrs: el modal muestra selectores de variantes; si no, es solo de cantidad
-  const modalHasAttrs = fullProduct?.attributes?.length > 0;
+  // modalHasAttrs: el modal muestra selectores de variantes; si no, es solo de cantidad.
+  // Antes: fullProduct?.attributes?.length > 0
+  // No alcanzaba con que EXISTAN atributos: hay que tener además al menos una variante visible para
+  // este cliente. Si el producto usa variantes pero todas están restringidas al otro tipo de cliente
+  // (ej. atributo "Color" solo-MINORISTA y el que mira es MAYORISTA), pedirle que elija una opción
+  // no tiene sentido — ninguna elección resuelve a una variante real y el ítem terminaba yendo al
+  // carrito con variantId null igual. En ese caso se le pide solo la cantidad: el pedido entra como
+  // cotización y el admin le asigna la variante al aprobarla (OrderItem.variantByAdmin).
+  const modalHasAttrs = fullProduct?.attributes?.length > 0 && (fullProduct?.variants?.length ?? 0) > 0;
   // Tope de cantidad para productos SIN variantes (lo que queda de stock menos lo ya carriteado)
   const noVariantMax = product.stockUnlimited ? null : Math.max(0, (product.stock || 0) - cartQty);
   // Botón "Agregar" del modal deshabilitado: cargando, agregando, o (con variantes) opciones incompletas/sin stock
@@ -134,9 +141,12 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     return productEffectivePrice;
   })();
 
-  // Moneda del precio mostrado en el modal: la de la variante activa si define una propia,
-  // si no la del producto completo (fullProduct, que puede diferir de `product` — el de la card).
-  const modalUnitCurrency = activeVariant?.currency || fullProduct?.currency || product.currency || "ARS";
+  // Moneda del precio mostrado en el modal: la del producto. La variante no tiene moneda propia
+  // (define el número, no la unidad), así que da igual cuál esté seleccionada.
+  // Antes: activeVariant?.currency || fullProduct?.currency || product.currency || "ARS"
+  // Se sigue prefiriendo fullProduct sobre product: fullProduct es la ficha completa que trae el
+  // modal, y `product` el resumen de la card, que puede estar desactualizado.
+  const modalUnitCurrency = fullProduct?.currency || product.currency || "ARS";
 
   // Bloque de precio del modal: precio unitario + subtotal en chico (precio × cantidad)
   const ModalPriceInfo = () => {
@@ -204,8 +214,12 @@ export default function ProductCard({ product, viewMode = "grid" }) {
 
   const handleAddVariantToCart = async (e) => {
     e.preventDefault();
-    // Producto SIN variantes: el modal es solo de cantidad — agrega directo con la qty elegida
-    const hasAttrs = fullProduct?.attributes?.length > 0;
+    // Producto SIN variantes ELEGIBLES por este cliente: el modal es solo de cantidad — agrega
+    // directo con la qty elegida. Antes: const hasAttrs = fullProduct?.attributes?.length > 0;
+    // Se usa modalHasAttrs (atributos Y variantes visibles) para no caer en el camino de variantes
+    // cuando no hay ninguna que el cliente pueda elegir: ahí activeVariant siempre es null y el ítem
+    // se agregaba igual, pero con variantId null y una etiqueta de variante que no le corresponde.
+    const hasAttrs = modalHasAttrs;
     if (!hasAttrs) {
       setAddingVariant(true);
       try {
@@ -348,7 +362,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                 <div className="flex items-center justify-center py-8">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
                 </div>
-              ) : fullProduct?.attributes?.length > 0 ? (
+              ) : modalHasAttrs ? (
                 <>
                   {(() => {
                     const tiers = isMayorista ? fullProduct?.wholesalePriceTiers : fullProduct?.priceTiers;
@@ -643,7 +657,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
               </div>
-            ) : fullProduct?.attributes?.length > 0 ? (
+            ) : modalHasAttrs ? (
               <>
                 {/* Aviso de descuentos por cantidad — arriba de las variantes */}
                 {(() => {
@@ -675,7 +689,18 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                       )}
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {attr.values.map((v) => {
+                      {attr.values
+                        // Mismo filtro que el otro bloque del modal (más arriba en este archivo):
+                        // solo valores que tengan al menos una variante VISIBLE para este cliente.
+                        // Acá faltaba, así que este modal listaba todos los valores del atributo
+                        // aunque ninguno tuviera variante comprable para el cliente.
+                        .filter((v) => (fullProduct.variants || []).some((pv) => {
+                          const combo = Array.isArray(pv.combination)
+                            ? pv.combination
+                            : (typeof pv.combination === "string" ? JSON.parse(pv.combination) : null);
+                          return combo?.some((c) => c.name === attr.name && c.value === v.value);
+                        }))
+                        .map((v) => {
                         const isSelected = selectedAttrs[attr.name] === v.value;
                         const relevantVariants = (fullProduct.variants || []).filter((pv) => {
                           const combo = Array.isArray(pv.combination)

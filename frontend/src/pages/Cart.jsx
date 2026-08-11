@@ -14,9 +14,23 @@ export default function Cart() {
   const navigate = useNavigate();
 
   const isMayorista = customer?.type === "MAYORISTA";
-  const minimoActivo = isMayorista && mayoristaMinimoCompra > 0;
-  const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;
-  const progreso = minimoActivo ? Math.min(100, (totalPrice / mayoristaMinimoCompra) * 100) : 100;
+
+  // Totales separados por moneda: totalPrice (del CartContext) es una suma cruda que no distingue
+  // ARS de USD, así que en un carrito mixto muestra un número que no existe (AR$500 + USD 25 = 525).
+  // No hay conversión automática en el sistema, así que se muestran los dos por separado.
+  const hasUsd   = items.some((i) => i.currency === "USD");
+  const totalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+
+  // El mínimo de compra mayorista está configurado SOLO en pesos. Si el carrito tiene algún ítem en
+  // dólares NO se exige: no hay mínimo en USD contra el cual medir esa parte, y pedirlo solo sobre
+  // la parte en pesos trabaría a un mayorista que gasta mucho pero en dólares. Se lo deja comprar.
+  // Al apagar minimoActivo desaparecen el indicador de progreso Y el bloqueo del botón de checkout.
+  // Antes: const minimoActivo = isMayorista && mayoristaMinimoCompra > 0;
+  const minimoActivo = isMayorista && mayoristaMinimoCompra > 0 && !hasUsd;
+  // Antes: const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;  (mezclaba monedas)
+  const llegaAlMinimo = totalArs >= mayoristaMinimoCompra;
+  const progreso = minimoActivo ? Math.min(100, (totalArs / mayoristaMinimoCompra) * 100) : 100;
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   // Hay items sin stock = no se puede finalizar la compra
@@ -213,20 +227,45 @@ export default function Cart() {
                 Resumen del pedido
               </p>
 
+              {/* Antes acá se mostraba formatPrice(totalPrice) en las dos filas: una suma cruda
+                  de pesos y dólares formateada como pesos. Ahora, si el carrito mezcla monedas,
+                  se listan los subtotales por separado (mismo criterio que el Checkout). */}
               <div className="space-y-2 text-sm text-[#565e74]">
                 <div className="flex justify-between">
                   <span>
                     {totalItems} {totalItems === 1 ? "producto" : "productos"}
                   </span>
-                  <span className="font-semibold text-[#0b1c30]">{formatPrice(totalPrice)}</span>
+                  {hasUsd
+                    ? <span className="font-semibold text-[#0b1c30]">—</span>
+                    : <span className="font-semibold text-[#0b1c30]">{formatPrice(totalPrice)}</span>}
                 </div>
+                {hasUsd && (
+                  <>
+                    {totalArs > 0 && (
+                      <div className="flex justify-between">
+                        <span>Subtotal ARS</span>
+                        <span className="font-semibold text-[#0b1c30]">{formatPrice(totalArs)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>Subtotal USD</span>
+                      <span className="font-semibold text-[#0b1c30]">{formatPrice(totalUsd, "USD")}</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="border-t border-[#bdcaba]/30 pt-4 flex justify-between items-center">
                 <span className="font-bold text-[#0b1c30]">Total</span>
-                <span className="text-2xl font-extrabold text-[#0b1c30]">
-                  {formatPrice(totalPrice)}
-                </span>
+                {hasUsd ? (
+                  // Carrito mixto: no existe un "total" único sin convertir. El precio final se
+                  // coordina con la tienda (el pedido sale como A convenir — ver Checkout).
+                  <span className="text-base font-extrabold text-[#006b2c]">A convenir</span>
+                ) : (
+                  <span className="text-2xl font-extrabold text-[#0b1c30]">
+                    {formatPrice(totalPrice)}
+                  </span>
+                )}
               </div>
 
               {/* Indicador de mínimo mayorista */}
@@ -236,7 +275,7 @@ export default function Cart() {
                     <span className={llegaAlMinimo ? "text-[#006b2c]" : "text-amber-600"}>
                       {llegaAlMinimo
                         ? "✓ Mínimo de compra alcanzado"
-                        : `Faltan ${formatPrice(mayoristaMinimoCompra - totalPrice)}`}
+                        : `Faltan ${formatPrice(mayoristaMinimoCompra - totalArs)}`}
                     </span>
                     <span className="text-[#565e74]">{formatPrice(mayoristaMinimoCompra)}</span>
                   </div>

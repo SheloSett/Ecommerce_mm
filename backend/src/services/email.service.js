@@ -40,6 +40,19 @@ function formatMoney(amount, currency) {
   return formatARS(amount);
 }
 
+// Totales separados por moneda. Order.total es una suma CRUDA de los ítems que no distingue moneda:
+// en un pedido mixto (ver PaymentMethod.A_CONVENIR) un ítem de USD 25 le suma "25" como si fueran
+// pesos, así que mostrarlo con formatARS le miente al cliente en el mail y en el PDF adjunto.
+// Cuando el pedido es 100% en pesos —todos los que existían antes del selector de moneda— hasUsd es
+// false y los templates siguen usando Order.total tal cual (con cupón e IVA ya aplicados).
+function splitTotalsByCurrency(order) {
+  const items = order?.items || [];
+  const hasUsd   = items.some((i) => i.currency === "USD");
+  const totalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  const totalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  return { hasUsd, totalArs, totalUsd };
+}
+
 // Resuelve la ruta local de una imagen de producto.
 // Las imágenes se guardan en la DB como "/uploads/filename.jpg" → extrae solo el filename.
 function resolveImagePath(imageName) {
@@ -307,12 +320,35 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
     }
 
     // Fila de total
-    doc.rect(tableX, rowY, tableW, 28).fill(ACCENT);
-    doc.fillColor("white").fontSize(11).font("Helvetica-Bold")
-      .text("TOTAL", tableX + 8, rowY + 8, { width: tableW - cols.subtotal - 8 });
-    doc.text(formatARS(order.total), tableX + tableW - cols.subtotal - 4, rowY + 8, {
-      width: cols.subtotal - 4, align: "right",
-    });
+    // COMENTADO: un solo TOTAL formateado siempre en pesos. En un pedido mixto Order.total suma
+    // dólares y pesos como si fueran la misma unidad, así que el PDF le mostraba al cliente un
+    // "$525,00" que no existe (eran AR$500 + USD 25). Ahora se separa por moneda.
+    // doc.rect(tableX, rowY, tableW, 28).fill(ACCENT);
+    // doc.fillColor("white").fontSize(11).font("Helvetica-Bold")
+    //   .text("TOTAL", tableX + 8, rowY + 8, { width: tableW - cols.subtotal - 8 });
+    // doc.text(formatARS(order.total), tableX + tableW - cols.subtotal - 4, rowY + 8, {
+    //   width: cols.subtotal - 4, align: "right",
+    // });
+    const totalRow = (label, amount) => {
+      doc.rect(tableX, rowY, tableW, 28).fill(ACCENT);
+      doc.fillColor("white").fontSize(11).font("Helvetica-Bold")
+        .text(label, tableX + 8, rowY + 8, { width: tableW - cols.subtotal - 8 });
+      doc.text(amount, tableX + tableW - cols.subtotal - 4, rowY + 8, {
+        width: cols.subtotal - 4, align: "right",
+      });
+    };
+    const pdfTotals = splitTotalsByCurrency(order);
+    if (pdfTotals.hasUsd) {
+      // Pedido mixto: una fila por moneda, sin convertir. rowY avanza solo entre filas para que
+      // el bloque de datos bancarios / footer de abajo siga cayendo debajo de la última.
+      if (pdfTotals.totalArs > 0) {
+        totalRow("TOTAL ARS", formatARS(pdfTotals.totalArs));
+        rowY += 28;
+      }
+      totalRow("TOTAL USD", formatMoney(pdfTotals.totalUsd, "USD"));
+    } else {
+      totalRow("TOTAL", formatARS(order.total));
+    }
 
     // Datos bancarios (solo si showBankDetails = true y hay datos configurados)
     if (showBankDetails) {
@@ -395,6 +431,19 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
       </tr>`;
   }).join("");
 
+  // Filas de TOTAL: una sola en pesos para los pedidos de siempre, o una por moneda si el pedido
+  // mezcla ARS y USD (ver splitTotalsByCurrency — no se convierte nada, se muestran por separado).
+  const htmlTotals = splitTotalsByCurrency(order);
+  const totalRow = (label, amount) => `
+                <tr style="background:#3b82f6;">
+                  <td colspan="5" style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:14px;">${label}</td>
+                  <td style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:15px;text-align:right;">${amount}</td>
+                </tr>`;
+  const totalRowsHtml = htmlTotals.hasUsd
+    ? (htmlTotals.totalArs > 0 ? totalRow("TOTAL ARS", formatARS(htmlTotals.totalArs)) : "")
+      + totalRow("TOTAL USD", formatMoney(htmlTotals.totalUsd, "USD"))
+    : totalRow("TOTAL", formatARS(order.total));
+
   const html = `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -473,10 +522,14 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                     + ${formatARS(order.ivaAmount)}
                   </td>
                 </tr>` : ""}
-                <tr style="background:#3b82f6;">
-                  <td colspan="5" style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:14px;">TOTAL</td>
-                  <td style="padding:12px 16px;color:#ffffff;font-weight:700;font-size:15px;text-align:right;">${formatARS(order.total)}</td>
-                </tr>
+                <!-- COMENTADO: acá iba una sola fila TOTAL con formatARS(order.total). En un pedido
+                     mixto Order.total suma dólares y pesos como si fueran la misma unidad, así que
+                     el mail mostraba un total que no existe. Ahora las filas las arma
+                     totalRowsHtml (ver splitTotalsByCurrency): una por moneda si el pedido es
+                     mixto, o la de siempre en pesos si no lo es.
+                     No se deja el código original tal cual porque este bloque vive dentro de un
+                     template literal: una interpolación se evalúa igual estando comentada. -->
+                ${totalRowsHtml}
               </tfoot>
             </table>
           </td>

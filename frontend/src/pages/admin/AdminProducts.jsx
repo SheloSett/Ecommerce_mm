@@ -1197,9 +1197,10 @@ export default function AdminProducts() {
                                     const combinationLabel = Array.isArray(v.combination)
                                       ? v.combination.map((c) => c.value).join(" / ")
                                       : "—";
-                                    // Moneda efectiva de la variante (variante > producto) — solo lectura acá,
-                                    // la edición de moneda vive en el editor de variantes del modal.
-                                    const vCurrencyLabel = (v.currency || p.currency || "ARS") === "USD" ? "USD" : "$";
+                                    // Moneda de la variante = la del producto (la variante no tiene moneda
+                                    // propia; define el número, no la unidad). Se edita en la ficha del producto.
+                                    // Antes: (v.currency || p.currency || "ARS") === "USD" ? "USD" : "$"
+                                    const vCurrencyLabel = (p.currency || "ARS") === "USD" ? "USD" : "$";
                                     return (
                                       <tr key={v.id} className="border-t border-slate-100">
                                         {/* Variante: imagen + combinación + SKU */}
@@ -2279,11 +2280,18 @@ export default function AdminProducts() {
                   </button>
                   {showVariants && (
                     <div className="p-4 border-t border-slate-200">
+                      {/* baseCurrency sale del FORMULARIO (form.currency), no del producto guardado
+                          (editingProduct.currency). Si tomaba el guardado, al cambiar el selector de
+                          ARS→USD los precios de arriba pasaban a USD al instante pero la tabla de
+                          variantes seguía mostrando pesos hasta guardar y volver a entrar al producto
+                          — confuso, y encima al guardar se cierra la ficha y hay que buscarlo de nuevo
+                          entre todos los productos. Con el valor del form la tabla acompaña en vivo.
+                          Antes: baseCurrency={editingProduct.currency || "ARS"} */}
                       <ProductVariantsEditor
                         productId={editingProduct.id}
                         basePrice={editingProduct.price}
                         baseWholesalePrice={editingProduct.wholesalePrice}
-                        baseCurrency={editingProduct.currency || "ARS"}
+                        baseCurrency={form.currency || editingProduct.currency || "ARS"}
                         productImages={editingProduct.images || []}
                         suppliers={suppliers}
                       />

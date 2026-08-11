@@ -11,6 +11,28 @@ const mp = new MercadoPagoConfig({
   options: { timeout: 5000 },
 });
 
+// ¿esta orden se puede cobrar por MercadoPago?
+// MP cobra SIEMPRE en pesos (currency_id: "ARS" en las preferencias de abajo) y el sistema NO hace
+// conversión de moneda en ningún punto. Entonces una orden con ítems en USD no puede pasar por acá:
+// el unit_price que se le manda a MP es el número crudo del ítem, así que un artículo de USD 500 se
+// cobraría como AR$500.
+//
+// SEGURIDAD: este chequeo es el que hace valer server-side el gating de A_CONVENIR. createOrder
+// fuerza el método a A_CONVENIR cuando un minorista lleva ítems en USD, pero esa orden queda en
+// status PENDING igual que una de MercadoPago — sin este guard, pegarle directo a
+// POST /api/payments/create-preference con el orderId (endpoint público, sin auth) alcanzaba para
+// generar el link de pago y pagar el pedido en dólares como si fueran pesos.
+// Devuelve null si está todo bien, o el mensaje de error si no se puede cobrar.
+function mpPaymentBlockedReason(order) {
+  if (order.paymentMethod === "A_CONVENIR") {
+    return "Este pedido tiene precios en dólares: el pago se coordina con la tienda, no se puede pagar por MercadoPago.";
+  }
+  if ((order.items || []).some((i) => i.currency === "USD")) {
+    return "Este pedido incluye artículos con precio en dólares y no se puede pagar por MercadoPago. Contactanos para coordinar el pago.";
+  }
+  return null;
+}
+
 // Valida la firma "x-signature" que manda MercadoPago (HMAC-SHA256 sobre un manifest con el
 // data.id de la URL + el header x-request-id + el timestamp de la firma). Sirve para asegurar que
 // el webhook viene de verdad de MP y no de alguien que conoce la URL.
@@ -75,6 +97,12 @@ async function createPreference(req, res) {
 
     if (order.status !== "PENDING") {
       return res.status(400).json({ error: "La orden ya fue procesada" });
+    }
+
+    // Órdenes en dólares / "a convenir": no se pueden cobrar por MP (ver mpPaymentBlockedReason).
+    const blockedReason = mpPaymentBlockedReason(order);
+    if (blockedReason) {
+      return res.status(400).json({ error: blockedReason });
     }
 
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -471,6 +499,16 @@ async function createCotizacionPreference(req, res) {
 
     if (!order) {
       return res.status(404).json({ error: "Cotización no encontrada o no está aprobada" });
+    }
+
+    // Mismo guard que createPreference: una cotización con ítems en USD no se puede cobrar por MP.
+    // Este es el camino MÁS expuesto de los dos — los mayoristas sí pueden tener ítems en dólares
+    // (siguen yendo por COTIZACION, el gating de A_CONVENIR no les aplica), así que sin este
+    // chequeo la cotización se pagaba por el total en pesos con los dólares contados 1:1.
+    // En PayQuotation.jsx ya se avisa al cliente, pero eso es solo la UI: el bloqueo va acá.
+    const blockedReason = mpPaymentBlockedReason(order);
+    if (blockedReason) {
+      return res.status(400).json({ error: blockedReason });
     }
 
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
