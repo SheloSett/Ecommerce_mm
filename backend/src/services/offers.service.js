@@ -88,10 +88,17 @@ function planProduct(offer, product, prevItem) {
   const plan = { productId: product.id, salePrice: null, wholesaleSalePrice: null, variants: [] };
   const skips = new Set();
 
+  // La moneda es propiedad EXCLUSIVA del producto: él define la UNIDAD y la variante el NÚMERO
+  // (ver effectiveCurrency en utils/pricing.js). ProductVariant.currency está deprecada — la columna
+  // todavía guarda datos del modelo viejo, así que leerla haría que una variante con un "USD"
+  // heredado se saltee dentro de un producto ARS: el producto recibiría el descuento y esa variante
+  // no, que es justo la desincronización que este motor existe para evitar.
+  // Por eso este chequeo se hace UNA vez y vale para el producto y para todas sus variantes.
   const productCurrency = product.currency || "ARS";
+  const blockedByCurrency = currencyBlocked(offer, productCurrency);
 
   // ── Producto ──
-  if (currencyBlocked(offer, productCurrency)) {
+  if (blockedByCurrency) {
     skips.add("Precio en USD: un descuento de monto fijo no aplica");
   } else {
     if (wantsRetail) {
@@ -120,14 +127,10 @@ function planProduct(offer, product, prevItem) {
   // ── Variantes activas ──
   // Cada variante se resuelve por separado, con la misma precedencia que utils/pricing.js:
   // su base es su propio precio si lo define, si no cae al del producto padre.
-  for (const variant of product.variants || []) {
+  // Si el producto quedó bloqueado por moneda, sus variantes también: están expresadas en la moneda
+  // del padre, así que descontarles un monto fijo en pesos sería el mismo disparate.
+  for (const variant of blockedByCurrency ? [] : (product.variants || [])) {
     const prev = prevVariants.get(variant.id);
-    const variantCurrency = variant.currency || productCurrency;
-    if (currencyBlocked(offer, variantCurrency)) {
-      skips.add("Variante en USD: un descuento de monto fijo no aplica");
-      continue;
-    }
-
     const entry = { variantId: variant.id, salePrice: null, wholesaleSalePrice: null };
 
     if (wantsRetail) {
