@@ -210,8 +210,11 @@ export default function AdminOrders() {
     setManualModal(true);
     if (allProducts.length === 0) {
       try {
-        const res = await productsApi.getAllAdmin({ limit: 500, active: true });
-        setAllProducts(res.data.products || res.data);
+        // Antes: { limit: 500, active: true } — el tope de 500 dejaba productos afuera del buscador
+        // (y "active" el backend de /products/admin/all no lo usa). all=true trae el catálogo completo,
+        // igual que en cotizaciones.
+        const res = await productsApi.getAllAdmin({ all: true });
+        setAllProducts(res.data.products || res.data || []);
       } catch { /* silencioso */ }
     }
   };
@@ -1413,7 +1416,7 @@ ${pagesHtml}
                           const bS = normName(b.name).startsWith(term) ? 0 : 1;
                           if (aS !== bS) return aS - bS;
                           return normName(a.name).localeCompare(normName(b.name));
-                        }).slice(0, 6);
+                        });  // sin slice: se listan todas las coincidencias (la lista scrollea)
 
                         return (
                           <div className="border-2 border-dashed border-slate-300 rounded-xl p-3 space-y-2">
@@ -1430,7 +1433,10 @@ ${pagesHtml}
                                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                                 {matches.length > 0 && !sel.product && (
-                                  <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-20 mt-1 max-h-64 overflow-y-auto">
+                                  <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-20 mt-1 max-h-80 overflow-y-auto">
+                                    <div className="sticky top-0 bg-slate-50 border-b border-slate-200 px-3 py-1 text-[11px] text-slate-500">
+                                      {matches.length} {matches.length === 1 ? "resultado" : "resultados"}
+                                    </div>
                                     {matches.map((p) => (
                                       <button
                                         key={p.id}
@@ -2473,6 +2479,7 @@ ${pagesHtml}
                     // orden de carga (más nuevo primero) y buscando "a" aparecían "CABLE..." antes
                     // que "ADAPTADOR...". Ahora: primero los que EMPIEZAN con lo tipeado, después
                     // el resto alfabético (insensible a mayúsculas y tildes).
+                    // Sin slice: se muestran TODAS las coincidencias (la lista scrollea).
                     const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
                     const term = normName(productSearch[idx] || "");
                     const filtered = (allProducts || []).filter((p) =>
@@ -2485,7 +2492,7 @@ ${pagesHtml}
                       const bStarts = normName(b.name).startsWith(term) ? 0 : 1;
                       if (aStarts !== bStarts) return aStarts - bStarts;
                       return normName(a.name).localeCompare(normName(b.name));
-                    }).slice(0, 6);
+                    });
 
                     return (
                       <div key={idx} className="bg-slate-50 rounded-xl p-3 space-y-2">
@@ -2533,8 +2540,13 @@ ${pagesHtml}
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                           {filtered.length > 0 && !item.productId && (
-                            /* max-h-48 → max-h-64: las sugerencias ahora incluyen foto y son más altas */
-                            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-64 overflow-y-auto">
+                            /* max-h-48 → max-h-64 → max-h-80: las sugerencias incluyen foto y ya no
+                               están limitadas a 6, así que conviene mostrar más antes de scrollear */
+                            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-10 mt-1 max-h-80 overflow-y-auto">
+                              {/* Contador: deja claro que la lista scrollea y cuántas coincidencias hay */}
+                              <div className="sticky top-0 bg-slate-50 border-b border-slate-200 px-3 py-1 text-[11px] text-slate-500">
+                                {filtered.length} {filtered.length === 1 ? "resultado" : "resultados"}
+                              </div>
                               {filtered.map((p) => {
                                 // Muestra el precio que corresponde al tipo de cliente seleccionado
                                 const displayPrice = getPriceForType(p, manualForm.customerType);

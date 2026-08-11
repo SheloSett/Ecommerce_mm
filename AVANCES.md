@@ -282,6 +282,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 132- búsqueda con orden por relevancia (admin productos + sugerencias de venta manual): primero los productos cuyo nombre EMPIEZA con lo tipeado, después el resto alfabético (insensible a mayúsculas/tildes). Antes ordenaba por fecha de creación y buscando "a" salían los "Cable..." antes que los "Adaptador...". ✅
 
+133- ofertas por campaña con vigencia (Productos → Ofertas / Campañas): se eligen productos con buscador y filtro por categoría ("agregar todos" los del filtro), se define el descuento (% o monto fijo), a qué público aplica (minorista / mayorista / ambos) y desde/hasta cuándo. El descuento se aplica y se saca SOLO según las fechas — un job cada minuto escribe el precio de oferta en el producto y en TODAS sus variantes al arrancar, y lo borra al terminar. Los productos que ya tenían una oferta cargada a mano se respetan y quedan afuera (avisa el motivo en el detalle), igual que los productos en USD cuando el descuento es de monto fijo. Antes de guardar muestra el precio resultante de cada producto. Cada campaña vigente arma su propia sección en el Home, entre "Ofertas" y "Visto recientemente", con su nombre, subtítulo y la fecha de fin, y además aparece como filtro propio en el catálogo, dentro del bloque "Ofertas y Stock" (elegir una muestra solo sus productos y el título del listado pasa a ser el nombre de la campaña). El check "mostrar en el Home" decide solo lo de la portada: el filtro del catálogo sale igual. Se puede pausar (restaura los precios), reanudar, editar (los productos que salen recuperan su precio) y borrar. ✅
+
 ##
 
 

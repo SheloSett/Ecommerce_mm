@@ -305,6 +305,25 @@ export const couponsApi = {
   getUsages: (id)     => api.get(`/coupons/${id}/usages`),
 };
 
+// ─── Campañas de oferta ───────────────────────────────────────────────────────
+// Ofertas con vigencia: un conjunto de productos con descuento entre dos fechas. Los PRODUCTOS de
+// una campaña NO se piden acá — se piden con productsApi.getAll({ offerId }), que ya resuelve
+// visibilidad, stock y precios de variante igual que el resto del catálogo.
+export const offersApi = {
+  // Público: campañas vigentes que piden sección propia en el Home
+  getActive: ()        => api.get("/offers/active"),
+  // Admin: CRUD
+  getAll:  ()          => api.get("/offers"),
+  getById: (id)        => api.get(`/offers/${id}`),
+  create:  (data)      => api.post("/offers", data),
+  update:  (id, data)  => api.patch(`/offers/${id}`, data),
+  remove:  (id)        => api.delete(`/offers/${id}`),
+  // Aplica o revierte según el reloj, sin esperar el tick del cron (que corre cada minuto)
+  sync:    (id)        => api.post(`/offers/${id}/sync`),
+  // Qué precio va a quedar en cada producto (y cuáles quedan afuera) antes de guardar
+  preview: (data)      => api.post("/offers/preview", data),
+};
+
 export const slidesApi = {
   getAll:  (params) => api.get("/slides", { params }),
   create:  (formData) => api.post("/slides", formData),        // FormData con imagen

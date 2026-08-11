@@ -2,6 +2,7 @@ const cron = require("node-cron");
 const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } = require("./email.service");
+const { syncOffers } = require("./offers.service");
 
 const prisma = new PrismaClient();
 
@@ -254,7 +255,15 @@ function startCronJobs() {
   // Minoristas: cada hora — la función interna verifica si coincide la hora configurada
   cron.schedule("0 * * * *", runMinoristaRecommendations);
 
-  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas)");
+  // Campañas de oferta: cada minuto. Prende las que entran en vigencia, apaga las que vencieron y
+  // re-aplica las activas (idempotente — solo escribe si hay diferencia real), lo que hace entrar a
+  // las variantes creadas o los precios base editados mientras la campaña corría.
+  cron.schedule("* * * * *", syncOffers);
+  // Una pasada al arrancar: si el contenedor estuvo caído justo cuando una campaña tenía que
+  // empezar o terminar, se corrige de entrada en vez de esperar al próximo minuto.
+  syncOffers();
+
+  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta)");
 }
 
 // ---------------------------------------------------------------------------

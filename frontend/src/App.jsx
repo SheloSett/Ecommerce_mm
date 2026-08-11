@@ -44,6 +44,7 @@ import AdminProductCreate from "./pages/admin/AdminProductCreate";
 import AdminCaja from "./pages/admin/AdminCaja";
 import AdminFlyer from "./pages/admin/AdminFlyer";
 import AdminCoupons from "./pages/admin/AdminCoupons";
+import AdminOffers from "./pages/admin/AdminOffers";
 import AdminPurchases from "./pages/admin/AdminPurchases";
 import AdminSuppliers from "./pages/admin/AdminSuppliers";
 // AdminCarousel: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
@@ -211,6 +212,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="productos"><AdminProductCreate /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Campañas de oferta con vigencia — sub-vista de Productos */}
+          <Route
+            path="/admin/productos/ofertas"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="productos"><AdminOffers /></RequirePermission>
               </ProtectedRoute>
             }
           />

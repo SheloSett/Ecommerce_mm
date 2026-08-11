@@ -79,6 +79,7 @@ export default function AdminLayout({ children, title }) {
         // que tenerlo también en el sidebar es redundante.
         // { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
+        { label: "🏷 Ofertas / Campañas", href: "/admin/productos/ofertas" },
         { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },

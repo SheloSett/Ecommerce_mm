@@ -99,6 +99,7 @@ model Product {
   variants        ProductVariant[]    // Combinaciones generadas
   // onSale: aparece en la sección "Ofertas" de la home (separado de destacados)
   onSale          Boolean     @default(false)
+  offerItems      OfferItem[] // Campañas de oferta que incluyen este producto
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
@@ -396,6 +397,62 @@ model CouponUsage {
 enum DiscountType {
   PERCENTAGE // % del total
   FIXED      // monto fijo en ARS
+}
+
+// Campañas de oferta con vigencia: el admin elige un conjunto de productos y un rango de fechas, y el
+// descuento se prende y se apaga solo (ver services/offers.service.js + el job en cron.service.js).
+//
+// CÓMO FUNCIONA: mientras la campaña está vigente, ESCRIBE salePrice/wholesaleSalePrice en los productos
+// y sus variantes; al terminar los vuelve a null. No se calcula nada al vuelo — así todos los lugares que
+// ya leen esos campos (carrito, checkout, cards, flyer, emails, SEO) funcionan sin cambios y el precio
+// del carrito nunca se desincroniza del de la vidriera.
+//
+// REGLA CLAVE: la campaña solo escribe donde el campo estaba en null. Si un producto ya tenía una oferta
+// cargada a mano, se respeta y se anota en skippedReason. Por eso revertir es "volver a null" y no hace
+// falta guardar el precio anterior.
+model Offer {
+  id            Int                @id @default(autoincrement())
+  name          String             // Título de la sección en el Home (ej: "Hot Sale Enero")
+  description   String?            // Subtítulo opcional de la sección
+  discountType  DiscountType       @default(PERCENTAGE) // PERCENTAGE: % sobre el precio / FIXED: monto a restar
+  discountValue Float              // 20 (%) o 5000 (monto fijo)
+  // A qué público aplica el descuento: MINORISTA escribe salePrice, MAYORISTA escribe
+  // wholesaleSalePrice, AMBOS escribe los dos.
+  appliesTo     CustomerVisibility @default(AMBOS)
+  startsAt      DateTime
+  endsAt        DateTime
+  showInHome    Boolean            @default(true)  // Renderizar una sección propia en el Home
+  active        Boolean            @default(true)  // Interruptor manual del admin (pausar sin borrar)
+  // applied: si los precios están escritos AHORA. Vive en la DB para que el estado sobreviva a un
+  // reinicio del contenedor (el cron no tiene que adivinar si ya aplicó o no).
+  applied       Boolean            @default(false)
+  items         OfferItem[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@map("offers")
+}
+
+// Un producto dentro de una campaña, junto con el registro EXACTO de lo que la campaña le escribió.
+// Ese registro es lo que permite revertir sin pisar cambios manuales: al terminar, un campo vuelve a
+// null solo si su valor actual sigue siendo el que escribió la campaña.
+model OfferItem {
+  id        Int     @id @default(autoincrement())
+  offerId   Int
+  offer     Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  productId Int
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // Precios que escribió la campaña. null = no lo tocó (había oferta manual, no aplicaba a ese
+  // público, o el producto no tiene precio mayorista cargado).
+  appliedSalePrice          Float?
+  appliedWholesaleSalePrice Float?
+  // Variantes escritas: [{ variantId, salePrice, wholesaleSalePrice }]. Solo las que la campaña tocó.
+  appliedVariants           Json?
+  // Motivo por el que quedó total o parcialmente afuera — se muestra en el detalle de la campaña.
+  skippedReason             String?
+
+  @@unique([offerId, productId])
+  @@map("offer_items")
 }
 
 // Slides del carrusel del hero en la página de inicio

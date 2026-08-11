@@ -4,7 +4,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
-import { productsApi, categoriesApi } from "../services/api";
+import { productsApi, categoriesApi, offersApi } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 
 // ─── Sección colapsable del sidebar ──────────────────────────────────────────
@@ -121,6 +121,7 @@ export default function Catalog() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [facets, setFacets] = useState([]); // [{ name, values[] }]
+  const [activeOffers, setActiveOffers] = useState([]); // campañas vigentes, para filtrar por campaña
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
@@ -139,6 +140,9 @@ export default function Catalog() {
   const currentPage      = parseInt(searchParams.get("page") || "1");
   const currentOnSale    = searchParams.get("onSale") === "true";
   const currentLowStock  = searchParams.get("lowStock") === "true";
+  // Campaña de oferta elegida en el filtro (?offerId=N). Es excluyente entre campañas: se filtra
+  // por una sola, igual que no tiene sentido pedir "productos de la campaña A Y de la B".
+  const currentOfferId   = searchParams.get("offerId") || "";
   const currentSortOrder = searchParams.get("sortOrder") || "newest";
   const currentSortPrice = searchParams.get("sortPrice") || "";
 
@@ -179,6 +183,7 @@ export default function Catalog() {
     if (currentSearch)   params.search   = currentSearch;
     if (currentOnSale)   params.onSale   = "true";
     if (currentLowStock) params.lowStock = "true";
+    if (currentOfferId)  params.offerId  = currentOfferId;
     if (attrsParam)      params.attrs    = attrsParam;
     // Orden: ahora lo resuelve el backend (para que funcione con la paginación, no solo la página actual)
     if (currentSortOrder) params.sortOrder = currentSortOrder;
@@ -192,7 +197,7 @@ export default function Catalog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, visibleFor, attrsParam, currentSortOrder, currentSortPrice]);
+  }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, currentOfferId, visibleFor, attrsParam, currentSortOrder, currentSortPrice]);
 
   // Traer facetas (atributos disponibles) cada vez que cambian los filtros base (no los de attr)
   const fetchFacets = useCallback(() => {
@@ -201,12 +206,13 @@ export default function Catalog() {
     if (currentSearch)   params.search   = currentSearch;
     if (currentOnSale)   params.onSale   = "true";
     if (currentLowStock) params.lowStock = "true";
+    if (currentOfferId)  params.offerId  = currentOfferId;
 
     productsApi
       .getFacets(params)
       .then((res) => setFacets(res.data.facets))
       .catch(() => setFacets([]));
-  }, [currentCategory, currentSearch, currentOnSale, currentLowStock, visibleFor]);
+  }, [currentCategory, currentSearch, currentOnSale, currentLowStock, currentOfferId, visibleFor]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => { fetchFacets(); }, [fetchFacets]);
@@ -222,6 +228,19 @@ export default function Catalog() {
   // realmente (excluye solo-mayorista/minorista y sin stock), igual que la grilla. Depende de
   // visibleFor para refrescar al iniciar/cerrar sesión o cambiar el tipo de cliente.
   useEffect(() => { categoriesApi.getAll({ visibleFor }).then((res) => setCategories(res.data)); }, [visibleFor]);
+
+  // Campañas de oferta vigentes: cada una es un filtro propio en el bloque "Ofertas y Stock".
+  // Se filtran por público igual que en el Home — una campaña solo mayorista no le sirve de filtro
+  // a un minorista, porque para él esos productos no tienen ningún descuento.
+  // OJO: acá NO se filtra por showInHome. Ese flag decide si la campaña arma su sección en el Home,
+  // no si se puede filtrar por ella en el catálogo.
+  useEffect(() => {
+    offersApi.getActive()
+      .then((res) => setActiveOffers(
+        (res.data || []).filter((o) => o.appliesTo === "AMBOS" || o.appliesTo === visibleFor)
+      ))
+      .catch(() => setActiveOffers([]));
+  }, [visibleFor]);
 
   const setFilter = (key, value) => {
     const newParams = new URLSearchParams(searchParams);
@@ -284,7 +303,10 @@ export default function Catalog() {
     selectedCategorySlugs.includes(cat.slug) ||
     (cat.children && cat.children.some((s) => selectedCategorySlugs.includes(s.slug)));
 
-  const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || totalAttrFilters > 0;
+  const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || currentOfferId || totalAttrFilters > 0;
+
+  // Campaña actualmente filtrada (para el título del listado)
+  const currentOffer = activeOffers.find((o) => String(o.id) === currentOfferId) || null;
 
   // ─── Sidebar content (shared between desktop and mobile) ───────────────────
   // IMPORTANTE: se llama como función {renderSidebar()} en lugar de <RenderSidebar />
@@ -306,8 +328,25 @@ export default function Catalog() {
       )}
 
       {/* Filtros especiales — Ofertas y Stock */}
-      <FilterSection title="Ofertas y Stock" defaultOpen={currentOnSale || currentLowStock}>
+      <FilterSection title="Ofertas y Stock" defaultOpen={currentOnSale || currentLowStock || !!currentOfferId}>
         <div className="space-y-1">
+          {/* Campañas vigentes: una por campaña, arriba de los filtros fijos. Son excluyentes entre
+              sí (elegir una deselecciona la anterior) — pedir productos de dos campañas a la vez no
+              tiene sentido comercial y complicaría el filtro sin necesidad. */}
+          {activeOffers.map((offer) => (
+            <AttrItem
+              key={offer.id}
+              value={`🎉 ${offer.name}`}
+              checked={currentOfferId === String(offer.id)}
+              onToggle={() => {
+                const newParams = new URLSearchParams(searchParams);
+                if (currentOfferId === String(offer.id)) newParams.delete("offerId");
+                else newParams.set("offerId", String(offer.id));
+                newParams.delete("page");
+                setSearchParams(newParams);
+              }}
+            />
+          ))}
           <AttrItem
             value="🏷️ En descuento"
             checked={currentOnSale}
@@ -336,7 +375,7 @@ export default function Catalog() {
         <div className="space-y-0.5">
           <CategoryItem
             label="Todos los productos"
-            checked={!currentCategory && !currentOnSale && !currentLowStock}
+            checked={!currentCategory && !currentOnSale && !currentLowStock && !currentOfferId}
             onClick={() => {
               const newParams = new URLSearchParams();
               if (currentSearch) newParams.set("search", currentSearch);
@@ -492,6 +531,8 @@ export default function Catalog() {
                   <h1 className="text-2xl font-bold text-[#0b1c30] tracking-tight">
                     {currentSearch
                       ? `Resultados para "${currentSearch}"`
+                      : currentOffer
+                      ? currentOffer.name
                       : currentOnSale
                       ? "Productos en oferta"
                       : currentLowStock

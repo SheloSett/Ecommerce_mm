@@ -4,11 +4,86 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
-import { productsApi, categoriesApi, slidesApi, getImageUrl } from "../services/api";
+import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { getRecentIds } from "../utils/recentlyViewed";
 
 const CAROUSEL_PAGE_SIZE = 4; // cards visibles a la vez en los carruseles de la home
+
+// Carrusel de productos con flechas y puntos — mismo layout que las secciones "Destacados" y
+// "Ofertas" de más abajo, pero como componente porque las campañas de oferta son 0..N y cada una
+// necesita su propio offset (las otras dos secciones son fijas y mantienen su estado en Home).
+function CampaignSection({ offer }) {
+  const [offset, setOffset] = useState(0);
+  const products = offer.products;
+
+  // Fecha de fin en formato corto ("hasta el 15/2") para que se note que la oferta se termina.
+  const endLabel = offer.endsAt
+    ? new Date(offer.endsAt).toLocaleDateString("es-AR", { day: "numeric", month: "numeric" })
+    : null;
+
+  return (
+    <section className="mt-14">
+      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span
+          className="material-symbols-outlined text-[#006b2c]"
+          style={{ fontVariationSettings: "'FILL' 1", fontSize: 28 }}
+        >sell</span>
+        <h2 className="text-2xl font-bold text-[#0b1c30]">{offer.name}</h2>
+        {endLabel && (
+          <span className="text-xs font-semibold text-[#006b2c] bg-[#006b2c]/10 px-2.5 py-1 rounded-full">
+            Hasta el {endLabel}
+          </span>
+        )}
+        {offer.description && (
+          <p className="w-full text-sm text-[#565e74]">{offer.description}</p>
+        )}
+      </div>
+
+      <div className="relative">
+        {offset > 0 && (
+          <button
+            onClick={() => setOffset((o) => Math.max(0, o - CAROUSEL_PAGE_SIZE))}
+            className="absolute -left-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
+          >
+            <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_left</span>
+          </button>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {products.slice(offset, offset + CAROUSEL_PAGE_SIZE).map((p) => (
+            <ProductCard key={p.id} product={p} />
+          ))}
+        </div>
+
+        {offset + CAROUSEL_PAGE_SIZE < products.length && (
+          <button
+            onClick={() => setOffset((o) => Math.min(products.length - CAROUSEL_PAGE_SIZE, o + CAROUSEL_PAGE_SIZE))}
+            className="absolute -right-5 top-1/2 -translate-y-1/2 z-10 bg-white border border-[#bdcaba]/50 shadow-md rounded-full w-10 h-10 flex items-center justify-center hover:bg-[#eff4ff] transition-colors"
+          >
+            <span className="material-symbols-outlined text-[#565e74] text-[20px]">chevron_right</span>
+          </button>
+        )}
+
+        {products.length > CAROUSEL_PAGE_SIZE && (
+          <div className="flex justify-center gap-1.5 mt-4">
+            {Array.from({ length: Math.ceil(products.length / CAROUSEL_PAGE_SIZE) }).map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setOffset(i * CAROUSEL_PAGE_SIZE)}
+                className={`rounded-full transition-all ${
+                  Math.floor(offset / CAROUSEL_PAGE_SIZE) === i
+                    ? "bg-[#0b1c30] w-5 h-2"
+                    : "bg-[#bdcaba] hover:bg-[#565e74] w-2 h-2"
+                }`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 
 export default function Home() {
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -16,6 +91,8 @@ export default function Home() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [recentProducts, setRecentProducts] = useState([]);
+  // Campañas de oferta vigentes, cada una con sus productos ya resueltos
+  const [campaigns, setCampaigns] = useState([]);
   // IDs leídos una sola vez del localStorage (snapshot inmutable)
   const recentIds = useState(() => getRecentIds(4))[0];
   const [slides, setSlides] = useState([]);
@@ -42,6 +119,46 @@ export default function Home() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+  }, [customer?.type]);
+
+  // Campañas de oferta vigentes: primero los metadatos (nombre, subtítulo, fin) y después los
+  // productos de cada una vía ?offerId=N, que pasa por el mismo handler que el catálogo y por lo
+  // tanto respeta visibilidad por tipo de cliente, stock y precios de variante.
+  useEffect(() => {
+    const visibleFor = customer?.type || "MINORISTA";
+    let cancelled = false;
+
+    offersApi.getActive()
+      .then(async (res) => {
+        // Dos filtros sobre las campañas vigentes:
+        //  - showInHome: el endpoint devuelve TODAS (el catálogo las usa para filtrar), así que la
+        //    decisión de armar sección en la portada se toma acá.
+        //  - público: una campaña "solo mayorista" no le muestra sección a un minorista — vería los
+        //    productos sin ningún descuento y la sección sería una promesa incumplida.
+        const relevant = (res.data || []).filter(
+          (o) => o.showInHome && (o.appliesTo === "AMBOS" || o.appliesTo === visibleFor)
+        );
+        if (relevant.length === 0) {
+          if (!cancelled) setCampaigns([]);
+          return;
+        }
+        const withProducts = await Promise.all(
+          relevant.map(async (offer) => {
+            try {
+              const r = await productsApi.getAll({ offerId: offer.id, limit: 8, visibleFor });
+              return { ...offer, products: r.data.products || [] };
+            } catch {
+              return { ...offer, products: [] };
+            }
+          })
+        );
+        // Una campaña cuyos productos están todos sin stock (o no visibles para este cliente) no
+        // renderiza una sección vacía.
+        if (!cancelled) setCampaigns(withProducts.filter((c) => c.products.length > 0));
+      })
+      .catch(console.error);
+
+    return () => { cancelled = true; };
   }, [customer?.type]);
 
   // Re-fetchea los productos recientes desde la API para tener _count correcto y poder
@@ -489,6 +606,13 @@ export default function Home() {
             </div>
           </section>
         )}
+
+        {/* Campañas de oferta vigentes — una sección por campaña, entre "Ofertas" y "Visto
+            recientemente". Se arman solas: el admin define nombre, productos y fechas en
+            /admin/productos/ofertas y la sección aparece y desaparece con la vigencia. */}
+        {campaigns.map((offer) => (
+          <CampaignSection key={offer.id} offer={offer} />
+        ))}
 
         {/* Visitados recientemente */}
         {/* Antes: horizontal scroll con min-w-[280px] (cards enormes según template) */}

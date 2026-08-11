@@ -87,7 +87,7 @@ async function searchProductIds(term, { includeSku = false } = {}) {
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, attrs, sortOrder, sortPrice } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, offerId, attrs, sortOrder, sortPrice } = req.query;
 
     const where = {};
 
@@ -203,6 +203,15 @@ async function getProducts(req, res) {
       where.onSale = true;
     }
 
+    // offerId=N: productos que forman parte de una campaña de oferta (model Offer). Lo usa el Home
+    // para armar la sección de cada campaña vigente. Pasa por acá a propósito, y no por un endpoint
+    // aparte, para heredar todo lo que ya resuelve este handler: visibilidad por tipo de cliente,
+    // filtro de stock, precio tomado de la primera variante disponible y stripAdminProductFields.
+    if (offerId) {
+      const oid = parseInt(offerId);
+      if (!isNaN(oid)) where.offerItems = { some: { offerId: oid } };
+    }
+
     // Filtrar solo productos en oferta según el tipo de cliente:
     // - MAYORISTA → solo productos con wholesaleSalePrice (oferta mayorista)
     // - MINORISTA (o sin sesión) → solo productos con salePrice (oferta minorista)
@@ -250,10 +259,16 @@ async function getProducts(req, res) {
     // Orden del catálogo (mismo criterio que los dropdowns del front): el precio tiene prioridad sobre
     // el orden por nombre/fecha. Default: más nuevo primero. Se ordena en el BACKEND para que funcione
     // con la paginación — antes se ordenaba en el cliente y solo reordenaba la página actual (20 de N).
+    //
+    // OJO con el precio: NO se puede usar orderBy: { price } de Prisma. El precio que ve el cliente en
+    // la card no es la columna `price` del producto — puede venir de la primera variante disponible, de
+    // la oferta (salePrice) o de los campos mayoristas, y todo eso se resuelve recién en el .map() de
+    // abajo. Ordenar por la columna daba un catálogo visiblemente desordenado (ej: $114.999 antes que
+    // $122.499). Por eso, cuando se pide orden por precio, se traen TODOS los productos que matchean,
+    // se resuelve el precio mostrado, se ordena en memoria y recién ahí se pagina.
+    const byPrice = sortPrice === "asc" || sortPrice === "desc";
     let orderBy;
-    if (sortPrice === "asc")         orderBy = { price: "asc" };
-    else if (sortPrice === "desc")   orderBy = { price: "desc" };
-    else if (sortOrder === "az")     orderBy = { name: "asc" };
+    if (sortOrder === "az")          orderBy = { name: "asc" };
     else if (sortOrder === "za")     orderBy = { name: "desc" };
     else if (sortOrder === "oldest") orderBy = { createdAt: "asc" };
     else                             orderBy = { createdAt: "desc" };
@@ -286,20 +301,19 @@ async function getProducts(req, res) {
         },
         // Antes: orderBy: { createdAt: "desc" } (fijo). Ahora según sortOrder/sortPrice.
         orderBy,
-        skip,
-        take: parseInt(limit),
+        // Con orden por precio la paginación se hace en memoria (ver comentario arriba).
+        ...(byPrice ? {} : { skip, take: parseInt(limit) }),
       }),
       prisma.product.count({ where }),
     ]);
 
-    res.json({
-      // Catálogo público: nunca exponer ubicación de depósito ni proveedor
-      // Antes: products: products.map(stripAdminProductFields),
-      // Ahora, además, el precio de la card sale de la primera variante DISPONIBLE (en su orden):
-      // si la primera no tiene stock se usa la siguiente, etc. Mismo criterio de grupos que el
-      // checkout: si la variante define precio base del grupo (min/may), TODO el grupo sale de la
-      // variante (su oferta solo si la define — no se hereda la del padre).
-      products: products.map((p) => {
+    // Catálogo público: nunca exponer ubicación de depósito ni proveedor
+    // Antes: products: products.map(stripAdminProductFields),
+    // Ahora, además, el precio de la card sale de la primera variante DISPONIBLE (en su orden):
+    // si la primera no tiene stock se usa la siguiente, etc. Mismo criterio de grupos que el
+    // checkout: si la variante define precio base del grupo (min/may), TODO el grupo sale de la
+    // variante (su oferta solo si la define — no se hereda la del padre).
+    let cards = products.map((p) => {
         const { variants: cardVariants, attributes: cardAttrs, ...rest } = p;
         const out = { ...rest };
         // hasVariants: si el producto tiene atributos/variantes configurados, SIN filtrar por
@@ -347,7 +361,37 @@ async function getProducts(req, res) {
           }
         }
         return stripAdminProductFields(out);
-      }),
+    });
+
+    // Orden por precio: se hace acá, sobre el precio YA resuelto (variante + oferta + mayorista),
+    // que es exactamente el que muestra la card. Ver ProductCard.jsx → productEffectivePrice.
+    if (byPrice) {
+      const isMayorista = visibleFor === "MAYORISTA";
+      const shownPrice = (p) => {
+        if (isMayorista && p.wholesalePrice) {
+          return (p.wholesaleSalePrice && p.wholesaleSalePrice < p.wholesalePrice)
+            ? p.wholesaleSalePrice
+            : p.wholesalePrice;
+        }
+        return (p.salePrice && p.salePrice < p.price) ? p.salePrice : p.price;
+      };
+      const dir = sortPrice === "asc" ? 1 : -1;
+      cards.sort((a, b) => {
+        // Los productos en USD van SIEMPRE primeros, en las dos direcciones del orden. No hay
+        // cotización guardada para convertirlos a pesos, así que mezclarlos por su número pelado
+        // (ej: USD 575 junto a $575) daría un orden falso; se muestran como bloque arriba de todo.
+        // Dentro de cada bloque (USD y ARS) sí se respeta la dirección elegida.
+        const aUsd = (a.currency || "ARS") === "USD" ? 1 : 0;
+        const bUsd = (b.currency || "ARS") === "USD" ? 1 : 0;
+        if (aUsd !== bUsd) return bUsd - aUsd;
+        return ((shownPrice(a) ?? 0) - (shownPrice(b) ?? 0)) * dir;
+      });
+      // Paginación en memoria (la query trajo todos los que matchean el filtro).
+      cards = cards.slice(skip, skip + parseInt(limit));
+    }
+
+    res.json({
+      products: cards,
       pagination: {
         total,
         page: parseInt(page),
@@ -1163,11 +1207,11 @@ async function bulkPriceAdjust(req, res) {
 }
 
 // GET /api/products/facets - Atributos únicos de los productos del conjunto actual (para filtros dinámicos)
-// Acepta los mismos filtros que getProducts (category, search, visibleFor, onSale, lowStock) pero devuelve
-// los atributos agregados en lugar de productos paginados.
+// Acepta los mismos filtros que getProducts (category, search, visibleFor, onSale, lowStock, offerId)
+// pero devuelve los atributos agregados en lugar de productos paginados.
 async function getProductFacets(req, res) {
   try {
-    const { category, search, visibleFor, onSale, lowStock } = req.query;
+    const { category, search, visibleFor, onSale, lowStock, offerId } = req.query;
 
     const where = { active: true };
 
@@ -1221,6 +1265,13 @@ async function getProductFacets(req, res) {
       } else {
         where.salePrice = { not: null };
       }
+    }
+
+    // Mismo filtro por campaña que getProducts, para que al elegir una campaña en el catálogo los
+    // filtros de características muestren solo los atributos de esos productos.
+    if (offerId) {
+      const oid = parseInt(offerId);
+      if (!isNaN(oid)) where.offerItems = { some: { offerId: oid } };
     }
 
     if (lowStock === "true") {

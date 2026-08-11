@@ -17,6 +17,7 @@ const notificationRoutes = require("./routes/notification.routes");
 const gastoRoutes    = require("./routes/gasto.routes");
 const variantRoutes  = require("./routes/variant.routes");
 const couponRoutes   = require("./routes/coupon.routes");
+const offerRoutes    = require("./routes/offer.routes");
 const slideRoutes    = require("./routes/slide.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const settingsRoutes = require("./routes/settings.routes");
@@ -68,6 +69,8 @@ const generalLimiter = rateLimit({
       "/categories",
       "/slides",
       "/settings",
+      "/offers",     // /offers/active lo pide el Home en cada carga
+
       "/health",
       "/sitemap.xml",
       "/feed.xml",
@@ -130,6 +133,7 @@ app.use("/api/carts", cartRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/gastos",    gastoRoutes);
 app.use("/api/coupons",   couponRoutes);
+app.use("/api/offers",    offerRoutes);
 app.use("/api/slides",    slideRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/settings",  settingsRoutes);
