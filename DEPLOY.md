@@ -1,5 +1,25 @@
 # Deploy en VPS Hostinger — guía paso a paso
 
+> ## ⚠️ LEER PRIMERO — el runtime cambió a Docker
+>
+> Las secciones 1 a 12 de abajo describen el **setup original con PM2**, que YA NO es el que corre
+> en el VPS. Se dejan como registro de cómo se armó el server (Postgres, nginx, SSL y backups
+> siguen siendo exactamente eso), pero **el backend y el frontend hoy corren en contenedores
+> Docker**, definidos en `deploy/docker-compose.vps.yml`:
+>
+> | | Cómo corre hoy |
+> |---|---|
+> | Backend | contenedor `igwtstore_backend`, `network_mode: host` → escucha el 4000 del VPS |
+> | Frontend | contenedor `igwtstore_frontend` → `127.0.0.1:8090`, proxyeado por el nginx del VPS |
+> | Postgres | **bare-metal en el VPS** (`localhost:5432`), fuera de Docker |
+> | PM2 | ya no se usa — `pm2 list` vacío es lo NORMAL, no un problema |
+>
+> **Para actualizar el código, andá directo a [Operaciones diarias](#operaciones-diarias).**
+>
+> _(Nota: esto se descubrió el 2026-08-12 durante un deploy, siguiendo los pasos de PM2 de este
+> mismo archivo, que ya estaban desactualizados. Casi se arranca un segundo backend en el 4000
+> encima del contenedor.)_
+
 Esta guía te lleva desde un VPS vacío hasta la app funcionando con dominio + SSL + backups.
 
 **Tiempo estimado:** 2-3 horas el primer setup + 30 min por cada actualización futura.
@@ -323,33 +343,147 @@ Agregar al final:
 
 ## Operaciones diarias
 
+Todo esto asume el setup ACTUAL (Docker). El compose vive en `deploy/docker-compose.vps.yml` y
+todos los comandos se corren desde `~/Ecommerce_mm`.
+
+Para no repetir la ruta larga, conviene:
+```bash
+alias dcv='docker compose -f ~/Ecommerce_mm/deploy/docker-compose.vps.yml'
+```
+
 ### Ver logs del backend
 ```bash
-pm2 logs igwtstore-backend
+docker compose -f deploy/docker-compose.vps.yml logs -f --tail=50 backend
 ```
-
-### Reiniciar el backend (después de cambios)
+Para ver SOLO lo reciente (clave para no confundir errores viejos con actuales):
 ```bash
-pm2 restart igwtstore-backend
+docker compose -f deploy/docker-compose.vps.yml logs --since 2m --timestamps backend
 ```
 
-### Actualizar el código (cuando hagas cambios)
+### Reiniciar el backend
+```bash
+docker compose -f deploy/docker-compose.vps.yml restart backend
+```
+
+### Actualizar el código (deploy normal)
+
+**Paso 0 — SIEMPRE: ver si el schema de la DB quedó atrás.**
+
+Este chequeo NO existía y por eso se rompió el deploy del 2026-08-12: se desplegó código que usaba
+las tablas `offers` / `offer_items` que nunca se habían creado en producción. Mirar solo el diff de
+los commits NO alcanza — hay que comparar el schema contra la base real, porque el drift se acumula
+de deploys anteriores.
+
+```bash
+cd ~/Ecommerce_mm/backend
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script
+```
+
+- `-- This is an empty migration.` → la base está al día, seguí al paso 1.
+- Sale SQL → hay drift. Resolvelo con [Aplicar cambios de schema](#aplicar-cambios-de-schema-a-mano)
+  ANTES de seguir.
+
+**Paso 1 — traer el código y rebuildear:**
 ```bash
 cd ~/Ecommerce_mm
 git pull
+docker compose -f deploy/docker-compose.vps.yml up -d --build
+```
 
-# Si cambió el backend:
-cd backend
-npm install --omit=dev
-npx prisma generate
-npx prisma db push    # Solo si cambió el schema
-pm2 restart igwtstore-backend
+Eso rebuildea las dos imágenes y recrea los contenedores. No hace falta `npm install` ni
+`prisma generate` en el host: el código y las dependencias van adentro de las imágenes.
 
-# Si cambió el frontend:
-cd ../frontend
-npm install
-npm run build
-sudo cp -r dist/* /var/www/igwtstore/frontend/
+**Paso 2 — verificar:**
+```bash
+docker ps --filter name=igwtstore
+curl -s localhost:4000/api/products -o /dev/null -w "API: %{http_code}\n"
+docker compose -f deploy/docker-compose.vps.yml logs --since 2m --timestamps backend
+```
+
+En el browser, hard refresh con `Ctrl+Shift+R` (si no, te queda el JS viejo cacheado).
+
+> **Si acabás de crear tablas nuevas, reiniciá el backend.** El motor de Prisma mantiene la conexión
+> abierta y sigue tirando "table does not exist" aunque la tabla ya exista:
+> `docker compose -f deploy/docker-compose.vps.yml restart backend`
+
+### Aplicar cambios de schema a mano
+
+`prisma db push` pide `--accept-data-loss` con demasiada facilidad (pasó con el `slug`), y ese flag
+NO se usa nunca. En su lugar: se genera el SQL, se LEE, y se aplica en una transacción.
+
+```bash
+# 1. Backup primero, siempre
+~/Ecommerce_mm/backend/scripts/backup-db.sh
+
+# 2. Generar el SQL a un archivo
+cd ~/Ecommerce_mm/backend
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script > /tmp/migracion.sql
+
+# 3. LEERLO antes de correrlo
+cat /tmp/migracion.sql
+```
+
+Qué mirar en ese SQL:
+- `CREATE TABLE` / `ADD COLUMN` / `CREATE INDEX` → aditivo, seguro.
+- Cualquier `DROP`, o un `ALTER COLUMN ... SET NOT NULL` sobre una tabla con datos → **frenar** y
+  pensarlo, eso sí puede perder información.
+- Si usa un tipo enum (`"DiscountType"`, etc.) y no hay un `CREATE TYPE` en el script, es porque el
+  enum ya existe. Verificalo:
+  ```bash
+  psql -U ecommerce_user -d ecommerce_db -h localhost \
+    -c "SELECT typname FROM pg_type WHERE typname IN ('DiscountType','CustomerVisibility');"
+  ```
+
+```bash
+# 4. Aplicar TODO O NADA
+psql -U ecommerce_user -d ecommerce_db -h localhost \
+  --single-transaction -v ON_ERROR_STOP=1 -f /tmp/migracion.sql
+
+# 5. Confirmar que quedó en sync (tiene que decir "empty migration")
+npx prisma migrate diff \
+  --from-schema-datasource prisma/schema.prisma \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script
+
+# 6. Reiniciar el backend para que Prisma vea las tablas nuevas
+docker compose -f ~/Ecommerce_mm/deploy/docker-compose.vps.yml restart backend
+```
+
+`--single-transaction` + `ON_ERROR_STOP=1` es lo que garantiza que si algo falla se revierte entero
+y no quedan tablas a medio crear.
+
+### El compose ya te protege de dos cosas
+
+No las cambies sin entender por qué están:
+
+- **`command: ["node", "src/index.js"]`** pisa el CMD del Dockerfile, que corre
+  `prisma db push --accept-data-loss` en cada arranque. Eso está pensado para contenedores de dev
+  descartables; contra la base real de producción es destructivo.
+- **`volumes: ../backend/uploads:/app/uploads`** deja las imágenes subidas FUERA de la imagen, así
+  sobreviven a cada redeploy.
+
+### Método viejo (PM2) — YA NO APLICA
+
+Se deja documentado por si alguna vez se vuelve atrás, pero hoy NO se usa. Si corrés esto con los
+contenedores levantados, PM2 va a intentar tomar el puerto 4000 que ya tiene el contenedor
+(`network_mode: host`) y va a fallar — o peor, vas a terminar con dos backends peleándose.
+
+```bash
+# pm2 logs igwtstore-backend
+# pm2 restart igwtstore-backend
+#
+# cd ~/Ecommerce_mm && git pull
+# cd backend && npm install --omit=dev && npx prisma generate
+# pm2 restart igwtstore-backend
+#
+# cd ../frontend && npm install && npm run build
+# sudo cp -r dist/* /var/www/igwtstore/frontend/
 ```
 
 ### Deploy puntual: URLs con slug (feature #123 — correr UNA sola vez)
@@ -389,13 +523,20 @@ gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | psql -U ecommerce_user -d ecomme
 
 ## Troubleshooting rápido
 
+Todos los comandos con `dcv` son `docker compose -f ~/Ecommerce_mm/deploy/docker-compose.vps.yml`.
+
 | Problema | Solución |
 |---|---|
-| `502 Bad Gateway` en el browser | El backend está caído. `pm2 restart igwtstore-backend` |
-| `pm2 logs` muestra error de Postgres | Verificar DATABASE_URL en `.env`. `sudo systemctl status postgresql` |
+| `502 Bad Gateway` en el browser | El backend está caído: `dcv ps` y `dcv restart backend` |
+| `table public.X does not exist` | Falta aplicar el schema. Ver [Aplicar cambios de schema](#aplicar-cambios-de-schema-a-mano) |
+| Ese error sigue DESPUÉS de crear la tabla | Prisma quedó con la conexión vieja: `dcv restart backend` |
+| Logs llenos de un error que ya arreglaste | `--tail` muestra historial. Usá `dcv logs --since 2m --timestamps backend` |
+| Error de Postgres en los logs | Verificar DATABASE_URL en `backend/.env`. `sudo systemctl status postgresql` |
+| `pm2 list` vacío | **Es lo normal.** Ya no se usa PM2, corre en Docker. |
 | SSL no funciona | `sudo certbot renew --dry-run`. Si falla, revisar DNS. |
-| Disco lleno | `df -h` para ver. Borrar backups viejos o `journalctl --vacuum-time=7d` |
-| Cambios no se reflejan | Hard refresh (Ctrl+Shift+R). Si es del backend, `pm2 restart` |
+| Disco lleno | `df -h`. Borrar backups viejos, `docker image prune -a`, o `journalctl --vacuum-time=7d` |
+| Cambios no se reflejan | Hard refresh (Ctrl+Shift+R). Si es del backend, `dcv up -d --build` |
+| El build del frontend se queda sin memoria | Agregar swap temporal, o buildear en la PC y subir el `dist/` por `scp` |
 
 ---
 
