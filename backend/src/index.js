@@ -75,7 +75,18 @@ const generalLimiter = rateLimit({
       "/sitemap.xml",
       "/feed.xml",
     ];
-    return req.method === "GET" && publicGetPaths.some((p) => req.path.startsWith(p));
+    // Antes: return req.method === "GET" && publicGetPaths.some((p) => req.path.startsWith(p));
+    //
+    // EXCEPCIÓN A LA EXENCIÓN: /products?sortPrice=... no es una lectura barata. Para ordenar por
+    // precio hay que traer los productos sin paginar (el precio mostrado se resuelve recién en el
+    // handler, ver getProducts), así que cada request cuesta cientos de filas con sus variantes en
+    // vez de 20. Estando exenta del limiter, cualquiera podía repetirla en bucle desde afuera y
+    // tumbar el servidor sin necesidad de credenciales. El resto de los GET públicos sigue exento.
+    if (req.method !== "GET") return false;
+    const isPublicGet = publicGetPaths.some((p) => req.path.startsWith(p));
+    if (!isPublicGet) return false;
+    const expensiveSort = req.path.startsWith("/products") && !!req.query.sortPrice;
+    return !expensiveSort;
   },
 });
 

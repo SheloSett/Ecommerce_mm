@@ -7,6 +7,9 @@ import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
 import TierEditor from "../../components/admin/TierEditor";
 import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
+// Las categorías ya no están topeadas en dos niveles: aplanar el árbol y armar el breadcrumb
+// necesitan recursión. Ver utils/categoryTree.js.
+import { flattenTree, indentedLabel, breadcrumbForId } from "../../utils/categoryTree";
 import * as XLSX from "xlsx";
 
 const EMPTY_FORM = {
@@ -49,17 +52,30 @@ const EMPTY_FORM = {
   visibility: "AMBOS",
 };
 
-// Genera el breadcrumb de una categoría: "Padre > Hijo" o solo "Nombre"
-function getCategoryBreadcrumb(category) {
+// Genera el breadcrumb completo de una categoría: "Audio > Auriculares > Inalámbricos".
+//
+// Antes:
+//   function getCategoryBreadcrumb(category) {
+//     if (!category) return null;
+//     if (category.parent) return `${category.parent.name} > ${category.name}`;
+//     return category.name;
+//   }
+// El backend incluye `parent` un solo nivel, así que esto nunca podía mostrar más de dos escalones:
+// con la jerarquía libre, un producto en "Inalámbricos" se veía como "Auriculares > Inalámbricos" y
+// no se sabía de qué rama colgaba. Ahora la ruta se arma con el árbol de categorías que la pantalla
+// ya tiene cargado (`categoryTree`), que la tiene entera.
+//
+// `fallbackName` cubre el instante en que el árbol todavía no cargó, o una categoría huérfana: en
+// vez de no mostrar nada, muestra al menos el nombre suelto.
+function getCategoryBreadcrumb(categoryTree, category) {
   if (!category) return null;
-  if (category.parent) return `${category.parent.name} > ${category.name}`;
-  return category.name;
+  return breadcrumbForId(categoryTree, category.id, category.name);
 }
 
 // Lista los breadcrumbs de todas las categorías de un producto, separados por " · "
-function getProductCategoryLabels(categories) {
+function getProductCategoryLabels(categoryTree, categories) {
   if (!categories || categories.length === 0) return null;
-  return categories.map(getCategoryBreadcrumb).join(" · ");
+  return categories.map((c) => getCategoryBreadcrumb(categoryTree, c)).join(" · ");
 }
 
 // Genera un SKU simple a partir del nombre del producto (slug-like)
@@ -989,7 +1005,9 @@ export default function AdminProducts() {
             {pagedProducts.map((p) => {
               const img = p.images?.[0];
               // Antes: getCategoryBreadcrumb(p.category) — ahora M2M array
-              const breadcrumb = getProductCategoryLabels(p.categories);
+              // Se le pasa el árbol de categorías porque el breadcrumb ahora muestra la ruta
+              // completa y el producto solo trae su categoría con un nivel de `parent`.
+              const breadcrumb = getProductCategoryLabels(categories, p.categories);
               const isQuickOpen = openQuickEdit.has(p.id);
               const qv = quickEditValues[p.id] || {};
               const isSaving = quickEditSaving.has(p.id);
@@ -1935,33 +1953,42 @@ export default function AdminProducts() {
                   )}
                 </label>
                 <div className="border border-slate-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-slate-100">
-                  {categories.map((c) => {
-                    // Genera la lista plana de opciones: padre + hijos indentados
-                    const opts = c.children && c.children.length > 0
-                      ? [{ id: c.id, label: c.name, indent: false }, ...c.children.map((s) => ({ id: s.id, label: `↳ ${s.name}`, indent: true }))]
-                      : [{ id: c.id, label: c.name, indent: false }];
-                    return opts.map((opt) => {
-                      const checked = form.categoryIds.includes(opt.id.toString());
-                      return (
-                        <label key={opt.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50 ${opt.indent ? "pl-6" : ""}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              const sid = opt.id.toString();
-                              setForm((f) => ({
-                                ...f,
-                                categoryIds: checked
-                                  ? f.categoryIds.filter((id) => id !== sid)
-                                  : [...f.categoryIds, sid],
-                              }));
-                            }}
-                            className="rounded border-slate-300 text-blue-600"
-                          />
-                          <span className="text-sm text-slate-700">{opt.label}</span>
-                        </label>
-                      );
-                    });
+                  {/* Antes se aplanaba a mano y solo bajaba UN nivel:
+                        const opts = c.children?.length
+                          ? [{ id: c.id, label: c.name, indent: false },
+                             ...c.children.map((s) => ({ id: s.id, label: `↳ ${s.name}`, indent: true }))]
+                          : [{ id: c.id, label: c.name, indent: false }];
+                      Con anidado libre eso deja afuera a los nietos: no había forma de asignar un
+                      producto a una categoría de tercer nivel. flattenTree recorre hasta el fondo y
+                      devuelve cada nodo con su `depth`, que acá se usa para la sangría. */}
+                  {flattenTree(categories).map((opt) => {
+                    const checked = form.categoryIds.includes(opt.id.toString());
+                    return (
+                      <label
+                        key={opt.id}
+                        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50"
+                        style={{ paddingLeft: `${12 + opt.depth * 16}px` }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const sid = opt.id.toString();
+                            setForm((f) => ({
+                              ...f,
+                              categoryIds: checked
+                                ? f.categoryIds.filter((id) => id !== sid)
+                                : [...f.categoryIds, sid],
+                            }));
+                          }}
+                          className="rounded border-slate-300 text-blue-600"
+                        />
+                        <span className="text-sm text-slate-700">
+                          {opt.depth > 0 && <span className="text-blue-400 mr-1">↳</span>}
+                          {opt.name}
+                        </span>
+                      </label>
+                    );
                   })}
                 </div>
 
@@ -1991,8 +2018,10 @@ export default function AdminProducts() {
                       className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Sin categoría padre (raíz)</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                      {/* Antes: categories.map(...) — solo las raíces, porque el backend no dejaba
+                          anidar más de un nivel. Ahora cualquier categoría puede ser padre. */}
+                      {flattenTree(categories).map((c) => (
+                        <option key={c.id} value={c.id}>{indentedLabel(c)}</option>
                       ))}
                     </select>
                     <div className="flex gap-2">

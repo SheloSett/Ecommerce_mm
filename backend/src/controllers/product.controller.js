@@ -2,6 +2,9 @@ const { PrismaClient } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
 const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
+// Filtrar por una categoría incluye a toda su descendencia, y la jerarquía ya no está topeada en
+// dos niveles, así que la expansión es recursiva. Ver utils/categoryTree.js.
+const { descendantIdsBySlugs } = require("../utils/categoryTree");
 
 const prisma = new PrismaClient();
 
@@ -145,16 +148,19 @@ async function getProducts(req, res) {
 
     if (category) {
       // Soporta múltiples categorías separadas por "|" — ej. ?category=accesorios|cables.
-      // Para cada slug se incluyen también sus subcategorías (jerarquía).
+      // Para cada slug se incluyen también TODAS sus subcategorías, hasta el fondo del árbol.
       const slugs = category.split("|").map((s) => s.trim()).filter(Boolean);
       if (slugs.length > 0) {
-        const cats = await prisma.category.findMany({
-          where:   { slug: { in: slugs } },
-          include: { children: { select: { id: true } } },
-        });
-        if (cats.length > 0) {
-          // Unimos los IDs de cada categoría + sus hijos en una sola lista
-          const categoryIds = cats.flatMap((c) => [c.id, ...c.children.map((ch) => ch.id)]);
+        // Antes se bajaba un solo nivel a mano:
+        //   const cats = await prisma.category.findMany({
+        //     where: { slug: { in: slugs } },
+        //     include: { children: { select: { id: true } } },
+        //   });
+        //   const categoryIds = cats.flatMap((c) => [c.id, ...c.children.map((ch) => ch.id)]);
+        // Con el anidado libre eso dejaba afuera a los nietos: filtrar por "Audio" no traía lo
+        // cargado en "Audio › Auriculares › Inalámbricos". descendantIdsBySlugs baja hasta el final.
+        const categoryIds = await descendantIdsBySlugs(prisma, slugs);
+        if (categoryIds) {
           where.categories = { some: { id: { in: categoryIds } } };
         } else {
           // Si ninguno de los slugs existe, devolver vacío
@@ -209,7 +215,20 @@ async function getProducts(req, res) {
     // filtro de stock, precio tomado de la primera variante disponible y stripAdminProductFields.
     if (offerId) {
       const oid = parseInt(offerId);
-      if (!isNaN(oid)) where.offerItems = { some: { offerId: oid } };
+      // Antes: where.offerItems = { some: { offerId: oid } }  ← sin chequear vigencia
+      // Este endpoint es PÚBLICO y no valida sesión, así que con el id pelado cualquiera podía pedir
+      // ?offerId=N y ver la lista de productos de una campaña PROGRAMADA que todavía no lanzaste (o
+      // de una pausada). Ahora la campaña tiene que estar vigente, que es el único caso para el que
+      // el Home y el catálogo usan este filtro.
+      if (!isNaN(oid)) {
+        const nowOffer = new Date();
+        where.offerItems = {
+          some: {
+            offerId: oid,
+            offer: { active: true, startsAt: { lte: nowOffer }, endsAt: { gt: nowOffer } },
+          },
+        };
+      }
     }
 
     // Filtrar solo productos en oferta según el tipo de cliente:
@@ -248,7 +267,14 @@ async function getProducts(req, res) {
       }
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Antes: const skip = (parseInt(page) - 1) * parseInt(limit);
+    // El `limit` venía del query string sin ningún techo: un ?limit=99999 hacía que la ruta pública
+    // devolviera el catálogo entero de una. Se acota acá, en un solo lugar, y el resto del handler
+    // usa safeLimit/safePage. 100 alcanza de sobra (el catálogo pide 20 y el Home 8).
+    const MAX_LIMIT = 100;
+    const safeLimit = Math.min(Math.max(parseInt(limit) || 20, 1), MAX_LIMIT);
+    const safePage  = Math.max(parseInt(page) || 1, 1);
+    const skip = (safePage - 1) * safeLimit;
 
     // Filtro de variantes contables según tipo de cliente: solo las visibles para él.
     // Si no se envía visibleFor (admin/legacy), cuenta todas las activas.
@@ -266,6 +292,14 @@ async function getProducts(req, res) {
     // abajo. Ordenar por la columna daba un catálogo visiblemente desordenado (ej: $114.999 antes que
     // $122.499). Por eso, cuando se pide orden por precio, se traen TODOS los productos que matchean,
     // se resuelve el precio mostrado, se ordena en memoria y recién ahí se pagina.
+    //
+    // TECHO: ordenar por precio obliga a traer los productos sin paginar (hay que resolver el precio
+    // de todos antes de saber cuáles entran en la página). Eso no puede ser ilimitado en una ruta
+    // pública, así que se acota a los N más nuevos. Si algún día el catálogo pasa de este número, el
+    // orden por precio empieza a dejar afuera a los más viejos y hay que cambiar el enfoque: guardar
+    // el precio efectivo en una columna del producto (mantenida al guardar producto/variante/oferta)
+    // y ordenar con orderBy de Prisma, que es lo único que escala de verdad.
+    const PRICE_SORT_MAX_ROWS = 2000;
     const byPrice = sortPrice === "asc" || sortPrice === "desc";
     let orderBy;
     if (sortOrder === "az")          orderBy = { name: "asc" };
@@ -303,7 +337,12 @@ async function getProducts(req, res) {
         // Antes: orderBy: { createdAt: "desc" } (fijo). Ahora según sortOrder/sortPrice.
         orderBy,
         // Con orden por precio la paginación se hace en memoria (ver comentario arriba).
-        ...(byPrice ? {} : { skip, take: parseInt(limit) }),
+        // Antes: ...(byPrice ? {} : { skip, take: parseInt(limit) })
+        // Sin `take`, ordenar por precio traía el catálogo COMPLETO con variantes, atributos y
+        // categorías en cada request — y /products está exento del rate limiter, así que
+        // ?sortPrice=asc en bucle era una forma trivial de voltear el servidor desde afuera.
+        // Ahora hay un techo duro: se ordena sobre los PRICE_SORT_MAX_ROWS productos más nuevos.
+        ...(byPrice ? { take: PRICE_SORT_MAX_ROWS } : { skip, take: safeLimit }),
       }),
       prisma.product.count({ where }),
     ]);
@@ -388,17 +427,27 @@ async function getProducts(req, res) {
         if (aUsd !== bUsd) return bUsd - aUsd;
         return ((shownPrice(a) ?? 0) - (shownPrice(b) ?? 0)) * dir;
       });
-      // Paginación en memoria (la query trajo todos los que matchean el filtro).
-      cards = cards.slice(skip, skip + parseInt(limit));
+      // Paginación en memoria (la query trajo hasta PRICE_SORT_MAX_ROWS de los que matchean).
+      // Antes: cards.slice(skip, skip + parseInt(limit))
+      cards = cards.slice(skip, skip + safeLimit);
     }
+
+    // Con orden por precio solo se ordenaron hasta PRICE_SORT_MAX_ROWS productos, así que las páginas
+    // que caen más allá de ese techo vendrían vacías. Se acota el total de páginas a las que de verdad
+    // tienen contenido, para que el paginador no ofrezca páginas en blanco. `total` se informa real:
+    // es la cantidad de productos que matchean el filtro, que es lo que muestra el encabezado.
+    const pageableTotal = byPrice ? Math.min(total, PRICE_SORT_MAX_ROWS) : total;
 
     res.json({
       products: cards,
       pagination: {
+        // Antes: page/limit salían del query string sin acotar; ahora se informa lo que se usó de
+        // verdad, para que el frontend no calcule páginas con un límite que el backend ignoró.
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(total / parseInt(limit)),
+        page: safePage,
+        limit: safeLimit,
+        // Antes: Math.ceil(total / parseInt(limit))
+        totalPages: Math.ceil(pageableTotal / safeLimit),
       },
     });
   } catch (err) {
@@ -410,13 +459,41 @@ async function getProducts(req, res) {
 // GET /api/products/admin - Listar TODOS los productos para el admin (activos e inactivos)
 async function getProductsAdmin(req, res) {
   try {
-    const { category, search, page = 1, limit = 50, lowStock, all } = req.query;
+    const { category, search, page = 1, limit = 50, lowStock, all, inStock } = req.query;
     // all=true: el admin trae TODOS los productos (sin paginar en el server) para que el "Capital total
     // en stock" y los tabs "Sin stock"/"Quiebre de stock" cuenten sobre el total real, no sobre una página.
     // La paginación visual (50 por página) la hace el cliente. Ver AdminProducts.jsx.
     const noPaginate = all === "true";
 
     const where = {};
+
+    // inStock=true: deja afuera lo que no se puede vender por falta de stock.
+    //
+    // Lo usa el picker de productos de las campañas de oferta: poner en una campaña algo que está
+    // agotado no sirve para nada — el descuento se escribe igual pero el producto no se muestra en
+    // la tienda, así que solo ensucia la lista y el conteo de "Agregar todos".
+    //
+    // "Tiene stock" es el mismo criterio que usa el catálogo para decidir si muestra un producto
+    // (publicVisibilityWhere en category.controller.js), sin la parte de visibilidad por tipo de
+    // cliente: el stock del producto padre NO alcanza cuando hay variantes, porque en ese caso lo
+    // que se vende es la variante. Los tres casos:
+    //   1. stock ilimitado a nivel producto,
+    //   2. producto SIN variantes activas → vale su propio stock,
+    //   3. producto CON variantes activas → vale que al menos una tenga stock.
+    //
+    // Va en AND para no pisar un where.OR que pueda poner otro filtro más adelante.
+    if (inStock === "true") {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { stockUnlimited: true },
+            { AND: [{ variants: { none: { active: true } } }, { stock: { gt: 0 } }] },
+            { variants: { some: { active: true, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
+          ],
+        },
+      ];
+    }
 
     // Filtro de quiebre de stock: productos donde stock <= stockBreak (y stockBreak está definido)
     if (lowStock === "true") {
@@ -429,9 +506,31 @@ async function getProductsAdmin(req, res) {
     if (category) {
       // Soporta múltiples categorías separadas por "|" — ej. ?category=accesorios|cables|cargadores
       // Las relaciones M2M usan "some" con "in" para hacer OR.
+      // Para cada slug se incluyen también sus subcategorías, igual que en getProducts (público).
       const slugs = category.split("|").map((s) => s.trim()).filter(Boolean);
       if (slugs.length > 0) {
-        where.categories = { some: { slug: { in: slugs } } };
+        // Antes: where.categories = { some: { slug: { in: slugs } } };
+        //
+        // Filtraba por la categoría EXACTA: elegir "Audio" no traía los productos cargados en
+        // "Audio › Auriculares". El admin veía menos productos de los que existen bajo esa rama —
+        // en el picker de campañas eso significaba armar una oferta "de Audio" que dejaba afuera
+        // todas las subcategorías. El listado público ya expandía a las hijas desde siempre
+        // (getProducts, más arriba); esto alinea el endpoint del admin con ese criterio.
+        //
+        // exactCategory=true conserva el comportamiento viejo. Lo usa el modal "productos
+        // vinculados" de AdminCategories, donde el número del badge cuenta SOLO los vínculos
+        // directos (_count.products) y la lista tiene que coincidir con ese número.
+        if (req.query.exactCategory === "true") {
+          where.categories = { some: { slug: { in: slugs } } };
+        } else {
+          const categoryIds = await descendantIdsBySlugs(prisma, slugs);
+          if (categoryIds) {
+            where.categories = { some: { id: { in: categoryIds } } };
+          } else {
+            // Si ninguno de los slugs existe, devolver vacío (mismo truco que en getProducts).
+            where.categories = { every: { id: -1 }, some: {} };
+          }
+        }
       }
     }
 
@@ -1210,7 +1309,29 @@ async function bulkPriceAdjust(req, res) {
 
     await prisma.$transaction(updates);
 
-    res.json({ ok: true, updated: products.length });
+    // Campañas de oferta: este ajuste escala también los salePrice/wholesaleSalePrice, incluidos los
+    // que escribió una campaña vigente. La campaña reconoce sus precios comparando contra el número
+    // exacto que anotó, así que si no reajustamos esa anotación deja de reconocerlos, los toma por
+    // "oferta cargada a mano" y AL TERMINAR NO LOS REVIERTE: el descuento queda pegado para siempre.
+    // Se escala la anotación con el mismo factor y redondeo, y después se re-sincroniza para que el
+    // descuento se recalcule sobre el precio nuevo (necesario con descuentos de monto fijo, donde
+    // escalar no da el mismo resultado que volver a restar el monto).
+    let offersResynced = 0;
+    try {
+      const { rescaleAppliedPrices, syncOffers } = require("../services/offers.service");
+      const r = await rescaleAppliedPrices(factor, {
+        retail:    type === "MINORISTA" || type === "AMBOS",
+        wholesale: type === "MAYORISTA" || type === "AMBOS",
+      });
+      offersResynced = r.rescaled;
+      await syncOffers();
+    } catch (e) {
+      // Si esto falla, el ajuste de precios ya quedó hecho y no se revierte: el cron va a re-aplicar
+      // las campañas en el próximo minuto. Se loguea para poder revisar los precios de oferta a mano.
+      console.error("bulkPriceAdjust: error re-sincronizando campañas de oferta:", e.message);
+    }
+
+    res.json({ ok: true, updated: products.length, offersResynced });
   } catch (err) {
     console.error("bulkPriceAdjust error:", err);
     res.status(500).json({ error: "Error al ajustar precios" });
@@ -1231,12 +1352,16 @@ async function getProductFacets(req, res) {
     }
 
     if (category) {
-      const cat = await prisma.category.findUnique({
-        where: { slug: category },
-        include: { children: { select: { id: true } } },
-      });
-      if (cat) {
-        const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
+      // Antes bajaba un solo nivel:
+      //   const cat = await prisma.category.findUnique({
+      //     where: { slug: category },
+      //     include: { children: { select: { id: true } } },
+      //   });
+      //   const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
+      // Tiene que usar el MISMO criterio que getProducts o los filtros de características quedarían
+      // calculados sobre un conjunto de productos distinto del que se muestra en la grilla.
+      const categoryIds = await descendantIdsBySlugs(prisma, [category]);
+      if (categoryIds) {
         where.categories = { some: { id: { in: categoryIds } } };
       } else {
         where.categories = { every: { id: -1 }, some: {} };
@@ -1280,9 +1405,18 @@ async function getProductFacets(req, res) {
 
     // Mismo filtro por campaña que getProducts, para que al elegir una campaña en el catálogo los
     // filtros de características muestren solo los atributos de esos productos.
+    // Incluye el chequeo de vigencia por el mismo motivo que allá: es un endpoint público.
     if (offerId) {
       const oid = parseInt(offerId);
-      if (!isNaN(oid)) where.offerItems = { some: { offerId: oid } };
+      if (!isNaN(oid)) {
+        const nowOffer = new Date();
+        where.offerItems = {
+          some: {
+            offerId: oid,
+            offer: { active: true, startsAt: { lte: nowOffer }, endsAt: { gt: nowOffer } },
+          },
+        };
+      }
     }
 
     if (lowStock === "true") {

@@ -6,6 +6,9 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, offersApi } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+// La jerarquía de categorías ya no está topeada en dos niveles, así que buscar por slug y recorrer
+// una rama tienen que ser recursivos. Ver utils/categoryTree.js.
+import { findBySlug, slugsInBranch } from "../utils/categoryTree";
 
 // ─── Sección colapsable del sidebar ──────────────────────────────────────────
 function FilterSection({ title, defaultOpen = true, children, activeCount = 0 }) {
@@ -282,26 +285,46 @@ export default function Catalog() {
 
   const clearAllFilters = () => setSearchParams({});
 
-  const findCategoryName = (slug) => {
-    for (const cat of categories) {
-      if (cat.slug === slug) return cat.name;
-      if (cat.children) {
-        const sub = cat.children.find((s) => s.slug === slug);
-        if (sub) return sub.name;
-      }
-    }
-    return "Catálogo";
-  };
+  // Antes recorría a mano dos niveles (la raíz y su `children`), así que el nombre de una categoría
+  // de tercer nivel no se encontraba y el título del catálogo decía "Catálogo" en vez del nombre.
+  const findCategoryName = (slug) => findBySlug(categories, slug)?.name || "Catálogo";
 
-  const parentTotal = (cat) => {
+  // Total de una rama: los productos propios + los de TODA la descendencia.
+  //
+  // Antes: `own + cat.children.reduce(...)`, que sumaba un solo nivel y dejaba los nietos afuera.
+  // El backend ya manda `totalProducts` calculado sobre el árbol completo, así que alcanza con
+  // usarlo; el cálculo local queda como respaldo por si la respuesta no lo trae.
+  const branchTotal = (cat) => {
+    if (typeof cat.totalProducts === "number") return cat.totalProducts;
     const own = cat._count?.products || 0;
-    const childrenTotal = cat.children?.reduce((acc, s) => acc + (s._count?.products || 0), 0) || 0;
-    return own + childrenTotal;
+    return own + (cat.children || []).reduce((acc, s) => acc + branchTotal(s), 0);
   };
 
-  const isParentActive = (cat) =>
-    selectedCategorySlugs.includes(cat.slug) ||
-    (cat.children && cat.children.some((s) => selectedCategorySlugs.includes(s.slug)));
+  // ¿Hay algo seleccionado en esta rama? Decide si se despliegan las subcategorías.
+  //
+  // Antes solo miraba los hijos DIRECTOS, así que al entrar por una categoría de tercer nivel la
+  // rama de arriba aparecía colapsada y el filtro activo quedaba escondido.
+  const isBranchActive = (cat) =>
+    slugsInBranch(cat).some((slug) => selectedCategorySlugs.includes(slug));
+
+  // Dibuja una categoría y, si su rama está activa, su descendencia — recursivamente.
+  // `depth` solo se usa para no indentar la primera fila (las raíces van al ras).
+  const renderBranch = (cat, depth = 0) => (
+    <div key={cat.id}>
+      <CategoryItem
+        label={cat.name}
+        count={branchTotal(cat)}
+        checked={selectedCategorySlugs.includes(cat.slug)}
+        indent={depth > 0}
+        onClick={() => toggleCategory(cat.slug)}
+      />
+      {cat.children && cat.children.length > 0 && isBranchActive(cat) && (
+        <div className="mt-0.5 space-y-0.5 ml-2 pl-2 border-l-2 border-[#dce9ff]">
+          {cat.children.map((sub) => renderBranch(sub, depth + 1))}
+        </div>
+      )}
+    </div>
+  );
 
   const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || currentOfferId || totalAttrFilters > 0;
 
@@ -382,30 +405,12 @@ export default function Catalog() {
               setSearchParams(newParams);
             }}
           />
-          {categories.map((cat) => (
-            <div key={cat.id}>
-              <CategoryItem
-                label={cat.name}
-                count={parentTotal(cat)}
-                checked={selectedCategorySlugs.includes(cat.slug)}
-                onClick={() => toggleCategory(cat.slug)}
-              />
-              {cat.children && cat.children.length > 0 && isParentActive(cat) && (
-                <div className="mt-0.5 space-y-0.5 ml-2 pl-2 border-l-2 border-[#dce9ff]">
-                  {cat.children.map((sub) => (
-                    <CategoryItem
-                      key={sub.id}
-                      label={sub.name}
-                      count={sub._count?.products || 0}
-                      checked={selectedCategorySlugs.includes(sub.slug)}
-                      indent
-                      onClick={() => toggleCategory(sub.slug)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+          {/* Antes esto dibujaba exactamente dos niveles: la raíz, y adentro un map sobre
+              cat.children. Una categoría de tercer nivel no tenía forma de aparecer en el filtro, y
+              el cliente no podía llegar a ella. renderBranch se llama a sí misma, así que baja hasta
+              donde haga falta manteniendo el mismo comportamiento: una rama solo se despliega
+              cuando está activa (ver isBranchActive). */}
+          {categories.map((cat) => renderBranch(cat))}
         </div>
       </FilterSection>
 

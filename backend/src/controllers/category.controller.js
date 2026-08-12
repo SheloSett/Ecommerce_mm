@@ -1,4 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
+// Helpers de jerarquía: el anidado ya no está topeado en dos niveles, así que armar el árbol y
+// validar que un movimiento no cierre un ciclo necesita recursión. Ver utils/categoryTree.js.
+const { buildTree, wouldCreateCycle } = require("../utils/categoryTree");
 
 const prisma = new PrismaClient();
 
@@ -46,30 +49,45 @@ async function getCategories(req, res) {
     // Antes: where: { active: true } — contaba todos los activos, sin filtrar visibilidad ni stock.
     const productCountWhere = countAll ? {} : { active: true, ...publicVisibilityWhere(visibleFor) };
 
-    const categories = await prisma.category.findMany({
-      where: { parentId: null }, // Solo categorías raíz (sin padre)
+    // Antes se traían solo las raíces con UN nivel de hijas anidado:
+    //
+    //   const categories = await prisma.category.findMany({
+    //     where: { parentId: null },
+    //     include: {
+    //       _count: { select: { products: { where: productCountWhere } } },
+    //       children: {
+    //         include: { _count: { select: { products: { where: productCountWhere } } } },
+    //         orderBy: { name: "asc" },
+    //       },
+    //     },
+    //     orderBy: { name: "asc" },
+    //   });
+    //
+    // Con el anidado libre eso ya no alcanza: una categoría de tercer nivel no aparecía en ningún
+    // lado de la respuesta. Ahora se traen TODAS planas con su conteo y el árbol se arma en memoria
+    // (son decenas de filas; ver utils/categoryTree.js).
+    const flat = await prisma.category.findMany({
       include: {
         // Contar solo los productos que el cliente ve realmente (activos + visibilidad + stock)
         _count: { select: { products: { where: productCountWhere } } },
-        // Incluir subcategorías con su conteo de productos visibles
-        children: {
-          include: {
-            _count: { select: { products: { where: productCountWhere } } },
-          },
-          orderBy: { name: "asc" },
-        },
       },
       orderBy: { name: "asc" },
     });
 
-    // Agregar totalProducts: suma de productos propios + productos en subcategorías
-    const withTotals = categories.map((cat) => {
-      const ownCount = cat._count.products;
-      const childrenCount = cat.children.reduce((sum, child) => sum + child._count.products, 0);
-      return { ...cat, totalProducts: ownCount + childrenCount };
-    });
+    const tree = buildTree(flat);
 
-    res.json(withTotals);
+    // totalProducts: productos propios + los de TODA la descendencia, no solo los hijos directos.
+    // Antes era `own + children`, que con tres niveles dejaba los nietos sin contar. Se calcula de
+    // abajo hacia arriba aprovechando que `buildTree` ya devuelve los hijos resueltos.
+    const withTotals = (nodes) =>
+      nodes.map((cat) => {
+        const children = withTotals(cat.children);
+        const own = cat._count?.products || 0;
+        const descendants = children.reduce((sum, ch) => sum + ch.totalProducts, 0);
+        return { ...cat, children, totalProducts: own + descendants };
+      });
+
+    res.json(withTotals(tree));
   } catch (err) {
     console.error("getCategories error:", err);
     res.status(500).json({ error: "Error al obtener categorías" });
@@ -95,10 +113,14 @@ async function createCategory(req, res) {
       if (!parent) {
         return res.status(400).json({ error: "La categoría padre no existe" });
       }
-      // No se permite anidar más de un nivel (subcategoría no puede tener hijos)
-      if (parent.parentId !== null) {
-        return res.status(400).json({ error: "No se puede crear una subcategoría de una subcategoría" });
-      }
+      // Antes acá había un tope de anidado:
+      //   if (parent.parentId !== null) {
+      //     return res.status(400).json({ error: "No se puede crear una subcategoría de una subcategoría" });
+      //   }
+      // Se levantó a pedido: la jerarquía ahora puede tener la profundidad que haga falta
+      // (ej: Audio › Auriculares › Inalámbricos). No hace falta chequear ciclos en el ALTA porque
+      // la categoría todavía no existe y por lo tanto no puede tener descendencia — solo puede
+      // colgar de algo que ya está. El chequeo de ciclos sí es obligatorio al EDITAR (ver abajo).
     }
 
     const category = await prisma.category.create({
@@ -133,19 +155,25 @@ async function updateCategory(req, res) {
       return res.status(400).json({ error: "El nombre es requerido" });
     }
 
-    // Evitar que una categoría se asigne a sí misma como padre
-    if (parentId && parseInt(parentId) === parseInt(id)) {
-      return res.status(400).json({ error: "Una categoría no puede ser su propio padre" });
-    }
-
-    // Si se provee parentId, verificar que exista y no sea subcategoría
+    // Antes:
+    //   if (parentId && parseInt(parentId) === parseInt(id)) → "no puede ser su propio padre"
+    //   if (parent.parentId !== null)                        → "No se puede anidar más de un nivel"
+    //
+    // Con el tope de dos niveles, prohibir "ser su propio padre" alcanzaba: el padre siempre tenía
+    // que ser una raíz, así que no había forma de armar un ciclo más largo. Sin tope sí la hay
+    // (poner A bajo B y después B bajo A), y a partir de ese momento CUALQUIER recorrido recursivo
+    // —armar el árbol, juntar descendientes, armar el breadcrumb— queda girando para siempre y
+    // cuelga el request. wouldCreateCycle() sube por toda la cadena de ancestros del padre
+    // propuesto y rechaza el movimiento antes de escribir; también cubre el caso "su propio padre".
     if (parentId) {
       const parent = await prisma.category.findUnique({ where: { id: parseInt(parentId) } });
       if (!parent) {
         return res.status(400).json({ error: "La categoría padre no existe" });
       }
-      if (parent.parentId !== null) {
-        return res.status(400).json({ error: "No se puede anidar más de un nivel" });
+      if (await wouldCreateCycle(prisma, parseInt(id), parseInt(parentId))) {
+        return res.status(400).json({
+          error: "No se puede mover una categoría dentro de sí misma o de una de sus subcategorías",
+        });
       }
     }
 

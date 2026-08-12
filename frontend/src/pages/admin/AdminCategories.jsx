@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { categoriesApi, productsApi, getImageUrl } from "../../services/api";
+// La jerarquía ya no está topeada en dos niveles: aplanar el árbol para la tabla y calcular qué
+// ramas hay que excluir del selector de padre necesitan recursión. Ver utils/categoryTree.js.
+import { flattenTree, indentedLabel, findBySlug, slugsInBranch } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
 
 const formatPrice = (n) =>
@@ -47,7 +50,12 @@ export default function AdminCategories() {
     setCatProducts([]);
     setLoadingCatProducts(true);
     try {
-      const res = await productsApi.getAllAdmin({ category: cat.slug, limit: 100 });
+      // Antes: { category: cat.slug, limit: 100 }
+      // El endpoint del admin ahora expande la categoría a sus subcategorías por defecto (para que
+      // filtrar por "Audio" traiga también lo de "Audio › Auriculares"). Acá NO queremos eso: el
+      // número del badge que abre este modal es _count.products, o sea los vínculos DIRECTOS, así
+      // que la lista tiene que mostrar exactamente esos y no los de las hijas.
+      const res = await productsApi.getAllAdmin({ category: cat.slug, limit: 100, exactCategory: true });
       setCatProducts(res.data.products || []);
     } catch {
       toast.error("No se pudieron cargar los productos");
@@ -125,8 +133,22 @@ export default function AdminCategories() {
     }
   };
 
-  // Categorías raíz para el dropdown de "padre" en el modal (excluye la que se está editando)
-  const rootCategories = categories.filter((c) => !editingCat || c.id !== editingCat.id);
+  // Opciones del dropdown "categoría padre".
+  //
+  // Antes: `categories.filter((c) => !editingCat || c.id !== editingCat.id)` — solo las raíces
+  // (`categories` traía únicamente raíces) y alcanzaba con sacar la que se estaba editando, porque
+  // el anidado estaba topeado en dos niveles.
+  //
+  // Ahora cualquier categoría puede ser padre, así que hay que sacar además TODA la descendencia de
+  // la que se está editando: ponerla bajo una hija suya la metería adentro de sí misma y armaría un
+  // ciclo. El backend lo rechaza igual (wouldCreateCycle), pero mostrar acá opciones que el servidor
+  // va a rechazar es ofrecerle al admin un camino que termina en error.
+  const parentOptions = (() => {
+    const all = flattenTree(categories);
+    if (!editingCat) return all;
+    const excluded = new Set(slugsInBranch(findBySlug(categories, editingCat.slug)));
+    return all.filter((c) => !excluded.has(c.slug));
+  })();
 
   return (
     <AdminLayout title="Categorías">
@@ -161,85 +183,66 @@ export default function AdminCategories() {
                   </td>
                 </tr>
               ) : (
-                // Renderizar categorías raíz y sus subcategorías anidadas
-                categories.map((cat) => (
-                  <>
-                    {/* Fila de categoría principal */}
-                    <tr key={cat.id} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-3 font-semibold text-slate-800">
-                        {cat.name}
+                // Antes había DOS plantillas de fila distintas: una para la categoría raíz y otra,
+                // copiada y con estilos propios, para `cat.children`. Eso solo podía dibujar dos
+                // niveles — con el anidado libre, una categoría de tercer nivel simplemente no
+                // aparecía en esta tabla. Ahora es UNA sola plantilla sobre el árbol aplanado, y la
+                // profundidad se expresa con sangría calculada a partir de `depth`.
+                flattenTree(categories).map((cat) => (
+                  <tr
+                    key={cat.id}
+                    className={`border-b hover:bg-slate-50 ${
+                      cat.depth === 0 ? "border-slate-100" : "border-slate-50 bg-slate-50/50"
+                    }`}
+                  >
+                    <td className={cat.depth === 0 ? "px-4 py-3" : "px-4 py-2.5"}>
+                      <div
+                        className={`flex items-center gap-2 ${cat.depth > 0 ? "border-l-2 border-blue-200" : ""}`}
+                        style={{ paddingLeft: cat.depth > 0 ? `${cat.depth * 16}px` : undefined }}
+                      >
+                        {cat.depth > 0 && <span className="text-blue-400 text-xs">↳</span>}
+                        <span className={cat.depth === 0 ? "font-semibold text-slate-800" : "text-slate-700 font-medium"}>
+                          {cat.name}
+                        </span>
                         {/* Badge para las categorías ocultas del catálogo general */}
                         {cat.hidden && (
                           <span
-                            className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 align-middle"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200"
                             title="Sus productos no aparecen en el catálogo general — solo eligiendo esta categoría o buscándolos"
                           >
                             🙈 Oculta
                           </span>
                         )}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-slate-500 text-xs hidden sm:table-cell">{cat.slug}</td>
-                      <td className="px-4 py-3 table-cell">
-                        <CountBadge count={cat._count?.products || 0} onClick={() => openProducts(cat)} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={() => openEdit(cat)}
-                            className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold"
-                          >
-                            Editar
-                          </button>
-                          <button
-                            onClick={() => handleDelete(cat)}
-                            className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-
-                    {/* Filas de subcategorías: indentadas con borde izquierdo */}
-                    {cat.children && cat.children.map((sub) => (
-                      <tr key={sub.id} className="border-b border-slate-50 hover:bg-slate-50 bg-slate-50/50">
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-2 pl-4 border-l-2 border-blue-200">
-                            <span className="text-blue-400 text-xs">↳</span>
-                            <span className="text-slate-700 font-medium">{sub.name}</span>
-                            {sub.hidden && (
-                              <span
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200"
-                                title="Sus productos no aparecen en el catálogo general — solo eligiendo esta categoría o buscándolos"
-                              >
-                                🙈 Oculta
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-slate-400 text-xs hidden sm:table-cell">{sub.slug}</td>
-                        <td className="px-4 py-2.5 table-cell">
-                          <CountBadge count={sub._count?.products || 0} onClick={() => openProducts(sub)} />
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              onClick={() => openEdit({ ...sub, parentId: cat.id })}
-                              className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              onClick={() => handleDelete(sub)}
-                              className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold"
-                            >
-                              Eliminar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </>
+                      </div>
+                    </td>
+                    <td className={`font-mono text-xs hidden sm:table-cell ${
+                      cat.depth === 0 ? "px-4 py-3 text-slate-500" : "px-4 py-2.5 text-slate-400"
+                    }`}>
+                      {cat.slug}
+                    </td>
+                    <td className={cat.depth === 0 ? "px-4 py-3 table-cell" : "px-4 py-2.5 table-cell"}>
+                      <CountBadge count={cat._count?.products || 0} onClick={() => openProducts(cat)} />
+                    </td>
+                    <td className={cat.depth === 0 ? "px-4 py-3" : "px-4 py-2.5"}>
+                      <div className="flex gap-2 justify-end">
+                        {/* Antes las subcategorías se abrían con openEdit({ ...sub, parentId: cat.id }),
+                            porque el padre solo se conocía por el anidado del render. Los nodos ya
+                            traen su propio parentId, así que alcanza con pasar el nodo. */}
+                        <button
+                          onClick={() => openEdit(cat)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDelete(cat)}
+                          className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-xs font-semibold"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 ))
               )}
             </tbody>
@@ -335,14 +338,18 @@ export default function AdminCategories() {
                   className="input"
                 >
                   <option value="">— Sin padre (categoría principal) —</option>
-                  {rootCategories.map((cat) => (
+                  {/* Antes: rootCategories.map(...) con solo el nombre. Ahora la lista incluye
+                      subcategorías de cualquier nivel, así que va indentada para que se entienda de
+                      qué rama cuelga cada opción. */}
+                  {parentOptions.map((cat) => (
                     <option key={cat.id} value={cat.id}>
-                      {cat.name}
+                      {indentedLabel(cat)}
                     </option>
                   ))}
                 </select>
                 <p className="text-xs text-slate-400 mt-1">
-                  Si seleccionás una categoría padre, esta se creará como subcategoría.
+                  Si seleccionás una categoría padre, esta se creará como subcategoría. Se puede
+                  anidar sin límite de niveles.
                 </p>
               </div>
 

@@ -142,11 +142,26 @@ export default function Home() {
           if (!cancelled) setCampaigns([]);
           return;
         }
+        // El filtro ?offerId=N devuelve los productos que PERTENECEN a la campaña, que no es lo
+        // mismo que los que terminaron CON descuento: el motor deja afuera a los que ya tenían una
+        // oferta cargada a mano, a los que están en USD cuando el descuento es de monto fijo, y a
+        // los que no tienen precio mayorista si la campaña es mayorista. Esos productos aparecían
+        // igual bajo el título de la campaña, a precio lleno — la sección prometía un descuento que
+        // esas cards no tenían. Se filtran acá con el mismo criterio que usa ProductCard para
+        // decidir si muestra precio tachado (productEffectivePrice).
+        const hasDiscount = (p) =>
+          visibleFor === "MAYORISTA" && p.wholesalePrice
+            ? p.wholesaleSalePrice != null && p.wholesaleSalePrice < p.wholesalePrice
+            : p.salePrice != null && p.salePrice < p.price;
+
         const withProducts = await Promise.all(
           relevant.map(async (offer) => {
             try {
-              const r = await productsApi.getAll({ offerId: offer.id, limit: 8, visibleFor });
-              return { ...offer, products: r.data.products || [] };
+              // Antes: limit: 8 — se pedían justo los 8 que se muestran. Ahora se pide de más
+              // porque el filtro de abajo puede descartar algunos, y quedaría la fila incompleta.
+              const r = await productsApi.getAll({ offerId: offer.id, limit: 24, visibleFor });
+              const products = (r.data.products || []).filter(hasDiscount).slice(0, 8);
+              return { ...offer, products };
             } catch {
               return { ...offer, products: [] };
             }

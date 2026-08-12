@@ -7,6 +7,8 @@ import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
 import TierEditor from "../../components/admin/TierEditor";
 import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
+// Aplanado recursivo del árbol de categorías (ya no está topeado en dos niveles).
+import { flattenTree, indentedLabel } from "../../utils/categoryTree";
 
 const EMPTY_FORM = {
   name: "",
@@ -671,32 +673,37 @@ export default function AdminProductCreate() {
               )}
             </label>
             <div className="border border-slate-200 rounded-lg max-h-40 overflow-y-auto divide-y divide-slate-100">
-              {categories.map((c) => {
-                const opts = c.children && c.children.length > 0
-                  ? [{ id: c.id, label: c.name, indent: false }, ...c.children.map((s) => ({ id: s.id, label: `↳ ${s.name}`, indent: true }))]
-                  : [{ id: c.id, label: c.name, indent: false }];
-                return opts.map((opt) => {
-                  const checked = form.categoryIds.includes(opt.id.toString());
-                  return (
-                    <label key={opt.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50 ${opt.indent ? "pl-6" : ""}`}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          const sid = opt.id.toString();
-                          setForm((f) => ({
-                            ...f,
-                            categoryIds: checked
-                              ? f.categoryIds.filter((id) => id !== sid)
-                              : [...f.categoryIds, sid],
-                          }));
-                        }}
-                        className="rounded border-slate-300 text-blue-600"
-                      />
-                      <span className="text-sm text-slate-700">{opt.label}</span>
-                    </label>
-                  );
-                });
+              {/* Antes se aplanaba a mano bajando un solo nivel (padre + c.children), así que las
+                  categorías de tercer nivel en adelante no aparecían y no se les podía asignar un
+                  producto. flattenTree baja hasta el fondo y devuelve el `depth` para la sangría. */}
+              {flattenTree(categories).map((opt) => {
+                const checked = form.categoryIds.includes(opt.id.toString());
+                return (
+                  <label
+                    key={opt.id}
+                    className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-50"
+                    style={{ paddingLeft: `${12 + opt.depth * 16}px` }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const sid = opt.id.toString();
+                        setForm((f) => ({
+                          ...f,
+                          categoryIds: checked
+                            ? f.categoryIds.filter((id) => id !== sid)
+                            : [...f.categoryIds, sid],
+                        }));
+                      }}
+                      className="rounded border-slate-300 text-blue-600"
+                    />
+                    <span className="text-sm text-slate-700">
+                      {opt.depth > 0 && <span className="text-blue-400 mr-1">↳</span>}
+                      {opt.name}
+                    </span>
+                  </label>
+                );
               })}
             </div>
 
@@ -726,8 +733,10 @@ export default function AdminProductCreate() {
                   className="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Sin categoría padre (raíz)</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  {/* Antes: categories.map(...) — solo raíces, porque no se podía anidar más de un
+                      nivel. Ahora cualquier categoría sirve de padre. */}
+                  {flattenTree(categories).map((c) => (
+                    <option key={c.id} value={c.id}>{indentedLabel(c)}</option>
                   ))}
                 </select>
                 <div className="flex gap-2">

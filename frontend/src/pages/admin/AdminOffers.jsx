@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { offersApi, productsApi, categoriesApi, getImageUrl } from "../../services/api";
 import { formatPrice } from "../../utils/formatPrice";
+// Aplanado recursivo del árbol de categorías para el filtro del picker de productos.
+import { flattenTree, indentedLabel } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
 
 // Campañas de oferta con vigencia: un conjunto de productos con descuento entre dos fechas.
@@ -19,6 +21,10 @@ const EMPTY_FORM = {
   showInHome: true,
   active: true,
 };
+
+// Cuántos resultados del buscador se dibujan. La búsqueda trae todas las coincidencias (el botón
+// "Agregar todos" las necesita para no mentir), pero renderizarlas todas con imagen traba el modal.
+const PICKER_VISIBLE = 50;
 
 const STATE_STYLES = {
   ACTIVA:     "bg-green-100 text-green-700",
@@ -112,10 +118,21 @@ export default function AdminOffers() {
     const t = setTimeout(async () => {
       try {
         setPickerLoading(true);
+        // Antes: { search, category, limit: 50 }
+        // Con el tope de 50, elegir una categoría de 200 productos mostraba 50 y el botón decía
+        // "Agregar todos (50)": la campaña salía con 50 productos y el admin creía que estaban todos.
+        // all=true trae el resultado completo del filtro (mismo criterio que el buscador de pedidos
+        // manuales en AdminOrders); la lista visible se recorta abajo con PICKER_VISIBLE.
+        // inStock: los productos agotados no se ofrecen. Ponerlos en una campaña no hace nada útil
+        // —el descuento se escribe pero el producto no se muestra en la tienda— y encima inflaba el
+        // número de "Agregar todos", que es el que el admin usa para saber cuántos entran.
+        // Los que YA están en la campaña no se ven afectados: la selección vive en `selected`, que
+        // se carga desde la campaña al abrir el modal y no depende de esta búsqueda.
         const res = await productsApi.getAllAdmin({
           search: pickerSearch || undefined,
           category: pickerCategory || undefined,
-          limit: 50,
+          all: true,
+          inStock: true,
         });
         setPickerProducts(res.data?.products || []);
       } catch {
@@ -594,8 +611,15 @@ export default function AdminOffers() {
                           className="input text-sm flex-1"
                         >
                           <option value="">Todas las categorías</option>
-                          {categories.map((c) => (
-                            <option key={c.id} value={c.slug}>{c.name}</option>
+                          {/* Antes: categories.map((c) => <option value={c.slug}>{c.name}</option>)
+                              categoriesApi.getAll() devuelve solo las categorías RAÍZ, con su
+                              descendencia anidada en c.children. Al mapear el nivel de arriba nomás,
+                              las subcategorías no aparecían y no había forma de armar una campaña
+                              filtrando por una de ellas. flattenTree las trae todas, a cualquier
+                              profundidad, con la sangría metida en el texto (los <option> no
+                              respetan padding por CSS). */}
+                          {flattenTree(categories).map((c) => (
+                            <option key={c.id} value={c.slug}>{indentedLabel(c)}</option>
                           ))}
                         </select>
                         <button
@@ -615,7 +639,19 @@ export default function AdminOffers() {
                       ) : pickerProducts.length === 0 ? (
                         <p className="p-4 text-center text-sm text-slate-400">Sin resultados</p>
                       ) : (
-                        pickerProducts.map((p) => (
+                        <>
+                        {/* La búsqueda ya trae TODAS las coincidencias (para que "Agregar todos" no
+                            mienta), pero solo se dibujan las primeras PICKER_VISIBLE: pintar 800
+                            filas con imagen trabaría el modal. El aviso deja claro que hay más y que
+                            el botón de arriba las agrega igual. */}
+                        {pickerProducts.length > PICKER_VISIBLE && (
+                          <p className="px-3 py-2 text-xs text-slate-500 bg-slate-50 sticky top-0">
+                            Mostrando {PICKER_VISIBLE} de {pickerProducts.length} — afiná la búsqueda
+                            o usá "Agregar todos ({pickerProducts.length})"
+                          </p>
+                        )}
+                        {/* Antes: pickerProducts.map(...) sobre la lista completa */}
+                        {pickerProducts.slice(0, PICKER_VISIBLE).map((p) => (
                           <label
                             key={p.id}
                             className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer"
@@ -643,7 +679,8 @@ export default function AdminOffers() {
                               </span>
                             </span>
                           </label>
-                        ))
+                        ))}
+                        </>
                       )}
                     </div>
                   </div>
