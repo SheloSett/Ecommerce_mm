@@ -163,6 +163,20 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Errores de multer (subida de archivos). Sin este bloque caen en el handler genérico y salen
+// como 500 "File too large", que en el panel de admin no le dice nada a quien está subiendo.
+app.use((err, req, res, next) => {
+  if (err?.name === "MulterError") {
+    const messages = {
+      LIMIT_FILE_SIZE: "El archivo es demasiado grande (máximo 5 MB por imagen y 100 MB por video).",
+      LIMIT_FILE_COUNT: "Se superó la cantidad máxima de archivos.",
+      LIMIT_UNEXPECTED_FILE: "Se enviaron más archivos de los permitidos (máx. 10 fotos y 5 videos).",
+    };
+    return res.status(400).json({ error: messages[err.code] || `Error al subir el archivo: ${err.message}` });
+  }
+  next(err);
+});
+
 // Manejo global de errores
 app.use((err, req, res, next) => {
   console.error("Error:", err.message);

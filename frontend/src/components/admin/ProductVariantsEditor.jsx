@@ -7,7 +7,7 @@ import { formatPrice } from "../../utils/formatPrice";
 // baseCurrency: moneda del producto (ARS/USD). Es LA moneda de todos los precios y costos de sus
 // variantes — la variante define el número, el producto la unidad. Antes esto era solo un "fallback
 // cuando la variante no define la suya", pero la moneda por variante se eliminó (ver schema.prisma).
-export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, baseCurrency = "ARS", productImages = [], suppliers = [] }) {
+export default function ProductVariantsEditor({ productId, basePrice, baseWholesalePrice, baseCurrency = "ARS", productImages = [], productVideos = [], suppliers = [] }) {
   const [attributes, setAttributes] = useState([]);
   const [variants,   setVariants]   = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -253,7 +253,11 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         images:             Array.isArray(v.images) && v.images.length > 0
                               ? [...v.images]
                               : (v.image ? [v.image] : []),
+        // videos: mismo criterio que images — URLs de los videos del producto asignadas a esta
+        // variante. Sin campo legado que contemplar porque los videos nacieron ya como array.
+        videos:             Array.isArray(v.videos) ? [...v.videos] : [],
         pickerOpen:         false,
+        videoPickerOpen:    false,
       },
     }));
   };
@@ -312,6 +316,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
         visibility:         e.visibility || "AMBOS",
         images:             e.images || [],
         image:              e.images && e.images.length > 0 ? e.images[0] : null,
+        videos:             e.videos || [],
         // Descuentos por cantidad de la variante (el backend filtra tramos vacíos/ inválidos).
         priceTiers:          e.priceTiers || [],
         wholesalePriceTiers: e.wholesalePriceTiers || [],
@@ -909,6 +914,80 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                                       type="button"
                                       onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
                                       className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg"
+                                    >
+                                      Listo
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Videos de la variante — mismo picker que las fotos pero sobre
+                                product.videos. Va en esta misma celda para no agregar una
+                                columna más a una tabla que ya es ancha. */}
+                            {productVideos.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videoPickerOpen: !e.videoPickerOpen } }))}
+                                className="text-xs text-violet-500 hover:text-violet-700 underline whitespace-nowrap"
+                              >
+                                🎬 {e.videos?.length > 0 ? `Videos (${e.videos.length})` : "Videos"}
+                              </button>
+                            )}
+                            {e.videoPickerOpen && productVideos.length > 0 && (
+                              <div
+                                className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                                onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videoPickerOpen: false } }))}
+                              >
+                                <div
+                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto"
+                                  onClick={(ev) => ev.stopPropagation()}
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <h3 className="font-bold text-slate-800">Elegir videos para esta variante</h3>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videoPickerOpen: false } }))}
+                                      className="text-slate-400 hover:text-slate-700 text-xl leading-none"
+                                    >×</button>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mb-4">Tocá cada video para agregarlo o quitarlo. Si no elegís ninguno, la variante muestra los videos del producto.</p>
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    {productVideos.map((url, idx) => {
+                                      const isSelected = (e.videos || []).includes(url);
+                                      return (
+                                        <button
+                                          key={idx}
+                                          type="button"
+                                          onClick={() => setEditing((p) => {
+                                            const current = e.videos || [];
+                                            const next = current.includes(url)
+                                              ? current.filter((u) => u !== url)
+                                              : [...current, url];
+                                            return { ...p, [v.id]: { ...e, videos: next } };
+                                          })}
+                                          className={`relative rounded-lg overflow-hidden border-2 transition-colors bg-slate-900 ${isSelected ? "border-violet-500 ring-2 ring-violet-200" : "border-slate-200 hover:border-violet-300"}`}
+                                        >
+                                          <video src={url} className="w-full aspect-video object-cover pointer-events-none" muted playsInline preload="metadata" />
+                                          {isSelected && (
+                                            <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-violet-500 text-white text-xs font-bold flex items-center justify-center shadow">✓</div>
+                                          )}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videos: [] } }))}
+                                      className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700"
+                                    >
+                                      Limpiar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videoPickerOpen: false } }))}
+                                      className="px-4 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-lg"
                                     >
                                       Listo
                                     </button>

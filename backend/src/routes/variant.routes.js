@@ -222,7 +222,7 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
       price, salePrice, wholesalePrice, wholesaleSalePrice,
       // `currency` ya NO se desestructura del body: la moneda es del producto, no de la variante
       // (ver ProductVariant.currency en schema.prisma, deprecada). Antes: cost, currency, sku, ...
-      cost, sku, active, image, images, visibility,
+      cost, sku, active, image, images, videos, visibility,
       module, shelf, // ubicación en depósito a nivel variante (override del producto)
       supplierId,    // proveedor a nivel variante (override del producto; vacío → usa el del producto)
       priceTiers, wholesalePriceTiers, // descuentos por cantidad PROPIOS de la variante
@@ -268,6 +268,8 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
     // image (legado, una sola foto) y images (array, múltiples). El admin nuevo manda images.
     if (image          !== undefined) data.image          = image || null;
     if (images         !== undefined) data.images         = Array.isArray(images) ? images.filter(Boolean) : [];
+    // videos: mismo criterio que images — referencias a los videos del producto padre, no archivos
+    if (videos         !== undefined) data.videos         = Array.isArray(videos) ? videos.filter(Boolean) : [];
     // Ubicación en depósito: vacío → null (para que el fallback al producto funcione con ??)
     if (module         !== undefined) data.module         = module ? String(module).trim() : null;
     if (shelf          !== undefined) data.shelf          = shelf  ? String(shelf).trim()  : null;

@@ -64,9 +64,11 @@ export default function AdminProductCreate() {
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [newImages, setNewImages] = useState([]);
+  const [newVideos, setNewVideos] = useState([]);
   const [saving, setSaving] = useState(false);
   const [savedProduct, setSavedProduct] = useState(null);
   const fileInputRef = useRef();
+  const videoInputRef = useRef();
   const priceBeforeEditRef = useRef({});
 
   // Mini-formulario "Crear categoría" inline
@@ -89,6 +91,28 @@ export default function AdminProductCreate() {
     if (total > 10) toast.error("Máximo 10 imágenes — se agregaron hasta completar 10");
   };
 
+  // Videos: mismo patrón que las fotos pero con tope de 5 y validación de peso en el cliente.
+  // El backend igual rechaza los que se pasen, pero avisar acá evita esperar una subida de
+  // 100 MB para recién ahí enterarse de que no entraba.
+  const MAX_VIDEO_MB = 100;
+  const handleVideoSelect = (e) => {
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    const tooBig = files.filter((f) => f.size > MAX_VIDEO_MB * 1024 * 1024);
+    if (tooBig.length > 0) {
+      toast.error(`${tooBig.length === 1 ? "El video supera" : "Algunos videos superan"} los ${MAX_VIDEO_MB} MB y no se agregaron`);
+    }
+    const ok = files.filter((f) => f.size <= MAX_VIDEO_MB * 1024 * 1024);
+    if (ok.length === 0) return;
+    const total = newVideos.length + ok.length;
+    setNewVideos((prev) => [...prev, ...ok].slice(0, 5));
+    if (total > 5) toast.error("Máximo 5 videos — se agregaron hasta completar 5");
+  };
+
+  const removeVideoAt = (idx) => {
+    setNewVideos((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   // ─── Asistente de IA (Gemini) ──────────────────────────────────────────────
   const [aiLoadingText, setAiLoadingText]     = useState(false);
   const [aiLoadingImages, setAiLoadingImages] = useState(false);
@@ -106,6 +130,14 @@ export default function AdminProductCreate() {
   const removeImageAt = (idx) => {
     setNewImages((prev) => prev.filter((_, i) => i !== idx));
   };
+
+  // Previsualización de los videos elegidos (object URLs, se revocan igual que las fotos)
+  const [videoPreviews, setVideoPreviews] = useState([]);
+  useEffect(() => {
+    const urls = newVideos.map((f) => ({ url: URL.createObjectURL(f), name: f.name, size: f.size }));
+    setVideoPreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u.url));
+  }, [newVideos]);
 
   // Sugerir título, descripción y SKU a partir de la primera foto subida.
   const handleAiSuggestText = async () => {
@@ -260,6 +292,7 @@ export default function AdminProductCreate() {
       formData.append("wholesalePriceTiers", JSON.stringify(form.wholesalePriceTiers || []));
       form.categoryIds.forEach((id) => formData.append("categoryIds", id));
       newImages.forEach((file) => formData.append("images", file));
+      newVideos.forEach((file) => formData.append("videos", file));
 
       const res = await productsApi.create(formData);
       toast.success("Producto creado. Ahora podés agregar variantes.");
@@ -315,7 +348,7 @@ export default function AdminProductCreate() {
             </div>
           </div>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} baseCurrency={savedProduct.currency || "ARS"} productImages={savedProduct.images || []} suppliers={suppliers} />
+            <ProductVariantsEditor productId={savedProduct.id} basePrice={savedProduct.price} baseWholesalePrice={savedProduct.wholesalePrice} baseCurrency={savedProduct.currency || "ARS"} productImages={savedProduct.images || []} productVideos={savedProduct.videos || []} suppliers={suppliers} />
           </div>
         </div>
       </AdminLayout>
@@ -871,6 +904,42 @@ export default function AdminProductCreate() {
                 </p>
               </>
             )}
+
+            {/* Videos — van a un campo aparte de las fotos: se muestran solo en la galería
+                del producto, nunca como miniatura en el catálogo, carrito ni pedidos. */}
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Videos (máx. 5, 100MB c/u · MP4, WEBM o MOV)
+              </label>
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime"
+                multiple
+                onChange={handleVideoSelect}
+                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100 cursor-pointer"
+              />
+              {videoPreviews.length > 0 && (
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {videoPreviews.map((vid, idx) => (
+                    <div key={idx} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-900">
+                      <video src={vid.url} className="w-full aspect-video object-cover" muted playsInline preload="metadata" />
+                      <button
+                        type="button"
+                        onClick={() => removeVideoAt(idx)}
+                        title="Quitar"
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-red-600 text-white text-xs leading-none flex items-center justify-center sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                      <p className="px-1.5 py-1 text-[10px] text-white/80 truncate bg-black/40">
+                        {vid.name} · {(vid.size / (1024 * 1024)).toFixed(1)} MB
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* ── Asistente de IA (Gemini) ── */}
             <div className="mt-4 rounded-2xl border border-violet-200 dark:border-violet-900/50 bg-gradient-to-br from-violet-50 to-fuchsia-50 dark:from-violet-950/40 dark:to-fuchsia-950/30 p-4 sm:p-5 shadow-sm">

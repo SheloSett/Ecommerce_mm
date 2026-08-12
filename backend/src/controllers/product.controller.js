@@ -1,7 +1,8 @@
 const { PrismaClient } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
-const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
+const { uploadBuffer, uploadVideoBuffer, deleteByUrl } = require("../config/cloudinary");
+const { isVideoMime } = require("../middleware/upload.middleware");
 // Filtrar por una categoría incluye a toda su descendencia, y la jerarquía ya no está topeada en
 // dos niveles, así que la expansión es recursiva. Ver utils/categoryTree.js.
 const { descendantIdsBySlugs } = require("../utils/categoryTree");
@@ -822,6 +823,29 @@ async function enforceCarouselLimit(field, excludeId = null) {
   }
 }
 
+// Con upload.fields, req.files es un objeto { images: [...], videos: [...] } en vez de un array.
+// Se juntan todos y se reparticionan por mimetype REAL, no por el campo en el que llegaron: si el
+// navegador manda un .mp4 dentro de "images" igual sube como video, en vez de reventar en Cloudinary
+// por pedirle resource_type "image" a un archivo que no lo es.
+function splitMediaFiles(req) {
+  const all = req.files
+    ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat())
+    : [];
+  return {
+    imageFiles: all.filter((f) => !isVideoMime(f.mimetype)),
+    videoFiles: all.filter((f) => isVideoMime(f.mimetype)),
+  };
+}
+
+// Sube fotos y videos a Cloudinary y devuelve las URLs ya listas para guardar.
+async function uploadMediaFiles({ imageFiles, videoFiles }) {
+  const [images, videos] = await Promise.all([
+    Promise.all(imageFiles.map((f) => uploadBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url))),
+    Promise.all(videoFiles.map((f) => uploadVideoBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url))),
+  ]);
+  return { images, videos };
+}
+
 // POST /api/products - Crear producto (admin)
 async function createProduct(req, res) {
   try {
@@ -850,10 +874,8 @@ async function createProduct(req, res) {
       return res.status(400).json({ error: "El precio de oferta mayorista debe ser menor al precio mayorista" });
     }
 
-    // Subir imágenes a Cloudinary y obtener las URLs
-    const images = req.files && req.files.length > 0
-      ? await Promise.all(req.files.map((f) => uploadBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url)))
-      : [];
+    // Subir imágenes y videos a Cloudinary y obtener las URLs
+    const { images, videos } = await uploadMediaFiles(splitMediaFiles(req));
 
     // Si se activa featured u onSale, verificar que no se supere el límite del carrusel.
     // Si ya hay 20, el más viejo se desmarca automáticamente antes de insertar el nuevo.
@@ -902,6 +924,7 @@ async function createProduct(req, res) {
         priceTiers: priceTiers || undefined,
         wholesalePriceTiers: wholesalePriceTiers || undefined,
         images,
+        videos,
       },
       include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
     });
@@ -917,7 +940,7 @@ async function createProduct(req, res) {
 async function updateProduct(req, res) {
   try {
     const { id } = req.params;
-    const { name, description, price, cost, currency, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
+    const { name, description, price, cost, currency, ivaRate, salePrice, wholesalePrice, wholesaleSalePrice, minQuantity, stock, stockUnlimited, stockBreak, priceTiers: priceTiersRaw, wholesalePriceTiers: wholesalePriceTiersRaw, sku, youtubeUrl, featured, onSale, hotSeller, hotSellerThreshold, active, keepImages, keepVideos, weight, length, width, height, visibility, module, shelf, supplierId } = req.body;
     // undefined → no tocar (allowUndefined=true); null/[] → borrar tiers
     const priceTiersUpdate = parseTiers(priceTiersRaw, true);
     const wholesalePriceTiersUpdate = parseTiers(wholesalePriceTiersRaw, true);
@@ -961,36 +984,40 @@ async function updateProduct(req, res) {
       return res.status(400).json({ error: "El precio de oferta mayorista debe ser menor al precio mayorista" });
     }
 
-    // Manejo de imágenes:
-    // keepImages puede ser un array de URLs de imágenes que se quieren conservar
-    let images = existing.images;
+    // Manejo de fotos y videos:
+    // keepImages / keepVideos son arrays de URLs que se quieren conservar
+    const { images: newImages, videos: newVideos } = await uploadMediaFiles(splitMediaFiles(req));
 
-    if (req.files && req.files.length > 0) {
-      const newImages = await Promise.all(req.files.map((f) => uploadBuffer(f.buffer, "ecommerce/products").then((r) => r.secure_url)));
+    // Resuelve la lista final de un tipo de media combinando lo que ya había, lo recién subido
+    // y lo que el front pidió conservar. __NONE__ es el marcador que manda el frontend cuando se
+    // borró todo (FormData no puede transportar un array vacío, así que sin el marcador no habría
+    // forma de distinguir "borrar todas" de "no tocar nada").
+    const resolveMedia = (current, uploaded, keepRaw) => {
+      const keepArr = keepRaw === undefined
+        ? undefined
+        : (Array.isArray(keepRaw) ? keepRaw : [keepRaw]).filter((k) => k && k !== "__NONE__");
 
-      // Si keepImages se envía, combinamos las que se quieren conservar con las nuevas
-      // Filtramos __NONE__ que es el marcador que envía el frontend cuando no hay imágenes a conservar
-      if (keepImages) {
-        const toKeep = (Array.isArray(keepImages) ? keepImages : [keepImages]).filter((k) => k !== "__NONE__");
-        images = [...toKeep, ...newImages];
-      } else {
-        // Si no se especifica keepImages, reemplazamos todas con las nuevas
-        images = newImages;
+      if (uploaded.length > 0) {
+        // Sin keep explícito, lo nuevo reemplaza a lo anterior (comportamiento histórico)
+        return keepArr === undefined ? uploaded : [...keepArr, ...uploaded];
       }
-    } else if (keepImages !== undefined) {
-      // Solo conservar las imágenes especificadas (sin nuevas imágenes subidas)
-      // __NONE__ es el marcador que envía el frontend cuando se borraron todas las imágenes
-      const keepArr = Array.isArray(keepImages) ? keepImages : [keepImages];
-      images = keepArr.filter((k) => k !== "__NONE__");
-    }
+      return keepArr === undefined ? current : keepArr;
+    };
 
-    // Eliminar de Cloudinary las imágenes que ya no se van a usar
-    const removedImages = existing.images.filter((img) => !images.includes(img));
-    for (const img of removedImages) {
-      if (img.startsWith("http")) {
-        await deleteByUrl(img);
+    const images = resolveMedia(existing.images, newImages, keepImages);
+    const videos = resolveMedia(existing.videos || [], newVideos, keepVideos);
+
+    // Liberar del almacenamiento lo que quedó fuera. deleteByUrl detecta solo si es imagen o
+    // video por la URL, así que sirve para ambas listas.
+    const removedMedia = [
+      ...existing.images.filter((img) => !images.includes(img)),
+      ...(existing.videos || []).filter((vid) => !videos.includes(vid)),
+    ];
+    for (const item of removedMedia) {
+      if (item.startsWith("http")) {
+        await deleteByUrl(item);
       } else {
-        const fullPath = require("path").join(__dirname, "../../", img);
+        const fullPath = require("path").join(__dirname, "../../", item);
         if (require("fs").existsSync(fullPath)) require("fs").unlinkSync(fullPath);
       }
     }
@@ -1073,6 +1100,7 @@ async function updateProduct(req, res) {
         ...(priceTiersUpdate !== undefined ? { priceTiers: priceTiersUpdate } : {}),
         ...(wholesalePriceTiersUpdate !== undefined ? { wholesalePriceTiers: wholesalePriceTiersUpdate } : {}),
         images,
+        videos,
       },
       include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
     });
@@ -1236,7 +1264,7 @@ async function deleteProduct(req, res) {
       // Sin ventas: borrado normal. Liberamos las imágenes del almacenamiento.
       // IMPORTANTE: se borran SOLO cuando ya vamos a borrar el producto (antes se borraban antes del
       // delete, y si el delete fallaba el producto quedaba sin fotos).
-      await deleteProductImages(existing.images);
+      await deleteProductImages([...existing.images, ...(existing.videos || [])]);
     }
 
     // Con onDelete: SetNull en OrderItem.product, este delete ya no es bloqueado por las ventas:
