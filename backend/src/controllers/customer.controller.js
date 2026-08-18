@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { sendPasswordResetEmail } = require("../services/email.service");
+const { findCustomerByEmail } = require("../utils/email");
 
 const prisma = new PrismaClient();
 
@@ -26,7 +27,10 @@ async function register(req, res) {
     }
 
     // Verifica si ya existe una cuenta con ese email
-    const existing = await prisma.customer.findUnique({ where: { email } });
+    // Antes: const existing = await prisma.customer.findUnique({ where: { email } });
+    // Comentado porque comparaba exacto: si en la DB estaba "Juan@Gmail.com" y llegaba
+    // "juan@gmail.com", no lo detectaba como duplicado y creaba una segunda cuenta.
+    const existing = await findCustomerByEmail(prisma, email);
     if (existing) {
       // Antes: "Ya existe una solicitud con ese email" — ahora las cuentas se crean directas
       return res.status(409).json({ error: "Ya existe una cuenta con ese email" });
@@ -78,7 +82,11 @@ async function customerLogin(req, res) {
       return res.status(400).json({ error: "Email y contraseña son requeridos" });
     }
 
-    const customer = await prisma.customer.findUnique({ where: { email } });
+    // Antes: const customer = await prisma.customer.findUnique({ where: { email } });
+    // Comentado: era exactamente el bug que reportó el cliente. El email llega normalizado
+    // en minúsculas, pero la cuenta pudo haberse guardado con mayúsculas, y findUnique no
+    // la encontraba → "credenciales inválidas" con la contraseña correcta.
+    const customer = await findCustomerByEmail(prisma, email);
 
     if (!customer || !customer.password) {
       return res.status(401).json({ error: "Credenciales inválidas" });
@@ -219,8 +227,16 @@ async function updateCustomer(req, res) {
     if (status && !validStatuses.includes(status)) return res.status(400).json({ error: "Estado inválido" });
 
     // Si el admin cambia el email, verificar que no esté en uso por otro cliente
-    if (email && email.trim() && email.trim() !== customer.email) {
-      const taken = await prisma.customer.findUnique({ where: { email: email.trim() } });
+    // Antes: if (email && email.trim() && email.trim() !== customer.email) {
+    //          const taken = await prisma.customer.findUnique({ where: { email: email.trim() } });
+    // Comentado por dos motivos:
+    // 1) La comparación con el email actual era sensible a mayúsculas: si el cliente estaba
+    //    guardado como "Juan@Gmail.com", guardar sin tocar el campo se veía como "cambió".
+    // 2) La búsqueda de duplicado tampoco encontraba variantes en mayúsculas, y además ahora
+    //    hay que excluir al propio cliente (NOT: { id }) para no reportarse a sí mismo como
+    //    "email ya en uso".
+    if (email && email.trim() && email.trim().toLowerCase() !== customer.email.toLowerCase()) {
+      const taken = await findCustomerByEmail(prisma, email, { NOT: { id: parseInt(id) } });
       if (taken) return res.status(409).json({ error: "Ese email ya está en uso por otro cliente" });
     }
 
@@ -339,7 +355,10 @@ async function changeEmail(req, res) {
     }
 
     // Verificar que el nuevo email no esté en uso
-    const existing = await prisma.customer.findUnique({ where: { email: newEmail } });
+    // Antes: const existing = await prisma.customer.findUnique({ where: { email: newEmail } });
+    // Comentado: no detectaba una cuenta existente guardada con otras mayúsculas. Se excluye
+    // al propio cliente para permitir "corregir" el formato del propio email.
+    const existing = await findCustomerByEmail(prisma, newEmail, { NOT: { id } });
     if (existing) {
       return res.status(409).json({ error: "Ese email ya está registrado" });
     }
@@ -405,7 +424,9 @@ async function requestEmailChange(req, res) {
     }
 
     // Verificar que el nuevo email no esté registrado por otro cliente
-    const existing = await prisma.customer.findUnique({ where: { email: newEmail.trim() } });
+    // Antes: const existing = await prisma.customer.findUnique({ where: { email: newEmail.trim() } });
+    // Comentado: comparación exacta, no veía duplicados guardados con otras mayúsculas.
+    const existing = await findCustomerByEmail(prisma, newEmail, { NOT: { id } });
     if (existing) {
       return res.status(409).json({ error: "Ese email ya está registrado" });
     }
@@ -475,7 +496,11 @@ async function approveEmailChangeRequest(req, res) {
     }
 
     // Verificar que el nuevo email siga libre
-    const taken = await prisma.customer.findUnique({ where: { email: emailReq.newEmail } });
+    // Antes: const taken = await prisma.customer.findUnique({ where: { email: emailReq.newEmail } });
+    // Comentado: comparación exacta. Además la solicitud pudo haberse creado ANTES de la
+    // normalización, así que el newEmail guardado puede traer mayúsculas; se pasa a minúsculas
+    // al momento de aplicarlo para que la cuenta quede consistente con el resto.
+    const taken = await findCustomerByEmail(prisma, emailReq.newEmail, { NOT: { id: emailReq.customerId } });
     if (taken) {
       return res.status(409).json({ error: "El email solicitado ya está en uso" });
     }
@@ -484,7 +509,8 @@ async function approveEmailChangeRequest(req, res) {
     await prisma.$transaction([
       prisma.customer.update({
         where: { id: emailReq.customerId },
-        data: { email: emailReq.newEmail },
+        // Antes: data: { email: emailReq.newEmail },
+        data: { email: emailReq.newEmail.trim().toLowerCase() },
       }),
       prisma.emailChangeRequest.update({
         where: { id: requestId },
@@ -540,7 +566,11 @@ async function createCustomerAdmin(req, res) {
       return res.status(400).json({ error: "La contraseña es requerida (mínimo 6 caracteres)" });
     }
 
-    const existing = await prisma.customer.findUnique({ where: { email } });
+    // Antes: const existing = await prisma.customer.findUnique({ where: { email } });
+    // Comentado: éste es el alta que usa el admin cuando le crea la cuenta al cliente
+    // (el caso que reportó el usuario). Con comparación exacta podía crear una cuenta
+    // duplicada de alguien que ya existía escrito con mayúsculas.
+    const existing = await findCustomerByEmail(prisma, email);
     if (existing) {
       return res.status(409).json({ error: "Ya existe un cliente con ese email" });
     }
@@ -594,7 +624,11 @@ async function forgotPassword(req, res) {
     if (!email) return res.status(400).json({ error: "Email requerido" });
 
     // Siempre responder 200 para no revelar si el email existe en el sistema
-    const customer = await prisma.customer.findUnique({ where: { email: email.toLowerCase().trim() } });
+    // Antes: const customer = await prisma.customer.findUnique({ where: { email: email.toLowerCase().trim() } });
+    // Comentado: acá ya se bajaba a minúsculas lo que ENTRA, pero se comparaba contra la
+    // columna tal cual está guardada. Si la cuenta se creó con mayúsculas, el "olvidé mi
+    // contraseña" respondía ok pero nunca mandaba el mail.
+    const customer = await findCustomerByEmail(prisma, email);
     if (customer && customer.status === "APPROVED") {
       const token = crypto.randomBytes(32).toString("hex");
       const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hora

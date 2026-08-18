@@ -32,6 +32,9 @@ services:
       MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN}
       FRONTEND_URL: ${FRONTEND_URL}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
+      # Casillas extra para notificaciones de pedidos/cotizaciones (opcional, separadas por coma).
+      # Si no está en el .env queda vacía y no rompe nada.
+      ADMIN_EMAIL_CC: ${ADMIN_EMAIL_CC:-}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}

@@ -2,6 +2,7 @@ const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { loginLimiter } = require("../middleware/loginLimiter");
+const { findUserByEmail } = require("../utils/email");
 
 const prisma = new PrismaClient();
 
@@ -14,7 +15,11 @@ async function login(req, res) {
       return res.status(400).json({ error: "Email y contraseña son requeridos" });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    // Antes: const user = await prisma.user.findUnique({ where: { email } });
+    // Comentado porque findUnique compara el email tal cual está guardado (sensible a
+    // mayúsculas). Los admins creados antes de la normalización pueden tener mayúsculas
+    // en la DB y, como el login ahora llega siempre en minúsculas, no matcheaban nunca.
+    const user = await findUserByEmail(prisma, email);
     if (!user) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
@@ -94,9 +99,10 @@ async function updateProfile(req, res) {
     const { name, email } = req.body;
 
     if (email) {
-      const exists = await prisma.user.findFirst({
-        where: { email, NOT: { id: req.user.id } },
-      });
+      // Antes: const exists = await prisma.user.findFirst({ where: { email, NOT: { id: req.user.id } } });
+      // Comentado: la comparación exacta dejaba pasar "Otro@Mail.com" como si fuera distinto
+      // de un "otro@mail.com" ya existente, generando dos admins con el mismo email real.
+      const exists = await findUserByEmail(prisma, email, { NOT: { id: req.user.id } });
       if (exists) {
         return res.status(400).json({ error: "Ese email ya está en uso por otro usuario" });
       }

@@ -26,6 +26,36 @@ function createTransporter() {
   });
 }
 
+// ─── Destinatarios de las notificaciones al admin ────────────────────────────
+// Antes cada notificación usaba directamente `process.env.ADMIN_EMAIL`, que admite
+// UN solo destinatario. El cliente pidió que los pedidos y las cotizaciones le
+// lleguen también a una segunda casilla, así que ahora hay una lista.
+//
+// Se combinan tres fuentes y se deduplica (ignorando mayúsculas):
+//   1. ADMIN_EMAIL      → admite varios separados por coma
+//   2. ADMIN_EMAIL_CC   → opcional, para sumar casillas sin tocar la principal
+//   3. la lista fija de acá abajo
+//
+// La lista fija existe para que esto funcione con solo deployar, sin depender de que
+// alguien edite el .env del servidor. Para agregar o sacar una casilla se toca acá
+// (o se define ADMIN_EMAIL_CC en el .env, que no requiere tocar código).
+const EXTRA_ADMIN_RECIPIENTS = [
+  "tuelectronica26@gmail.com", // pedido del cliente: quiere recibir compras y cotizaciones
+];
+
+function getAdminRecipients() {
+  const fromEnv = [process.env.ADMIN_EMAIL, process.env.ADMIN_EMAIL_CC]
+    .filter(Boolean)
+    .join(",")
+    .split(",");
+
+  const todos = [...fromEnv, ...EXTRA_ADMIN_RECIPIENTS]
+    .map((e) => String(e).trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+
+  return [...new Set(todos)]; // nodemailer acepta un array en el campo "to"
+}
+
 // Formatea un número como moneda ARS
 function formatARS(amount) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(amount ?? 0);
@@ -711,8 +741,10 @@ async function sendOrderConfirmationToCustomer(order) {
 
 // Notificación al admin — pedido con pago manual
 async function sendOrderNotificationToAdmin(order) {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  if (!adminEmail) {
+  // Antes: const adminEmail = process.env.ADMIN_EMAIL; if (!adminEmail) { ... }
+  // Comentado: mandaba a una sola casilla. Ahora va a todas las de getAdminRecipients().
+  const adminEmails = getAdminRecipients();
+  if (adminEmails.length === 0) {
     console.log(`[EMAIL OMITIDO] Nuevo pedido #${order.id} de ${order.customerName}`);
     return;
   }
@@ -736,7 +768,8 @@ async function sendOrderNotificationToAdmin(order) {
 
     await transporter.sendMail({
       from: `"IGWT Store" <${process.env.SMTP_USER}>`,
-      to: adminEmail,
+      // Antes: to: adminEmail,
+      to: adminEmails,
       subject: `Nuevo pedido #${order.id} — ${order.customerName} (${methodLabel})`,
       html,
       attachments: [
@@ -744,7 +777,7 @@ async function sendOrderNotificationToAdmin(order) {
         { filename: `pedido-${order.id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
       ],
     });
-    console.log(`[EMAIL] Notificación pedido #${order.id} enviada al admin`);
+    console.log(`[EMAIL] Notificación pedido #${order.id} enviada a: ${adminEmails.join(", ")}`);
   } catch (err) {
     console.error("[EMAIL ERROR]", err.message);
   }
@@ -787,8 +820,10 @@ async function sendCotizacionToCustomer(order) {
 
 // Notificación al admin de nueva cotización
 async function sendCotizacionToAdmin(order) {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  if (!adminEmail) {
+  // Antes: const adminEmail = process.env.ADMIN_EMAIL; if (!adminEmail) { ... }
+  // Comentado: ídem sendOrderNotificationToAdmin, ahora la cotización va a varias casillas.
+  const adminEmails = getAdminRecipients();
+  if (adminEmails.length === 0) {
     console.log(`[EMAIL OMITIDO] Nueva cotización #${order.id} de ${order.customerName}`);
     return;
   }
@@ -810,7 +845,8 @@ async function sendCotizacionToAdmin(order) {
 
     await transporter.sendMail({
       from: `"IGWT Store" <${process.env.SMTP_USER}>`,
-      to: adminEmail,
+      // Antes: to: adminEmail,
+      to: adminEmails,
       subject: `Nueva cotización mayorista #${order.id} — ${order.customerName}`,
       html,
       attachments: [
@@ -818,7 +854,7 @@ async function sendCotizacionToAdmin(order) {
         { filename: `cotizacion-${order.id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
       ],
     });
-    console.log(`[EMAIL] Cotización #${order.id} notificada al admin`);
+    console.log(`[EMAIL] Cotización #${order.id} notificada a: ${adminEmails.join(", ")}`);
   } catch (err) {
     console.error("[EMAIL ERROR]", err.message);
   }
@@ -864,8 +900,10 @@ async function sendACConvenirToCustomer(order) {
 
 // Notificación al admin
 async function sendACConvenirToAdmin(order) {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  if (!adminEmail) {
+  // Antes: const adminEmail = process.env.ADMIN_EMAIL; if (!adminEmail) { ... }
+  // Comentado: "a convenir" también es una compra, así que va a las mismas casillas.
+  const adminEmails = getAdminRecipients();
+  if (adminEmails.length === 0) {
     console.log(`[EMAIL OMITIDO] Nuevo pedido a convenir #${order.id} de ${order.customerName}`);
     return;
   }
@@ -888,7 +926,8 @@ async function sendACConvenirToAdmin(order) {
 
     await transporter.sendMail({
       from: `"IGWT Store" <${process.env.SMTP_USER}>`,
-      to: adminEmail,
+      // Antes: to: adminEmail,
+      to: adminEmails,
       subject: `Nuevo pedido a convenir #${order.id} — ${order.customerName}`,
       html,
       attachments: [
@@ -896,7 +935,7 @@ async function sendACConvenirToAdmin(order) {
         { filename: `pedido-${order.id}.pdf`, content: pdfBuffer, contentType: "application/pdf" },
       ],
     });
-    console.log(`[EMAIL] Pedido a convenir #${order.id} notificado al admin`);
+    console.log(`[EMAIL] Pedido a convenir #${order.id} notificado a: ${adminEmails.join(", ")}`);
   } catch (err) {
     console.error("[EMAIL ERROR]", err.message);
   }

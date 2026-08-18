@@ -129,6 +129,12 @@ app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Normalización de emails a minúsculas (después de parsear el body, antes de las rutas).
+// Evita el problema de cuentas que no podían loguearse por haberse creado con mayúsculas
+// ("Juan@Gmail.com" vs "juan@gmail.com"). Ver normalizeEmail.middleware.js.
+const { normalizeEmails } = require("./middleware/normalizeEmail.middleware");
+app.use(normalizeEmails);
+
 // Servir imágenes estáticas
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 

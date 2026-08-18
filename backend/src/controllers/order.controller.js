@@ -258,8 +258,12 @@ async function createOrder(req, res) {
       });
     }
     if (!registeredCustomer && customerEmail) {
-      registeredCustomer = await prisma.customer.findUnique({
-        where: { email: customerEmail },
+      // Antes: registeredCustomer = await prisma.customer.findUnique({ where: { email: customerEmail }, select: { type: true } });
+      // Comentado: si la cuenta del mayorista estaba guardada con mayúsculas y compraba
+      // escribiendo el email en minúsculas, este fallback no lo encontraba y le cobraba
+      // precio minorista. La búsqueda insensible a mayúsculas lo resuelve.
+      registeredCustomer = await prisma.customer.findFirst({
+        where: { email: { equals: customerEmail, mode: "insensitive" } },
         select: { type: true },
       });
     }

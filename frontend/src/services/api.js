@@ -8,6 +8,46 @@ const api = axios.create({
   timeout: 12000, // 12 seg — evita que el spinner de auth quede colgado para siempre si el backend no responde
 });
 
+// ─── Normalización de emails ──────────────────────────────────────────────────
+// Los emails viajan SIEMPRE en minúsculas y sin espacios. El backend también los
+// normaliza (normalizeEmail.middleware.js), pero hacerlo también acá evita que el
+// front compare o muestre una versión distinta a la que quedó guardada.
+// Motivo: cuentas creadas con la primera letra en mayúscula ("Juan@gmail.com") no
+// podían loguearse escribiendo el email de otra forma.
+const EMAIL_KEY_REGEX = /email$/i; // email, newEmail, customerEmail, ...
+const MAX_DEPTH = 4;
+
+function normalizeEmailsInPlace(node, depth = 0) {
+  if (depth > MAX_DEPTH || node === null || typeof node !== "object") return;
+  // FormData/Blob no se recorren (los envíos multipart no llevan emails)
+  if (typeof FormData !== "undefined" && node instanceof FormData) return;
+
+  if (Array.isArray(node)) {
+    node.forEach((item) => normalizeEmailsInPlace(item, depth + 1));
+    return;
+  }
+
+  Object.keys(node).forEach((key) => {
+    const value = node[key];
+    if (value !== null && typeof value === "object") {
+      normalizeEmailsInPlace(value, depth + 1);
+      return;
+    }
+    // Solo si la clave es de email Y el valor realmente parece un email
+    if (EMAIL_KEY_REGEX.test(key) && typeof value === "string") {
+      const trimmed = value.trim();
+      if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) node[key] = trimmed.toLowerCase();
+    }
+  });
+}
+
+function emailNormalizerInterceptor(config) {
+  if (config.data && typeof config.data === "object") {
+    normalizeEmailsInPlace(config.data);
+  }
+  return config;
+}
+
 // Interceptor: adjunta el token JWT automáticamente si existe en localStorage
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("admin_token");
@@ -16,6 +56,7 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+api.interceptors.request.use(emailNormalizerInterceptor);
 
 // Instancia separada que usa el token de CUSTOMER (no el de admin)
 const customerAuthApi = axios.create({
@@ -28,6 +69,7 @@ customerAuthApi.interceptors.request.use((config) => {
   }
   return config;
 });
+customerAuthApi.interceptors.request.use(emailNormalizerInterceptor);
 customerAuthApi.interceptors.response.use(
   (response) => response,
   (error) => {

@@ -274,8 +274,11 @@ function startCronJobs() {
 // no afectar al ciclo normal del cron al usarlo en prueba.
 // ---------------------------------------------------------------------------
 async function forceRestockEmailForEmail(targetEmail) {
-  const customer = await prisma.customer.findUnique({
-    where: { email: targetEmail },
+  // Antes: const customer = await prisma.customer.findUnique({ where: { email: targetEmail }, ... });
+  // Comentado: búsqueda exacta; si el email del cliente tenía mayúsculas en la DB, la prueba
+  // manual desde el panel fallaba con "Cliente no encontrado".
+  const customer = await prisma.customer.findFirst({
+    where: { email: { equals: targetEmail, mode: "insensitive" } },
     include: {
       orders: {
         where: { status: "APPROVED" },
@@ -298,8 +301,10 @@ async function forceRecommendationEmailForEmail(targetEmail) {
   const settings = await getEmailCampaignSettings();
   const { productCount, featuredProductIds } = settings;
 
-  const customer = await prisma.customer.findUnique({
-    where: { email: targetEmail },
+  // Antes: const customer = await prisma.customer.findUnique({ where: { email: targetEmail }, ... });
+  // Comentado por el mismo motivo que en forceRestockEmailForEmail: búsqueda exacta.
+  const customer = await prisma.customer.findFirst({
+    where: { email: { equals: targetEmail, mode: "insensitive" } },
     include: {
       orders: {
         where: { status: "APPROVED" },

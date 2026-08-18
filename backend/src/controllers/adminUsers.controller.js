@@ -1,5 +1,6 @@
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
+const { findUserByEmail } = require("../utils/email");
 
 const prisma = new PrismaClient();
 
@@ -30,7 +31,10 @@ async function createAdmin(req, res) {
       return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
     }
 
-    const exists = await prisma.user.findUnique({ where: { email } });
+    // Antes: const exists = await prisma.user.findUnique({ where: { email } });
+    // Comentado: comparación exacta → permitía crear dos admins con el mismo email
+    // escrito con distintas mayúsculas.
+    const exists = await findUserByEmail(prisma, email);
     if (exists) {
       return res.status(400).json({ error: "Ya existe un usuario con ese email" });
     }
@@ -66,8 +70,11 @@ async function updateAdmin(req, res) {
       return res.status(403).json({ error: "No se puede editar al SUPERADMIN desde aquí" });
     }
 
-    if (email && email !== target.email) {
-      const exists = await prisma.user.findFirst({ where: { email, NOT: { id } } });
+    // Antes: if (email && email !== target.email) {
+    //          const exists = await prisma.user.findFirst({ where: { email, NOT: { id } } });
+    // Comentado: ambas comparaciones eran sensibles a mayúsculas (ver createAdmin).
+    if (email && email.toLowerCase() !== target.email.toLowerCase()) {
+      const exists = await findUserByEmail(prisma, email, { NOT: { id } });
       if (exists) return res.status(400).json({ error: "Ese email ya está en uso" });
     }
 
