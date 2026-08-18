@@ -216,6 +216,9 @@ export default function AdminProducts() {
   const [suppliers, setSuppliers] = useState([]);
   const [newImages, setNewImages] = useState([]);
   const [keepImages, setKeepImages] = useState([]);
+  // Videos: mismo par (nuevos a subir / ya guardados que se conservan) que las fotos
+  const [newVideos, setNewVideos] = useState([]);
+  const [keepVideos, setKeepVideos] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showVariants, setShowVariants] = useState(false);
   const [search, setSearch] = useState("");
@@ -245,6 +248,7 @@ export default function AdminProducts() {
   const [openMenuId, setOpenMenuId] = useState(null);
 
   const fileInputRef = useRef();
+  const videoInputRef = useRef();
   const menuRef = useRef();
   // Guarda el precio antes de que el usuario empiece a editar el campo,
   // para calcular el ratio de ajuste proporcional sobre los tiers al salir del campo.
@@ -335,6 +339,8 @@ export default function AdminProducts() {
     setForm(EMPTY_FORM);
     setNewImages([]);
     setKeepImages([]);
+    setNewVideos([]);
+    setKeepVideos([]);
     setShowVariants(false);
     setShowModal(true);
   };
@@ -379,6 +385,8 @@ export default function AdminProducts() {
     });
     setNewImages([]);
     setKeepImages(product.images || []);
+    setNewVideos([]);
+    setKeepVideos(product.videos || []);
     setShowModal(true);
   };
 
@@ -394,6 +402,28 @@ export default function AdminProducts() {
 
   const removeKeepImage = (img) => {
     setKeepImages((prev) => prev.filter((i) => i !== img));
+  };
+
+  // Videos: tope de 5 y control de peso en el cliente para no hacer esperar una subida
+  // de 100 MB que el backend va a rechazar igual.
+  const MAX_VIDEO_MB = 100;
+  const handleVideoSelect = (e) => {
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    const tooBig = files.filter((f) => f.size > MAX_VIDEO_MB * 1024 * 1024);
+    if (tooBig.length > 0) {
+      toast.error(`${tooBig.length === 1 ? "El video supera" : "Algunos videos superan"} los ${MAX_VIDEO_MB} MB y no se agregaron`);
+    }
+    const ok = files.filter((f) => f.size <= MAX_VIDEO_MB * 1024 * 1024);
+    if (ok.length === 0) return;
+    const maxNew = Math.max(0, 5 - keepVideos.length);
+    const total = newVideos.length + ok.length;
+    setNewVideos((prev) => [...prev, ...ok].slice(0, maxNew));
+    if (total > maxNew) toast.error("Máximo 5 videos en total");
+  };
+
+  const removeKeepVideo = (vid) => {
+    setKeepVideos((prev) => prev.filter((v) => v !== vid));
   };
 
   // ── Reordenar las imágenes ya guardadas (drag & drop) ──────────────────────
@@ -487,6 +517,7 @@ export default function AdminProducts() {
       formData.append("visibility", form.visibility || "AMBOS");
 
       newImages.forEach((file) => formData.append("images", file));
+      newVideos.forEach((file) => formData.append("videos", file));
 
       if (editingProduct) {
         if (keepImages.length > 0) {
@@ -494,6 +525,12 @@ export default function AdminProducts() {
         } else {
           // Array vacío: señaliza al backend que se deben borrar todas las imágenes actuales
           formData.append("keepImages", "__NONE__");
+        }
+        // Mismo marcador para los videos (FormData no puede mandar un array vacío)
+        if (keepVideos.length > 0) {
+          keepVideos.forEach((vid) => formData.append("keepVideos", vid));
+        } else {
+          formData.append("keepVideos", "__NONE__");
         }
         await productsApi.update(editingProduct.id, formData);
         toast.success("Producto actualizado");
@@ -2293,6 +2330,71 @@ export default function AdminProducts() {
                 )}
               </div>
 
+              {/* Videos — campo separado de las fotos: solo se ven en la galería del producto,
+                  nunca como miniatura en catálogo, carrito, pedidos ni emails. */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  {editingProduct ? "Agregar nuevos videos" : "Videos"} (máx. 5, 100MB c/u · MP4, WEBM o MOV)
+                </label>
+
+                {/* Videos ya guardados en este producto */}
+                {keepVideos.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                    {keepVideos.map((url) => (
+                      <div key={url} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-900">
+                        <video src={url} className="w-full aspect-video object-cover" controls muted playsInline preload="metadata" />
+                        <button
+                          type="button"
+                          onClick={() => removeKeepVideo(url)}
+                          className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-700"
+                          title="Quitar video"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime"
+                  multiple
+                  onChange={handleVideoSelect}
+                  className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100 cursor-pointer"
+                />
+
+                {newVideos.length > 0 && (
+                  <>
+                    <p className="text-xs text-violet-600 mt-2">
+                      {newVideos.length} video{newVideos.length > 1 ? "s" : ""} seleccionado{newVideos.length > 1 ? "s" : ""} (preview antes de guardar)
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                      {newVideos.map((file, idx) => {
+                        const previewUrl = URL.createObjectURL(file);
+                        return (
+                          <div key={`${file.name}-${idx}`} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-900">
+                            <video src={previewUrl} className="w-full aspect-video object-cover" muted playsInline preload="metadata" />
+                            <button
+                              type="button"
+                              onClick={() => setNewVideos((prev) => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-700"
+                              title="Quitar video"
+                            >
+                              ✕
+                            </button>
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1 py-0.5 truncate">
+                              {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
               {/* Variantes — solo en modo edición (el producto ya tiene ID) */}
               {editingProduct && (
                 <>
@@ -2322,6 +2424,7 @@ export default function AdminProducts() {
                         baseWholesalePrice={editingProduct.wholesalePrice}
                         baseCurrency={form.currency || editingProduct.currency || "ARS"}
                         productImages={editingProduct.images || []}
+                        productVideos={editingProduct.videos || []}
                         suppliers={suppliers}
                       />
                     </div>

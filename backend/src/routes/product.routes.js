@@ -11,10 +11,17 @@ const {
   getProductFacets,
 } = require("../controllers/product.controller");
 const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
-const upload = require("../middleware/upload.middleware");
-const { verifyImageBytes } = require("../middleware/upload.middleware");
+const { uploadMedia, verifyMediaBytes } = require("../middleware/upload.middleware");
 
 const router = express.Router();
+
+// Los productos aceptan fotos y videos en la misma request. Se usan campos separados
+// (.fields en vez de .array) para que el controller sepa qué es cada cosa sin adivinar,
+// aunque igual se reparticiona por mimetype por si el navegador manda un video en "images".
+const productMedia = uploadMedia.fields([
+  { name: "images", maxCount: 10 },
+  { name: "videos", maxCount: 5 },
+]);
 
 // Rutas públicas
 router.get("/", getProducts);
@@ -24,8 +31,8 @@ router.get("/:id", getProduct);
 
 // Rutas de admin (requieren autenticación)
 router.get("/admin/all", authMiddleware, adminMiddleware, getProductsAdmin);
-router.post("/", authMiddleware, adminMiddleware, upload.array("images", 10), verifyImageBytes, createProduct);
-router.put("/:id", authMiddleware, adminMiddleware, upload.array("images", 10), verifyImageBytes, updateProduct);
+router.post("/", authMiddleware, adminMiddleware, productMedia, verifyMediaBytes, createProduct);
+router.put("/:id", authMiddleware, adminMiddleware, productMedia, verifyMediaBytes, updateProduct);
 // Edición rápida: actualiza campos simples sin multipart (precio, stock, estado, precios especiales)
 router.patch("/:id/quick", authMiddleware, adminMiddleware, quickUpdateProduct);
 // Ajuste masivo de precios por porcentaje (suma o resta) para MINORISTA, MAYORISTA o AMBOS

@@ -45,6 +45,33 @@ function uploadBuffer(buffer, folder = "ecommerce", eagerTransform = PRODUCT_EAG
   });
 }
 
+// Sube un video a Cloudinary. Va por upload_chunked_stream (no upload_stream) porque
+// el endpoint de subida directa corta en 100 MB y un archivo de ese tamaño en una sola
+// request se cae por timeout; chunked lo parte en tramos de 20 MB y los reensambla.
+// Sin eager: transcodificar un video de forma síncrona haría esperar la request minutos.
+// Cloudinary ya sirve el mp4 original y se encarga del streaming.
+function uploadVideoBuffer(buffer, folder = "ecommerce") {
+  return new Promise((resolve, reject) => {
+    // Ojo con el orden de los argumentos: el adaptador v2 del SDK espera (options, callback),
+    // al revés que la función v1 subyacente. Igual que upload_stream acá arriba.
+    const stream = cloudinary.uploader.upload_chunked_stream(
+      {
+        folder,
+        resource_type: "video",
+        chunk_size: 20 * 1024 * 1024,
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else {
+          console.log("[Cloudinary] Video almacenado:", result.secure_url);
+          resolve(result);
+        }
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
 // Extrae el public_id de una URL de Cloudinary para poder eliminarlo.
 // Las URLs eager tienen transformaciones antes del version: /upload/{transforms}/v{ts}/{public_id}.ext
 // El public_id siempre viene DESPUÉS del segmento v{número}/.
@@ -54,13 +81,17 @@ function extractPublicId(url) {
   return match ? match[1] : null;
 }
 
-// Elimina una imagen de Cloudinary a partir de su URL
+// Elimina una imagen o video de Cloudinary a partir de su URL.
+// destroy() asume resource_type "image" por defecto: para un video hay que decírselo
+// explícitamente o el borrado no encuentra nada. Se detecta por el segmento /video/upload/
+// que Cloudinary incluye en las URLs de video.
 async function deleteByUrl(url) {
   const publicId = extractPublicId(url);
   if (!publicId) return;
+  const resourceType = url.includes("/video/upload/") ? "video" : "image";
   try {
-    await cloudinary.uploader.destroy(publicId);
-  } catch { /* silencioso: la imagen puede no existir */ }
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
+  } catch { /* silencioso: el archivo puede no existir */ }
 }
 
-module.exports = { uploadBuffer, deleteByUrl };
+module.exports = { uploadBuffer, uploadVideoBuffer, deleteByUrl };

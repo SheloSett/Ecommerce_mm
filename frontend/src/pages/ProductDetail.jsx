@@ -64,7 +64,22 @@ export default function ProductDetail() {
     return null;
   })();
   const galleryImages = variantImages && variantImages.length > 0 ? variantImages : (product?.images || []);
-  const totalImages = galleryImages.length;
+  // Videos: misma lógica que las fotos — si la variante tiene los suyos asignados se filtra
+  // a esos, si no se muestran todos los del producto.
+  const variantVideos = activeVariant && Array.isArray(activeVariant.videos) && activeVariant.videos.length > 0
+    ? activeVariant.videos
+    : null;
+  const galleryVideos = variantVideos || product?.videos || [];
+
+  // El carrusel opera sobre una lista unificada de media. Las fotos van primero para que la
+  // portada (images[0]) siga siendo lo primero que ve el cliente, y los videos al final.
+  const galleryMedia = [
+    ...galleryImages.map((url) => ({ type: "image", url })),
+    ...galleryVideos.map((url) => ({ type: "video", url })),
+  ];
+  const totalImages = galleryMedia.length;
+  const currentMedia = galleryMedia[selectedImage];
+  const isVideoSlide = currentMedia?.type === "video";
 
   const resetTimer = useCallback((nextFn) => {
     clearInterval(autoplayRef.current);
@@ -91,15 +106,17 @@ export default function ProductDetail() {
     });
   }, [totalImages, resetTimer]);
 
-  // Autoplay: avanza cada 5 segundos si hay más de 1 imagen
+  // Autoplay: avanza cada 5 segundos si hay más de 1 imagen.
+  // Se frena mientras el slide actual es un video: pasar de largo a los 5 segundos cortaría
+  // la reproducción justo cuando el cliente lo está mirando.
   useEffect(() => {
-    if (totalImages <= 1) return;
+    if (totalImages <= 1 || isVideoSlide) return;
     autoplayRef.current = setInterval(() => {
       setSlideDir("next");
       setSelectedImage((i) => (i + 1) % totalImages);
     }, 5000);
     return () => clearInterval(autoplayRef.current);
-  }, [totalImages]);
+  }, [totalImages, isVideoSlide]);
 
   // Al clickear (o pasar el mouse por) una miniatura, resetea con dirección relativa
   const handleSelectImage = (i) => {
@@ -415,19 +432,30 @@ export default function ProductDetail() {
               {/* Thumbnails verticales — solo en desktop; en mobile se muestran debajo */}
               {totalImages > 1 && (
                 <div className="hidden lg:flex flex-col gap-3 flex-shrink-0" style={{ width: 72 }}>
-                  {galleryImages.map((img, i) => (
+                  {galleryMedia.map((m, i) => (
                     <button
                       key={i}
                       onClick={() => handleSelectImage(i)}
-                      // Hover sobre la miniatura = mostrarla en el visor grande (sin necesidad de click)
-                      onMouseEnter={() => handleSelectImage(i)}
-                      className={`w-full aspect-square rounded-lg overflow-hidden p-1 bg-white transition-colors ${
+                      // Hover sobre la miniatura = mostrarla en el visor grande (sin necesidad de click).
+                      // En los videos NO: el hover cambiaría el slide sin querer al pasar el mouse
+                      // hacia otra miniatura y cortaría la reproducción.
+                      onMouseEnter={m.type === "video" ? undefined : () => handleSelectImage(i)}
+                      className={`relative w-full aspect-square rounded-lg overflow-hidden p-1 bg-white transition-colors ${
                         selectedImage === i
                           ? "border-2 border-[#00873a]"
                           : "border border-[#bdcaba] hover:border-[#006b2c]"
                       }`}
                     >
-                      <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain" />
+                      {m.type === "video" ? (
+                        <>
+                          <video src={m.url} className="w-full h-full object-cover rounded" muted playsInline preload="metadata" />
+                          <span className="absolute inset-0 flex items-center justify-center text-white drop-shadow">
+                            <span className="material-symbols-outlined text-[28px]">play_circle</span>
+                          </span>
+                        </>
+                      ) : (
+                        <img src={getImageUrl(m.url)} alt="" className="w-full h-full object-contain" />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -437,8 +465,10 @@ export default function ProductDetail() {
               {/* Antes: aspect-[4/5] del template — vuelto a aspect-square porque 4/5 resultaba demasiado alto */}
               <div
                 className="flex-1 relative bg-[#eff4ff] rounded-xl border border-[#bdcaba] overflow-hidden group aspect-square"
-                style={{ cursor: zoom ? "zoom-out" : "zoom-in" }}
+                // En un video no hay zoom: escalar el <video> taparía los controles de reproducción
+                style={{ cursor: isVideoSlide ? "default" : (zoom ? "zoom-out" : "zoom-in") }}
                 onMouseMove={(e) => {
+                  if (isVideoSlide) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const x = ((e.clientX - rect.left) / rect.width) * 100;
                   const y = ((e.clientY - rect.top) / rect.height) * 100;
@@ -451,10 +481,19 @@ export default function ProductDetail() {
                     Antes había una rama variantImageUrl que sobreescribía la galería; ahora la
                     variante solo cambia el índice (selectedImage), así el cliente sigue viendo
                     todo el carrusel y las flechas funcionan normal. */}
-                {galleryImages[selectedImage] ? (
+                {currentMedia?.type === "video" ? (
+                  <video
+                    key={`${activeVariant?.id || "noVariant"}-${selectedImage}`}
+                    src={currentMedia.url}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className={`absolute inset-0 w-full h-full object-contain bg-black ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
+                  />
+                ) : currentMedia ? (
                   <img
                     key={`${activeVariant?.id || "noVariant"}-${selectedImage}`}
-                    src={getImageUrl(galleryImages[selectedImage])}
+                    src={getImageUrl(currentMedia.url)}
                     alt={product.name}
                     className={`absolute inset-0 w-full h-full object-contain p-8 ${slideDir === "next" ? "carousel-slide-next" : "carousel-slide-prev"}`}
                     style={{
@@ -496,12 +535,15 @@ export default function ProductDetail() {
                       {/* › */}
                       <span className="material-symbols-outlined text-[20px]">chevron_right</span>
                     </button>
-                    {/* Indicador de posición */}
-                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-                      {galleryImages.map((_, i) => (
-                        <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedImage ? "bg-white" : "bg-white/40"}`} />
-                      ))}
-                    </div>
+                    {/* Indicador de posición — oculto sobre un video: quedaría encima de la
+                        barra de controles de reproducción */}
+                    {!isVideoSlide && (
+                      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                        {galleryMedia.map((_, i) => (
+                          <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === selectedImage ? "bg-white" : "bg-white/40"}`} />
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -511,17 +553,26 @@ export default function ProductDetail() {
             {/* Antes: siempre visibles con overflow-x-auto — ahora solo en mobile (lg:hidden) */}
             {totalImages > 1 && (
               <div className="flex gap-2 overflow-x-auto pb-2 mt-3 lg:hidden">
-                {galleryImages.map((img, i) => (
+                {galleryMedia.map((m, i) => (
                   <button
                     key={i}
                     onClick={() => handleSelectImage(i)}
-                    className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 p-1 bg-white transition-colors ${
+                    className={`relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 p-1 bg-white transition-colors ${
                       selectedImage === i
                         ? "border-2 border-[#00873a]"
                         : "border border-[#bdcaba] hover:border-[#006b2c]"
                     }`}
                   >
-                    <img src={getImageUrl(img)} alt="" className="w-full h-full object-contain" />
+                    {m.type === "video" ? (
+                      <>
+                        <video src={m.url} className="w-full h-full object-cover rounded" muted playsInline preload="metadata" />
+                        <span className="absolute inset-0 flex items-center justify-center text-white drop-shadow">
+                          <span className="material-symbols-outlined text-[24px]">play_circle</span>
+                        </span>
+                      </>
+                    ) : (
+                      <img src={getImageUrl(m.url)} alt="" className="w-full h-full object-contain" />
+                    )}
                   </button>
                 ))}
               </div>

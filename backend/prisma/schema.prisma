@@ -83,6 +83,10 @@ model Product {
   supplierId      Int?
   supplier        Supplier?   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   images          String[]
+  // Videos de Cloudinary (resource_type: video). Campo separado de images a propósito:
+  // images[] se usa como miniatura en cards, carrito, órdenes, flyers y og:image — un .mp4
+  // ahí rompería todos esos <img>. Los videos solo se renderizan en la galería del producto.
+  videos          String[]
   // categoryId/category reemplazados por relación M2M — un producto puede tener varias categorías
   // categoryId   Int?
   // category     Category?   @relation(fields: [categoryId], references: [id])
@@ -698,6 +702,7 @@ model ProductVariant {
   visibility         CustomerVisibility @default(AMBOS)
   image              String?            // LEGADO — antes era una sola foto. Se mantiene por compatibilidad.
   images             String[]           // URLs de Cloudinary (subset de las fotos del producto) asociadas a esta variante
+  videos             String[]           // Subset de los videos del producto asociados a esta variante (mismo criterio que images)
   active             Boolean            @default(true)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt

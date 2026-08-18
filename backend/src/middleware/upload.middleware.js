@@ -7,13 +7,33 @@ const multer = require("multer");
 // diskStorage reemplazado por memoryStorage para no escribir archivos temporales al disco
 const storage = multer.memoryStorage();
 
+const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+// Formatos de video que Cloudinary procesa sin problema y que los navegadores reproducen.
+// quicktime = .mov (lo que graba un iPhone); Cloudinary lo transcodifica a mp4 al servir.
+const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"];
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;    // 5 MB por imagen
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024;  // 100 MB por video (tope de Cloudinary en plan free)
+
+function isVideoMime(mimetype) {
+  return VIDEO_MIMES.includes(mimetype);
+}
+
 // Filtro: solo permite imágenes
 function fileFilter(req, file, cb) {
-  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  if (allowedTypes.includes(file.mimetype)) {
+  if (IMAGE_MIMES.includes(file.mimetype)) {
     cb(null, true);
   } else {
     cb(new Error("Solo se permiten imágenes (JPG, PNG, WEBP, GIF)"), false);
+  }
+}
+
+// Filtro mixto: imágenes o videos. Se usa en las rutas que aceptan ambos (productos, variantes).
+function mediaFileFilter(req, file, cb) {
+  if (IMAGE_MIMES.includes(file.mimetype) || isVideoMime(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Solo se permiten imágenes (JPG, PNG, WEBP, GIF) o videos (MP4, WEBM, MOV)"), false);
   }
 }
 
@@ -21,7 +41,19 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB máximo por imagen
+    fileSize: MAX_IMAGE_BYTES,
+  },
+});
+
+// Uploader para rutas que aceptan imágenes Y videos.
+// El límite de multer tiene que ser el más alto de los dos (no se puede variar por archivo),
+// así que se pone en MAX_VIDEO_BYTES y el tamaño real de cada imagen se valida después,
+// en verifyMediaBytes, donde ya se sabe si el archivo es imagen o video.
+const uploadMedia = multer({
+  storage,
+  fileFilter: mediaFileFilter,
+  limits: {
+    fileSize: MAX_VIDEO_BYTES,
   },
 });
 
@@ -50,6 +82,19 @@ function matchesSignature(buf) {
   );
 }
 
+// Firmas de video. MP4 y MOV comparten el contenedor ISO-BMFF: bytes 4-7 son "ftyp"
+// (el tamaño del box ocupa los primeros 4, por eso no se puede matchear desde el byte 0).
+// WEBM usa el header de Matroska (EBML): 1A 45 DF A3.
+function matchesVideoSignature(buf) {
+  const isIsoBmff =
+    buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70; // "ftyp"
+  if (isIsoBmff) return true;
+
+  const isMatroska =
+    buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3;
+  return isMatroska;
+}
+
 // Con memoryStorage los archivos están en file.buffer (RAM), no en disco
 // checkMagicBytes ahora recibe el buffer directamente en vez de leer del filesystem
 function checkMagicBytes(buffer) {
@@ -60,16 +105,18 @@ function checkMagicBytes(buffer) {
   }
 }
 
-// Middleware: se usa DESPUÉS de upload.single() o upload.array() en las rutas.
-// Verifica magic bytes sobre el buffer en RAM — no hay disco involucrado.
-function verifyImageBytes(req, res, next) {
-  const files = req.files
+function collectFiles(req) {
+  return req.files
     ? (Array.isArray(req.files) ? req.files : Object.values(req.files).flat())
     : req.file
     ? [req.file]
     : [];
+}
 
-  for (const file of files) {
+// Middleware: se usa DESPUÉS de upload.single() o upload.array() en las rutas.
+// Verifica magic bytes sobre el buffer en RAM — no hay disco involucrado.
+function verifyImageBytes(req, res, next) {
+  for (const file of collectFiles(req)) {
     if (!file.buffer || !checkMagicBytes(file.buffer)) {
       return res.status(400).json({
         error: `El archivo "${file.originalname}" no es una imagen válida.`,
@@ -80,5 +127,43 @@ function verifyImageBytes(req, res, next) {
   next();
 }
 
+// Igual que verifyImageBytes pero acepta también videos. Valida contra la firma que
+// corresponde al mimetype declarado (un .mp4 renombrado a .jpg no pasa: se chequea
+// contra las firmas de imagen y falla). También aplica el límite de 5 MB a las
+// imágenes, que multer no pudo aplicar porque su límite está en 100 MB por el video.
+function verifyMediaBytes(req, res, next) {
+  for (const file of collectFiles(req)) {
+    if (!file.buffer) {
+      return res.status(400).json({ error: `El archivo "${file.originalname}" está vacío.` });
+    }
+
+    if (isVideoMime(file.mimetype)) {
+      if (!matchesVideoSignature(file.buffer)) {
+        return res.status(400).json({
+          error: `El archivo "${file.originalname}" no es un video válido (se aceptan MP4, WEBM y MOV).`,
+        });
+      }
+    } else {
+      if (!checkMagicBytes(file.buffer)) {
+        return res.status(400).json({
+          error: `El archivo "${file.originalname}" no es una imagen válida.`,
+        });
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        return res.status(400).json({
+          error: `La imagen "${file.originalname}" supera el máximo de 5 MB.`,
+        });
+      }
+    }
+  }
+
+  next();
+}
+
 module.exports = upload;
 module.exports.verifyImageBytes = verifyImageBytes;
+module.exports.uploadMedia = uploadMedia;
+module.exports.verifyMediaBytes = verifyMediaBytes;
+module.exports.isVideoMime = isVideoMime;
+module.exports.MAX_IMAGE_BYTES = MAX_IMAGE_BYTES;
+module.exports.MAX_VIDEO_BYTES = MAX_VIDEO_BYTES;
