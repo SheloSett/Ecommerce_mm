@@ -61,11 +61,8 @@ export default function AdminOrders() {
   const [filterSort, setFilterSort] = useState("desc"); // "desc" = más nuevo, "asc" = más viejo
   const [filterType, setFilterType] = useState("");     // "" | "MINORISTA" | "MAYORISTA"
   const [page, setPage] = useState(1);
-  const [selectedOrder, setSelectedOrder] = useState(null);
   // IDs de órdenes seleccionadas para borrado masivo
   const [checkedIds, setCheckedIds] = useState([]);
-  // Actualizando campos del modal (método de pago / fulfillment)
-  const [updatingFields, setUpdatingFields] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // Estado para edición inline de items en cotizaciones
@@ -836,42 +833,9 @@ export default function AdminOrders() {
     }
   };
 
-  const handleStatusChange = async (orderId, newStatus) => {
-    try {
-      await ordersApi.updateStatus(orderId, newStatus);
-      toast.success("Estado actualizado");
-      fetchOrders();
-      if (selectedOrder?.id === orderId) {
-        setSelectedOrder((prev) => ({
-          ...prev,
-          status: newStatus,
-          // Si pasa a Abonada y estaba en Pendiente, reflejar el avance automático en el modal
-          fulfillmentStatus:
-            newStatus === "APPROVED" && prev.fulfillmentStatus === "PENDIENTE"
-              ? "EN_PREPARACION"
-              : prev.fulfillmentStatus,
-        }));
-      }
-    } catch (err) {
-      toast.error("Error al actualizar el estado");
-    }
-  };
-
-  const handleUpdateFields = async (orderId, fields) => {
-    setUpdatingFields(true);
-    try {
-      await ordersApi.updateFields(orderId, fields);
-      toast.success("Actualizado");
-      // Actualizar el selectedOrder en memoria para que el modal refleje el cambio
-      setSelectedOrder((prev) => ({ ...prev, ...fields }));
-      // Reflejar en la lista también
-      setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, ...fields } : o));
-    } catch (err) {
-      toast.error("Error al actualizar");
-    } finally {
-      setUpdatingFields(false);
-    }
-  };
+  // handleStatusChange / handleUpdateFields vivían acá para el modal de detalle, que se eliminó
+  // (el botón "Ver detalle" ahora navega directo a /admin/ordenes/:id). Esos controles ya existen
+  // en AdminOrderDetail.jsx, que es donde se gestiona el estado de la orden a partir de ahora.
 
   // Estilos compartidos de la impresión de órdenes (individual y masiva).
   const ORDER_PRINT_STYLES = `
@@ -1037,7 +1001,6 @@ ${pagesHtml}
     try {
       await ordersApi.delete(order.id);
       toast.success(`Orden #${order.id} eliminada`);
-      if (selectedOrder?.id === order.id) setSelectedOrder(null);
       fetchOrders();
     } catch (err) {
       toast.error("Error al eliminar la orden");
@@ -1051,7 +1014,6 @@ ${pagesHtml}
     try {
       await Promise.all(checkedIds.map((id) => ordersApi.delete(id)));
       toast.success(`${checkedIds.length} órdenes eliminadas`);
-      if (checkedIds.includes(selectedOrder?.id)) setSelectedOrder(null);
       fetchOrders();
     } catch (err) {
       toast.error("Error al eliminar algunas órdenes");
@@ -1898,9 +1860,12 @@ ${pagesHtml}
                                   proveedores") mantienen el significado. */}
                               OC
                             </button>
+                            {/* Antes: abría un modal chico con un resumen, y ahí adentro había otro botón
+                                "Ver detalle completo" que recién llevaba a /admin/ordenes/:id — llegar al
+                                detalle real costaba dos clics. Ahora navega directo (igual que el #id de la
+                                primera columna) y ese modal intermedio se eliminó. */}
                             <button
                               onClick={() => {
-                                setSelectedOrder(order);
                                 if (!order.seenByAdmin) {
                                   ordersApi.markSeen(order.id).catch(() => {});
                                   // Actualizar estado local para quitar el badge NUEVO de la fila inmediatamente
@@ -1911,6 +1876,7 @@ ${pagesHtml}
                                     decrementBadge("ordenesPendientes");
                                   }
                                 }
+                                navigate(`/admin/ordenes/${order.id}`);
                               }}
                               className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs font-semibold"
                             >
@@ -1987,246 +1953,6 @@ ${pagesHtml}
         )}
       </div>
 
-      {/* Modal detalle de orden */}
-      {selectedOrder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h2 className="font-bold text-slate-800">Orden #{selectedOrder.id}</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { setSelectedOrder(null); navigate(`/admin/ordenes/${selectedOrder.id}`); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
-                  Ver detalle completo
-                </button>
-                <button
-                  onClick={() => setSelectedOrder(null)}
-                  className="p-2 hover:bg-slate-100 rounded-lg"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-5">
-              {/* Cliente */}
-              <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm">
-                <p><span className="font-medium text-slate-600">Cliente:</span> {selectedOrder.customerName}</p>
-                {selectedOrder.customerEmail && (
-                  <p><span className="font-medium text-slate-600">Email:</span> {selectedOrder.customerEmail}</p>
-                )}
-                {selectedOrder.customerPhone && (
-                  <p><span className="font-medium text-slate-600">Teléfono:</span> {selectedOrder.customerPhone}</p>
-                )}
-                <p><span className="font-medium text-slate-600">Fecha:</span> {formatDate(selectedOrder.createdAt)}</p>
-                {/* Badges: tipo de cliente · canal de venta · método de pago */}
-                <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-200">
-                  {(() => {
-                    const t = TYPE_LABEL[selectedOrder.customerType] || TYPE_LABEL.MINORISTA;
-                    return (
-                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${t.color}`}>
-                        {t.label}
-                      </span>
-                    );
-                  })()}
-                  {(() => {
-                    const ch = CHANNEL_LABEL[selectedOrder.salesChannel] || CHANNEL_LABEL.WEB;
-                    return (
-                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-slate-200 text-slate-700">
-                        {ch.icon} {ch.label}
-                      </span>
-                    );
-                  })()}
-                  {(() => {
-                    const pm = PAYMENT_LABEL[selectedOrder.paymentMethod] || PAYMENT_LABEL.EFECTIVO;
-                    return (
-                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-slate-200 text-slate-700">
-                        {pm.icon} {pm.label}
-                      </span>
-                    );
-                  })()}
-                  {/* Badge método de entrega */}
-                  {(() => {
-                    const sh = SHIPPING_LABEL[selectedOrder.shippingMethod] || SHIPPING_LABEL.RETIRO;
-                    return (
-                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-orange-100 text-orange-700">
-                        {sh.icon} {sh.label}
-                      </span>
-                    );
-                  })()}
-                </div>
-                {selectedOrder.customerNote && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    <p className="text-xs font-semibold text-amber-700 mb-0.5">💬 Nota del cliente</p>
-                    <p className="text-sm text-amber-900">{selectedOrder.customerNote}</p>
-                  </div>
-                )}
-                {selectedOrder.adminNotes && (
-                  <p><span className="font-medium text-slate-600">Notas internas:</span> <span className="text-slate-700">{selectedOrder.adminNotes}</span></p>
-                )}
-                {selectedOrder.mpPaymentId && (
-                  <p><span className="font-medium text-slate-600">ID Pago MP:</span> <span className="font-mono text-xs">{selectedOrder.mpPaymentId}</span></p>
-                )}
-              </div>
-
-              {/* Productos */}
-              <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Productos</h3>
-                <div className="space-y-2">
-                  {selectedOrder.items?.map((item) => {
-                    const img = item.product?.images?.[0];
-                    return (
-                      <div key={item.id} className="flex items-center gap-3 bg-slate-50 rounded-lg p-3">
-                        <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-200 flex-shrink-0">
-                          {img ? (
-                            <img src={getImageUrl(img)} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-sm">📦</div>
-                          )}
-                        </div>
-                        <div className="flex-1 text-sm">
-                          <p className="font-medium text-slate-800">{item.product?.name}</p>
-                          {item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
-                            <p key={vi} className="text-xs text-blue-600 font-medium">{v}</p>
-                          ))}
-                          <p className="text-slate-500">x{item.quantity} × {formatPrice(item.price)}</p>
-                        </div>
-                        <span className="font-bold text-slate-800 text-sm">
-                          {formatPrice(item.price * item.quantity)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Desglose: cupón + IVA */}
-                {(() => {
-                  const discount = selectedOrder.couponDiscount || 0;
-                  const iva      = selectedOrder.ivaAmount      || 0;
-                  const hasLines = discount > 0 || iva > 0;
-                  // subtotal = total de items antes de cupón y antes de IVA
-                  const subtotal = selectedOrder.total + discount - iva;
-                  return hasLines ? (
-                    <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
-                      <div className="flex justify-between text-sm text-slate-500">
-                        <span>Subtotal</span>
-                        <span>{formatPrice(subtotal)}</span>
-                      </div>
-                      {discount > 0 && (
-                        <div className="flex justify-between text-sm text-green-700 font-medium">
-                          <span>
-                            Cupón{" "}
-                            {selectedOrder.coupon?.code && (
-                              <span className="font-mono text-xs tracking-widest bg-green-100 px-1.5 py-0.5 rounded">
-                                {selectedOrder.coupon.code}
-                              </span>
-                            )}
-                          </span>
-                          <span>−{formatPrice(discount)}</span>
-                        </div>
-                      )}
-                      {iva > 0 && (
-                        <div className="flex justify-between text-sm text-slate-500">
-                          <span>IVA (21%)</span>
-                          <span>+{formatPrice(iva)}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : null;
-                })()}
-                <div className="flex justify-between font-bold text-lg text-slate-900 mt-4 pt-4 border-t border-slate-200">
-                  <span>Total</span>
-                  <span>{formatPrice(selectedOrder.total)}</span>
-                </div>
-              </div>
-
-              {/* Estado de Pago */}
-              <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Estado de pago</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(STATUS_CONFIG).map(([value, config]) => (
-                    <button
-                      key={value}
-                      onClick={() => handleStatusChange(selectedOrder.id, value)}
-                      className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors ${
-                        selectedOrder.status === value
-                          ? config.color + " ring-2 ring-offset-2 ring-white/50"
-                          : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                      }`}
-                    >
-                      {config.icon} {config.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Método de pago */}
-              <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Método de pago</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(PAYMENT_LABEL).map(([value, config]) => (
-                    <button
-                      key={value}
-                      onClick={() => handleUpdateFields(selectedOrder.id, { paymentMethod: value })}
-                      disabled={updatingFields}
-                      className={`py-2 px-3 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 ${
-                        selectedOrder.paymentMethod === value
-                          ? "bg-indigo-600 text-white ring-2 ring-offset-1 ring-indigo-400"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                      }`}
-                    >
-                      {config.icon} {config.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Estado de pedido (fulfillment) */}
-              <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Estado de pedido</h3>
-                <div className="flex flex-col gap-2">
-                  {[
-                    { value: "PENDIENTE",       label: "Pendiente",       icon: "🕐", color: "bg-slate-100 text-slate-700" },
-                    { value: "EN_PREPARACION",  label: "En preparación",  icon: "🔧", color: "bg-yellow-100 text-yellow-800" },
-                    // Para RETIRO: "Pedido listo" (a retirar); para ENVIO: "Enviado" (en camino)
-                    selectedOrder.shippingMethod === "RETIRO"
-                      ? { value: "ENVIADO", label: "Pedido listo",  icon: "🏪", color: "bg-orange-100 text-orange-800" }
-                      : { value: "ENVIADO", label: "Enviado",       icon: "🚚", color: "bg-blue-100 text-blue-800" },
-                    { value: "ENTREGADO",       label: "Entregado",       icon: "✅", color: "bg-green-100 text-green-800" },
-                  ].map((stage, idx, arr) => {
-                    const current = selectedOrder.fulfillmentStatus || "PENDIENTE";
-                    const currentIdx = arr.findIndex((s) => s.value === current);
-                    const isActive = stage.value === current;
-                    const isPast   = idx < currentIdx;
-                    return (
-                      <button
-                        key={stage.value}
-                        onClick={() => handleUpdateFields(selectedOrder.id, { fulfillmentStatus: stage.value })}
-                        disabled={updatingFields}
-                        className={`flex items-center gap-3 py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 ${
-                          isActive
-                            ? stage.color + " ring-2 ring-offset-1 ring-blue-400"
-                            : isPast
-                            ? "bg-slate-50 text-slate-400"
-                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        }`}
-                      >
-                        <span className="text-base">{stage.icon}</span>
-                        <span className="flex-1 text-left">{stage.label}</span>
-                        {isActive && <span className="text-xs font-bold opacity-70">● Actual</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal: ¿actualizar precio del producto en la BD? */}
       {priceUpdateConfirm && (
