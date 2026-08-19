@@ -2104,6 +2104,11 @@ async function createManualOrder(req, res) {
           salesChannel:  salesChannel || "MANUAL",
           // customerType: MINORISTA o MAYORISTA según seleccionó el admin al registrar la venta.
           customerType:  customerType || "MINORISTA",
+          // seenByAdmin: la venta manual la carga el propio admin, así que ya está "vista" — no
+          // tiene sentido avisarle de algo que acaba de escribir él. Sin esto quedaba en false
+          // (el default del schema) y la orden salía con el cartelito "NUEVO", y además sumaba al
+          // badge de pendientes del sidebar si se registraba con estado Pendiente.
+          seenByAdmin:   true,
           items: { create: orderItems },
         },
         include: {

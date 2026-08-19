@@ -516,11 +516,29 @@ export default function AdminOrderDetail() {
   };
   const costArs = sumBy(order.items, "ARS", itemUnitCost);
   const costUsd = sumBy(order.items, "USD", itemUnitCost);
-  // Si NINGÚN ítem tiene costo cargado, no hay nada real que mostrar: se oculta el bloque entero
-  // en vez de mentir con "Costo $0 / Ganancia = Total".
-  const hasCostData = costArs > 0 || costUsd > 0;
   const profitArs   = saleArs - costArs;
   const profitUsd   = totalUsd - costUsd;
+
+  // ── Ítems sin costo ────────────────────────────────────────────────────────────────────────
+  // Un ítem sin costo suma 0 al costo, y eso INFLA la ganancia: si de 5 productos hay 2 sin costo
+  // cargado, la ganancia que se muestra es mayor que la real y no hay forma de darse cuenta.
+  //
+  // "Tiene costo" = costo > 0, mismo criterio que capitalStatus en product.controller.js (la tarjeta
+  // "Capital total en stock" ya marca noCost cuando cost es null O 0). Un 0 no se interpreta como
+  // "es gratis": crear un producto con costo 0 está prohibido por el backend, así que un 0 guardado
+  // siempre significa que nunca se cargó.
+  const itemHasCost = (i) => {
+    if (i.cost != null) return i.cost > 0;
+    const lineCurrency = isUsdItem(i) ? "USD" : "ARS";
+    // Costo maestro en otra moneda: no se puede usar (no se convierte), cuenta como faltante.
+    if ((i.product?.currency || "ARS") !== lineCurrency) return false;
+    return (i.variant?.cost ?? i.product?.cost ?? 0) > 0;
+  };
+  const itemsSinCosto = (order.items || []).filter((i) => !itemHasCost(i));
+  // Si NINGÚN ítem tiene costo, no hay nada real que mostrar: se oculta el bloque entero en vez de
+  // mentir con "Costo $0 / Ganancia = Total". Si solo faltan ALGUNOS, se muestra con la advertencia.
+  const hasCostData = itemsSinCosto.length < (order.items || []).length;
+  const costoParcial = hasCostData && itemsSinCosto.length > 0;
 
   // Renderiza un monto en pesos y, debajo, el de dólares si el pedido mezcla monedas. Nunca los suma.
   // Es una función (no un componente) para no remontar nodos en cada render.
@@ -928,12 +946,37 @@ export default function AdminOrderDetail() {
                           </svg>
                           Solo visible para el admin
                         </div>
+                        {/* Aviso de costo incompleto: los ítems sin costo suman 0, así que la
+                            ganancia de abajo es MAYOR que la real. Se nombran los productos para
+                            saber a cuál hay que cargarle el costo. */}
+                        {costoParcial && (
+                          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                            <p className="font-bold">
+                              ⚠ {itemsSinCosto.length} de {(order.items || []).length} productos sin costo cargado
+                            </p>
+                            <ul className="mt-1 ml-4 list-disc space-y-0.5 text-amber-800">
+                              {itemsSinCosto.map((i) => (
+                                <li key={i.id}>
+                                  {i.product?.name || i.productName || "Producto"}
+                                  {i.variantLabel && <span className="text-amber-700"> ({i.variantLabel})</span>}
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="mt-1.5">
+                              Cuentan como costo $0, así que la ganancia real es <strong>menor</strong> que la de
+                              abajo. Cargalos con <strong>Modificar pedido</strong> para que el número cierre.
+                            </p>
+                          </div>
+                        )}
                         <div className="flex justify-between items-start text-sm text-slate-600">
-                          <span>Costo</span>
+                          <span>Costo{costoParcial && <span className="text-amber-700 font-semibold"> (incompleto)</span>}</span>
                           {moneyPair(costArs, costUsd, { prefix: "−" })}
                         </div>
                         <div className="flex justify-between items-start font-bold text-lg pt-2 border-t border-slate-200">
-                          <span className="text-slate-900">Ganancia</span>
+                          <span className="text-slate-900">
+                            Ganancia
+                            {costoParcial && <span className="block text-xs font-semibold text-amber-700">máximo estimado</span>}
+                          </span>
                           {moneyPair(profitArs, profitUsd, {
                             arsClass: profitArs >= 0 ? "text-green-700" : "text-red-600",
                             usdClass: profitUsd >= 0 ? "text-green-700" : "text-red-600",
