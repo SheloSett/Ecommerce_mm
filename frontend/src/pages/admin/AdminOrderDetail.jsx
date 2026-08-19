@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, productsApi, shippingApi, getImageUrl } from "../../services/api";
+import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import toast from "react-hot-toast";
 
 const STATUS_CONFIG = {
@@ -48,9 +49,23 @@ function formatDate(dateStr) {
   });
 }
 
+// Atajo para montos que SIEMPRE son pesos. Los montos que dependen de la moneda de la línea usan
+// formatPriceWithCurrency(monto, item.currency) explícitamente — mismo patrón que OrderHistory.jsx
+// y Checkout.jsx. Antes esta función tenía ARS hardcodeado y se usaba para TODO, así que un ítem en
+// dólares se mostraba con el "$" de pesos.
 function formatPrice(price) {
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+  return formatPriceWithCurrency(price, "ARS");
 }
+
+// ── Separación de montos por moneda ────────────────────────────────────────────────────────────
+// El sistema no convierte monedas en ningún punto: pesos y dólares se suman por separado y se
+// muestran en renglones distintos. Cada línea de la orden guarda su moneda (OrderItem.currency,
+// snapshot del momento de la venta), porque un mismo pedido puede mezclar ARS y USD.
+const isUsdItem = (i) => (i.currency || "ARS") === "USD";
+const sumBy = (items, currency, pick) =>
+  (items || [])
+    .filter((i) => (isUsdItem(i) ? "USD" : "ARS") === currency)
+    .reduce((s, i) => s + pick(i) * i.quantity, 0);
 
 function InfoRow({ label, value }) {
   if (!value) return null;
@@ -163,6 +178,9 @@ export default function AdminOrderDetail() {
       price:        i.price,
       // cost: costo efectivo actual (ítem → variante → producto) para mostrarlo como default editable
       cost:         i.cost ?? i.variant?.cost ?? i.product?.cost ?? "",
+      // currency: solo para mostrar bien el "Total estimado" mientras se edita (no se envía al
+      // backend — la moneda de la línea ya está guardada y no se cambia desde acá).
+      currency:     i.currency || "ARS",
       variantId:    i.variantId || null,
       variantLabel: i.variantLabel || null,
     })));
@@ -225,6 +243,8 @@ export default function AdminOrderDetail() {
         quantity:     1,
         price:        price,
         cost:         product.cost ?? "",
+        // La moneda la define el producto (la variante hereda la del padre)
+        currency:     product.currency || "ARS",
         variantId:    null,
         variantLabel: null,
       }]);
@@ -320,19 +340,30 @@ export default function AdminOrderDetail() {
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
+              <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
         </td>
-        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPrice(item.price * item.quantity)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPriceWithCurrency(item.price * item.quantity, item.currency)}</td>
       </tr>`;
     }).join("");
+
+    // Totales de la impresión separados por moneda, igual que la impresión del cliente
+    // (OrderDetail.jsx / OrderHistory.jsx). Este papel puede terminar en manos del cliente:
+    // acá NO va el costo ni la ganancia, solo los totales de venta.
+    const hasUsdPrint   = (order.items || []).some((i) => (i.currency || "ARS") === "USD");
+    const totalArsPrint = (order.items || []).filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+    const totalUsdPrint = (order.items || []).filter((i) => (i.currency || "ARS") === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+    const showArsPrint  = !hasUsdPrint || totalArsPrint > 0;
+    const totLabelStyle = 'style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b"';
+    const totValueStyle = 'style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b"';
 
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>
       ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : ""}
-      <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`;
+      ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(hasUsdPrint ? totalArsPrint : order.total)}</td></tr>` : ""}
+      ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(totalUsdPrint, "USD")}</td></tr>` : ""}`;
 
     const html = `<!DOCTYPE html>
 <html lang="es">
@@ -447,6 +478,59 @@ export default function AdminOrderDetail() {
   const ivaRate          = subtotal > 0 && iva > 0 ? iva / subtotal : 0;
   const originalIva      = isSnapObj ? (rawSnap.ivaAmount || 0) : Math.round(subtotalOriginal * ivaRate * 100) / 100;
   const originalTotal    = isSnapObj ? rawSnap.total : (subtotalOriginal + originalIva - originalDiscount);
+
+  // ── Totales por moneda ─────────────────────────────────────────────────────────────────────
+  // Un pedido puede mezclar ítems en pesos y en dólares (por eso el backend fuerza A_CONVENIR
+  // cuando un minorista carga algo en USD). Como no hay conversión, los dos se suman por separado
+  // y se muestran en renglones distintos — mismo criterio que ya usan el carrito, el checkout, el
+  // detalle del cliente (OrderDetail.jsx) y la Caja.
+  const hasUsd   = (order.items || []).some(isUsdItem);
+  const totalArs = sumBy(order.items, "ARS", (i) => i.price);
+  const totalUsd = sumBy(order.items, "USD", (i) => i.price);
+  // Pedido 100% en pesos → el Total sigue siendo order.total, que ya viene neto de cupón e IVA.
+  // Pedido con dólares → los totales se recalculan desde los ítems, porque order.total es un único
+  // número que suma ambas monedas y no representa ninguna de las dos.
+  const saleArs  = hasUsd ? totalArs : order.total;
+  // Con dólares en el pedido, el renglón de pesos se muestra solo si realmente hay parte en pesos.
+  const showArs  = !hasUsd || totalArs > 0;
+
+  // ── Costo y ganancia de la venta (SOLO ADMIN) ──────────────────────────────────────────────
+  // Estos números NO se muestran nunca al cliente: se calculan acá, en la página del panel, a
+  // partir de datos que solo devuelve GET /api/orders/:id (ruta adminMiddleware). No se tocan
+  // OrderDetail.jsx / OrderHistory.jsx (vistas del cliente) ni la impresión del pedido, que puede
+  // terminar en manos del cliente junto con el paquete.
+  //
+  // Costo unitario: mismo criterio que el backend en getStats/getStatsUsd. El snapshot del ítem
+  // (OrderItem.cost) manda siempre y ya está en la moneda de la línea. Los costos MAESTROS de la
+  // variante y del producto viven en Product.currency, que no tiene por qué coincidir con la moneda
+  // de la línea vendida — cuando no coincide se devuelve 0 en vez de sumar dólares dentro del total
+  // en pesos (es lo mismo que hace costoMaestroEnMoneda() en el backend). Se usa ?? y != null (no ||)
+  // para respetar un costo cargado en 0.
+  const itemUnitCost = (i) => {
+    if (i.cost != null) return i.cost;
+    const lineCurrency = isUsdItem(i) ? "USD" : "ARS";
+    // La variante NO tiene moneda propia: hereda la del producto (ver ProductVariant.currency,
+    // deprecado en schema.prisma), así que el mismo control cubre los dos fallbacks.
+    if ((i.product?.currency || "ARS") !== lineCurrency) return 0;
+    return i.variant?.cost ?? i.product?.cost ?? 0;
+  };
+  const costArs = sumBy(order.items, "ARS", itemUnitCost);
+  const costUsd = sumBy(order.items, "USD", itemUnitCost);
+  // Si NINGÚN ítem tiene costo cargado, no hay nada real que mostrar: se oculta el bloque entero
+  // en vez de mentir con "Costo $0 / Ganancia = Total".
+  const hasCostData = costArs > 0 || costUsd > 0;
+  const profitArs   = saleArs - costArs;
+  const profitUsd   = totalUsd - costUsd;
+
+  // Renderiza un monto en pesos y, debajo, el de dólares si el pedido mezcla monedas. Nunca los suma.
+  // Es una función (no un componente) para no remontar nodos en cada render.
+  const moneyPair = (ars, usd, { prefix = "", arsClass = "", usdClass = "" } = {}) => (
+    <div className="text-right leading-tight">
+      {showArs && <div className={arsClass}>{prefix}{formatPrice(ars)}</div>}
+      {hasUsd  && <div className={usdClass}>{prefix}{formatPriceWithCurrency(usd, "USD")}</div>}
+    </div>
+  );
+
   const statusInfo = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING;
   const paymentInfo = PAYMENT_LABEL[order.paymentMethod] || PAYMENT_LABEL.EFECTIVO;
   const shippingInfo = SHIPPING_LABEL[order.shippingMethod] || SHIPPING_LABEL.RETIRO;
@@ -689,9 +773,23 @@ export default function AdminOrderDetail() {
                 <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
                   <div className="text-sm text-slate-500">
                     Total estimado:{" "}
-                    <span className="font-bold text-slate-800">
-                      {formatPrice(editItems.reduce((s, i) => s + parseFloat(i.price || 0) * parseInt(i.quantity || 0), 0))}
-                    </span>
+                    {/* Separado por moneda: si la edición mezcla pesos y dólares se muestran los dos
+                        montos, nunca sumados entre sí. */}
+                    {(() => {
+                      const sum = (cur) => editItems
+                        .filter((i) => (i.currency || "ARS") === cur)
+                        .reduce((s, i) => s + parseFloat(i.price || 0) * parseInt(i.quantity || 0), 0);
+                      const ars = sum("ARS");
+                      const usd = sum("USD");
+                      const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
+                      return (
+                        <span className="font-bold text-slate-800">
+                          {(!anyUsd || ars > 0) && formatPrice(ars)}
+                          {(!anyUsd || ars > 0) && anyUsd && " + "}
+                          {anyUsd && formatPriceWithCurrency(usd, "USD")}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <button
                     onClick={handleSaveEdit}
@@ -744,12 +842,15 @@ export default function AdminOrderDetail() {
                           {!showOriginal && item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
                             <p key={vi} className="text-xs text-blue-600 font-medium mt-0.5">{v}</p>
                           ))}
+                          {/* La moneda sale de la línea (snapshot de la venta). En la vista del pedido
+                              original el snapshot viejo puede no tenerla → cae a ARS, que es lo que
+                              era antes de que existiera el selector de moneda. */}
                           <p className="text-xs text-slate-400 mt-0.5">
-                            {formatPrice(item.price)} × {item.quantity}
+                            {formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}
                           </p>
                         </div>
                         <p className="font-bold text-slate-800 text-sm flex-shrink-0">
-                          {formatPrice(item.price * item.quantity)}
+                          {formatPriceWithCurrency(item.price * item.quantity, item.currency)}
                         </p>
                       </div>
                     );
@@ -810,10 +911,36 @@ export default function AdminOrderDetail() {
                         <span>+{formatPrice(iva)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between font-bold text-lg text-slate-900 pt-2 border-t border-slate-200">
+                    <div className="flex justify-between items-start font-bold text-lg text-slate-900 pt-2 border-t border-slate-200">
                       <span>Total</span>
-                      <span>{formatPrice(order.total)}</span>
+                      {moneyPair(saleArs, totalUsd)}
                     </div>
+
+                    {/* ── Costo y ganancia — SOLO ADMIN ──────────────────────────────────────
+                        Este bloque no existe en ninguna vista del cliente (OrderDetail.jsx /
+                        OrderHistory.jsx) ni en la impresión del pedido. Si se toca este archivo,
+                        NO copiar estas líneas a esas vistas. */}
+                    {hasCostData && (
+                      <div className="mt-3 pt-3 border-t border-dashed border-slate-300 space-y-2">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                          </svg>
+                          Solo visible para el admin
+                        </div>
+                        <div className="flex justify-between items-start text-sm text-slate-600">
+                          <span>Costo</span>
+                          {moneyPair(costArs, costUsd, { prefix: "−" })}
+                        </div>
+                        <div className="flex justify-between items-start font-bold text-lg pt-2 border-t border-slate-200">
+                          <span className="text-slate-900">Ganancia</span>
+                          {moneyPair(profitArs, profitUsd, {
+                            arsClass: profitArs >= 0 ? "text-green-700" : "text-red-600",
+                            usdClass: profitUsd >= 0 ? "text-green-700" : "text-red-600",
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

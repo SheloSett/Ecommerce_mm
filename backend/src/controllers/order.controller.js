@@ -205,7 +205,11 @@ async function getOrder(req, res) {
           include: {
             // module/shelf: ubicación en depósito (impresión de separación).
             // cost/supplier: para la orden de compra al proveedor. Esta ruta es admin-only.
-            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, supplier: { select: { id: true, name: true } } } },
+            // currency: moneda EN LA QUE ESTÁ CARGADO product.cost. Hace falta para que el panel
+            // pueda aplicar el mismo criterio que costoMaestroEnMoneda(): el costo maestro solo se
+            // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
+            // Antes: ... shelf: true, cost: true, supplier: ...
+            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: { id: true, name: true } } } },
           },
         },
         // Incluir cupón para mostrarlo en el detalle de la orden en el panel admin
