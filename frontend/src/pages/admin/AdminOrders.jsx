@@ -4,6 +4,8 @@ import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from "../../services/api";
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
+import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
+import { getOrderTotals } from "../../utils/orderTotals";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",           color: "bg-yellow-500 text-white",  icon: "⏳" },
@@ -91,6 +93,50 @@ export default function AdminOrders() {
   // addProductSel: { [orderId]: { product, search, quantity } } — buscador de "agregar producto"
   const [addProductSel, setAddProductSel] = useState({});
   const [addingProduct, setAddingProduct] = useState(null);   // orderId en guardado
+
+  // ── Orden FIJO de los ítems dentro de cada cotización ────────────────────────
+  // itemOrderRef: { [orderId]: [itemId, ...] } — se calcula UNA sola vez por orden (agrupando por
+  // proveedor) y después queda congelado. Antes la lista se re-ordenaba en cada render, así que al
+  // cambiar una cantidad, un precio o el proveedor, el producto editado "saltaba" de lugar.
+  // Los ítems nuevos se agregan al final; los eliminados salen solos.
+  const itemOrderRef = useRef({});
+
+  // Criterio del orden INICIAL: por proveedor (los sin proveedor al final) y, dentro del mismo
+  // proveedor, alfabético por nombre de producto. Es el mismo que usaba el render antes.
+  const compareBySupplier = (a, b) => {
+    const sa = a.product?.supplier?.name || "";
+    const sb = b.product?.supplier?.name || "";
+    if (!sa && sb) return 1;   // sin proveedor va al final
+    if (sa && !sb) return -1;
+    if (sa !== sb) return sa.localeCompare(sb);
+    return (a.product?.name || "").localeCompare(b.product?.name || "");
+  };
+
+  // Devuelve los ítems de la orden en el orden congelado (y lo inicializa/actualiza si hace falta).
+  const getOrderedItems = (order) => {
+    const items = order.items || [];
+    const saved = itemOrderRef.current[order.id];
+    let sorted;
+    if (!saved) {
+      // Primera vez que se muestra esta orden: se define el orden agrupando por proveedor
+      sorted = [...items].sort(compareBySupplier);
+    } else {
+      // Ya hay un orden fijado: se respeta. Lo que no estaba (ítems agregados) va al final,
+      // manteniendo entre sí el orden en que vino del backend (sort estable en JS moderno).
+      const pos = new Map(saved.map((id, i) => [id, i]));
+      sorted = [...items].sort((a, b) => {
+        const pa = pos.has(a.id) ? pos.get(a.id) : Number.MAX_SAFE_INTEGER;
+        const pb = pos.has(b.id) ? pos.get(b.id) : Number.MAX_SAFE_INTEGER;
+        return pa - pb;
+      });
+    }
+    const ids = sorted.map((i) => i.id);
+    // Solo reescribir la ref si cambió la lista de ids (evita escrituras inútiles en cada render)
+    if (!saved || saved.length !== ids.length || saved.some((id, i) => id !== ids[i])) {
+      itemOrderRef.current[order.id] = ids;
+    }
+    return sorted;
+  };
 
   // ── Scroll horizontal de la tabla de pedidos (flechas laterales) ─────────────
   // En pantallas chicas la tabla es más ancha que el viewport. Estas flechas la desplazan
@@ -786,8 +832,12 @@ export default function AdminOrders() {
     setPublishing(orderId);
     try {
       if (action === "publish") {
-        await ordersApi.publishCotizacion(orderId, noteText);
-        toast.success("Cambios publicados — el cliente fue notificado");
+        // Antes: await ordersApi.publishCotizacion(orderId, noteText); — siempre notificaba.
+        // Ahora respeta el botón elegido ("Publicar y notificar" vs "Publicar sin notificar").
+        await ordersApi.publishCotizacion(orderId, noteText, notify);
+        toast.success(notify
+          ? "Cambios publicados — el cliente fue notificado"
+          : "Cambios publicados (sin notificar al cliente)");
         setDirtyOrders((prev) => { const n = new Set(prev); n.delete(orderId); return n; });
       } else {
         // Recopilar asignaciones de variantes para esta orden
@@ -890,9 +940,12 @@ ${pagesHtml}
     const type    = TYPE_LABEL[order.customerType]     || { label: order.customerType, color: "" };
     const channel = CHANNEL_LABEL[order.salesChannel]  || { label: order.salesChannel, icon: "" };
 
-    const subtotalSinDesc = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
-    const hasDiscount = order.couponDiscount > 0;
-    const hasIva      = order.wantsInvoice && order.ivaAmount > 0;
+    // Antes: el subtotal sumaba pesos y dolares juntos y el cupon/IVA salian de los campos crudos
+    // de la orden, que en un pedido mixto mezclaban las dos monedas.
+    const Tp = getOrderTotals(order);
+    const subtotalSinDesc = Tp.ars.subtotal;
+    const hasDiscount = Tp.ars.discount > 0 || Tp.usd.discount > 0;
+    const hasIva      = order.wantsInvoice && (Tp.ars.iva > 0 || Tp.usd.iva > 0);
 
     // Filas de producto compactas con imagen pequeña
     const itemCards = (order.items || []).map((item) => {
@@ -927,9 +980,9 @@ ${pagesHtml}
     // Resumen de totales
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : ""}
-      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA 21%</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : ""}
-      <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`;
+      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}</td></tr>` : ""}
+      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA 21%</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}</td></tr>` : ""}
+      <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(Tp.ars.total)}</td></tr>`;
 
     return `<div class="page">
 
@@ -1081,7 +1134,14 @@ ${pagesHtml}
 
                   <div className="text-right flex-shrink-0">
                     <p className="text-xs text-slate-400">Total estimado</p>
-                    <p className="font-bold text-slate-900">{formatPrice(order.total)}</p>
+                    {/* Antes: formatPrice(order.total) — en un pedido mixto ese numero mezclaba
+                        pesos y dolares y se mostraba con el "$" de pesos. */}
+                    {(() => { const t = getOrderTotals(order); return (
+                      <>
+                        {(!t.hasUsd || t.ars.total > 0) && <p className="font-bold text-slate-900">{formatPrice(t.ars.total)}</p>}
+                        {t.hasUsd && <p className="font-bold text-slate-900">{formatPriceWithCurrency(t.usd.total, "USD")}</p>}
+                      </>
+                    ); })()}
                   </div>
 
                   <button
@@ -1107,17 +1167,13 @@ ${pagesHtml}
                       <span>🕐 {formatDate(order.createdAt)}</span>
                     </div>
 
-                    {/* Items editables — ordenados por PROVEEDOR (los sin proveedor, al final) */}
+                    {/* Items editables — el orden se fija la primera vez (agrupado por PROVEEDOR) y
+                        después NO se mueve más, aunque se edite cantidad, precio o proveedor.
+                        Antes acá se re-ordenaba en cada render con este sort inline:
+                        [...(order.items || [])].sort((a, b) => { ...comparación por proveedor... })
+                        y por eso el producto editado saltaba de posición. Ver getOrderedItems(). */}
                     <div className="space-y-2">
-                      {[...(order.items || [])].sort((a, b) => {
-                        const sa = a.product?.supplier?.name || "";
-                        const sb = b.product?.supplier?.name || "";
-                        if (!sa && sb) return 1;   // sin proveedor va al final
-                        if (sa && !sb) return -1;
-                        if (sa !== sb) return sa.localeCompare(sb);
-                        // Mismo proveedor: alfabético por nombre de producto
-                        return (a.product?.name || "").localeCompare(b.product?.name || "");
-                      }).map((item) => {
+                      {getOrderedItems(order).map((item) => {
                         const img = item.product?.images?.[0];
                         const isEditing = editingQty[item.id] !== undefined;
                         const isSaving  = savingItem === item.id;
@@ -1501,10 +1557,12 @@ ${pagesHtml}
               <h3 className="font-bold text-slate-800 text-lg">
                 {noteModal.action === "approve" ? "✅ Aprobar cotización" : "📤 Publicar cambios al cliente"}
               </h3>
+              {/* Antes en "publish" decía solo: "El cliente recibirá una notificación con los cambios".
+                  Ahora también se puede publicar sin avisarle, así que el texto lo aclara. */}
               <p className="text-sm text-slate-500">
                 {noteModal.action === "approve"
                   ? "Podés aprobarla notificando al cliente (recibe un aviso y puede pagar) o sin notificar (solo cambia el estado)."
-                  : "El cliente recibirá una notificación con los cambios en su cotización."}
+                  : "Podés publicar los cambios notificando al cliente (recibe un aviso) o sin notificar (los cambios quedan igual publicados en su cotización)."}
               </p>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1526,16 +1584,19 @@ ${pagesHtml}
                 >
                   Cancelar
                 </button>
-                {/* Solo en aprobar: aprobar SIN mandarle la notificación al cliente */}
-                {noteModal.action === "approve" && (
-                  <button
-                    onClick={() => handleConfirmAction(false)}
-                    disabled={publishing === noteModal.orderId}
-                    className="flex-1 min-w-[9rem] px-4 py-2 rounded-xl text-sm font-bold border-2 border-green-600 text-green-700 hover:bg-green-50 disabled:opacity-60"
-                  >
-                    Aprobar sin notificar
-                  </button>
-                )}
+                {/* Opción "sin notificar" — antes existía solo al aprobar; ahora también al publicar
+                    cambios, para poder actualizar la cotización sin mandarle aviso al cliente. */}
+                <button
+                  onClick={() => handleConfirmAction(false)}
+                  disabled={publishing === noteModal.orderId}
+                  className={`flex-1 min-w-[9rem] px-4 py-2 rounded-xl text-sm font-bold border-2 disabled:opacity-60 ${
+                    noteModal.action === "approve"
+                      ? "border-green-600 text-green-700 hover:bg-green-50"
+                      : "border-blue-600 text-blue-700 hover:bg-blue-50"
+                  }`}
+                >
+                  {noteModal.action === "approve" ? "Aprobar sin notificar" : "Publicar sin notificar"}
+                </button>
                 <button
                   onClick={() => handleConfirmAction(true)}
                   disabled={publishing === noteModal.orderId}
@@ -1825,7 +1886,15 @@ ${pagesHtml}
                             );
                           })()}
                         </td>
-                        <td className="px-4 py-3 font-semibold">{formatPrice(order.total)}</td>
+                        <td className="px-4 py-3 font-semibold">
+                          {/* Idem: cada moneda en su renglon, nunca sumadas. */}
+                          {(() => { const t = getOrderTotals(order); return (
+                            <>
+                              {(!t.hasUsd || t.ars.total > 0) && <div>{formatPrice(t.ars.total)}</div>}
+                              {t.hasUsd && <div>{formatPriceWithCurrency(t.usd.total, "USD")}</div>}
+                            </>
+                          ); })()}
+                        </td>
                         <td className="px-4 py-3">
                           {/* Badge de estado — en mobile solo muestra el icono para ahorrar espacio */}
                           <span className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${status.color}`}>

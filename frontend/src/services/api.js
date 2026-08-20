@@ -201,7 +201,9 @@ export const ordersApi = {
   modifyOrder: (orderId, items, applyCostToProduct = false) =>
     api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct }),
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
-  publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
+  // notify=false publica los cambios SIN avisarle al cliente (igual que en aprobar).
+  // Antes: publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
+  publishCotizacion: (orderId, adminNotes, notify = true) => api.post(`/orders/${orderId}/publish`, { adminNotes, notify }),
   // Admin: aprobar cotización
   approveCotizacion: (orderId, adminNotes, variantAssignments = [], notify = true) => api.post(`/orders/${orderId}/approve`, { adminNotes, variantAssignments, notify }),
   // Cliente: cancelar su cotización con motivo

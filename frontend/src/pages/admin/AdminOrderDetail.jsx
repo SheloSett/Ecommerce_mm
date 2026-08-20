@@ -3,11 +3,17 @@ import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, productsApi, shippingApi, getImageUrl } from "../../services/api";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
+import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import toast from "react-hot-toast";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",            color: "bg-yellow-500 text-white",  icon: "⏳" },
   QUOTE_APPROVED: { label: "Aprobada (sin pagar)", color: "bg-teal-600 text-white",   icon: "💳" },
+  // PAYMENT_REVIEW faltaba en este archivo (sí estaba en AdminOrders.jsx y en el enum del schema).
+  // Traía dos problemas: no aparecía como opción en el selector de estado, y —peor— como el lookup
+  // es `STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING`, un pedido en revisión de pago se
+  // mostraba en el detalle con la chapa amarilla de "Pendiente". Mismo label/color que el listado.
+  PAYMENT_REVIEW: { label: "Revisión de pago",     color: "bg-blue-600 text-white",    icon: "🔍" },
   APPROVED:       { label: "Abonada",              color: "bg-green-600 text-white",   icon: "✅" },
   REJECTED:       { label: "Rechazada",            color: "bg-red-600 text-white",     icon: "❌" },
   CANCELLED:      { label: "Cancelada",            color: "bg-slate-500 text-white",   icon: "🚫" },
@@ -315,9 +321,13 @@ export default function AdminOrderDetail() {
     const type    = TYPE_LABEL[order.customerType]        || { label: order.customerType };
     const channel = CHANNEL_LABEL[order.salesChannel]    || { label: order.salesChannel, icon: "" };
 
-    const subtotalSinDesc = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
-    const hasDiscount = order.couponDiscount > 0;
-    const hasIva      = order.wantsInvoice && order.ivaAmount > 0;
+    // Montos del papel, con la misma fuente que la pantalla (ver utils/orderTotals.js).
+    const Tp = getOrderTotals(order);
+    // Antes: const subtotalSinDesc = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado: sumaba pesos y dólares en el mismo número.
+    const subtotalSinDesc = Tp.ars.subtotal;
+    const hasDiscount = Tp.ars.discount > 0 || Tp.usd.discount > 0;
+    const hasIva      = order.wantsInvoice && (Tp.ars.iva > 0 || Tp.usd.iva > 0);
 
     const itemCards = (order.items || []).map((item) => {
       const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
@@ -351,18 +361,23 @@ export default function AdminOrderDetail() {
     // Totales de la impresión separados por moneda, igual que la impresión del cliente
     // (OrderDetail.jsx / OrderHistory.jsx). Este papel puede terminar en manos del cliente:
     // acá NO va el costo ni la ganancia, solo los totales de venta.
-    const hasUsdPrint   = (order.items || []).some((i) => (i.currency || "ARS") === "USD");
-    const totalArsPrint = (order.items || []).filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
-    const totalUsdPrint = (order.items || []).filter((i) => (i.currency || "ARS") === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+    // Antes se recalculaba acá desde los ítems (precio de lista), así que el papel salía SIN el
+    // cupón ni el IVA aplicados. Ahora sale de Tp, calculado arriba con getOrderTotals().
+    // const hasUsdPrint   = (order.items || []).some((i) => (i.currency || "ARS") === "USD");
+    // const totalArsPrint = (order.items || []).filter(...).reduce(...);
+    // const totalUsdPrint = (order.items || []).filter(...).reduce(...);
+    const hasUsdPrint   = Tp.hasUsd;
+    const totalArsPrint = Tp.ars.total;
+    const totalUsdPrint = Tp.usd.total;
     const showArsPrint  = !hasUsdPrint || totalArsPrint > 0;
     const totLabelStyle = 'style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b"';
     const totValueStyle = 'style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b"';
 
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(order.couponDiscount)}</td></tr>` : ""}
-      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(order.ivaAmount)}</td></tr>` : ""}
-      ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(hasUsdPrint ? totalArsPrint : order.total)}</td></tr>` : ""}
+      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
+      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
+      ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
       ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(totalUsdPrint, "USD")}</td></tr>` : ""}`;
 
     const html = `<!DOCTYPE html>
@@ -464,9 +479,18 @@ export default function AdminOrderDetail() {
     );
   }
 
-  const discount = order.couponDiscount || 0;
-  const iva = order.ivaAmount || 0;
-  const subtotal = order.total + discount - iva;
+  // Montos separados por moneda (ver utils/orderTotals.js). Se calcula acá arriba porque el resto
+  // de la pantalla —incluido el bloque del pedido original— se apoya en estos números.
+  const T = getOrderTotals(order);
+
+  // discount / iva / subtotal son la parte EN PESOS. Antes salían directo de los campos de la orden,
+  // que en un pedido mixto mezclaban las dos monedas.
+  // Antes: const discount = order.couponDiscount || 0;
+  //        const iva = order.ivaAmount || 0;
+  //        const subtotal = order.total + discount - iva;
+  const discount = T.ars.discount;
+  const iva = T.ars.iva;
+  const subtotal = T.ars.subtotal;
   const isMayorista = order.customerType === "MAYORISTA";
 
   // Snapshot: puede ser array (formato viejo) u objeto { items, total, ivaAmount, couponDiscount } (formato nuevo)
@@ -484,15 +508,18 @@ export default function AdminOrderDetail() {
   // cuando un minorista carga algo en USD). Como no hay conversión, los dos se suman por separado
   // y se muestran en renglones distintos — mismo criterio que ya usan el carrito, el checkout, el
   // detalle del cliente (OrderDetail.jsx) y la Caja.
-  const hasUsd   = (order.items || []).some(isUsdItem);
-  const totalArs = sumBy(order.items, "ARS", (i) => i.price);
-  const totalUsd = sumBy(order.items, "USD", (i) => i.price);
-  // Pedido 100% en pesos → el Total sigue siendo order.total, que ya viene neto de cupón e IVA.
-  // Pedido con dólares → los totales se recalculan desde los ítems, porque order.total es un único
-  // número que suma ambas monedas y no representa ninguna de las dos.
-  const saleArs  = hasUsd ? totalArs : order.total;
+  // COMENTADO: recalculaba los totales desde los ítems, lo que dejaba afuera el cupón y el IVA en
+  // los pedidos mixtos (mostraba el precio de lista como Total). Ahora el backend guarda cada moneda
+  // en su propio campo y getOrderTotals() los lee, con fallback automático para los pedidos viejos.
+  // const hasUsd   = (order.items || []).some(isUsdItem);
+  // const totalArs = sumBy(order.items, "ARS", (i) => i.price);
+  // const totalUsd = sumBy(order.items, "USD", (i) => i.price);
+  // const saleArs  = hasUsd ? totalArs : order.total;
+  const hasUsd   = T.hasUsd;
+  const saleArs  = T.ars.total;
+  const totalUsd = T.usd.total;
   // Con dólares en el pedido, el renglón de pesos se muestra solo si realmente hay parte en pesos.
-  const showArs  = !hasUsd || totalArs > 0;
+  const showArs  = !hasUsd || T.ars.total > 0 || T.ars.subtotal > 0;
 
   // ── Costo y ganancia de la venta (SOLO ADMIN) ──────────────────────────────────────────────
   // Estos números NO se muestran nunca al cliente: se calculan acá, en la página del panel, a
@@ -516,8 +543,14 @@ export default function AdminOrderDetail() {
   };
   const costArs = sumBy(order.items, "ARS", itemUnitCost);
   const costUsd = sumBy(order.items, "USD", itemUnitCost);
-  const profitArs   = saleArs - costArs;
-  const profitUsd   = totalUsd - costUsd;
+  // COMENTADO: la ganancia salía del Total, que incluye el IVA. El IVA se le cobra al cliente para
+  // girárselo a ARCA — entra y sale, nunca fue plata de la tienda —, así que contarlo como ganancia
+  // la inflaba. En un pedido de $100.000 + 21% mostraba $21.000 de ganancia que no existen.
+  // const profitArs   = saleArs - costArs;
+  // const profitUsd   = totalUsd - costUsd;
+  // Ahora: (total SIN IVA, ya neto de cupón) − costo. Ver profitFromTotals().
+  const profitArs   = profitFromTotals(T.ars, costArs);
+  const profitUsd   = profitFromTotals(T.usd, costUsd);
 
   // ── Ítems sin costo ────────────────────────────────────────────────────────────────────────
   // Un ítem sin costo suma 0 al costo, y eso INFLA la ganancia: si de 5 productos hay 2 sin costo
@@ -539,6 +572,8 @@ export default function AdminOrderDetail() {
   // mentir con "Costo $0 / Ganancia = Total". Si solo faltan ALGUNOS, se muestra con la advertencia.
   const hasCostData = itemsSinCosto.length < (order.items || []).length;
   const costoParcial = hasCostData && itemsSinCosto.length > 0;
+  // hayIva: para aclarar en pantalla por qué la ganancia no es simplemente Total − Costo.
+  const hayIva = (T.ars.iva || 0) > 0 || (T.usd.iva || 0) > 0;
 
   // Renderiza un monto en pesos y, debajo, el de dólares si el pedido mezcla monedas. Nunca los suma.
   // Es una función (no un componente) para no remontar nodos en cada render.
@@ -904,14 +939,17 @@ export default function AdminOrderDetail() {
                 {/* Totales — vista actual */}
                 {!showOriginal && (
                   <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
-                    {(discount > 0 || iva > 0) && (
-                      <div className="flex justify-between text-sm text-slate-500">
+                    {/* Cada renglón muestra las dos monedas cuando el pedido las mezcla. Antes todos
+                        usaban formatPrice() a secas, o sea que un pedido mixto mostraba el descuento
+                        y el IVA de los dólares con el signo "$" de pesos. */}
+                    {(discount > 0 || iva > 0 || T.usd.discount > 0 || T.usd.iva > 0) && (
+                      <div className="flex justify-between items-start text-sm text-slate-500">
                         <span>Subtotal</span>
-                        <span>{formatPrice(subtotal)}</span>
+                        {moneyPair(subtotal, T.usd.subtotal)}
                       </div>
                     )}
-                    {discount > 0 && (
-                      <div className="flex justify-between text-sm text-green-700 font-medium">
+                    {(discount > 0 || T.usd.discount > 0) && (
+                      <div className="flex justify-between items-start text-sm text-green-700 font-medium">
                         <span>
                           Cupón{" "}
                           {order.coupon?.code && (
@@ -920,13 +958,13 @@ export default function AdminOrderDetail() {
                             </span>
                           )}
                         </span>
-                        <span>−{formatPrice(discount)}</span>
+                        {moneyPair(discount, T.usd.discount, { prefix: "−" })}
                       </div>
                     )}
-                    {isMayorista && iva > 0 && (
-                      <div className="flex justify-between text-sm text-slate-500">
+                    {isMayorista && (iva > 0 || T.usd.iva > 0) && (
+                      <div className="flex justify-between items-start text-sm text-slate-500">
                         <span>IVA</span>
-                        <span>+{formatPrice(iva)}</span>
+                        {moneyPair(iva, T.usd.iva, { prefix: "+" })}
                       </div>
                     )}
                     <div className="flex justify-between items-start font-bold text-lg text-slate-900 pt-2 border-t border-slate-200">
@@ -975,6 +1013,10 @@ export default function AdminOrderDetail() {
                         <div className="flex justify-between items-start font-bold text-lg pt-2 border-t border-slate-200">
                           <span className="text-slate-900">
                             Ganancia
+                            {/* El IVA no es ganancia: se le cobra al cliente y se le gira a ARCA.
+                                Se aclara en pantalla para que se entienda por qué la ganancia no da
+                                Total − Costo cuando el pedido lleva factura. */}
+                            {hayIva && <span className="block text-xs font-normal text-slate-500">no incluye IVA</span>}
                             {costoParcial && <span className="block text-xs font-semibold text-amber-700">máximo estimado</span>}
                           </span>
                           {moneyPair(profitArs, profitUsd, {

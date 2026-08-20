@@ -136,7 +136,16 @@ model Order {
   customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   status         OrderStatus   @default(PENDING)
   paymentMethod  PaymentMethod @default(MERCADOPAGO)
+  // total: total del pedido EN PESOS, ya neto de cupón y con IVA sumado.
+  // Antes este campo sumaba pesos y dólares en un mismo número (un pedido de $11.000 + USD 100
+  // quedaba en 11.100, que no es ni pesos ni dólares). Desde el cambio de monedas separadas, la
+  // parte en dólares vive en totalUsd y acá quedan SOLO los pesos.
   total          Float
+  // totalUsd: total en dólares, neto de cupón y con IVA. Ver utils/orderTotals.js.
+  // null = el pedido no tiene ítems en dólares, O es anterior a este cambio. Para los pedidos
+  // MIXTOS viejos (null pero con líneas USD) el panel recalcula desde los ítems, que es
+  // exactamente lo que hacía antes: no se reescribe ningún dato histórico.
+  totalUsd       Float?
   mpPaymentId    String?
   mpStatus       String?
   mpPreferenceId String?
@@ -145,7 +154,11 @@ model Order {
   // Cupón aplicado a esta orden
   couponId       Int?
   coupon         Coupon?       @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  couponDiscount Float?        // Monto descontado por el cupón (en ARS)
+  couponDiscount Float?        // Monto descontado por el cupón sobre la parte EN PESOS
+  // couponDiscountUsd: parte del descuento aplicada sobre las líneas en dólares.
+  // Solo los cupones de PORCENTAJE descuentan en dólares; los de monto fijo están expresados en
+  // pesos, así que ahí este campo queda en 0 (ver las reglas en utils/orderTotals.js).
+  couponDiscountUsd Float?
   couponUsage    CouponUsage?
   // Campos exclusivos para cotizaciones:
   // clientSnapshot: copia de los items visible al cliente. Se actualiza solo cuando el admin presiona
@@ -164,8 +177,12 @@ model Order {
   customerType   String        @default("MINORISTA")
   // wantsInvoice: el cliente mayorista solicitó factura (se aplica 21% IVA al total)
   wantsInvoice        Boolean       @default(false)
-  // ivaAmount: monto del IVA aplicado (0 si no solicitó factura)
+  // ivaAmount: monto del IVA de las líneas EN PESOS (0 si no solicitó factura)
   ivaAmount           Float         @default(0)
+  // ivaAmountUsd: IVA de las líneas en dólares. Se calcula con la misma alícuota por producto, pero
+  // se acumula aparte para no meter dólares adentro del IVA en pesos. null = pedido sin dólares o
+  // anterior a este cambio.
+  ivaAmountUsd        Float?
   // fulfillmentStatus: etapa logística del pedido (independiente del estado de pago)
   fulfillmentStatus   String        @default("PENDIENTE")  // PENDIENTE | EN_PREPARACION | ENVIADO | ENTREGADO
   // shippingMethod: cómo el cliente quiere recibir su pedido.

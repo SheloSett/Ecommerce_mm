@@ -6,6 +6,7 @@ import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+import { getOrderTotals } from "../utils/orderTotals";
 
 function formatPrice(price) {
   return formatPriceWithCurrency(price, "ARS");
@@ -46,6 +47,9 @@ const PAYMENT_METHODS = [
   { id: "MERCADOPAGO",   label: "MercadoPago",   icon: <IconMP />,       desc: "Pagá online con tarjeta o dinero en cuenta" },
   { id: "EFECTIVO",      label: "Efectivo",       icon: <IconCash />,     desc: "El vendedor coordinará la entrega y cobro" },
   { id: "TRANSFERENCIA", label: "Transferencia",  icon: <IconTransfer />, desc: "Te enviamos los datos bancarios por email" },
+  // A_CONVENIR: única opción cuando la cotización tiene ítems en dólares. No es un método de pago
+  // más — es la ausencia de uno: se confirma el pedido y la tienda arregla el cobro por fuera.
+  { id: "A_CONVENIR",    label: "A convenir con la tienda", icon: <IconCash />, desc: "Coordinamos el pago con vos: al haber precios en dólares no se puede cobrar online" },
 ];
 
 export default function PayQuotation() {
@@ -83,6 +87,25 @@ export default function PayQuotation() {
   // total para que quede claro que ese monto no representa el total real si hay ítems en dólares.
   const quoteHasUsd = (quote?.items || []).some((i) => i.currency === "USD");
 
+  // Montos por moneda (ver utils/orderTotals.js): con dólares en la cotización, quote.total es
+  // SOLO la parte en pesos, así que mostrarlo solo a él como "Total a pagar" es engañoso.
+  const T = quote ? getOrderTotals(quote) : null;
+
+  // Cotización con dólares → NO se puede pagar online: no hay un monto único que cobrar (el sistema
+  // no convierte monedas). El pago se coordina con la tienda, igual que un pedido A_CONVENIR.
+  // Antes la página ofrecía MercadoPago igual: el backend lo rechazaba (mpPaymentBlockedReason),
+  // pero el cliente solo veía "Error al procesar el pago. Intentá de nuevo.", sin saber por qué.
+  const metodosDisponibles = quoteHasUsd
+    ? PAYMENT_METHODS.filter((m) => m.id === "A_CONVENIR")
+    : PAYMENT_METHODS.filter((m) => m.id !== "A_CONVENIR");
+
+  // El estado arranca en MERCADOPAGO (el default de la mayoria de las cotizaciones). Si la que se
+  // cargo tiene dolares, se corrige a A_CONVENIR: sin esto el boton quedaba en "Pagar con
+  // MercadoPago" aunque esa opcion ya no este en la lista.
+  useEffect(() => {
+    if (quoteHasUsd) setPaymentMethod("A_CONVENIR");
+  }, [quoteHasUsd]);
+
   // handleApplyCoupon — MOVIDO: el cupón se aplica al crear la cotización en Checkout.jsx
   // const handleApplyCoupon = async () => { ... };
 
@@ -98,8 +121,11 @@ export default function PayQuotation() {
         await ordersApi.confirmCotizacionPayment(quote.id, paymentMethod);
         setSuccess(paymentMethod);
       }
-    } catch {
-      toast.error("Error al procesar el pago. Intentá de nuevo.");
+    } catch (err) {
+      // Antes: toast.error("Error al procesar el pago. Intentá de nuevo.") sin mirar la respuesta.
+      // El backend explica el motivo (por ejemplo, cotizacion en dolares que no se puede cobrar
+      // online); mostrarlo evita que el cliente reintente a ciegas.
+      toast.error(err?.response?.data?.error || "Error al procesar el pago. Intentá de nuevo.");
     } finally {
       setPaying(false);
     }
@@ -142,13 +168,23 @@ export default function PayQuotation() {
                 Te enviaremos los datos bancarios a <strong className="text-[#0b1c30]">{quote.customerEmail}</strong> para que puedas realizar la transferencia.
                 Una vez confirmado el pago, tu pedido quedará aprobado.
               </p>
+            ) : success === "A_CONVENIR" ? (
+              /* Rama nueva: antes caia en el "else" y decia "coordinar el pago en efectivo",
+                 cuando justamente lo que no esta definido todavia es como se paga. */
+              <p className="text-[#565e74] text-sm">
+                Tu pedido quedó confirmado. Como incluye precios en dólares, el vendedor se contactará
+                con vos para acordar el monto final y la forma de pago.
+              </p>
             ) : (
               <p className="text-[#565e74] text-sm">
                 El vendedor se contactará con vos para coordinar el pago en efectivo y la entrega.
               </p>
             )}
-            {/* Antes: text-slate-400 */}
-            <p className="text-xs text-[#565e74]/50">Cotización #{quote.id} — {formatPrice(quote.total)}</p>
+            {/* Antes: text-slate-400. El monto tambien salia solo en pesos (quote.total). */}
+            <p className="text-xs text-[#565e74]/50">
+              Cotización #{quote.id} — {formatPrice(T.ars.total)}
+              {quoteHasUsd && ` + ${formatPriceWithCurrency(T.usd.total, "USD")}`}
+            </p>
             {/* Antes: bg-green-600 hover:bg-green-700 */}
             <button
               onClick={() => navigate("/cotizaciones")}
@@ -231,14 +267,24 @@ export default function PayQuotation() {
             {/* Total */}
             <div className="px-5 py-4 border-t border-[#bdcaba]/20">
               {/* El descuento del cupón ya está incluido en quote.total si se aplicó al crear la cotización */}
-              <div className="flex justify-between items-center">
+              {/* Antes se mostraba un unico "Total a pagar" con quote.total, que es SOLO la parte
+                  en pesos: en una cotizacion mixta el cliente veia "$23.000" cuando ademas debia
+                  USD 14.000. Ahora cada moneda va en su renglon, igual que en el resto del sitio. */}
+              <div className="flex justify-between items-start">
                 {/* Antes: text-slate-700 / text-slate-800 */}
-                <span className="font-semibold text-[#0b1c30]">Total a pagar</span>
-                <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalAPagar)}</span>
+                <span className="font-semibold text-[#0b1c30]">{quoteHasUsd ? "Total (por moneda)" : "Total a pagar"}</span>
+                <span className="text-xl font-bold text-[#0b1c30] text-right leading-tight">
+                  {(!quoteHasUsd || T.ars.total > 0) && <div>{formatPrice(T.ars.total)}</div>}
+                  {quoteHasUsd && <div>{formatPriceWithCurrency(T.usd.total, "USD")}</div>}
+                </span>
               </div>
               {quoteHasUsd && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-                  ⚠️ Esta cotización incluye ítems con precio en dólares (ver detalle arriba) — el monto de arriba está en pesos y puede no reflejar el total real. Coordinalo con la tienda antes de pagar.
+                  {/* Antes este cartel decia que el monto "puede no reflejar el total real" y aun asi
+                      se ofrecia pagar online. Ahora los montos estan bien y lo que se explica es por
+                      que el pago se coordina en vez de cobrarse por MercadoPago. */}
+                  ⚠️ Esta cotización tiene precios en dólares. No se puede abonar online porque no hay
+                  un único monto a cobrar: al confirmar, la tienda se contacta con vos para coordinar el pago.
                 </p>
               )}
             </div>
@@ -270,7 +316,9 @@ export default function PayQuotation() {
               <h2 className="font-semibold text-[#0b1c30]">Método de pago</h2>
             </div>
             <div className="p-4 space-y-3">
-              {PAYMENT_METHODS.map((method) => (
+              {/* Antes: PAYMENT_METHODS.map(...) — mostraba MercadoPago siempre, incluso en
+                  cotizaciones con dólares que el backend rechaza. */}
+              {metodosDisponibles.map((method) => (
                 <label
                   key={method.id}
                   // Antes: border-green-500 bg-green-50 / border-slate-200 hover:border-slate-300
@@ -321,6 +369,13 @@ export default function PayQuotation() {
                 {/* Antes: emoji 💳 */}
                 <span className="material-symbols-outlined text-[20px]">credit_card</span>
                 Pagar {formatPrice(totalAPagar)} con MercadoPago
+              </>
+            ) : paymentMethod === "A_CONVENIR" ? (
+              /* Sin monto en el boton: justamente lo que se confirma es que el importe se arregla
+                 con la tienda. Poner una cifra en pesos seria volver al problema original. */
+              <>
+                <span className="material-symbols-outlined text-[20px]">handshake</span>
+                Confirmar pedido — pago a convenir
               </>
             ) : (
               <>

@@ -29,6 +29,7 @@ const {
 const prisma = new PrismaClient();
 // Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
+const { computeOrderTotals } = require("../utils/orderTotals");
 
 // Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
 // costo e imágenes. A diferencia del precio o la etiqueta de variante (que se congelan al
@@ -80,6 +81,27 @@ function hydrateDeletedProducts(orders) {
   }
   return orders;
 }
+
+// Forma del producto que se devuelve al MUTAR ítems de una orden (updateOrderItem / deleteOrderItem /
+// addItemToOrder). Tiene que traer los MISMOS campos que getOrders, porque el panel de cotizaciones
+// reemplaza la orden en memoria con esta respuesta: si faltan slug/supplier, al cliente se le "borra"
+// el proveedor de todos los ítems y la lista (que se ordena por proveedor) se reacomoda sola.
+// Antes cada endpoint hacía: product: { select: { id: true, name: true, images: true } }
+const ORDER_ITEM_PRODUCT_SELECT = {
+  id: true, name: true, images: true, module: true, shelf: true,
+  slug: true, supplierId: true,
+  supplier: { select: { id: true, name: true } },
+};
+
+// Include estándar para devolver una orden completa desde los endpoints de edición de ítems.
+// orderBy id asc: sin esto Prisma no garantiza el orden de los ítems y el panel los veía "saltar".
+const ORDER_WITH_ITEMS_INCLUDE = {
+  items: {
+    include: { product: { select: ORDER_ITEM_PRODUCT_SELECT } },
+    orderBy: { id: "asc" },
+  },
+  coupon: { select: { code: true, discountType: true, discountValue: true } },
+};
 
 // Registra el uso del cupon de una orden recien APROBADA (pago confirmado). Idempotente: si ya
 // existe un registro para esa orden, no crea otro (protege ante webhooks repetidos de MP o doble
@@ -162,6 +184,9 @@ async function getOrders(req, res) {
                 },
               },
             },
+            // Orden estable de los ítems: sin orderBy Prisma no garantiza el orden y la lista de la
+            // cotización podía salir distinta en cada recarga (ítems que "saltan" de lugar).
+            orderBy: { id: "asc" },
           },
           // Incluir datos del cupón para mostrar en detalle y en impresión
           coupon: { select: { code: true, discountType: true, discountValue: true } },
@@ -329,7 +354,12 @@ async function createOrder(req, res) {
         product, variant: selectedVariant, isMayorista, quantity: item.quantity,
       });
 
-      total += finalPrice * item.quantity;
+      // COMENTADO: esta suma mezclaba pesos y dólares en una sola variable. Ya no se lee en ningún
+      // lado (el mínimo del cupón y el mayorista miran totalArs, y el total final lo arma
+      // computeOrderTotals más abajo), pero se deja el renglón a la vista para que quede claro
+      // dónde estaba el problema de origen.
+      // total += finalPrice * item.quantity;
+      total += finalPrice * item.quantity; // (sin uso: `total` se reasigna con totales.totalArs)
 
       // SKU de la variante seleccionada — reusa selectedVariant (traída arriba para el precio).
       // Antes se hacía una segunda consulta solo para el SKU:
@@ -407,7 +437,11 @@ async function createOrder(req, res) {
         coupon &&
         coupon.active &&
         (!coupon.expiresAt || now <= new Date(coupon.expiresAt)) &&
-        (!coupon.minPurchase || total >= coupon.minPurchase) &&
+        // Antes: (!coupon.minPurchase || total >= coupon.minPurchase)
+        // Comentado: `total` mezclaba pesos y dólares, así que un ítem de USD 300 hacía "alcanzar"
+        // una compra mínima de $300. El mínimo del cupón está en pesos → se mide contra los pesos,
+        // igual que ya se hace con el mínimo de compra mayorista unas líneas más arriba.
+        (!coupon.minPurchase || totalArs >= coupon.minPurchase) &&
         (!coupon.customerId || coupon.customer?.email.toLowerCase() === customerEmail.toLowerCase());
 
       if (isValid) {
@@ -424,11 +458,17 @@ async function createOrder(req, res) {
         const underCustomerLimit = !coupon.maxUsesPerCustomer || customerUsages < coupon.maxUsesPerCustomer;
 
         if (underTotalLimit && underCustomerLimit) {
+          // COMENTADO: el descuento se calculaba sobre `total`, que sumaba pesos y dólares en un
+          // mismo número. Un 10% sobre un pedido de $11.000 + USD 100 descontaba 1.110 de una
+          // unidad que no existe, y después se guardaba como si fueran pesos.
+          // couponDiscount = coupon.discountType === "PERCENTAGE"
+          //   ? Math.round((total * coupon.discountValue) / 100 * 100) / 100
+          //   : Math.min(coupon.discountValue, total);
+          // total = Math.max(0, total - couponDiscount);
+          //
+          // Ahora el cálculo por moneda se hace todo junto más abajo, con computeOrderTotals().
+          // Acá solo se marca que el cupón pasó todas las validaciones.
           appliedCoupon = coupon;
-          couponDiscount = coupon.discountType === "PERCENTAGE"
-            ? Math.round((total * coupon.discountValue) / 100 * 100) / 100
-            : Math.min(coupon.discountValue, total);
-          total = Math.max(0, total - couponDiscount);
         }
       }
     }
@@ -438,20 +478,46 @@ async function createOrder(req, res) {
     // El flag wantsInvoice del body se ignora para minoristas.
     // El IVA se calcula por producto según su campo ivaRate (10.5% o 21%).
     const applyIva = isMayorista && wantsInvoice === true;
-    let ivaAmount = 0;
+
+    // COMENTADO: el IVA se calculaba sobre el precio de lista y el cupón se restaba del total
+    // DESPUÉS, así que el descuento se llevaba puesto también el IVA de la parte descontada.
+    // Además sumaba el IVA de los ítems en dólares dentro del mismo número que el de pesos.
+    // let ivaAmount = 0;
+    // if (applyIva) {
+    //   for (const item of orderItems) {
+    //     const prod = await prisma.product.findUnique({
+    //       where: { id: item.productId },
+    //       select: { ivaRate: true },
+    //     });
+    //     const rate = (prod?.ivaRate ?? 21) / 100;
+    //     ivaAmount += Math.round(item.price * item.quantity * rate * 100) / 100;
+    //   }
+    //   ivaAmount = Math.round(ivaAmount * 100) / 100;
+    //   total = Math.round((total + ivaAmount) * 100) / 100;
+    // }
+    //
+    // Ahora: una sola consulta para traer las alícuotas y computeOrderTotals() hace todo el cálculo
+    // por moneda, en el orden correcto — (subtotal − cupón) + IVA sobre la base ya descontada.
+    let ivaRates = null;
     if (applyIva) {
-      // Para cada item de la orden, buscar el ivaRate del producto y calcular su IVA
-      for (const item of orderItems) {
-        const prod = await prisma.product.findUnique({
-          where: { id: item.productId },
-          select: { ivaRate: true },
-        });
-        const rate = (prod?.ivaRate ?? 21) / 100;
-        ivaAmount += Math.round(item.price * item.quantity * rate * 100) / 100;
-      }
-      ivaAmount = Math.round(ivaAmount * 100) / 100;
-      total = Math.round((total + ivaAmount) * 100) / 100;
+      const prods = await prisma.product.findMany({
+        where: { id: { in: [...new Set(orderItems.map((i) => i.productId))] } },
+        select: { id: true, ivaRate: true },
+      });
+      ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
     }
+
+    const totales = computeOrderTotals({
+      items:  orderItems,
+      coupon: appliedCoupon,
+      ivaRates,
+    });
+
+    // Nombres viejos mantenidos para no tocar el resto de la función: ahora son SOLO la parte
+    // en pesos. La parte en dólares viaja en los campos *Usd.
+    total                 = totales.totalArs;
+    const ivaAmount       = totales.ivaAmountArs;
+    couponDiscount        = totales.couponDiscountArs;
 
     // Crear la orden en la base de datos con el método de pago elegido.
     // Si el cliente está registrado, vincular la orden a su cuenta via customerId.
@@ -462,6 +528,9 @@ async function createOrder(req, res) {
         customerPhone: customerPhone || null,
         customerId:    customerId ? parseInt(customerId) : null,
         total,
+        // totalUsd: solo se guarda si el pedido REALMENTE tiene ítems en dólares. Si no, queda null
+        // y el pedido se comporta igual que siempre (100% pesos).
+        ...(totales.hasUsd ? { totalUsd: totales.totalUsd } : {}),
         // Pedidos MINORISTA con efectivo o transferencia pasan a QUOTE_APPROVED ("Aprobada sin pagar"):
         // el pedido está aceptado pero el pago aún no fue confirmado por el admin.
         // MercadoPago queda PENDING hasta que el webhook confirme el pago.
@@ -475,11 +544,17 @@ async function createOrder(req, res) {
         customerType: isMayorista ? "MAYORISTA" : "MINORISTA",
         wantsInvoice: applyIva,
         ivaAmount,
+        ...(totales.hasUsd ? { ivaAmountUsd: totales.ivaAmountUsd } : {}),
         customerNote: customerNote?.trim() || null,
         // shippingMethod: "RETIRO" (retiro en el local) o "ENVIO" (acordar envío).
         // Solo se aceptan los dos valores válidos; cualquier otro valor usa el default "RETIRO".
         shippingMethod: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO",
-        ...(appliedCoupon ? { couponId: appliedCoupon.id, couponDiscount } : {}),
+        ...(appliedCoupon ? {
+          couponId: appliedCoupon.id,
+          couponDiscount,
+          // Los cupones de monto fijo dejan esto en 0 (el valor del cupón está en pesos).
+          ...(totales.hasUsd ? { couponDiscountUsd: totales.couponDiscountUsd } : {}),
+        } : {}),
         items: {
           create: orderItems,
         },
@@ -723,7 +798,11 @@ async function updateOrderStatus(req, res) {
             where:   { orderId: affected.orderId },
             include: { product: { select: { name: true, images: true } } },
           });
-          const newTotal    = remainingItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+          // Antes: const newTotal = remainingItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+          // Comentado: mismo problema que los demás recálculos (monedas mezcladas, cupón e IVA
+          // descartados). Acá importa especialmente: si a una cotización con descuento se le agota
+          // un producto, el ajuste automático le devolvía el precio de lista al cliente.
+          const totalsData  = await recalcOrderTotals(affected.orderId);
           const newSnapshot = remainingItems.map((i) => ({
             id:        i.id,
             productId: i.productId,
@@ -745,7 +824,7 @@ async function updateOrderStatus(req, res) {
           await prisma.order.update({
             where: { id: affected.orderId },
             data:  {
-              total:          newTotal,
+              ...totalsData,
               clientSnapshot: newSnapshot,
               adminNotes:     stockMsg,
               ...(autoCancel ? { status: "CANCELLED", cancelReason: "Cancelada automáticamente: productos sin stock disponible." } : {}),
@@ -845,14 +924,16 @@ async function getStats(req, res) {
     // por tener un ítem USD, y en getStatsUsd no entran porque ahí solo se suman las líneas en USD).
     const hasUsdItems = { items: { some: { currency: "USD" } } };
 
-    const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems, mixedArsItems] =
+    const [totalOrders, approvedOrders, pendingOrders, totalRevenue, totalProducts, approvedItems, mixedArsItems, mixedNewRevenue] =
       await Promise.all([
         prisma.order.count({ where: { ...orderDateWhere } }),
         prisma.order.count({ where: { status: "APPROVED", ...orderDateWhere } }),
         prisma.order.count({ where: { status: "PENDING", ...orderDateWhere } }),
         prisma.order.aggregate({
           where: { status: "APPROVED", ...orderDateWhere, ...noUsdItems },
-          _sum: { total: true },
+          // ivaAmount: se suma para poder DESCONTARLO de la ganancia más abajo. El IVA es plata que
+          // se le cobra al cliente para girarla a ARCA, no es ingreso propio.
+          _sum: { total: true, ivaAmount: true },
         }),
         prisma.product.count({ where: { active: true } }),
         // Traer todos los items de órdenes APPROVED con el costo del producto
@@ -870,10 +951,22 @@ async function getStats(req, res) {
           // product.currency: para no sumar un costo maestro cargado en dólares a un total en pesos
           include: { product: { select: { cost: true, currency: true } } },
         }),
-        // Líneas en PESOS de los pedidos mixtos, para recuperar su facturación (ver abajo).
+        // Líneas en PESOS de los pedidos mixtos VIEJOS, para recuperar su facturación (ver abajo).
+        // Antes: where: { currency: "ARS", order: { ...hasUsdItems } } — sin el filtro totalUsd.
+        // Ahora se limita a los pedidos mixtos ANTERIORES al cambio de monedas separadas
+        // (totalUsd == null). En los nuevos, Order.total ya guarda solo los pesos y se suma directo
+        // en la consulta de acá abajo, sin tener que reconstruirlo desde las líneas.
         prisma.orderItem.findMany({
-          where: { currency: "ARS", order: { status: "APPROVED", ...orderDateWhere, ...hasUsdItems } },
+          where: {
+            currency: "ARS",
+            order: { status: "APPROVED", ...orderDateWhere, ...hasUsdItems, totalUsd: null },
+          },
           select: { price: true, quantity: true },
+        }),
+        // Pedidos mixtos NUEVOS: su Order.total ya es la parte en pesos, neta de cupón y con IVA.
+        prisma.order.aggregate({
+          where: { status: "APPROVED", ...orderDateWhere, ...hasUsdItems, totalUsd: { not: null } },
+          _sum: { total: true, ivaAmount: true },
         }),
       ]);
 
@@ -883,7 +976,10 @@ async function getStats(req, res) {
     // así que prorratearlos daría un número inventado. Es una aproximación conservadora, pero muy
     // preferible a que esa plata no aparezca en ningún lado.
     const mixedArsRevenue = mixedArsItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-    const revenue = (totalRevenue._sum.total || 0) + mixedArsRevenue;
+    // Antes: const revenue = (totalRevenue._sum.total || 0) + mixedArsRevenue;
+    // Ahora se suma también la facturación en pesos de los pedidos mixtos NUEVOS, que ya la tienen
+    // bien guardada en Order.total (los viejos siguen reconstruyéndose desde las líneas).
+    const revenue = (totalRevenue._sum.total || 0) + mixedArsRevenue + (mixedNewRevenue._sum.total || 0);
     // Costo total = suma de (cantidad × costo unitario) por cada item
     const totalCost = approvedItems.reduce((sum, item) => {
       // Antes: solo item.product?.cost (costo MAESTRO), ignorando el costo guardado en la orden.
@@ -897,7 +993,18 @@ async function getStats(req, res) {
       const unitCost = item.cost ?? costoMaestroEnMoneda(item.product, "ARS");
       return sum + item.quantity * unitCost;
     }, 0);
-    const totalProfit = revenue - totalCost;
+    // IVA facturado en pesos. NO es ingreso de la tienda: se le cobra al cliente y se le gira a
+    // ARCA. Por eso se descuenta de la ganancia (la facturación sí lo sigue incluyendo, que es lo
+    // que uno factura de verdad).
+    // Los pedidos mixtos VIEJOS no aportan IVA acá a propósito: su ivaAmount está calculado sobre un
+    // total que mezclaba monedas, así que prorratearlo daría un número inventado — y su facturación
+    // ya se reconstruye desde las líneas, que vienen sin IVA.
+    const ivaFacturado = (totalRevenue._sum.ivaAmount || 0) + (mixedNewRevenue._sum.ivaAmount || 0);
+
+    // Antes: const totalProfit = revenue - totalCost;
+    // Comentado: contaba el IVA como ganancia. Un pedido de $100.000 + 21% mostraba $21.000 de
+    // ganancia extra que en realidad hay que depositarle a ARCA.
+    const totalProfit = revenue - ivaFacturado - totalCost;
 
     res.json({
       totalOrders,
@@ -906,6 +1013,9 @@ async function getStats(req, res) {
       totalRevenue: revenue,
       totalCost,
       totalProfit,
+      // totalIva: lo consume el dashboard para poder aclarar de dónde sale la diferencia entre
+      // facturación y ganancia.
+      totalIva: Math.round(ivaFacturado * 100) / 100,
       totalProducts,
     });
   } catch (err) {
@@ -937,7 +1047,20 @@ async function getStatsUsd(req, res) {
       include: { product: { select: { cost: true, currency: true } } },
     });
 
-    const totalRevenue = usdItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    // Descuentos de cupón aplicados sobre la parte EN DÓLARES de los pedidos del período.
+    // Antes no se restaban: la facturación en dólares se calculaba a precio de lista, así que un
+    // cupón de porcentaje sobre un pedido con ítems en USD inflaba el cuadro en dólares.
+    // (Los cupones de monto fijo dejan couponDiscountUsd en 0 — su valor está en pesos.)
+    const usdCoupons = await prisma.order.aggregate({
+      where: { status: "APPROVED", ...orderDateWhere, couponDiscountUsd: { not: null } },
+      _sum: { couponDiscountUsd: true },
+    });
+
+    // Antes: const totalRevenue = usdItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const bruto = usdItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    // El IVA en dólares NO se suma acá a propósito: la facturación en dólares se mide por las líneas
+    // vendidas, y el IVA nunca fue ganancia (mismo criterio que el cuadro en pesos).
+    const totalRevenue = Math.round(Math.max(0, bruto - (usdCoupons._sum.couponDiscountUsd || 0)) * 100) / 100;
     // Mismo criterio de costo que getStats: el snapshot del ítem manda, y solo cae al costo maestro
     // del producto si el ítem no lo tiene. ?? (no ||) para respetar un costo de 0.
     // COMENTADO: el fallback tomaba el costo del producto sin mirar su moneda. Una variante en USD
@@ -1150,18 +1273,30 @@ async function updateOrderItem(req, res) {
     await prisma.orderItem.update({ where: { id: itemId }, data: updateData });
 
     // Recalcular total y snapshot
-    const allItems    = await prisma.orderItem.findMany({ where: { orderId } });
-    const updatedPrice = updateData.price ?? item.price;
-    const newTotal    = allItems.reduce(
-      (sum, i) => sum + (i.id === itemId ? updatedPrice : i.price) * (i.id === itemId ? newQty : i.quantity), 0
-    );
+    // COMENTADO: sumaba precio × cantidad de todos los ítems sin mirar la moneda, y descartaba el
+    // cupón y el IVA de la orden. Ahora lo hace recalcOrderTotals() (ver el helper).
+    // const allItems    = await prisma.orderItem.findMany({ where: { orderId } });
+    // const updatedPrice = updateData.price ?? item.price;
+    // const newTotal    = allItems.reduce(
+    //   (sum, i) => sum + (i.id === itemId ? updatedPrice : i.price) * (i.id === itemId ? newQty : i.quantity), 0
+    // );
+    // Nota: el cálculo viejo tenía que "parchear" el ítem editado porque leía los ítems ANTES de
+    // guardarlos; recalcOrderTotals corre después del update, así que ya lee el valor nuevo.
+    const totalsData = await recalcOrderTotals(orderId);
     const snapshot = await buildSnapshot(orderId);
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { total: newTotal, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
-      include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      data:  { ...totalsData, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
+      // Antes: include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      // Comentado: ese select recortado hacía que el panel de cotizaciones perdiera supplier/slug al
+      // guardar una cantidad o un precio (el front pisa la orden en memoria con esta respuesta).
+      include: ORDER_WITH_ITEMS_INCLUDE,
     });
+
+    // Mismo post-procesado que el listado: variantes en vivo + producto reconstruido si fue borrado
+    await attachVariantDetails(updatedOrder);
+    hydrateDeletedProducts(updatedOrder);
 
     res.json(updatedOrder);
   } catch (err) {
@@ -1201,15 +1336,21 @@ async function deleteOrderItem(req, res) {
 
     await prisma.orderItem.delete({ where: { id: itemId } });
 
-    const allItems = await prisma.orderItem.findMany({ where: { orderId } });
-    const newTotal = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // Antes: const allItems = ...; const newTotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado por lo mismo que en updateOrderItem: mezclaba monedas y borraba cupón e IVA.
+    const totalsData = await recalcOrderTotals(orderId);
     const snapshot = await buildSnapshot(orderId);
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { total: newTotal, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
-      include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      data:  { ...totalsData, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
+      // Antes: include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      // Comentado por el mismo motivo que en updateOrderItem: faltaban supplier/slug en la respuesta.
+      include: ORDER_WITH_ITEMS_INCLUDE,
     });
+
+    await attachVariantDetails(updatedOrder);
+    hydrateDeletedProducts(updatedOrder);
 
     res.json(updatedOrder);
   } catch (err) {
@@ -1285,18 +1426,26 @@ async function addItemToOrder(req, res) {
     if (isApproved) await saveOriginalAndMarkModified(orderId, order);
 
     await prisma.orderItem.create({
-      data: { orderId, productId: product.id, quantity: qty, price: finalPrice, variantId: resolvedVariantId, variantLabel, variantSku },
+      // currency: faltaba, igual que en modifyOrder — un producto en dólares agregado a una
+      // cotización quedaba guardado como pesos (default ARS del schema).
+      data: { orderId, productId: product.id, quantity: qty, price: finalPrice, currency: effectiveCurrency({ product }), variantId: resolvedVariantId, variantLabel, variantSku },
     });
 
-    const allItems = await prisma.orderItem.findMany({ where: { orderId } });
-    const newTotal  = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // Antes: const allItems = ...; const newTotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado: ídem los otros — sin monedas separadas y pisando el cupón y el IVA.
+    const totalsData = await recalcOrderTotals(orderId);
     const snapshot  = await buildSnapshot(orderId);
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { total: newTotal, clientSnapshot: snapshot },
-      include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      data:  { ...totalsData, clientSnapshot: snapshot },
+      // Antes: include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+      // Comentado por el mismo motivo que en updateOrderItem: faltaban supplier/slug en la respuesta.
+      include: ORDER_WITH_ITEMS_INCLUDE,
     });
+
+    await attachVariantDetails(updatedOrder);
+    hydrateDeletedProducts(updatedOrder);
 
     res.json(updatedOrder);
   } catch (err) {
@@ -1400,13 +1549,14 @@ async function modifyOrder(req, res) {
 
     // Marcar como modificado, recalcular total y snapshot
     await saveOriginalAndMarkModified(orderId, order);
-    const allItems = await prisma.orderItem.findMany({ where: { orderId } });
-    const newTotal = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // Antes: const allItems = ...; const newTotal = allItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado: ídem los otros — sin monedas separadas y pisando el cupón y el IVA.
+    const totalsData = await recalcOrderTotals(orderId);
     const snapshot = await buildSnapshot(orderId);
 
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { total: newTotal, clientSnapshot: snapshot },
+      data:  { ...totalsData, clientSnapshot: snapshot },
       include: {
         items: { include: { product: { select: { id: true, name: true, images: true } } } },
         coupon: { select: { code: true, discountType: true, discountValue: true } },
@@ -1450,6 +1600,56 @@ async function getMyCotizaciones(req, res) {
   }
 }
 
+// ── Helper: recalcular los totales de una orden desde sus ítems ───────────────
+// Devuelve el objeto `data` listo para pasarle a prisma.order.update().
+//
+// POR QUÉ: había SEIS lugares que recalculaban el total al editar una cotización (cambiar una
+// cantidad, cambiar un precio, borrar un ítem, agregar un ítem, reemplazar ítems, y el ajuste
+// automático por falta de stock) y todos hacían lo mismo:
+//     total = Σ precio × cantidad
+// Eso tenía dos problemas: (1) sumaba pesos y dólares en un mismo número, y (2) PISABA el cupón y
+// el IVA — una cotización con 10% de descuento volvía al precio de lista con solo tocarle una
+// cantidad, y el descuento seguía figurando en pantalla aunque ya no estuviera aplicado.
+//
+// Ahora los seis usan esta función, que recalcula con computeOrderTotals(): cada moneda por su
+// lado y en el orden correcto — (subtotal − cupón) + IVA sobre la base ya descontada.
+async function recalcOrderTotals(orderId) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items:  { select: { productId: true, price: true, quantity: true, currency: true } },
+      coupon: { select: { discountType: true, discountValue: true } },
+    },
+  });
+  if (!order) return {};
+
+  // Las alícuotas solo se consultan si la orden lleva factura.
+  let ivaRates = null;
+  if (order.wantsInvoice) {
+    const prods = await prisma.product.findMany({
+      where:  { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+      select: { id: true, ivaRate: true },
+    });
+    ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
+  }
+
+  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates });
+
+  return {
+    total:     t.totalArs,
+    ivaAmount: order.wantsInvoice ? t.ivaAmountArs : (order.ivaAmount || 0),
+    // El descuento solo se toca si la orden tiene un cupón aplicado.
+    ...(order.couponId ? { couponDiscount: t.couponDiscountArs } : {}),
+    // Los campos en dólares solo se escriben si el pedido tiene ítems en dólares. Un pedido 100%
+    // en pesos los deja en null y se comporta exactamente como antes.
+    ...(t.hasUsd ? {
+      totalUsd:     t.totalUsd,
+      ivaAmountUsd: order.wantsInvoice ? t.ivaAmountUsd : 0,
+      ...(order.couponId ? { couponDiscountUsd: t.couponDiscountUsd } : {}),
+    } : {}),
+  };
+}
+
 // ── Helper: crear snapshot de items actuales de una orden ─────────────────────
 async function buildSnapshot(orderId) {
   const items = await prisma.orderItem.findMany({
@@ -1483,26 +1683,34 @@ async function createNotification(customerId, orderId, type, message) {
 async function publishCotizacion(req, res) {
   try {
     const orderId    = parseInt(req.params.id);
-    const { adminNotes } = req.body;
+    // notify: si es false, se publica el snapshot SIN crear la notificación in-app al cliente
+    // ("Publicar sin notificar"). Mismo criterio que approveCotizacion. Default true.
+    // Antes: const { adminNotes } = req.body;
+    const { adminNotes, notify = true } = req.body;
 
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) return res.status(404).json({ error: "Orden no encontrada" });
 
     const snapshot = await buildSnapshot(orderId);
-    const total    = snapshot.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Antes: const total = snapshot.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado: mismo problema — al publicarle los cambios al cliente se recalculaba el total a
+    // precio de lista, mezclando monedas y descartando el cupon y el IVA.
+    const totalsData = await recalcOrderTotals(orderId);
 
     const updated = await prisma.order.update({
       where: { id: orderId },
-      data:  { clientSnapshot: snapshot, adminNotes: adminNotes || null, total },
+      data:  { clientSnapshot: snapshot, adminNotes: adminNotes || null, ...totalsData },
     });
 
-    // Notificar al cliente
-    await createNotification(
-      order.customerId,
-      orderId,
-      "COTIZACION_ACTUALIZADA",
-      `Tu cotización #${orderId} fue actualizada por el vendedor.${adminNotes ? " Nota: " + adminNotes : ""}`
-    );
+    // Notificar al cliente (solo si notify !== false)
+    if (notify !== false) {
+      await createNotification(
+        order.customerId,
+        orderId,
+        "COTIZACION_ACTUALIZADA",
+        `Tu cotización #${orderId} fue actualizada por el vendedor.${adminNotes ? " Nota: " + adminNotes : ""}`
+      );
+    }
 
     res.json(updated);
   } catch (err) {
@@ -1610,13 +1818,17 @@ async function approveCotizacion(req, res) {
 
     // Publicar snapshot con el estado actual y marcar como QUOTE_APPROVED
     const snapshot = await buildSnapshot(orderId);
-    const total    = snapshot.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Antes: const total = snapshot.reduce((s, i) => s + i.price * i.quantity, 0);
+    // Comentado: al APROBAR la cotizacion se fijaba el total a pagar sumando las lineas a precio de
+    // lista — mezclando monedas y borrando el cupon y el IVA. O sea que aprobar una cotizacion con
+    // descuento le devolvia el precio sin descuento justo antes de que el cliente pague.
+    const totalsData = await recalcOrderTotals(orderId);
 
     // QUOTE_APPROVED: admin confirmó la cotización, el cliente debe pagar.
     // Solo pasa a APPROVED cuando se confirma el pago (manual o via webhook).
     const updated = await prisma.order.update({
       where: { id: orderId },
-      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, total },
+      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, ...totalsData },
     });
 
     // Solo notificar al cliente si notify !== false ("Aprobar sin notificar" lo saltea).
@@ -1709,9 +1921,12 @@ async function confirmCotizacionPayment(req, res) {
   try {
     const orderId    = parseInt(req.params.id);
     const customerId = req.user.id;
-    const { paymentMethod } = req.body; // "EFECTIVO" | "TRANSFERENCIA"
+    const { paymentMethod } = req.body; // "EFECTIVO" | "TRANSFERENCIA" | "A_CONVENIR"
 
-    if (!["EFECTIVO", "TRANSFERENCIA"].includes(paymentMethod)) {
+    // Antes: if (!["EFECTIVO", "TRANSFERENCIA"].includes(paymentMethod))
+    // Se suma A_CONVENIR: una cotización con ítems en dólares no se puede cobrar con un monto
+    // cerrado (el sistema no convierte monedas), así que el cliente confirma y la tienda coordina.
+    if (!["EFECTIVO", "TRANSFERENCIA", "A_CONVENIR"].includes(paymentMethod)) {
       return res.status(400).json({ error: "Método de pago inválido" });
     }
 
@@ -1732,6 +1947,20 @@ async function confirmCotizacionPayment(req, res) {
       },
     });
     if (!order) return res.status(404).json({ error: "Cotización no encontrada o no disponible" });
+
+    // GATING SERVER-SIDE: si la cotización tiene ítems en dólares, el único método aceptado es
+    // A_CONVENIR. El sistema no convierte monedas, así que no hay un monto único que cobrar:
+    // confirmarla como "Efectivo" o "Transferencia" dejaría el pedido en revisión con un total en
+    // pesos que ignora la parte en dólares. MercadoPago ya estaba bloqueado en payment.controller
+    // (mpPaymentBlockedReason), pero estos dos caminos habían quedado abiertos.
+    // El front ya no ofrece las otras opciones, pero el bloqueo tiene que estar acá igual: el
+    // endpoint se puede llamar directo.
+    const cotizacionTieneUsd = (order.items || []).some((i) => i.currency === "USD");
+    if (cotizacionTieneUsd && paymentMethod !== "A_CONVENIR") {
+      return res.status(400).json({
+        error: "Esta cotización incluye artículos con precio en dólares: el pago se coordina con la tienda.",
+      });
+    }
 
     // Actualizar paymentMethod y status en DB.
     // PAYMENT_REVIEW indica que el cliente ya eligió cómo pagar — el admin debe verificar
@@ -1848,7 +2077,12 @@ async function applyCouponToOrder(req, res) {
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { couponUsage: true },
+      // items: hacen falta para recalcular el total por moneda al aplicar el cupón (antes alcanzaba
+      // con order.total porque todo se trataba como un solo número en pesos).
+      include: {
+        couponUsage: true,
+        items: { select: { productId: true, price: true, quantity: true, currency: true } },
+      },
     });
     if (!order) return res.status(404).json({ valid: false, error: "Orden no encontrada" });
     if (order.couponId) return res.status(400).json({ valid: false, error: "Esta cotización ya tiene un cupón aplicado" });
@@ -1894,16 +2128,43 @@ async function applyCouponToOrder(req, res) {
     }
 
     // Calcular descuento y nuevo total
-    const discount = coupon.discountType === "PERCENTAGE"
-      ? Math.round((order.total * coupon.discountValue) / 100 * 100) / 100
-      : Math.min(coupon.discountValue, order.total);
-    const newTotal = Math.max(0, order.total - discount);
+    // COMENTADO: aplicaba el descuento sobre order.total, que ya venía CON el IVA sumado y encima
+    // mezclaba pesos y dólares. Descontar sobre un total con IVA equivale a regalarle al cliente
+    // también el IVA de la parte descontada.
+    // const discount = coupon.discountType === "PERCENTAGE"
+    //   ? Math.round((order.total * coupon.discountValue) / 100 * 100) / 100
+    //   : Math.min(coupon.discountValue, order.total);
+    // const newTotal = Math.max(0, order.total - discount);
+    //
+    // Ahora se recalcula todo desde los ítems con la misma función que usa createOrder:
+    // (subtotal − cupón) + IVA sobre la base ya descontada, y cada moneda por su lado.
+    let ivaRatesQuote = null;
+    if (order.wantsInvoice) {
+      const prods = await prisma.product.findMany({
+        where: { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+        select: { id: true, ivaRate: true },
+      });
+      ivaRatesQuote = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
+    }
+    const totalesQuote = computeOrderTotals({ items: order.items, coupon, ivaRates: ivaRatesQuote });
+    const discount = totalesQuote.couponDiscountArs;
+    const newTotal = totalesQuote.totalArs;
 
     // Actualizar orden y registrar uso en una transacción
     const [updatedOrder] = await prisma.$transaction([
       prisma.order.update({
         where: { id: orderId },
-        data: { total: newTotal, couponId: coupon.id, couponDiscount: discount },
+        data: {
+          total: newTotal,
+          couponId: coupon.id,
+          couponDiscount: discount,
+          ...(totalesQuote.hasUsd ? {
+            totalUsd:          totalesQuote.totalUsd,
+            couponDiscountUsd: totalesQuote.couponDiscountUsd,
+            ivaAmountUsd:      totalesQuote.ivaAmountUsd,
+          } : {}),
+          ...(order.wantsInvoice ? { ivaAmount: totalesQuote.ivaAmountArs } : {}),
+        },
       }),
       prisma.couponUsage.create({
         data: { couponId: coupon.id, orderId, customerEmail: customerEmail.toLowerCase() },
@@ -2048,11 +2309,21 @@ async function createManualOrder(req, res) {
         quantity:     qty,
         price,
         cost:         validCost,
+        // currency: faltaba acá también. Una venta manual de un producto en dólares se guardaba
+        // como pesos, así que entraba mal en la Caja y en el total del pedido.
+        currency:     effectiveCurrency({ product }),
         variantId:    selectedVariant ? selectedVariant.id : null,
         variantLabel,
         variantSku:   selectedVariant?.sku || null,
       });
     }
+
+    // Totales por moneda. La venta manual no lleva cupón ni factura con IVA, así que acá
+    // computeOrderTotals solo separa pesos de dólares — pero se usa la misma función que el resto
+    // para que el criterio sea uno solo. Los ítems libres (sin productId) van en pesos.
+    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null });
+    // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
+    total = totalesManual.totalArs;
 
     // Crear la orden y descontar stock en una transacción
     const order = await prisma.$transaction(async (tx) => {
@@ -2109,6 +2380,7 @@ async function createManualOrder(req, res) {
           // (el default del schema) y la orden salía con el cartelito "NUEVO", y además sumaba al
           // badge de pendientes del sidebar si se registraba con estado Pendiente.
           seenByAdmin:   true,
+          ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd } : {}),
           items: { create: orderItems },
         },
         include: {
@@ -2378,6 +2650,10 @@ async function modifyOrder(req, res) {
           quantity:     qty,
           price:        price,
           cost:         newItemCost,
+          // currency: faltaba. Sin esto la línea tomaba el default del schema (ARS), así que
+          // agregar un producto en dólares desde "Modificar pedido" lo guardaba como si fuera en
+          // pesos — y ahora que los totales se calculan por moneda, esa línea se sumaba a los pesos.
+          currency:     effectiveCurrency({ product }),
           variantId:    newItem.variantId ? parseInt(newItem.variantId) : null,
           variantLabel: newItem.variantLabel || null,
         },
@@ -2411,27 +2687,32 @@ async function modifyOrder(req, res) {
     }
 
     // Recalcular total: subtotal de items + IVA (si aplica) - descuento cupón
-    const allItems = await prisma.orderItem.findMany({ where: { orderId } });
-    const newSubtotal = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
-
-    // Recalcular IVA si el pedido lo tiene
-    let newIvaAmount = 0;
-    if (order.wantsInvoice) {
-      for (const item of allItems) {
-        const p = await prisma.product.findUnique({ where: { id: item.productId }, select: { ivaRate: true } });
-        const rate = ((p?.ivaRate ?? 21) / 100);
-        newIvaAmount += Math.round(item.price * item.quantity * rate * 100) / 100;
-      }
-      newIvaAmount = Math.round(newIvaAmount * 100) / 100;
-    }
-
-    const newTotal = Math.max(0, Math.round((newSubtotal - (order.couponDiscount || 0) + newIvaAmount) * 100) / 100);
+    // COMENTADO: tres problemas. (1) Sumaba pesos y dólares en un mismo número. (2) Calculaba el
+    // IVA sobre el precio de lista y recién después restaba el cupón, así que el descuento se
+    // llevaba puesto el IVA de la parte descontada. (3) Reusaba el couponDiscount VIEJO aunque los
+    // ítems (y por lo tanto el subtotal) hubieran cambiado, así que un cupón de porcentaje quedaba
+    // congelado en el monto del pedido original.
+    // const allItems = await prisma.orderItem.findMany({ where: { orderId } });
+    // const newSubtotal = allItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    // let newIvaAmount = 0;
+    // if (order.wantsInvoice) {
+    //   for (const item of allItems) {
+    //     const p = await prisma.product.findUnique({ where: { id: item.productId }, select: { ivaRate: true } });
+    //     const rate = ((p?.ivaRate ?? 21) / 100);
+    //     newIvaAmount += Math.round(item.price * item.quantity * rate * 100) / 100;
+    //   }
+    //   newIvaAmount = Math.round(newIvaAmount * 100) / 100;
+    // }
+    // const newTotal = Math.max(0, Math.round((newSubtotal - (order.couponDiscount || 0) + newIvaAmount) * 100) / 100);
+    //
+    // Ahora lo hace el mismo helper que el resto de las ediciones, con el cupón recalculado sobre
+    // el subtotal nuevo y el IVA sobre la base ya descontada.
+    const totalsData = await recalcOrderTotals(orderId);
 
     const updated = await prisma.order.update({
       where: { id: orderId },
       data: {
-        total:            newTotal,
-        ivaAmount:        newIvaAmount,
+        ...totalsData,
         isModified:       true,
         originalSnapshot: order.originalSnapshot ? undefined : originalSnapshot, // solo setear la primera vez
       },

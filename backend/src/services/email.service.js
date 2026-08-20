@@ -77,7 +77,17 @@ function formatMoney(amount, currency) {
 // false y los templates siguen usando Order.total tal cual (con cupón e IVA ya aplicados).
 function splitTotalsByCurrency(order) {
   const items = order?.items || [];
-  const hasUsd   = items.some((i) => i.currency === "USD");
+  const hasUsd = items.some((i) => i.currency === "USD");
+
+  // Pedido guardado DESPUÉS de separar monedas: cada total ya viene en su campo, neto de cupón y
+  // con IVA. Antes esta función siempre sumaba las líneas a precio de LISTA, así que el mail y el
+  // PDF de un pedido mixto mostraban un total sin el descuento ni el IVA aplicados.
+  if (order?.totalUsd != null) {
+    return { hasUsd: true, totalArs: order.total || 0, totalUsd: order.totalUsd || 0 };
+  }
+
+  // Pedido mixto viejo (totalUsd == null): no hay forma de repartir el cupón/IVA entre monedas,
+  // así que se reconstruye desde las líneas — exactamente lo que se hacía hasta ahora.
   const totalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
   const totalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
   return { hasUsd, totalArs, totalUsd };
@@ -328,8 +338,9 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
           tableX + 8, rowY + 6,
           { width: tableW - cols.subtotal - 8 }
         );
+      // Si el pedido tiene descuento tambien en dolares, se agrega en la misma fila. Nunca se suman.
       doc.text(
-        `- ${formatARS(order.couponDiscount)}`,
+        `- ${formatARS(order.couponDiscount)}${order.couponDiscountUsd > 0 ? ` · - ${formatMoney(order.couponDiscountUsd, "USD")}` : ""}`,
         tableX + tableW - cols.subtotal - 4, rowY + 6,
         { width: cols.subtotal - 4, align: "right" }
       );
@@ -342,7 +353,7 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
       doc.fillColor("#2563eb").fontSize(9).font("Helvetica-Bold")
         .text("IVA (21%)", tableX + 8, rowY + 6, { width: tableW - cols.subtotal - 8 });
       doc.text(
-        `+ ${formatARS(order.ivaAmount)}`,
+        `+ ${formatARS(order.ivaAmount)}${order.ivaAmountUsd > 0 ? ` · + ${formatMoney(order.ivaAmountUsd, "USD")}` : ""}`,
         tableX + tableW - cols.subtotal - 4, rowY + 6,
         { width: cols.subtotal - 4, align: "right" }
       );
@@ -540,7 +551,7 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                     🏷️ Cupón aplicado${order.coupon?.code ? ` (${order.coupon.code})` : ""}
                   </td>
                   <td style="padding:10px 16px;color:#16a34a;font-weight:700;font-size:13px;text-align:right;">
-                    - ${formatARS(order.couponDiscount)}
+                    - ${formatARS(order.couponDiscount)}${order.couponDiscountUsd > 0 ? `<br>- ${formatMoney(order.couponDiscountUsd, "USD")}` : ""}
                   </td>
                 </tr>` : ""}
                 ${order.wantsInvoice && order.ivaAmount > 0 ? `
@@ -549,7 +560,7 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                     🧾 IVA (21%)
                   </td>
                   <td style="padding:10px 16px;color:#2563eb;font-weight:700;font-size:13px;text-align:right;">
-                    + ${formatARS(order.ivaAmount)}
+                    + ${formatARS(order.ivaAmount)}${order.ivaAmountUsd > 0 ? `<br>+ ${formatMoney(order.ivaAmountUsd, "USD")}` : ""}
                   </td>
                 </tr>` : ""}
                 <!-- COMENTADO: acá iba una sola fila TOTAL con formatARS(order.total). En un pedido

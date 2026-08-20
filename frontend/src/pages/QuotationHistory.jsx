@@ -33,6 +33,14 @@ function getQuoteDisplay(status) {
       badgeCls: "bg-[#7ffc97] text-[#002109] font-bold",
       cardBorder: true,
     },
+    // PAYMENT_REVIEW faltaba en este mapa. Es el estado en el que queda la cotización apenas el
+    // cliente confirma cómo va a pagar, así que lo ve seguido — y como el fallback de abajo usa
+    // `label: status`, le aparecía el nombre crudo del enum ("PAYMENT_REVIEW") como si fuera texto.
+    PAYMENT_REVIEW: {
+      label: "Pago en revisión",
+      badgeCls: "bg-blue-100 text-blue-700 font-bold",
+      cardBorder: true,
+    },
     APPROVED: {
       label: "Pagada",
       badgeCls: "bg-green-100 text-green-700 font-bold",

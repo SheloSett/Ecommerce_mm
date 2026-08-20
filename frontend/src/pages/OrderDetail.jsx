@@ -7,6 +7,7 @@ import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -101,21 +102,14 @@ function exportExcel(order, customer) {
   ]);
   // Ítems ARS y USD mezclados (A_CONVENIR) → el TOTAL único en pesos sería incorrecto.
   const hasUsdXls   = order.items.some((i) => i.currency === "USD");
-  const totalArsXls = order.items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
-  const totalUsdXls = order.items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
-  const totals = hasUsdXls
-    ? [
-        [],
-        ...(totalArsXls > 0 ? [["", "", "", "TOTAL ARS", formatPrice(totalArsXls)]] : []),
-        ["", "", "", "TOTAL USD", formatPriceWithCurrency(totalUsdXls, "USD")],
-      ]
-    : [
-        [], ["", "", "", "Subtotal", formatPrice(subtotal)],
-        ...(order.couponDiscount > 0 ? [["", "", "", `Descuento (${order.coupon?.code || "cupón"})`, `−${formatPrice(order.couponDiscount)}`]] : []),
-        ...(isMayorista && order.ivaAmount > 0 ? [["", "", "", "IVA", formatPrice(order.ivaAmount)]] : []),
-        ...(order.shippingCost > 0 ? [["", "", "", "Envío", formatPrice(order.shippingCost)]] : []),
-        ["", "", "", "TOTAL", formatPrice(order.total)],
-      ];
+  // Antes se sumaban las líneas a precio de lista, así que el Excel salía sin el cupón ni el IVA.
+  const Tx          = getOrderTotals(order);
+  const totalArsXls = Tx.ars.total;
+  const totalUsdXls = Tx.usd.total;
+  // COMENTADO: con dolares en el pedido se exportaban SOLO los dos totales finales, sin subtotal,
+  // sin descuento y sin IVA. Ahora las dos ramas usan el mismo desglose por moneda.
+  const totals = [[], ...breakdownRowsAoa(order, order.coupon?.code)];
+
   const ws = XLSX.utils.aoa_to_sheet([...header, itemHeader, ...itemRows, ...totals]);
   ws["!cols"] = [{ wch: 38 }, { wch: 16 }, { wch: 10 }, { wch: 16 }];
   const wb = XLSX.utils.book_new();
@@ -125,9 +119,11 @@ function exportExcel(order, customer) {
 
 function exportPDF(order, customer) {
   const isMayorista = customer?.type === "MAYORIST";
-  const hasDiscount = (order.couponDiscount || 0) > 0;
-  const hasIva      = order.wantsInvoice && (order.ivaAmount || 0) > 0;
-  const subtotal    = (order.items || []).reduce((s, i) => s + i.price * i.quantity, 0);
+  // Antes: subtotal sumaba pesos y dólares juntos, y el cupón/IVA salían de los campos crudos.
+  const Tp          = getOrderTotals(order);
+  const hasDiscount = Tp.ars.discount > 0 || Tp.usd.discount > 0;
+  const hasIva      = order.wantsInvoice && (Tp.ars.iva > 0 || Tp.usd.iva > 0);
+  const subtotal    = Tp.ars.subtotal;
 
   const itemRows = (order.items || []).map((item) => {
     const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
@@ -149,22 +145,14 @@ function exportPDF(order, customer) {
   }).join("");
 
   // Ítems ARS y USD mezclados (A_CONVENIR) → el TOTAL único en pesos sería incorrecto.
-  const hasUsdPdf   = (order.items || []).some((i) => i.currency === "USD");
-  const totalArsPdf = (order.items || []).filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
-  const totalUsdPdf = (order.items || []).filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  // Antes se recalculaban desde los ítems (precio de lista, sin cupón ni IVA).
+  const hasUsdPdf   = Tp.hasUsd;
+  const totalArsPdf = Tp.ars.total;
+  const totalUsdPdf = Tp.usd.total;
 
-  const totalRows = hasUsdPdf
-    ? [
-        totalArsPdf > 0 ? `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL ARS</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(totalArsPdf)}</td></tr>` : "",
-        `<tr ${totalArsPdf > 0 ? "" : 'style="border-top:2px solid #1e293b"'}><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL USD</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPriceWithCurrency(totalUsdPdf, "USD")}</td></tr>`,
-      ].join("")
-    : [
-        `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotal)}</td></tr>`,
-        hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">Descuento (${order.coupon?.code || "cupón"})</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">−${formatPrice(order.couponDiscount)}</td></tr>` : "",
-        (order.shippingCost > 0) ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Envío</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+${formatPrice(order.shippingCost)}</td></tr>` : "",
-        hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+${formatPrice(order.ivaAmount)}</td></tr>` : "",
-        `<tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(order.total)}</td></tr>`,
-      ].join("");
+  // COMENTADO: idem el Excel — la rama con dolares mostraba solo los totales. breakdownRowsHtml()
+  // arma Subtotal / Descuento / IVA (con alicuota) / TOTAL para cada moneda.
+  const totalRows = breakdownRowsHtml(order, order.coupon?.code);
 
   const addr = order.shippingAddress;
   const addrHtml = addr
@@ -257,14 +245,22 @@ export default function OrderDetail() {
 
   if (!order) return null;
 
-  const subtotalItems  = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+  // Montos por moneda (ver utils/orderTotals.js). El cupón y el IVA ahora vienen separados por
+  // moneda desde el backend, así que el cliente ve el descuento en pesos y el descuento en dólares
+  // por separado en vez de un único número mezclado.
+  const T = getOrderTotals(order);
   const shippingCost   = order.shippingCost || 0;
-  const couponDiscount = order.couponDiscount || 0;
-  const ivaAmount      = order.ivaAmount || 0;
-  // Ítems ARS y USD mezclados (A_CONVENIR) → el total único en pesos sería incorrecto.
-  const hasUsd   = order.items.some((i) => i.currency === "USD");
-  const totalArs = order.items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
-  const totalUsd = order.items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+  // Antes: const subtotalItems = order.items.reduce((s, i) => s + i.price * i.quantity, 0);
+  //        const couponDiscount = order.couponDiscount || 0;
+  //        const ivaAmount = order.ivaAmount || 0;
+  //        const totalArs = order.items.filter(...).reduce(...);  ← precio de lista, sin cupón
+  //        const totalUsd = order.items.filter(...).reduce(...);
+  const subtotalItems  = T.ars.subtotal;
+  const couponDiscount = T.ars.discount;
+  const ivaAmount      = T.ars.iva;
+  const hasUsd   = T.hasUsd;
+  const totalArs = T.ars.total;
+  const totalUsd = T.usd.total;
 
   // El snapshot puede ser un array (formato viejo) o un objeto { items, total, ivaAmount, couponDiscount } (formato nuevo)
   const rawSnap          = order.originalSnapshot;
@@ -444,14 +440,24 @@ export default function OrderDetail() {
               </div>
             ) : (
               <div className="border-t border-slate-200 px-5 py-4 space-y-2">
-                <div className="flex justify-between text-sm text-slate-500">
+                {/* Cada renglón muestra "$X + USD Y" cuando el pedido mezcla monedas. Antes el
+                    descuento y el IVA de la parte en dólares se mostraban con el "$" de pesos. */}
+                {/* Un renglón por moneda, cada monto con su propio signo. Antes iban en una sola
+                    línea unidas por " + " y se leía como si hubiera que sumarlas entre sí. */}
+                <div className="flex justify-between items-start text-sm text-slate-500">
                   <span>Subtotal</span>
-                  <span>{formatPrice(subtotalItems)}</span>
+                  <span className="text-right leading-tight">
+                    {subtotalItems > 0 && <div>{formatPrice(subtotalItems)}</div>}
+                    {T.usd.subtotal > 0 && <div>{formatPriceWithCurrency(T.usd.subtotal, "USD")}</div>}
+                  </span>
                 </div>
-                {couponDiscount > 0 && (
-                  <div className="flex justify-between text-sm text-green-600">
+                {(couponDiscount > 0 || T.usd.discount > 0) && (
+                  <div className="flex justify-between items-start text-sm text-green-600">
                     <span>Descuento {order.coupon?.code ? `(${order.coupon.code})` : ""}</span>
-                    <span>−{formatPrice(couponDiscount)}</span>
+                    <span className="text-right leading-tight">
+                      {couponDiscount > 0 && <div>−{formatPrice(couponDiscount)}</div>}
+                      {T.usd.discount > 0 && <div>−{formatPriceWithCurrency(T.usd.discount, "USD")}</div>}
+                    </span>
                   </div>
                 )}
                 {shippingCost > 0 && (
@@ -460,18 +466,23 @@ export default function OrderDetail() {
                     <span>+{formatPrice(shippingCost)}</span>
                   </div>
                 )}
-                {ivaAmount > 0 && (
-                  <div className="flex justify-between text-sm text-slate-500">
+                {(ivaAmount > 0 || T.usd.iva > 0) && (
+                  <div className="flex justify-between items-start text-sm text-slate-500">
                     <span>IVA</span>
-                    <span>+{formatPrice(ivaAmount)}</span>
+                    <span className="text-right leading-tight">
+                      {ivaAmount > 0 && <div>+{formatPrice(ivaAmount)}</div>}
+                      {T.usd.iva > 0 && <div>+{formatPriceWithCurrency(T.usd.iva, "USD")}</div>}
+                    </span>
                   </div>
                 )}
                 <div className="flex flex-col gap-0.5 pt-2 border-t border-slate-200">
                   <div className="flex justify-between text-base font-bold text-slate-800">
                     <span>Total</span>
+                    {/* Antes el caso sin dólares usaba order.total y el caso con dólares recalculaba
+                        desde los ítems (sin cupón). Ahora los dos salen de getOrderTotals(). */}
                     {hasUsd
                       ? (totalArs > 0 ? <span>{formatPrice(totalArs)}</span> : <span>{formatPriceWithCurrency(totalUsd, "USD")}</span>)
-                      : <span>{formatPrice(order.total)}</span>}
+                      : <span>{formatPrice(totalArs)}</span>}
                   </div>
                   {hasUsd && totalArs > 0 && (
                     <div className="flex justify-end text-base font-bold text-slate-800">

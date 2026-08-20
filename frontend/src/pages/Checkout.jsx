@@ -146,15 +146,48 @@ export default function Checkout() {
   const faltaMinimo  = exigirMinimo && subtotalArs < mayoristaMinimoCompra;
 
   const subtotal       = items.reduce((s, i) => s + i.price * i.quantity, 0);
-  const couponDiscount = couponResult?.discountAmount || 0;
-  const baseTotal      = Math.max(0, subtotal - couponDiscount);
+
+  // Descuento del cupón separado por moneda, con las MISMAS reglas que el backend
+  // (backend/src/utils/orderTotals.js): el porcentaje se aplica a cada moneda por su lado, y el
+  // cupón de monto fijo —que está expresado en pesos— solo descuenta de la parte en pesos.
+  // Antes se usaba couponResult.discountAmount, un único número calculado sobre el total mezclado.
+  const cuponTipo  = couponResult?.coupon?.discountType;
+  const cuponValor = couponResult?.coupon?.discountValue || 0;
+  const couponDiscount = !couponResult ? 0
+    : (cuponTipo === "PERCENTAGE" ? (subtotalArs * cuponValor) / 100 : Math.min(cuponValor, subtotalArs));
+  const couponDiscountUsd = !couponResult ? 0
+    : (cuponTipo === "PERCENTAGE" ? (subtotalUsd * cuponValor) / 100 : 0);
+
+  const baseTotal      = Math.max(0, subtotalArs - couponDiscount);
+
   // IVA calculado por producto según su campo ivaRate (10.5% o 21%).
+  // Antes: acc + item.price * item.quantity * rate  ← sobre el precio de LISTA.
+  // Comentado porque el descuento del cupón va ANTES que el IVA: si se calcula el IVA sobre el
+  // precio de lista y después se resta el cupón, la tienda termina regalando también el IVA de la
+  // parte descontada. Ahora la base de cada línea baja en la misma proporción que el descuento,
+  // igual que hace el backend.
+  const factorArs = subtotalArs > 0 ? baseTotal / subtotalArs : 1;
   const ivaAmount = (isMayorista && wantsInvoice)
     ? items.reduce((acc, item) => {
+        if ((item.currency || "ARS") === "USD") return acc; // el IVA en dólares va aparte
         const rate = (item.ivaRate ?? 21) / 100;
-        return acc + item.price * item.quantity * rate;
+        return acc + item.price * item.quantity * rate * factorArs;
       }, 0)
     : 0;
+
+  // ── Lo mismo para la parte en DÓLARES ───────────────────────────────────────
+  // Faltaba: el resumen calculaba todo en pesos y el total de la parte en dólares no existía,
+  // así que un carrito mixto mostraba un "Subtotal" que sumaba las dos monedas como si fueran una.
+  const baseTotalUsd  = Math.max(0, subtotalUsd - couponDiscountUsd);
+  const factorUsd     = subtotalUsd > 0 ? baseTotalUsd / subtotalUsd : 1;
+  const ivaAmountUsd  = (isMayorista && wantsInvoice)
+    ? items.reduce((acc, item) => {
+        if ((item.currency || "ARS") !== "USD") return acc;
+        const rate = (item.ivaRate ?? 21) / 100;
+        return acc + item.price * item.quantity * rate * factorUsd;
+      }, 0)
+    : 0;
+  const finalTotalUsd = baseTotalUsd + ivaAmountUsd;
   // Costo de envío: solo aplica si el método es CORREO_ARGENTINO y ya se cotizó
   const shippingCost = shippingMethod === "CORREO_ARGENTINO" ? (shippingRate?.price || 0) : 0;
   const finalTotal   = baseTotal + ivaAmount + shippingCost;
@@ -192,7 +225,10 @@ export default function Checkout() {
     if (!couponCode.trim()) return;
     setCouponLoading(true);
     try {
-      const res = await couponsApi.validate(couponCode.trim(), subtotal, form.customerEmail);
+      // Antes se mandaba `subtotal` (suma que mezcla pesos y dólares). El mínimo de compra del
+      // cupón está en pesos, así que el backend lo mide contra la parte en pesos — acá va lo mismo
+      // para que la validación previa no diga "válido" y después el pedido lo rechace.
+      const res = await couponsApi.validate(couponCode.trim(), subtotalArs, form.customerEmail);
       if (res.data.valid) {
         setCouponResult(res.data);
         toast.success(`Cupón aplicado: -${res.data.coupon.discountType === "PERCENTAGE" ? res.data.coupon.discountValue + "%" : formatPrice(res.data.discountAmount)}`);
@@ -989,8 +1025,10 @@ export default function Checkout() {
                                 ))}
                               </div>
                             )}
-                            <p className="text-xs text-[#565e74]">x{item.quantity} · {formatPrice(price)} c/u</p>
-                            <p className="text-sm font-bold text-[#0b1c30]">{formatPrice(price * item.quantity)}</p>
+                            {/* Antes: formatPrice(price) — ARS hardcodeado, así que un producto en
+                                dólares se mostraba con el "$" de pesos en el resumen del pedido. */}
+                            <p className="text-xs text-[#565e74]">x{item.quantity} · {formatPriceWithCurrency(price, item.currency)} c/u</p>
+                            <p className="text-sm font-bold text-[#0b1c30]">{formatPriceWithCurrency(price * item.quantity, item.currency)}</p>
                           </div>
                         </div>
                       );
@@ -1041,7 +1079,14 @@ export default function Checkout() {
 
                   {/* Cálculos */}
                   <div className="space-y-2 pt-1">
-                    {cartHasUsd ? (
+                    {/* Antes: {cartHasUsd ? ... }
+                        ESTE ERA EL BUG. cartHasUsd es `!isMayorista && hay USD`: sirve para decidir
+                        el método de pago (a los mayoristas no les aplica porque siempre van por
+                        COTIZACION), pero NO para decidir cómo se muestran los montos. Resultado: a un
+                        MAYORISTA con dólares en el carrito le caía la rama de "todo en pesos" y veía
+                        un Subtotal que sumaba $55.000 + USD 7.000 = "$62.000".
+                        Para mostrar hay que preguntar solamente si el carrito tiene dólares. */}
+                    {hayUsdEnCarrito ? (
                       // Carrito con ítems en USD: subtotales separados por moneda, sin mezclar
                       // (no hay conversión automática en el sistema — ver PaymentMethod.A_CONVENIR).
                       <>
@@ -1063,10 +1108,18 @@ export default function Checkout() {
                       </div>
                     )}
 
-                    {couponDiscount > 0 && (
-                      <div className="flex justify-between text-sm text-[#006b2c] font-semibold">
+                    {(couponDiscount > 0 || couponDiscountUsd > 0) && (
+                      <div className="flex justify-between items-start text-sm text-[#006b2c] font-semibold">
                         <span>Descuento cupón</span>
-                        <span>−{formatPrice(couponDiscount)}</span>
+                        {/* Las dos monedas por separado: un cupón de porcentaje descuenta en pesos
+                            y en dólares, y nunca se suman entre sí.
+                            Antes iban en una sola línea unidas por " + " → "−$5.500 + USD 700", que
+                            se leía como una suma y peleaba con el signo menos. Ahora cada monto va en
+                            su renglón con su propio "−", igual que el Total de más abajo. */}
+                        <span className="text-right leading-tight">
+                          {couponDiscount > 0 && <div>−{formatPrice(couponDiscount)}</div>}
+                          {couponDiscountUsd > 0 && <div>−{formatPriceWithCurrency(couponDiscountUsd, "USD")}</div>}
+                        </span>
                       </div>
                     )}
 
@@ -1086,10 +1139,16 @@ export default function Checkout() {
                     )}
 
                     {/* Línea de IVA — visible solo cuando está tildado */}
-                    {ivaAmount > 0 && (
-                      <div className="flex justify-between text-sm text-[#565e74]">
+                    {(ivaAmount > 0 || ivaAmountUsd > 0) && (
+                      <div className="flex justify-between items-start text-sm text-[#565e74]">
                         <span>IVA</span>
-                        <span>+{formatPrice(ivaAmount)}</span>
+                        {/* El IVA de los ítems en dólares se muestra aparte, nunca sumado al de pesos.
+                            Un renglón por moneda, cada uno con su "+" (antes iban unidos por " + ",
+                            que hacía parecer que había que sumarlos entre sí). */}
+                        <span className="text-right leading-tight">
+                          {ivaAmount > 0 && <div>+{formatPrice(ivaAmount)}</div>}
+                          {ivaAmountUsd > 0 && <div>+{formatPriceWithCurrency(ivaAmountUsd, "USD")}</div>}
+                        </span>
                       </div>
                     )}
 
@@ -1113,9 +1172,22 @@ export default function Checkout() {
 
                     <div className="flex justify-between font-bold text-lg text-[#0b1c30] border-t border-[#bdcaba]/40 pt-3">
                       <span>{isMayorista ? "Total estimado" : "Total"}</span>
-                      {cartHasUsd
-                        ? <span className="text-[#006b2c]">A convenir</span>
-                        : <span className="text-[#006b2c]">{formatPrice(finalTotal)}</span>}
+                      {/* Antes: cartHasUsd ? "A convenir" : formatPrice(finalTotal)
+                          Al mayorista le caía siempre el else y veía un único número en pesos que
+                          no correspondía con el subtotal de arriba. Ahora:
+                          - minorista con dólares → "A convenir" (el pago se coordina, igual que antes)
+                          - mayorista con dólares → los dos totales, cada uno en su moneda
+                          - sin dólares → el total en pesos de siempre */}
+                      {cartHasUsd ? (
+                        <span className="text-[#006b2c]">A convenir</span>
+                      ) : hayUsdEnCarrito ? (
+                        <span className="text-[#006b2c] text-right leading-tight">
+                          {subtotalArs > 0 && <div>{formatPrice(finalTotal)}</div>}
+                          <div>{formatPriceWithCurrency(finalTotalUsd, "USD")}</div>
+                        </span>
+                      ) : (
+                        <span className="text-[#006b2c]">{formatPrice(finalTotal)}</span>
+                      )}
                     </div>
                   </div>
 
