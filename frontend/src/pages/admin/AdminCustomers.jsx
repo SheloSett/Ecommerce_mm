@@ -1079,8 +1079,17 @@ export default function AdminCustomers() {
                               {item.variantLabel && (
                                 <p className="text-xs text-blue-600 font-medium truncate">🔧 {item.variantLabel.split(" | ").join(" · ")}</p>
                               )}
+                              {/* item.price es el precio VIGENTE, recalculado por el backend en cada
+                                  lectura. previousPrice es al que el cliente lo agregó: se muestra
+                                  tachado cuando cambió (típico al terminar una campaña de ofertas),
+                                  así se entiende por qué el cliente puede estar esperando otro monto. */}
                               <p className="text-xs text-slate-400">
                                 ${item.price.toLocaleString("es-AR", { minimumFractionDigits: 2 })} c/u
+                                {item.priceChanged && (
+                                  <span className="ml-1.5 text-slate-300 line-through">
+                                    ${item.previousPrice.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                                  </span>
+                                )}
                               </p>
                             </div>
 

@@ -13,6 +13,137 @@ const prisma = new PrismaClient();
 // Permite notificar al cliente en tiempo real cuando el admin hace cambios
 const sseClients = new Map();
 
+// ── Precio vigente de los items ───────────────────────────────────────────────
+//
+// POR QUÉ EXISTE: CartItem.price es un SNAPSHOT del precio al momento de agregar el producto, y solo
+// se refrescaba al cambiar la cantidad (PATCH) o al volver a agregar el mismo item (POST). Cuando una
+// campaña de ofertas terminaba, offers.service revertía salePrice a null en productos y variantes,
+// pero los carritos ya cargados seguían mostrando el precio con descuento indefinidamente. Como el
+// checkout SIEMPRE recalcula server-side (ver order.controller.js), el cliente veía un total en el
+// carrito y le llegaba un pedido con otro. No se cobraba de menos, pero era un reclamo asegurado.
+//
+// SOLUCIÓN: el precio se recalcula EN CADA LECTURA con effectiveUnitPrice — el mismo helper del
+// checkout — así carrito, checkout y panel admin leen de la misma fuente de verdad.
+//
+// A PROPÓSITO NO SE PERSISTE: CartItem.price queda como el snapshot "precio al agregar", y es contra
+// ese valor que se detecta el cambio para avisarle al cliente (previousPrice / priceChanged). Si lo
+// pisáramos, el aviso se perdería en la primera lectura — incluso en una lectura del panel admin,
+// antes de que el cliente llegue a ver que su precio cambió.
+
+// Campos que necesita effectiveUnitPrice. Son los mismos para producto y variante.
+const PRICE_SELECT = {
+  price:          true, salePrice:          true,
+  wholesalePrice: true, wholesaleSalePrice: true,
+  priceTiers:     true, wholesalePriceTiers: true,
+};
+
+// Diferencia de precio real, no ruido de punto flotante (medio centavo).
+// Mismo criterio que sameMoney() en offers.service.js.
+const priceDiffers = (a, b) => Math.abs(a - b) >= 0.005;
+
+// Enriquece los items de una lista de carritos con outOfStock, currency y precio vigente.
+// Hace 2 consultas en total (productos + variantes) sin importar cuántos carritos vengan, para que
+// el listado del admin no dispare una consulta por item.
+//
+// Cada cart debe traer `items` y, si se quiere el precio mayorista correcto, `customer.type`.
+async function enrichCarts(carts) {
+  const productIds = [...new Set(carts.flatMap((c) => c.items.map((i) => i.productId)))];
+  const variantIds = [...new Set(carts.flatMap((c) => c.items.map((i) => i.variantId).filter(Boolean)))];
+
+  const products = productIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        // active y stockUnlimited son necesarios para distinguir "sin stock" de "stock ilimitado"
+        // o "producto despublicado" (regla de negocio: productos sin stock se ocultan en la web,
+        // PERO en el carrito mostramos un aviso porque el item ya estaba agregado).
+        select: { id: true, stock: true, stockUnlimited: true, active: true, ivaRate: true, currency: true, ...PRICE_SELECT },
+      })
+    : [];
+
+  const variants = variantIds.length
+    ? await prisma.productVariant.findMany({
+        where: { id: { in: variantIds } },
+        // Sin filtro por active: una variante desactivada igual tiene que resolverse para marcar
+        // el item como outOfStock. La moneda NO se trae: es propiedad del producto (ver pricing.js).
+        select: { id: true, stock: true, stockUnlimited: true, active: true, ...PRICE_SELECT },
+      })
+    : [];
+
+  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
+
+  return carts.map((cart) => {
+    const isMayorista = cart.customer?.type === "MAYORISTA";
+
+    const items = cart.items.map((item) => {
+      const product = productMap[item.productId] || null;
+      const variant = item.variantId ? (variantMap[item.variantId] || null) : null;
+
+      let outOfStock = false;
+      if (!product || !product.active) {
+        outOfStock = true; // producto eliminado o despublicado
+      } else if (item.variantId) {
+        if (!variant || !variant.active) outOfStock = true;
+        else if (!variant.stockUnlimited && variant.stock <= 0) outOfStock = true;
+      } else if (!product.stockUnlimited && product.stock <= 0) {
+        outOfStock = true;
+      }
+
+      // Precio vigente. Si el producto ya no existe no hay contra qué recalcular: se deja el
+      // snapshot (el item igual está marcado outOfStock y el checkout lo va a rechazar).
+      let price = item.price;
+      let previousPrice = null;
+      if (product) {
+        const current = effectiveUnitPrice({ product, variant, isMayorista, quantity: item.quantity });
+        if (current > 0 && priceDiffers(current, item.price)) {
+          previousPrice = item.price;
+          price = current;
+        }
+      }
+
+      return {
+        ...item,
+        price,
+        previousPrice,               // precio al que se agregó, solo si cambió (null si no)
+        priceChanged: previousPrice !== null,
+        outOfStock,
+        // currency: moneda del ítem (la del producto), para que el checkout sepa si este ítem obliga
+        // a ir por "A convenir" (ver PaymentMethod.A_CONVENIR).
+        currency: product ? effectiveCurrency({ product }) : "ARS",
+        // Subconjunto que consume el frontend. No se manda el producto entero a propósito: traería
+        // wholesalePrice y los tramos de precio mayorista a un cliente minorista.
+        product: product && {
+          stock:          product.stock,
+          stockUnlimited: product.stockUnlimited,
+          active:         product.active,
+          ivaRate:        product.ivaRate,
+          currency:       product.currency,
+        },
+      };
+    });
+
+    return { ...cart, items };
+  });
+}
+
+// Carrito de un cliente listo para responder (o null si no tiene). Lo usan GET /me y también el
+// POST/PATCH/DELETE de items, para que TODAS las respuestas tengan la misma forma: antes esas tres
+// devolvían el carrito crudo, sin outOfStock ni currency ni precio recalculado, y el frontend perdía
+// los avisos hasta el siguiente fetch.
+async function buildCartResponse(customerId) {
+  const cart = await prisma.cart.findUnique({
+    where:   { customerId },
+    include: {
+      items:    { orderBy: { id: "asc" } },
+      customer: { select: { type: true } }, // define si los precios se resuelven como mayorista
+    },
+  });
+  if (!cart) return null;
+
+  const [enriched] = await enrichCarts([cart]);
+  return enriched;
+}
+
 // GET /api/carts/sse - cliente se suscribe a eventos en tiempo real
 // EventSource no soporta headers, por eso el token va como query param
 router.get("/sse", (req, res) => {
@@ -105,59 +236,16 @@ router.put("/sync", authMiddleware, customerMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/carts/me - cliente: obtiene su carrito con items y stock del producto
-// Devuelve además el flag `outOfStock` por item (considerando producto inactivo,
-// stock 0 sin ilimitado, y stock de la variante si el item tiene variantId).
+// GET /api/carts/me - cliente: obtiene su carrito con items, stock y PRECIO VIGENTE
+// Por item devuelve además:
+//  - outOfStock: producto inactivo, stock 0 sin ilimitado, o variante sin stock
+//  - priceChanged / previousPrice: el precio cambió desde que lo agregó (típicamente porque
+//    terminó una campaña de ofertas). Ver el bloque de helpers arriba.
 router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
   try {
-    const customerId = req.user.id;
-    const cart = await prisma.cart.findUnique({
-      where: { customerId },
-      include: {
-        items: {
-          orderBy: { id: "asc" },
-          // active y stockUnlimited son necesarios para distinguir "sin stock" de "stock ilimitado"
-          // o "producto despublicado" (regla de negocio: productos sin stock se ocultan en la web,
-          // PERO en el carrito mostramos un aviso porque el item ya estaba agregado)
-          include: { product: { select: { stock: true, stockUnlimited: true, active: true, ivaRate: true, currency: true } } },
-        },
-      },
-    });
-
+    const cart = await buildCartResponse(req.user.id);
     if (!cart) return res.json(null);
-
-    // Para items con variante, consultamos el stock de la variante en un solo query
-    const variantIds = cart.items.map((i) => i.variantId).filter(Boolean);
-    const variants = variantIds.length > 0
-      ? await prisma.productVariant.findMany({
-          where:  { id: { in: variantIds } },
-          // Solo stock/estado: la moneda del ítem sale del PRODUCTO, no de la variante.
-          // Este select llegó a incluir currency y todos los campos de precio, cuando effectiveCurrency
-          // necesitaba saber si el precio salía de la variante o se heredaba del padre. Al pasar la
-          // moneda a ser propiedad del producto dejaron de usarse, así que no se traen de la DB.
-          select: { id: true, stock: true, stockUnlimited: true, active: true },
-        })
-      : [];
-    const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
-
-    const itemsWithStock = cart.items.map((item) => {
-      let outOfStock = false;
-      if (!item.product || !item.product.active) {
-        outOfStock = true; // producto eliminado o despublicado
-      } else if (item.variantId) {
-        const v = variantMap[item.variantId];
-        if (!v || !v.active) outOfStock = true;
-        else if (!v.stockUnlimited && v.stock <= 0) outOfStock = true;
-      } else if (!item.product.stockUnlimited && item.product.stock <= 0) {
-        outOfStock = true;
-      }
-      // currency: moneda del ítem (la del producto), para que el checkout sepa si este ítem obliga
-      // a ir por "A convenir" (ver PaymentMethod.A_CONVENIR).
-      const currency = item.product ? effectiveCurrency({ product: item.product }) : "ARS";
-      return { ...item, outOfStock, currency };
-    });
-
-    res.json({ ...cart, items: itemsWithStock });
+    res.json(cart);
   } catch (err) {
     console.error("Error al obtener carrito propio:", err);
     res.status(500).json({ error: "Error al obtener carrito" });
@@ -210,54 +298,63 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     }
     const existing = await prisma.cartItem.findFirst({ where: dedupWhere });
 
+    // Datos para calcular el precio. Antes se traían SOLO dentro de la rama `existing`: el item nuevo
+    // se guardaba con el precio que mandaba el cliente. No era un agujero de seguridad (el checkout
+    // recalcula igual), pero el número podía no coincidir con el del servidor — el frontend, por
+    // ejemplo, no mira los tramos por cantidad — y desde que GET /me compara contra este snapshot
+    // para avisar "cambió de precio", esa diferencia salía como un aviso falso apenas agregaba algo.
+    // Ahora las dos ramas guardan el precio calculado server-side, igual que el checkout.
+    const effectiveVariantId = existing ? existing.variantId : (variantId ? parseInt(variantId) : null);
+    const newQty = existing ? existing.quantity + quantity : quantity;
+
+    const productData = await prisma.product.findUnique({
+      where:  { id: parseInt(productId) },
+      select: PRICE_SELECT,
+    });
+    const variantData = effectiveVariantId
+      ? await prisma.productVariant.findUnique({
+          where:  { id: effectiveVariantId },
+          select: PRICE_SELECT,
+        })
+      : null;
+    const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
+    const isMayorista = customer?.type === "MAYORISTA";
+
+    // Precio efectivo con la variante y la cantidad final (variante > producto + tramos por cantidad).
+    // null si no da un precio usable — ahí se cae al valor anterior (o al del cliente, si es alta).
+    const calculated = productData
+      ? effectiveUnitPrice({ product: productData, variant: variantData, isMayorista, quantity: newQty })
+      : null;
+    const computedPrice = calculated > 0 ? calculated : null;
+
     if (existing) {
-      const newQty = existing.quantity + quantity;
-      // Recalcular precio según el nuevo total. Antes solo miraba el producto (precio + tiers),
-      // ignorando la variante → con variantes daba precios mal. Ahora usa el helper: variante > producto.
-      const productData = await prisma.product.findUnique({
-        where:  { id: productId },
-        select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
-      });
-      const variantData = existing.variantId
-        ? await prisma.productVariant.findUnique({
-            where:  { id: existing.variantId },
-            select: { price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
-          })
-        : null;
-      const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
-      const isMayorista = customer?.type === "MAYORISTA";
-      const newPrice = productData
-        ? effectiveUnitPrice({ product: productData, variant: variantData, isMayorista, quantity: newQty })
-        : existing.price;
       await prisma.cartItem.update({
         where: { id: existing.id },
-        data:  { quantity: newQty, price: parseFloat(newPrice) },
+        data:  { quantity: newQty, price: parseFloat(computedPrice ?? existing.price) },
       });
     } else {
-      const parsedPrice = parseFloat(price);
-      if (isNaN(parsedPrice)) {
+      // Fallback al precio del cliente solo si el producto no devolvió datos de precio (no debería
+      // pasar: más arriba ya se validó que existe y está activo).
+      const finalPrice = computedPrice ?? parseFloat(price);
+      if (isNaN(finalPrice)) {
         return res.status(400).json({ error: "Precio inválido" });
       }
       await prisma.cartItem.create({
         data: {
           cart:         { connect: { id: cart.id } },
           product:      { connect: { id: parseInt(productId) } },
-          variantId:    variantId ? parseInt(variantId) : null,
+          variantId:    effectiveVariantId,
           quantity, name,
-          price:        parsedPrice,
+          price:        finalPrice,
           image:        image || null,
           variantLabel: variantLabel || null,
         },
       });
     }
 
-    // Retornar carrito completo con stock e ivaRate del producto para validaciones en el frontend
-    const updatedCart = await prisma.cart.findUnique({
-      where:   { customerId },
-      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true, ivaRate: true, currency: true } } } } },
-    });
-
-    res.json(updatedCart);
+    // Misma forma que GET /me (stock, ivaRate, moneda y precio vigente): antes esta respuesta traía
+    // el carrito crudo y el frontend perdía outOfStock/priceChanged hasta el siguiente fetch.
+    res.json(await buildCartResponse(customerId));
   } catch (err) {
     console.error("Error al agregar item:", err);
     res.status(500).json({ error: "Error al agregar item al carrito" });
@@ -302,12 +399,7 @@ router.patch("/my/items/:itemId", authMiddleware, customerMiddleware, async (req
 
     await prisma.cart.update({ where: { customerId }, data: { updatedAt: new Date() } });
 
-    const cart = await prisma.cart.findUnique({
-      where:   { customerId },
-      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
-    });
-
-    res.json(cart);
+    res.json(await buildCartResponse(customerId));
   } catch (err) {
     console.error("Error al actualizar item propio:", err);
     res.status(500).json({ error: "Error al actualizar item" });
@@ -328,12 +420,7 @@ router.delete("/my/items/:itemId", authMiddleware, customerMiddleware, async (re
     await prisma.cartItem.delete({ where: { id: itemId } });
     await prisma.cart.update({ where: { customerId }, data: { updatedAt: new Date() } });
 
-    const cart = await prisma.cart.findUnique({
-      where:   { customerId },
-      include: { items: { orderBy: { id: "asc" }, include: { product: { select: { stock: true } } } } },
-    });
-
-    res.json(cart);
+    res.json(await buildCartResponse(customerId));
   } catch (err) {
     console.error("Error al eliminar item propio:", err);
     res.status(500).json({ error: "Error al eliminar item" });
@@ -363,8 +450,9 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, 
     const cart = await prisma.cart.findUnique({
       where: { customerId },
       include: {
-        customer: { select: { id: true, name: true, email: true } },
-        items: true,
+        // type: hace falta para resolver el precio mayorista al recalcular (ver enrichCarts)
+        customer: { select: { id: true, name: true, email: true, type: true } },
+        items: { orderBy: { id: "asc" } },
       },
     });
 
@@ -372,8 +460,13 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, 
       return res.status(404).json({ error: "Carrito no encontrado o vacío" });
     }
 
+    // Precios VIGENTES: el email tiene que decir lo que el cliente va a pagar hoy. Con el snapshot
+    // guardado, un recordatorio enviado después de terminada una campaña le prometía el precio con
+    // descuento y al entrar se encontraba con otro.
+    const [enriched] = await enrichCarts([cart]);
+
     const storeUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-    await sendAbandonedCartEmail(cart.customer, cart.items, { couponCode, couponDescription, storeUrl });
+    await sendAbandonedCartEmail(cart.customer, enriched.items, { couponCode, couponDescription, storeUrl });
 
     res.json({ ok: true });
   } catch (err) {
@@ -383,6 +476,8 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, 
 });
 
 // GET /api/carts - admin: obtener todos los carritos activos (con items)
+// Los precios salen recalculados al valor VIGENTE (con previousPrice si cambiaron), no al snapshot
+// guardado: si no, terminada una campaña de ofertas el panel mostraba totales que ya no eran reales.
 router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const carts = await prisma.cart.findMany({
@@ -391,14 +486,15 @@ router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
       },
       include: {
         customer: {
+          // type: además de mostrarse, define si los precios se resuelven como mayorista
           select: { id: true, name: true, email: true, type: true, phone: true },
         },
-        items: true,
+        items: { orderBy: { id: "asc" } },
       },
       orderBy: { updatedAt: "desc" },
     });
 
-    res.json(carts);
+    res.json(await enrichCarts(carts));
   } catch (err) {
     console.error("Error al obtener carritos:", err);
     res.status(500).json({ error: "Error al obtener carritos" });

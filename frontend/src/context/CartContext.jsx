@@ -34,6 +34,12 @@ const mapItem = (dbItem) => ({
   // o si el producto fue despublicado (active=false). Permite avisar al cliente
   // que un item agregado previamente al carrito ya no se puede comprar.
   outOfStock:   dbItem.outOfStock === true,
+  // priceChanged/previousPrice: el precio de este item cambió desde que lo agregó al carrito
+  // (típicamente porque terminó una campaña de ofertas). `price` ya viene con el valor VIGENTE
+  // —el mismo que va a cobrar el checkout— y previousPrice es el que veía antes, para avisarle
+  // en vez de que se entere recién cuando le llega el pedido.
+  priceChanged:  dbItem.priceChanged === true,
+  previousPrice: dbItem.previousPrice ?? null,
 });
 
 export function CartProvider({ children }) {

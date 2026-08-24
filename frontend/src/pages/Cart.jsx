@@ -96,6 +96,10 @@ export default function Cart() {
                 const img      = item.images?.[0];
                 const subtotal = item.price * item.quantity;
                 const isOut    = item.outOfStock;
+                // item.price ya es el precio VIGENTE (lo recalcula el backend en cada lectura);
+                // previousPrice es al que lo había agregado. Se avisa para que no se entere del
+                // cambio recién cuando le llega el pedido — típico al terminar una campaña de ofertas.
+                const priceUp  = item.priceChanged && item.price > item.previousPrice;
                 return (
                   <div
                     key={item.cartItemId}
@@ -173,6 +177,25 @@ export default function Cart() {
                         {formatPrice(item.price, item.currency)}{" "}
                         <span className="font-normal text-xs text-[#565e74]">c/u</span>
                       </p>
+                      {/* Aviso de cambio de precio. No se muestra si el item ya está sin stock:
+                          ahí el problema es otro y dos badges de alerta juntos confunden. */}
+                      {item.priceChanged && !isOut && (
+                        <div
+                          className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 text-[11px] font-bold rounded-full border ${
+                            priceUp
+                              ? "bg-amber-50 text-amber-700 border-amber-200"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-[12px]">
+                            {priceUp ? "trending_up" : "trending_down"}
+                          </span>
+                          {priceUp ? "Cambió de precio" : "¡Bajó de precio!"} — antes{" "}
+                          <span className="line-through font-semibold">
+                            {formatPrice(item.previousPrice, item.currency)}
+                          </span>
+                        </div>
+                      )}
                       {/* Controles de cantidad en mobile */}
                       <div className="flex items-center gap-2 mt-3 md:hidden">
                         <QtyControls

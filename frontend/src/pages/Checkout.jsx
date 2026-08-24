@@ -995,6 +995,19 @@ export default function Checkout() {
 
                 <div className="p-4 space-y-4">
 
+                  {/* Aviso de precios actualizados. Va como banner además del detalle por item:
+                      la lista scrollea (max-h-72), así que un item con precio cambiado puede quedar
+                      fuera de vista justo cuando el cliente está por confirmar. */}
+                  {items.some((i) => i.priceChanged) && (
+                    <div className="flex gap-2 items-start bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <span className="material-symbols-outlined text-[18px] text-amber-700 shrink-0">info</span>
+                      <p className="text-xs text-amber-800 leading-relaxed">
+                        <span className="font-bold">Actualizamos algunos precios</span> desde que
+                        agregaste los productos al carrito. Los importes de abajo son los vigentes.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Lista de items */}
                   <div className="space-y-3 max-h-72 overflow-y-auto">
                     {items.map((item) => {
@@ -1029,6 +1042,17 @@ export default function Checkout() {
                                 dólares se mostraba con el "$" de pesos en el resumen del pedido. */}
                             <p className="text-xs text-[#565e74]">x{item.quantity} · {formatPriceWithCurrency(price, item.currency)} c/u</p>
                             <p className="text-sm font-bold text-[#0b1c30]">{formatPriceWithCurrency(price * item.quantity, item.currency)}</p>
+                            {/* El precio cambió desde que lo agregó al carrito (ver CartContext).
+                                Acá es donde más importa avisar: está por confirmar el pedido. */}
+                            {item.priceChanged && (
+                              <p className="text-[11px] font-semibold text-amber-700 mt-0.5">
+                                Antes{" "}
+                                <span className="line-through">
+                                  {formatPriceWithCurrency(item.previousPrice, item.currency)}
+                                </span>{" "}
+                                c/u
+                              </p>
+                            )}
                           </div>
                         </div>
                       );

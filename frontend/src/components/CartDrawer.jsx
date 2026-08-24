@@ -118,6 +118,13 @@ export default function CartDrawer({ open, onClose }) {
                     )}
                     <p className="text-[#006b2c] font-bold text-sm mt-1">
                       {formatPrice(item.price, item.currency)}
+                      {/* Precio actualizado desde que lo agregó (ver CartContext): se tacha el
+                          anterior al lado en vez de un badge, para no romper el alto de la fila. */}
+                      {item.priceChanged && (
+                        <span className="ml-1.5 text-[11px] font-semibold text-[#565e74] line-through">
+                          {formatPrice(item.previousPrice, item.currency)}
+                        </span>
+                      )}
                     </p>
 
                     {/* Controles de cantidad + eliminar */}
