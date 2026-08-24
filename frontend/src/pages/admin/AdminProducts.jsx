@@ -10,7 +10,20 @@ import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFie
 // Las categorías ya no están topeadas en dos niveles: aplanar el árbol y armar el breadcrumb
 // necesitan recursión. Ver utils/categoryTree.js.
 import { flattenTree, indentedLabel, breadcrumbForId } from "../../utils/categoryTree";
+// formatPriceCurrency: versión que respeta la moneda del producto (el formatPrice local de este
+// archivo formatea SIEMPRE en ARS y se sigue usando para los totales de capital, que son en pesos).
+import { formatPrice as formatPriceCurrency } from "../../utils/formatPrice";
 import * as XLSX from "xlsx";
+
+// Opciones del selector "Ordenar por". `null` = orden que ya venía del backend
+// (más nuevos primero, o por relevancia cuando hay búsqueda).
+const SORT_OPTIONS = [
+  { key: "default",   label: "Más recientes" },
+  { key: "priceDesc", label: "Precio: mayor a menor" },
+  { key: "priceAsc",  label: "Precio: menor a mayor" },
+  { key: "soldDesc",  label: "Más vendidos" },
+  { key: "soldAsc",   label: "Menos vendidos" },
+];
 
 const EMPTY_FORM = {
   name: "",
@@ -223,6 +236,18 @@ export default function AdminProducts() {
   const [showVariants, setShowVariants] = useState(false);
   const [search, setSearch] = useState("");
 
+  // ── Filtros del listado (solo panel admin) ──────────────────────────────────
+  // Van en estado local y no en la URL como el tab: los botones de tab hacen setSearchParams({}),
+  // que borra TODOS los params, así que meterlos ahí los limpiaría al cambiar de pestaña.
+  const [sortBy, setSortBy] = useState("default");
+  const [supplierFilter, setSupplierFilter] = useState("");   // "" = todos | "none" = sin proveedor | id
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
+  // Moneda del rango de precio. El rango se aplica SOLO a los productos de esta moneda: comparar
+  // "USD 25" contra "$25.000" no tiene sentido, son unidades distintas (mismo criterio que el resto
+  // del sistema, que nunca convierte monedas — ver utils/formatPrice.js).
+  const [priceCurrency, setPriceCurrency] = useState("ARS");
+
   // Tab activa via searchParams: "" = todos, "sinstock" = sin stock
   // (reemplaza el estado local activeTab que ya no se usa)
 
@@ -323,8 +348,9 @@ export default function AdminProducts() {
     fetchProducts(search);
   };
 
-  // Al cambiar de tab (Todos / Sin stock / Quiebre) volvemos a la primera página
-  useEffect(() => { setPage(1); }, [activeTab]);
+  // Al cambiar de tab (Todos / Sin stock / Quiebre) o de filtro volvemos a la primera página:
+  // si no, filtrar estando en la página 7 podía dejar la lista vacía sin razón aparente.
+  useEffect(() => { setPage(1); }, [activeTab, sortBy, supplierFilter, priceMin, priceMax, priceCurrency]);
 
   // Al cambiar de página, subir al tope (pedido del cliente: que la nueva página arranque arriba).
   // Saltamos el primer render para no forzar el scroll al entrar a la vista.
@@ -872,20 +898,73 @@ export default function AdminProducts() {
     return { stock, unlimited };
   };
 
+  // Precio minorista vigente del producto: la oferta si es menor que el precio base.
+  // Es el número que se muestra en la fila y contra el que trabajan el rango y el orden por precio,
+  // para que el filtro coincida con lo que el admin está viendo.
+  const retailPrice = (p) => (p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price);
+
   // Lista filtrada por el tab activo (Sin stock / Quiebre) sobre TODOS los productos cargados.
   const filteredProducts = products.filter((p) => {
     const { stock: es, unlimited: eu } = effectiveStock(p);
-    if (isSinStock)      return !eu && es <= 0;
-    if (isQuiebreStock)  return p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak;
+    // Tabs de stock/capital: son excluyentes entre sí y se evalúan primero.
+    if (isSinStock       && !(!eu && es <= 0)) return false;
+    if (isQuiebreStock   && !(p.stockBreak !== null && !eu && es > 0 && es <= p.stockBreak)) return false;
     // Filtros del capital (mismo criterio que la tarjeta): capitalStatus lo calcula el backend.
-    if (isContabilizados) return p.capitalStatus === "counted";
-    if (isIlimitados)     return p.capitalStatus === "unlimited";
+    if (isContabilizados && p.capitalStatus !== "counted") return false;
+    if (isIlimitados     && p.capitalStatus !== "unlimited") return false;
+
+    // Proveedor. "none" = productos sin proveedor asignado, para poder encontrarlos y completarlos.
+    // OJO: es el proveedor del PRODUCTO. Una variante puede tener el suyo propio (ProductVariant.
+    // supplierId) y eso no se refleja acá — el listado muestra un producto por fila, no variantes.
+    if (supplierFilter === "none" && p.supplier) return false;
+    if (supplierFilter && supplierFilter !== "none" && p.supplier?.id !== parseInt(supplierFilter)) return false;
+
+    // Rango de precio. Solo aplica a los productos de la moneda elegida (ver priceCurrency).
+    const min = priceMin === "" ? null : parseFloat(priceMin);
+    const max = priceMax === "" ? null : parseFloat(priceMax);
+    if (min !== null || max !== null) {
+      if ((p.currency || "ARS") !== priceCurrency) return false;
+      const precio = retailPrice(p);
+      if (precio == null) return false;
+      if (min !== null && !isNaN(min) && precio < min) return false;
+      if (max !== null && !isNaN(max) && precio > max) return false;
+    }
+
     return true;
   });
+
+  // Orden. Sin sort explícito se respeta el que ya trae el backend (más nuevos primero, o por
+  // relevancia si hay búsqueda), por eso se ordena una COPIA solo cuando hace falta.
+  const sortedProducts = (() => {
+    if (sortBy === "default") return filteredProducts;
+    const list = [...filteredProducts];
+    if (sortBy === "soldDesc") return list.sort((a, b) => (b.totalSold || 0) - (a.totalSold || 0));
+    if (sortBy === "soldAsc")  return list.sort((a, b) => (a.totalSold || 0) - (b.totalSold || 0));
+    // Por precio: primero se agrupan por moneda (ARS y después USD) y recién ahí se comparan los
+    // números. Ordenar por el valor crudo pondría un producto de USD 25 al fondo de "mayor a menor"
+    // cuando en realidad es de los más caros del catálogo.
+    const dir = sortBy === "priceDesc" ? -1 : 1;
+    return list.sort((a, b) => {
+      const ca = (a.currency || "ARS") === "USD" ? 1 : 0;
+      const cb = (b.currency || "ARS") === "USD" ? 1 : 0;
+      if (ca !== cb) return ca - cb;
+      return ((retailPrice(a) ?? 0) - (retailPrice(b) ?? 0)) * dir;
+    });
+  })();
+
+  // ¿Hay algún filtro nuevo activo? Habilita el botón "Limpiar filtros".
+  const hasActiveFilters = sortBy !== "default" || supplierFilter !== "" || priceMin !== "" || priceMax !== "";
+  const clearFilters = () => {
+    setSortBy("default");
+    setSupplierFilter("");
+    setPriceMin("");
+    setPriceMax("");
+    setPriceCurrency("ARS");
+  };
   // Paginación en el cliente: 50 por página. Clampeamos la página actual por si el filtro achicó la lista.
-  const listTotalPages = Math.max(1, Math.ceil(filteredProducts.length / PER_PAGE));
+  const listTotalPages = Math.max(1, Math.ceil(sortedProducts.length / PER_PAGE));
   const safePage = Math.min(page, listTotalPages);
-  const pagedProducts = filteredProducts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+  const pagedProducts = sortedProducts.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
 
   return (
     <AdminLayout title="Productos">
@@ -1019,6 +1098,103 @@ export default function AdminProducts() {
           );
         })()}
 
+        {/* ── Filtros: orden, proveedor y rango de precio ────────────────────
+            Todo se resuelve en el cliente sobre los productos ya cargados (el listado del admin se
+            trae completo con all=true), así que filtrar no dispara una consulta nueva. */}
+        <div className="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap items-end gap-3">
+          {/* Ordenar por */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500">Ordenar por</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-700 bg-white focus:outline-none focus:border-blue-500"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Proveedor */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500">Proveedor</label>
+            <select
+              value={supplierFilter}
+              onChange={(e) => setSupplierFilter(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm text-slate-700 bg-white focus:outline-none focus:border-blue-500 max-w-[220px]"
+            >
+              <option value="">Todos los proveedores</option>
+              {/* "Sin proveedor" primero: sirve para encontrar los que falta completar */}
+              <option value="none">— Sin proveedor asignado —</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Rango de precio */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500">
+              Precio {priceCurrency === "USD" ? "(USD)" : "(pesos)"}
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                min="0"
+                placeholder="Desde"
+                value={priceMin}
+                onChange={(e) => setPriceMin(e.target.value)}
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
+              />
+              <span className="text-slate-400 text-sm">–</span>
+              <input
+                type="number"
+                min="0"
+                placeholder="Hasta"
+                value={priceMax}
+                onChange={(e) => setPriceMax(e.target.value)}
+                className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
+              />
+              {/* Moneda del rango: el filtro deja pasar solo los productos de esta moneda. Sin esto,
+                  "hasta 1000" mezclaría un producto de USD 25 con uno de $1.000. */}
+              <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                {["ARS", "USD"].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setPriceCurrency(c)}
+                    className={[
+                      "px-2 py-1.5 text-xs font-semibold transition-colors",
+                      priceCurrency === c ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    {c === "ARS" ? "$" : "USD"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-600 border border-slate-300 hover:bg-slate-50 transition-colors"
+            >
+              ✕ Limpiar filtros
+            </button>
+          )}
+
+          {/* Contador: cuántos productos quedaron. Con filtros activos es la única señal de que la
+              lista está recortada, porque el tab de arriba sigue diciendo "Todos". */}
+          {hasActiveFilters && (
+            <span className="text-xs text-slate-500 ml-auto self-center">
+              {sortedProducts.length} producto{sortedProducts.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+
         {/* Lista de productos en cards */}
         {loading ? (
           <div className="flex justify-center py-20">
@@ -1111,6 +1287,24 @@ export default function AdminProducts() {
                         {p.totalSold > 0 && (
                           <span className="text-xs text-emerald-600 font-medium">
                             🛒 {p.totalSold} vendida{p.totalSold !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {/* Precio y proveedor: se agregaron junto con los filtros de precio/proveedor.
+                            Sin verlos en la fila, el resultado de filtrar por esos criterios no se
+                            podía leer (había que abrir "Edición rápida" producto por producto). */}
+                        {p.price != null && (
+                          <span className="text-xs text-slate-600 font-semibold">
+                            {formatPriceCurrency(retailPrice(p), p.currency)}
+                            {retailPrice(p) !== p.price && (
+                              <span className="ml-1 font-normal text-slate-400 line-through">
+                                {formatPriceCurrency(p.price, p.currency)}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                        {p.supplier && (
+                          <span className="text-xs text-slate-400 hidden sm:inline">
+                            🏭 {p.supplier.name}
                           </span>
                         )}
                         {p.featured && (
@@ -1409,10 +1603,23 @@ export default function AdminProducts() {
             })}
           </div>
 
-          {/* Si el filtro por tab no deja ningún producto en esta vista */}
-          {filteredProducts.length === 0 && (
+          {/* Si el filtro por tab (o los de precio/proveedor) no deja ningún producto en esta vista */}
+          {sortedProducts.length === 0 && (
             <div className="card py-12 text-center text-slate-400">
-              No hay productos en esta vista.
+              {hasActiveFilters ? (
+                <>
+                  <p>Ningún producto coincide con los filtros.</p>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="mt-2 text-sm font-semibold text-blue-600 hover:underline"
+                  >
+                    Limpiar filtros
+                  </button>
+                </>
+              ) : (
+                "No hay productos en esta vista."
+              )}
             </div>
           )}
 
@@ -1464,9 +1671,9 @@ export default function AdminProducts() {
           )}
 
           {/* Texto: "Mostrando X–Y de Z" */}
-          {filteredProducts.length > 0 && (
+          {sortedProducts.length > 0 && (
             <p className="text-center text-xs text-slate-400 dark:text-slate-500 pt-1">
-              Mostrando {(safePage - 1) * PER_PAGE + 1}–{Math.min(safePage * PER_PAGE, filteredProducts.length)} de {filteredProducts.length} productos
+              Mostrando {(safePage - 1) * PER_PAGE + 1}–{Math.min(safePage * PER_PAGE, sortedProducts.length)} de {sortedProducts.length} productos
             </p>
           )}
           </>
