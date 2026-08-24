@@ -52,6 +52,22 @@ export function slugsInBranch(node) {
   return [node.slug, ...(node.children || []).flatMap(slugsInBranch)];
 }
 
+// Todos los ids que cuelgan de la categoría con ese id, incluido el suyo. Es el equivalente de
+// slugsInBranch pero por id, para filtros que trabajan con ids (ej: el filtro de categorías del
+// listado admin, donde elegir "Audio" tiene que traer también los productos de "Auriculares").
+export function idsInBranch(nodes, id) {
+  const collect = (node) => [node.id, ...(node.children || []).flatMap(collect)];
+  const find = (list) => {
+    for (const node of list || []) {
+      if (node.id === id) return collect(node);
+      const found = find(node.children);
+      if (found) return found;
+    }
+    return null;
+  };
+  return find(nodes) || [id];
+}
+
 // Ruta desde la raíz hasta la categoría con ese id, ej: [Audio, Auriculares, Inalámbricos].
 // Devuelve [] si no está en el árbol.
 export function pathToId(nodes, id, trail = []) {
