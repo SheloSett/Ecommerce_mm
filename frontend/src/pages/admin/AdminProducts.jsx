@@ -20,8 +20,12 @@ import * as XLSX from "xlsx";
 // mezclarlos en un solo desplegable de cinco opciones no dejaba ver de qué se estaba ordenando.
 // Igual solo puede haber UN orden activo a la vez: elegir en un grupo limpia el otro.
 // "default" = el orden que ya trae el backend (más nuevos primero, o por relevancia si hay búsqueda).
+// Cada grupo lleva ahora un "group" propio para poder pintarlos por separado: el de precio vive
+// dentro del bloque PRECIO (junto al selector minorista/mayorista y al rango, que son lo mismo que
+// ordena) y el de ventas queda suelto en la fila. Antes se recorrían los dos juntos con .map().
 const SORT_GROUPS = [
   {
+    group: "price",
     label: "Precio",
     options: [
       { key: "priceAsc",  label: "Menor a mayor" },
@@ -29,12 +33,22 @@ const SORT_GROUPS = [
     ],
   },
   {
+    group: "sales",
     label: "Ventas",
     options: [
       { key: "soldDesc", label: "Más vendidos" },
       { key: "soldAsc",  label: "Menos vendidos" },
     ],
   },
+];
+
+// Tipo de precio con el que trabaja TODO el bloque de precio del panel de filtros: el orden por
+// precio, el rango desde/hasta y el número que se muestra en cada fila del listado.
+// Se agregó porque los filtros de precio miraban siempre el minorista y no había forma de buscar
+// por el mayorista, que es un precio distinto y cargado aparte en cada producto.
+const PRICE_TYPES = [
+  { key: "retail",    label: "Minorista", short: "Min." },
+  { key: "wholesale", label: "Mayorista", short: "May." },
 ];
 
 const EMPTY_FORM = {
@@ -263,6 +277,8 @@ export default function AdminProducts() {
   // "USD 25" contra "$25.000" no tiene sentido, son unidades distintas (mismo criterio que el resto
   // del sistema, que nunca convierte monedas — ver utils/formatPrice.js).
   const [priceCurrency, setPriceCurrency] = useState("ARS");
+  // Tipo de precio del bloque PRECIO (ver PRICE_TYPES): "retail" = minorista, "wholesale" = mayorista.
+  const [priceType, setPriceType] = useState("retail");
 
   // Tab activa via searchParams: "" = todos, "sinstock" = sin stock
   // (reemplaza el estado local activeTab que ya no se usa)
@@ -366,7 +382,9 @@ export default function AdminProducts() {
 
   // Al cambiar de tab (Todos / Sin stock / Quiebre) o de filtro volvemos a la primera página:
   // si no, filtrar estando en la página 7 podía dejar la lista vacía sin razón aparente.
-  useEffect(() => { setPage(1); }, [activeTab, sortBy, supplierFilter, categoryFilter, priceMin, priceMax, priceCurrency]);
+  // priceType entra acá porque cambia qué productos pasan el rango (un producto sin precio mayorista
+  // queda afuera), no solo cómo se ven: si no, se podía quedar en una página que ya no existe.
+  useEffect(() => { setPage(1); }, [activeTab, sortBy, supplierFilter, categoryFilter, priceMin, priceMax, priceCurrency, priceType]);
 
   // Al cambiar de página, subir al tope (pedido del cliente: que la nueva página arranque arriba).
   // Saltamos el primer render para no forzar el scroll al entrar a la vista.
@@ -914,15 +932,37 @@ export default function AdminProducts() {
     return { stock, unlimited };
   };
 
-  // Precio MINORISTA vigente del producto: la oferta si es menor que el precio base.
+  // Precio de LISTA del producto según el tipo elegido en el panel de filtros (minorista/mayorista).
   // Es el número que se muestra en la fila y contra el que trabajan el rango y el orden por precio,
   // para que el filtro coincida con lo que el admin está viendo en pantalla.
   //
-  // LO QUE NO MIRA, a propósito: el precio mayorista (wholesalePrice), los tramos por cantidad
-  // (priceTiers) y el precio propio de cada variante. Un producto con variantes se ordena por su
-  // precio base, que es el que muestra la fila — el listado es una fila por producto, no por
-  // variante, así que no hay un único precio "de la variante" que mostrar u ordenar.
-  const retailPrice = (p) => (p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price);
+  // Antes esto era retailPrice(p), que miraba SOLO el minorista y por eso no se podía filtrar ni
+  // ordenar por el mayorista:
+  //   const retailPrice = (p) => (p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price);
+  // Se generaliza a los dos precios en vez de duplicar la función, porque la regla es la misma en
+  // ambos casos (la oferta pisa al base solo si es menor) y los tres consumidores — rango, orden y
+  // fila — tienen que usar exactamente el mismo número.
+  //
+  // basePrice() devuelve el precio SIN oferta, para poder mostrarlo tachado al lado del vigente.
+  //
+  // Devuelve null cuando el producto no tiene cargado ese precio. Pasa sobre todo con el mayorista,
+  // que es opcional (wholesalePrice es Float? en el schema), y también con el minorista si todavía
+  // no se cargó. Los null NO entran en el rango (no hay número que comparar) y el orden los manda
+  // al final en los dos sentidos, marcados en la fila, para poder encontrar los que falta completar.
+  //
+  // LO QUE NO MIRA, a propósito: los tramos por cantidad (priceTiers / wholesalePriceTiers) y el
+  // precio propio de cada variante. Un producto con variantes se ordena por su precio base, que es
+  // el que muestra la fila — el listado es una fila por producto, no por variante, así que no hay
+  // un único precio "de la variante" que mostrar u ordenar.
+  const basePrice = (p, type = priceType) =>
+    (type === "wholesale" ? p.wholesalePrice : p.price) ?? null;
+
+  const listPrice = (p, type = priceType) => {
+    const base = basePrice(p, type);
+    if (base == null) return null;
+    const offer = type === "wholesale" ? p.wholesaleSalePrice : p.salePrice;
+    return offer != null && offer < base ? offer : base;
+  };
 
   // Categorías elegidas expandidas a toda su descendencia (elegir "Audio" trae "Auriculares").
   const selectedCategoryIds = useMemo(() => {
@@ -959,12 +999,16 @@ export default function AdminProducts() {
       if (!ok) return false;
     }
 
-    // Rango de precio. Solo aplica a los productos de la moneda elegida (ver priceCurrency).
+    // Rango de precio. Solo aplica a los productos de la moneda elegida (ver priceCurrency) y mira
+    // el precio del tipo elegido (minorista/mayorista, ver priceType).
     const min = priceMin === "" ? null : parseFloat(priceMin);
     const max = priceMax === "" ? null : parseFloat(priceMax);
     if (min !== null || max !== null) {
       if ((p.currency || "ARS") !== priceCurrency) return false;
-      const precio = retailPrice(p);
+      // Antes: const precio = retailPrice(p);  → siempre el minorista.
+      const precio = listPrice(p);
+      // Sin precio de ese tipo cargado no hay número que comparar contra el rango, así que queda
+      // afuera. Se los sigue viendo con el rango vacío (el orden los manda al final, marcados).
       if (precio == null) return false;
       if (min !== null && !isNaN(min) && precio < min) return false;
       if (max !== null && !isNaN(max) && precio > max) return false;
@@ -983,12 +1027,23 @@ export default function AdminProducts() {
     // Por precio: primero se agrupan por moneda (ARS y después USD) y recién ahí se comparan los
     // números. Ordenar por el valor crudo pondría un producto de USD 25 al fondo de "mayor a menor"
     // cuando en realidad es de los más caros del catálogo.
+    // El precio que se compara es el del tipo elegido (minorista/mayorista, ver listPrice).
     const dir = sortBy === "priceDesc" ? -1 : 1;
     return list.sort((a, b) => {
+      const pa = listPrice(a);
+      const pb = listPrice(b);
+      // Los que no tienen ese precio cargado van al final SIEMPRE, sin importar el sentido del
+      // orden ni la moneda: son un "falta completar", no un precio bajo.
+      // Antes se resolvía con (retailPrice(a) ?? 0), que los trataba como $0 y los amontonaba
+      // arriba de todo en "menor a mayor" — justo donde estorban para leer los más baratos reales.
+      if (pa == null || pb == null) {
+        if (pa == null && pb == null) return 0;
+        return pa == null ? 1 : -1;
+      }
       const ca = (a.currency || "ARS") === "USD" ? 1 : 0;
       const cb = (b.currency || "ARS") === "USD" ? 1 : 0;
       if (ca !== cb) return ca - cb;
-      return ((retailPrice(a) ?? 0) - (retailPrice(b) ?? 0)) * dir;
+      return (pa - pb) * dir;
     });
   })();
 
@@ -998,7 +1053,11 @@ export default function AdminProducts() {
     (sortBy !== "default" ? 1 : 0) +
     (supplierFilter.length > 0 ? 1 : 0) +
     (categoryFilter.length > 0 ? 1 : 0) +
-    (priceMin !== "" || priceMax !== "" ? 1 : 0);
+    (priceMin !== "" || priceMax !== "" ? 1 : 0) +
+    // "Mayorista" cuenta como filtro activo aunque por sí solo no recorte la lista: cambia el precio
+    // que se ve en cada fila y el significado del orden por precio. Con el panel cerrado el globito
+    // es la única señal de que el listado no está mostrando los precios de siempre.
+    (priceType !== "retail" ? 1 : 0);
   const hasActiveFilters = activeFilterCount > 0;
   const clearFilters = () => {
     setSortBy("default");
@@ -1007,6 +1066,35 @@ export default function AdminProducts() {
     setPriceMin("");
     setPriceMax("");
     setPriceCurrency("ARS");
+    setPriceType("retail");
+  };
+
+  // Pinta uno de los SORT_GROUPS. Antes los dos salían de un .map() sobre SORT_GROUPS, pero ahora
+  // el de precio va adentro del bloque PRECIO y el de ventas suelto, así que hay que poder pedirlos
+  // de a uno sin duplicar el markup de los botones.
+  const renderSortGroup = (groupKey) => {
+    const group = SORT_GROUPS.find((g) => g.group === groupKey);
+    if (!group) return null;
+    return (
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-semibold text-slate-500">Ordenar por {group.label.toLowerCase()}</label>
+        <div className="flex rounded-lg border border-slate-300 overflow-hidden w-fit">
+          {group.options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => setSortBy((cur) => (cur === o.key ? "default" : o.key))}
+              className={[
+                "px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap",
+                sortBy === o.key ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
+              ].join(" ")}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   // Opciones de los desplegables. Las categorías se aplanan conservando `depth` para sangrarlas.
@@ -1187,29 +1275,89 @@ export default function AdminProducts() {
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-4">
             <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
 
-              {/* Orden. Dos grupos separados (precio y ventas) en vez de un solo desplegable que
-                  los mezclaba. Solo puede haber uno activo: elegir en un grupo limpia el otro, y
-                  volver a tocar la opción activa vuelve al orden por defecto. */}
-              {SORT_GROUPS.map((group) => (
-                <div key={group.label} className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-slate-500">Ordenar por {group.label.toLowerCase()}</label>
-                  <div className="flex rounded-lg border border-slate-300 overflow-hidden w-fit">
-                    {group.options.map((o) => (
+              {/* ── Bloque PRECIO ────────────────────────────────────────────
+                  El orden por precio y el rango miran el MISMO número, así que van juntos y debajo
+                  del selector minorista/mayorista que decide cuál es ese número. Antes el orden
+                  estaba a la izquierda de todo y el rango en la otra punta de la fila: con un tipo
+                  de precio de por medio quedaba imposible ver que el selector gobierna a los dos. */}
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 flex flex-col gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Precio</span>
+                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                    {PRICE_TYPES.map((t) => (
                       <button
-                        key={o.key}
+                        key={t.key}
                         type="button"
-                        onClick={() => setSortBy((cur) => (cur === o.key ? "default" : o.key))}
+                        onClick={() => setPriceType(t.key)}
                         className={[
-                          "px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap",
-                          sortBy === o.key ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
+                          "px-3 py-1 text-xs font-semibold transition-colors",
+                          priceType === t.key ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
                         ].join(" ")}
                       >
-                        {o.label}
+                        {t.label}
                       </button>
                     ))}
                   </div>
+                  <span className="text-xs text-slate-400">
+                    ordena y filtra por el precio {priceType === "wholesale" ? "mayorista" : "minorista"}
+                  </span>
                 </div>
-              ))}
+
+                <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+                  {/* Orden por precio. Solo puede haber UN orden activo en todo el panel: elegir acá
+                      limpia el de ventas, y volver a tocar la opción activa vuelve al orden por defecto. */}
+                  {renderSortGroup("price")}
+
+                  {/* Rango de precio */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-semibold text-slate-500">
+                      Rango {priceCurrency === "USD" ? "(USD)" : "(pesos)"}
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="Desde"
+                        value={priceMin}
+                        onChange={(e) => setPriceMin(e.target.value)}
+                        className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
+                      />
+                      <span className="text-slate-400 text-sm">–</span>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="Hasta"
+                        value={priceMax}
+                        onChange={(e) => setPriceMax(e.target.value)}
+                        className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
+                      />
+                      {/* Moneda del rango: el filtro deja pasar solo los productos de esta moneda. Sin
+                          esto, "hasta 1000" mezclaría un producto de USD 25 con uno de $1.000.
+                          La moneda es del PRODUCTO (p.currency), así que vale igual para el precio
+                          minorista y para el mayorista — no hace falta duplicarla por tipo. */}
+                      <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                        {["ARS", "USD"].map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setPriceCurrency(c)}
+                            className={[
+                              "px-2 py-1.5 text-xs font-semibold transition-colors",
+                              priceCurrency === c ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50",
+                            ].join(" ")}
+                          >
+                            {c === "ARS" ? "$" : "USD"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Orden por ventas: queda afuera del bloque PRECIO porque es otro criterio y el
+                  selector minorista/mayorista no lo toca. */}
+              {renderSortGroup("sales")}
 
               {/* Proveedores y categorías: selección múltiple */}
               <MultiSelectDropdown
@@ -1230,48 +1378,10 @@ export default function AdminProducts() {
                 searchable={categoryOptions.length > 8}
               />
 
-              {/* Rango de precio */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-500">
-                  Precio minorista {priceCurrency === "USD" ? "(USD)" : "(pesos)"}
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="Desde"
-                    value={priceMin}
-                    onChange={(e) => setPriceMin(e.target.value)}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
-                  />
-                  <span className="text-slate-400 text-sm">–</span>
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="Hasta"
-                    value={priceMax}
-                    onChange={(e) => setPriceMax(e.target.value)}
-                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm w-24 focus:outline-none focus:border-blue-500"
-                  />
-                  {/* Moneda del rango: el filtro deja pasar solo los productos de esta moneda. Sin
-                      esto, "hasta 1000" mezclaría un producto de USD 25 con uno de $1.000. */}
-                  <div className="flex rounded-lg border border-slate-300 overflow-hidden">
-                    {["ARS", "USD"].map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setPriceCurrency(c)}
-                        className={[
-                          "px-2 py-1.5 text-xs font-semibold transition-colors",
-                          priceCurrency === c ? "bg-blue-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50",
-                        ].join(" ")}
-                      >
-                        {c === "ARS" ? "$" : "USD"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              {/* El bloque "Rango de precio" que estaba acá se movió arriba, adentro del bloque
+                  PRECIO, para que quede pegado al selector minorista/mayorista y al orden por
+                  precio (los tres trabajan contra el mismo número). No se borró: es el mismo
+                  markup, ver el bloque PRECIO al principio de esta fila. */}
             </div>
 
             {/* Pie: resultado y limpiar */}
@@ -1390,17 +1500,42 @@ export default function AdminProducts() {
                         )}
                         {/* Precio y proveedor: se agregaron junto con los filtros de precio/proveedor.
                             Sin verlos en la fila, el resultado de filtrar por esos criterios no se
-                            podía leer (había que abrir "Edición rápida" producto por producto). */}
-                        {p.price != null && (
-                          <span className="text-xs text-slate-600 font-semibold">
-                            {formatPriceCurrency(retailPrice(p), p.currency)}
-                            {retailPrice(p) !== p.price && (
-                              <span className="ml-1 font-normal text-slate-400 line-through">
-                                {formatPriceCurrency(p.price, p.currency)}
+                            podía leer (había que abrir "Edición rápida" producto por producto).
+                            El precio que se muestra es el del tipo elegido en el panel de filtros
+                            (minorista/mayorista): tiene que ser EL MISMO número contra el que
+                            trabajan el rango y el orden, si no el resultado no se puede verificar.
+                            Antes era fijo el minorista:
+                              {p.price != null && (... formatPriceCurrency(retailPrice(p), ...))} */}
+                        {(() => {
+                          const vigente = listPrice(p);
+                          const base    = basePrice(p);
+                          // Sin ese precio cargado (típico del mayorista, que es opcional): se avisa
+                          // en vez de no mostrar nada. Filtrar por mayorista sirve también para
+                          // encontrar los que falta completar, como "sin proveedor asignado".
+                          if (vigente == null) {
+                            if (priceType !== "wholesale") return null;
+                            return (
+                              <span className="text-xs text-amber-600 font-medium">
+                                ⚠️ sin precio mayorista
                               </span>
-                            )}
-                          </span>
-                        )}
+                            );
+                          }
+                          return (
+                            <span className="text-xs text-slate-600 font-semibold">
+                              {/* Con el tipo en mayorista se aclara en la fila: el número solo no
+                                  se distingue del minorista de siempre. */}
+                              {priceType === "wholesale" && (
+                                <span className="mr-1 font-bold text-slate-400">May.</span>
+                              )}
+                              {formatPriceCurrency(vigente, p.currency)}
+                              {vigente !== base && (
+                                <span className="ml-1 font-normal text-slate-400 line-through">
+                                  {formatPriceCurrency(base, p.currency)}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
                         {p.supplier && (
                           <span className="text-xs text-slate-400 hidden sm:inline">
                             🏭 {p.supplier.name}
