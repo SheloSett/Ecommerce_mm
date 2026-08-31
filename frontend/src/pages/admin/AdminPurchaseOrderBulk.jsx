@@ -3,17 +3,32 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
-
-const formatPrice = (n) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
+import { formatPrice } from "../../utils/formatPrice";
 
 // Costo efectivo del ítem: el guardado en la orden si tiene; si no, el de la variante; si no, el del producto.
 const itemCost  = (item) => (item.cost ?? item.variant?.cost ?? item.product?.cost ?? 0);
+// Moneda de ese costo: el costo guardado en el ítem es un snapshot en la moneda de la línea
+// vendida; el costo maestro de la variante/producto vive en Product.currency. Antes no se miraba y
+// todo salía con formato de pesos (un producto de USD 500 se imprimía "$ 500,00").
+const itemCostCurrency = (item) =>
+  ((item.cost != null ? (item.currency || "ARS") : (item.product?.currency || "ARS")) === "USD" ? "USD" : "ARS");
+
+// ── Plata por moneda ────────────────────────────────────────────────────────
+// Pesos y dólares nunca se suman entre sí (no hay cotización, ver formatPrice): los totales son un
+// { ARS, USD } y se muestran en un renglón por moneda.
+const emptyMoney = () => ({ ARS: 0, USD: 0 });
+const moneyParts = (m) => {
+  const parts = [];
+  if (m.ARS || !m.USD) parts.push(formatPrice(m.ARS, "ARS"));
+  if (m.USD) parts.push(formatPrice(m.USD, "USD"));
+  return parts;
+};
+const moneyHtml = (m) => moneyParts(m).join("<br>");
 const itemPhoto = (item) => (item.variant?.images?.[0]) || item.product?.images?.[0] || null;
 // Proveedor: el de la variante si lo tiene, si no el del producto.
 const itemSupplier = (item) => item.variant?.supplier ?? item.product?.supplier;
 // Clave para consolidar el mismo producto/variante entre varias órdenes.
-const mergeKey = (item) => `${item.productId}::${item.variantId ?? "base"}`;
+const mergeKey = (item) => `${item.productId}::${item.variantId ?? "base"}::${itemCostCurrency(item)}`;
 
 // "Orden de compra combinada": toma varias órdenes (?ids=1,2,3), junta sus productos AGRUPADOS por
 // proveedor y SUMANDO cantidades del mismo producto entre ventas, para comprarle a cada proveedor
@@ -66,6 +81,7 @@ export default function AdminPurchaseOrderBulk() {
             name: item.product?.name || "Producto",
             variantLabel: item.variantLabel || null,
             photo: itemPhoto(item),
+            currency: itemCostCurrency(item),
             qty: 0,
             totalCost: 0,       // Σ costo × cantidad (soporta costos distintos por pedido)
             orderIds: new Set(),
@@ -94,8 +110,13 @@ export default function AdminPurchaseOrderBulk() {
   const toggleAll = () =>
     setSelected(allSelected ? new Set() : new Set(allLines.map((l) => l.key)));
 
-  const groupSubtotal = (g) => g.lines.reduce((s, l) => (selected.has(l.key) ? s + l.totalCost : s), 0);
-  const grandTotal = groups.reduce((s, g) => s + groupSubtotal(g), 0);
+  const addLine = (acc, l) => { acc[l.currency] += l.totalCost; return acc; };
+  const groupSubtotal = (g) => g.lines.reduce((acc, l) => (selected.has(l.key) ? addLine(acc, l) : acc), emptyMoney());
+  const grandTotal = groups.reduce((acc, g) => {
+    const sub = groupSubtotal(g);
+    acc.ARS += sub.ARS; acc.USD += sub.USD;
+    return acc;
+  }, emptyMoney());
 
   // ── Impresión (consolidada, agrupada por proveedor) ──────────────────────────
   const handlePrint = () => {
@@ -127,12 +148,12 @@ export default function AdminPurchaseOrderBulk() {
             <div style="font-size:15px;font-weight:800;color:#1e293b">${line.qty}</div>
           </td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;vertical-align:middle;white-space:nowrap">
-            <div style="font-size:10px;color:#94a3b8">${formatPrice(unit)} c/u</div>
-            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(line.totalCost)}</div>
+            <div style="font-size:10px;color:#94a3b8">${formatPrice(unit, line.currency)} c/u</div>
+            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(line.totalCost, line.currency)}</div>
           </td>
         </tr>`;
       }).join("");
-      const subtotal = g.lines.reduce((s, l) => s + l.totalCost, 0);
+      const subtotal = g.lines.reduce((acc, l) => addLine(acc, l), emptyMoney());
       return `
       <section style="margin-bottom:12px;break-inside:avoid">
         <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">
@@ -142,12 +163,12 @@ export default function AdminPurchaseOrderBulk() {
           <tbody>${rows}</tbody>
         </table>
         <div style="text-align:right;padding:5px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;font-size:11px">
-          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${formatPrice(subtotal)}</strong>
+          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
         </div>
       </section>`;
     }).join("");
 
-    const printTotal = printGroups.reduce((s, g) => s + g.lines.reduce((ss, l) => ss + l.totalCost, 0), 0);
+    const printTotal = printGroups.reduce((acc, g) => g.lines.reduce((a, l) => addLine(a, l), acc), emptyMoney());
     const totalUnits = printGroups.reduce((s, g) => s + g.lines.reduce((ss, l) => ss + l.qty, 0), 0);
     const orderList  = orders.map((o) => `#${o.id}`).join(", ");
 
@@ -193,7 +214,7 @@ export default function AdminPurchaseOrderBulk() {
 
   <div class="grand">
     <div style="font-size:11px;opacity:.85">${totalUnits} unidad(es) a comprar · ${orders.length} pedido(s)</div>
-    <div style="font-size:16px;font-weight:900">TOTAL: ${formatPrice(printTotal)}</div>
+    <div style="font-size:16px;font-weight:900;text-align:right;line-height:1.35">TOTAL: ${moneyHtml(printTotal)}</div>
   </div>
 
   <div class="footer">Orden de compra combinada generada el ${new Date().toLocaleString("es-AR")} · IGWT Store · Documento interno</div>
@@ -273,7 +294,7 @@ export default function AdminPurchaseOrderBulk() {
           </label>
           <div className="text-sm text-slate-600 dark:text-slate-300">
             <span className="font-semibold">{selectedCount}</span> de {allLines.length} productos ·
-            <span className="ml-1">Total: <span className="font-bold text-slate-800 dark:text-slate-100">{formatPrice(grandTotal)}</span></span>
+            <span className="ml-1">Total: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(grandTotal).join(" + ")}</span></span>
           </div>
         </div>
 
@@ -295,7 +316,7 @@ export default function AdminPurchaseOrderBulk() {
                   </span>
                 </label>
                 <span className="text-sm text-slate-500 dark:text-slate-400">
-                  Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{formatPrice(groupSubtotal(group))}</span>
+                  Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(groupSubtotal(group)).join(" + ")}</span>
                 </span>
               </div>
 
@@ -320,7 +341,7 @@ export default function AdminPurchaseOrderBulk() {
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{line.variantLabel.split(" | ").join(" · ")}</div>
                         )}
                         <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                          {formatPrice(unit)} c/u · en {[...line.orderIds].sort((a, b) => a - b).map((n) => `#${n}`).join(", ")}
+                          {formatPrice(unit, line.currency)} c/u · en {[...line.orderIds].sort((a, b) => a - b).map((n) => `#${n}`).join(", ")}
                         </div>
                       </div>
                       <div className="text-center shrink-0">
@@ -328,7 +349,7 @@ export default function AdminPurchaseOrderBulk() {
                         <div className="text-base font-bold text-slate-800 dark:text-slate-100">{line.qty}</div>
                       </div>
                       <div className="text-right shrink-0 w-24">
-                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{formatPrice(line.totalCost)}</div>
+                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{formatPrice(line.totalCost, line.currency)}</div>
                       </div>
                     </label>
                   );
@@ -340,7 +361,9 @@ export default function AdminPurchaseOrderBulk() {
 
         <div className="flex items-center justify-between gap-3 px-5 py-3 bg-blue-600 text-white rounded-xl">
           <span className="text-sm opacity-90">Total de la compra combinada ({selectedCount} producto{selectedCount !== 1 ? "s" : ""})</span>
-          <span className="text-xl font-extrabold">{formatPrice(grandTotal)}</span>
+          <span className="text-xl font-extrabold text-right leading-tight">
+            {moneyParts(grandTotal).map((t) => <div key={t}>{t}</div>)}
+          </span>
         </div>
       </div>
     </AdminLayout>

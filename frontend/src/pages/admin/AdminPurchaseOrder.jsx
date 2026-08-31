@@ -3,9 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
-
-const formatPrice = (n) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(n ?? 0);
+import { formatPrice } from "../../utils/formatPrice";
 
 const formatDate = (d) =>
   new Date(d).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -14,6 +12,29 @@ const formatDate = (d) =>
 // Costo efectivo: el del ítem del pedido (editado por el admin) si tiene; si no, el de la
 // variante; si no, el del producto. Permite ajustar el costo real del proveedor por pedido.
 const itemCost  = (item) => (item.cost ?? item.variant?.cost ?? item.product?.cost ?? 0);
+// Moneda de ese costo. El costo guardado en el ítem es un snapshot en la moneda de la línea
+// vendida; el costo maestro de la variante/producto vive en Product.currency (la variante no tiene
+// moneda propia, la hereda). Antes no se miraba y TODO salía con formato de pesos: un producto de
+// USD 500 se imprimía como "$ 500,00".
+const itemCostCurrency = (item) =>
+  ((item.cost != null ? (item.currency || "ARS") : (item.product?.currency || "ARS")) === "USD" ? "USD" : "ARS");
+
+// ── Plata por moneda ────────────────────────────────────────────────────────
+// Pesos y dólares NUNCA se suman entre sí (no hay cotización en el sistema, ver formatPrice).
+// Los totales de la orden de compra son un { ARS, USD } y se muestran en un renglón por moneda.
+const emptyMoney = () => ({ ARS: 0, USD: 0 });
+const addMoney = (acc, item, qty = item.quantity) => {
+  acc[itemCostCurrency(item)] += itemCost(item) * qty;
+  return acc;
+};
+// Solo las monedas con monto. Si no hay nada, muestra "$ 0" para no dejar el renglón vacío.
+const moneyParts = (m) => {
+  const parts = [];
+  if (m.ARS || !m.USD) parts.push(formatPrice(m.ARS, "ARS"));
+  if (m.USD) parts.push(formatPrice(m.USD, "USD"));
+  return parts;
+};
+const moneyHtml = (m) => moneyParts(m).join("<br>");
 // Foto: la específica de la variante si tiene, si no la primera del producto.
 const itemPhoto = (item) => (item.variant?.images?.[0]) || item.product?.images?.[0] || null;
 
@@ -80,11 +101,15 @@ export default function AdminPurchaseOrder() {
   const toggleAll = () =>
     setSelected(allSelected ? new Set() : new Set(allItems.map((i) => i.id)));
 
-  // Subtotal de un grupo considerando solo los items seleccionados
+  // Subtotal de un grupo considerando solo los items seleccionados, separado por moneda
   const groupSubtotal = (group) =>
-    group.items.reduce((s, i) => (selected.has(i.id) ? s + itemCost(i) * i.quantity : s), 0);
+    group.items.reduce((acc, i) => (selected.has(i.id) ? addMoney(acc, i) : acc), emptyMoney());
 
-  const grandTotal = groups.reduce((s, g) => s + groupSubtotal(g), 0);
+  const grandTotal = groups.reduce((acc, g) => {
+    const sub = groupSubtotal(g);
+    acc.ARS += sub.ARS; acc.USD += sub.USD;
+    return acc;
+  }, emptyMoney());
   const selectedCount = selected.size;
 
   // ── Impresión ───────────────────────────────────────────────────────────────
@@ -103,6 +128,7 @@ export default function AdminPurchaseOrder() {
           ? `<img src="${getImageUrl(photo)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0" />`
           : `<div style="width:48px;height:48px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:18px">📦</div>`;
         const cost = itemCost(item);
+        const cur  = itemCostCurrency(item);
         const lineTotal = cost * item.quantity;
         const variantHtml = item.variantLabel
           ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${item.variantLabel.split(" | ").join(" · ")}</div>`
@@ -119,13 +145,13 @@ export default function AdminPurchaseOrder() {
             <div style="font-size:15px;font-weight:800;color:#1e293b">${item.quantity}</div>
           </td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;vertical-align:middle;white-space:nowrap">
-            <div style="font-size:10px;color:#94a3b8">${formatPrice(cost)} c/u</div>
-            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(lineTotal)}</div>
+            <div style="font-size:10px;color:#94a3b8">${formatPrice(cost, cur)} c/u</div>
+            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(lineTotal, cur)}</div>
           </td>
         </tr>`;
       }).join("");
 
-      const subtotal = g.items.reduce((s, i) => s + itemCost(i) * i.quantity, 0);
+      const subtotal = g.items.reduce((acc, i) => addMoney(acc, i), emptyMoney());
       return `
       <section style="margin-bottom:12px;break-inside:avoid">
         <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">
@@ -135,13 +161,13 @@ export default function AdminPurchaseOrder() {
           <tbody>${rows}</tbody>
         </table>
         <div style="text-align:right;padding:5px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;font-size:11px">
-          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${formatPrice(subtotal)}</strong>
+          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
         </div>
       </section>`;
     }).join("");
 
     const printTotal = printGroups.reduce(
-      (s, g) => s + g.items.reduce((ss, i) => ss + itemCost(i) * i.quantity, 0), 0);
+      (acc, g) => g.items.reduce((a, i) => addMoney(a, i), acc), emptyMoney());
     const totalUnits = printGroups.reduce(
       (s, g) => s + g.items.reduce((ss, i) => ss + i.quantity, 0), 0);
 
@@ -189,7 +215,7 @@ export default function AdminPurchaseOrder() {
 
   <div class="grand">
     <div style="font-size:11px;opacity:.85">${totalUnits} unidad(es) a comprar</div>
-    <div style="font-size:16px;font-weight:900">TOTAL: ${formatPrice(printTotal)}</div>
+    <div style="font-size:16px;font-weight:900;text-align:right;line-height:1.35">TOTAL: ${moneyHtml(printTotal)}</div>
   </div>
 
   <div class="footer">Orden de compra generada el ${new Date().toLocaleString("es-AR")} · IGWT Store · Documento interno</div>
@@ -274,7 +300,7 @@ export default function AdminPurchaseOrder() {
           </label>
           <div className="text-sm text-slate-600 dark:text-slate-300">
             <span className="font-semibold">{selectedCount}</span> de {allItems.length} seleccionados ·
-            <span className="ml-1">Total: <span className="font-bold text-slate-800 dark:text-slate-100">{formatPrice(grandTotal)}</span></span>
+            <span className="ml-1">Total: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(grandTotal).join(" + ")}</span></span>
           </div>
         </div>
 
@@ -302,7 +328,7 @@ export default function AdminPurchaseOrder() {
                   </span>
                 </label>
                 <span className="text-sm text-slate-500 dark:text-slate-400">
-                  Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{formatPrice(groupSubtotal(group))}</span>
+                  Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(groupSubtotal(group)).join(" + ")}</span>
                 </span>
               </div>
 
@@ -312,6 +338,7 @@ export default function AdminPurchaseOrder() {
                   const isSel = selected.has(item.id);
                   const photo = itemPhoto(item);
                   const cost = itemCost(item);
+                  const cur  = itemCostCurrency(item);
                   return (
                     <label
                       key={item.id}
@@ -335,7 +362,7 @@ export default function AdminPurchaseOrder() {
                         {item.variantLabel && (
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{item.variantLabel.split(" | ").join(" · ")}</div>
                         )}
-                        <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">{formatPrice(cost)} c/u</div>
+                        <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">{formatPrice(cost, cur)} c/u</div>
                       </div>
                       {/* Cantidad */}
                       <div className="text-center shrink-0">
@@ -344,7 +371,7 @@ export default function AdminPurchaseOrder() {
                       </div>
                       {/* Subtotal línea */}
                       <div className="text-right shrink-0 w-24">
-                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{formatPrice(cost * item.quantity)}</div>
+                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{formatPrice(cost * item.quantity, cur)}</div>
                       </div>
                     </label>
                   );
@@ -357,7 +384,9 @@ export default function AdminPurchaseOrder() {
         {/* Total final */}
         <div className="flex items-center justify-between gap-3 px-5 py-3 bg-blue-600 text-white rounded-xl">
           <span className="text-sm opacity-90">Total de la compra ({selectedCount} ítem{selectedCount !== 1 ? "s" : ""})</span>
-          <span className="text-xl font-extrabold">{formatPrice(grandTotal)}</span>
+          <span className="text-xl font-extrabold text-right leading-tight">
+            {moneyParts(grandTotal).map((t) => <div key={t}>{t}</div>)}
+          </span>
         </div>
       </div>
     </AdminLayout>

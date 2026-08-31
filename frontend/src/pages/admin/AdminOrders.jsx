@@ -969,20 +969,28 @@ ${pagesHtml}
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              <div style="font-size:11px;color:#94a3b8">${formatPrice(item.price)} c/u × ${item.quantity} unid.</div>
+              <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
         </td>
-        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPrice(item.price * item.quantity)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPriceWithCurrency(item.price * item.quantity, item.currency)}</td>
       </tr>`;
     }).join("");
 
-    // Resumen de totales
+    // Resumen de totales, separado por moneda igual que la impresión del detalle
+    // (AdminOrderDetail.jsx). Antes salía todo con formato de pesos y sin renglón "TOTAL USD": una
+    // notebook de USD 575 se imprimía como "$ 575,00" y no aparecía en ningún total.
+    const hasUsdPrint   = Tp.hasUsd;
+    const showArsPrint  = !hasUsdPrint || Tp.ars.total > 0 || Tp.ars.subtotal > 0;
+    const totLabelStyle = 'style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b"';
+    const totValueStyle = 'style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b"';
+
     const totalRows = `
-      <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${formatPrice(subtotalSinDesc)}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}</td></tr>` : ""}
-      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA 21%</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}</td></tr>` : ""}
-      <tr style="border-top:2px solid #1e293b"><td style="padding:8px 8px 0;font-size:15px;font-weight:900;color:#1e293b">TOTAL</td><td style="padding:8px 8px 0;text-align:right;font-size:15px;font-weight:900;color:#1e293b">${formatPrice(Tp.ars.total)}</td></tr>`;
+      <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
+      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
+      ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
+      ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(Tp.ars.total)}</td></tr>` : ""}
+      ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(Tp.usd.total, "USD")}</td></tr>` : ""}`;
 
     return `<div class="page">
 
