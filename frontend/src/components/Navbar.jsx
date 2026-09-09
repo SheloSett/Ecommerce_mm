@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
-import { getImageUrl, productsApi } from "../services/api";
+import { getImageUrl, productsApi, categoriesApi } from "../services/api";
 import { useWishlist } from "../context/WishlistContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import AnnouncementBar from "./AnnouncementBar";
@@ -18,6 +18,12 @@ export default function Navbar() {
   const { unreadCount } = useNotifications();
   const [cartOpen, setCartOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Búsqueda mobile: la lupa del navbar despliega una barra animada debajo del nav
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  // Categorías para el menú lateral mobile — se cargan la primera vez que se abre el menú
+  const [menuCategories, setMenuCategories] = useState([]);
+  const [menuCategoriesLoaded, setMenuCategoriesLoaded] = useState(false);
+  const [categoriesExpanded, setCategoriesExpanded] = useState(true);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [suggestions, setSuggestions] = useState([]);
@@ -27,6 +33,8 @@ export default function Navbar() {
   const location = useLocation();
   const dropdownRef = useRef(null);
   const searchContainerRef = useRef(null);
+  const mobileSearchRef = useRef(null);
+  const mobileSearchInputRef = useRef(null);
 
   // Redirigir al carrito si se navegó con state { openCart: true }
   useEffect(() => {
@@ -41,7 +49,9 @@ export default function Navbar() {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setUserDropdownOpen(false);
       }
-      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target)) {
+      const insideDesktopSearch = searchContainerRef.current?.contains(e.target);
+      const insideMobileSearch = mobileSearchRef.current?.contains(e.target);
+      if (!insideDesktopSearch && !insideMobileSearch) {
         setShowSuggestions(false);
       }
     }
@@ -74,12 +84,68 @@ export default function Navbar() {
     return () => clearTimeout(timer);
   }, [search, customer?.type]);
 
+  // Al navegar se cierran el menú lateral y la búsqueda mobile
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setMobileSearchOpen(false);
+    setShowSuggestions(false);
+  }, [location.pathname, location.search]);
+
+  // Bloquea el scroll del body mientras el menú lateral está abierto
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileMenuOpen]);
+
+  // Categorías del menú lateral: se piden una sola vez, la primera vez que se abre
+  useEffect(() => {
+    if (!mobileMenuOpen || menuCategoriesLoaded) return;
+    const visibleFor = customer?.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
+    categoriesApi.getAll({ visibleFor })
+      .then((res) => setMenuCategories(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setMenuCategories([]))
+      .finally(() => setMenuCategoriesLoaded(true));
+  }, [mobileMenuOpen, menuCategoriesLoaded, customer?.type]);
+
+  // Foco automático en el input cuando se abre la búsqueda mobile
+  useEffect(() => {
+    if (mobileSearchOpen) {
+      const t = setTimeout(() => mobileSearchInputRef.current?.focus(), 150);
+      return () => clearTimeout(t);
+    }
+  }, [mobileSearchOpen]);
+
+  // Cierra todo con Escape
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") {
+        setMobileMenuOpen(false);
+        setMobileSearchOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  const openMobileMenu = () => {
+    setMobileSearchOpen(false);
+    setMobileMenuOpen(true);
+  };
+
+  const toggleMobileSearch = () => {
+    setMobileMenuOpen(false);
+    setMobileSearchOpen((o) => !o);
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     if (search.trim()) {
       navigate(`/catalogo?search=${encodeURIComponent(search.trim())}`);
       setSearch("");
       setShowSuggestions(false);
+      setMobileSearchOpen(false);
     }
   };
 
@@ -87,6 +153,7 @@ export default function Navbar() {
     navigate(`/producto/${product.slug || product.id}`);
     setSearch("");
     setShowSuggestions(false);
+    setMobileSearchOpen(false);
   };
 
   const formatSuggestionPrice = (product) => {
@@ -99,8 +166,51 @@ export default function Navbar() {
   const handleLogout = () => {
     customerLogout();
     setUserDropdownOpen(false);
+    setMobileMenuOpen(false);
     toast.success("Sesión cerrada");
   };
+
+  const isDark = theme === "oscuro";
+  const toggleTheme = () => setTheme(isDark ? "clasico" : "oscuro");
+
+  // Lista de sugerencias — compartida entre la búsqueda desktop (dropdown) y la mobile (inline)
+  const renderSuggestionItems = () => (
+    <>
+      {suggestions.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onMouseDown={() => handleSelectSuggestion(p)}
+          className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
+        >
+          <div className="w-10 h-10 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
+            {p.images?.[0] ? (
+              <img src={getImageUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">📦</div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+            <p className="text-xs text-slate-500">{p.categories?.[0]?.name || ""}</p>
+          </div>
+          <span className="text-sm font-semibold text-blue-600 flex-shrink-0">
+            {formatSuggestionPrice(p)}
+          </span>
+        </button>
+      ))}
+      <button
+        type="submit"
+        onMouseDown={handleSearch}
+        className="w-full px-3 py-2 text-xs text-center text-blue-600 hover:bg-blue-50 border-t border-slate-100 font-medium transition-colors"
+      >
+        Ver todos los resultados para "{search}" →
+      </button>
+    </>
+  );
+
+  // Clase común de los ítems del menú lateral
+  const drawerItem = "flex items-center gap-3 w-full px-5 py-3 text-[15px] text-slate-700 hover:bg-slate-100 active:bg-slate-200 transition-colors";
 
   return (
     <>
@@ -108,18 +218,18 @@ export default function Navbar() {
       {/* bg-[#0F172A]: dark navy del template Stitch, fijo en ambos temas (clasico y oscuro) */}
       <nav className="bg-[#0F172A] border-b border-white/10 shadow-sm sticky top-0 z-40">
         {/* Grid de 3 columnas: logo | búsqueda centrada | iconos */}
-        <div className="grid grid-cols-3 items-center w-full px-10 max-w-[1280px] mx-auto h-20">
+        <div className="flex md:grid md:grid-cols-3 items-center justify-between w-full px-4 sm:px-6 md:px-10 max-w-[1280px] mx-auto h-16 md:h-20">
 
           {/* ── COL 1: Logo ── */}
           <div className="flex items-center">
-            <Link to="/" className="flex items-center gap-2 text-2xl font-semibold text-white" style={{ fontFamily: "Outfit, sans-serif" }}>
+            <Link to="/" className="flex items-center gap-2 text-xl md:text-2xl font-semibold text-white whitespace-nowrap" style={{ fontFamily: "Outfit, sans-serif" }}>
               <span className="material-symbols-outlined text-[#7ffc97]">bolt</span>
               IGWT Store
             </Link>
           </div>
 
           {/* ── COL 2: Búsqueda centrada y más larga ── */}
-          <div className="flex justify-center">
+          <div className="hidden md:flex justify-center">
             {/* Búsqueda pill (solo lg+) — centrada en el navbar, ancho completo de la columna */}
             <form
               onSubmit={handleSearch}
@@ -149,36 +259,7 @@ export default function Navbar() {
               {/* Dropdown de sugerencias de búsqueda */}
               {showSuggestions && suggestions.length > 0 && (
                 <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden min-w-[320px]">
-                  {suggestions.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onMouseDown={() => handleSelectSuggestion(p)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
-                        {p.images?.[0] ? (
-                          <img src={getImageUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">📦</div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                        <p className="text-xs text-slate-500">{p.categories?.[0]?.name || ""}</p>
-                      </div>
-                      <span className="text-sm font-semibold text-blue-600 flex-shrink-0">
-                        {formatSuggestionPrice(p)}
-                      </span>
-                    </button>
-                  ))}
-                  <button
-                    type="submit"
-                    onMouseDown={handleSearch}
-                    className="w-full px-3 py-2 text-xs text-center text-blue-600 hover:bg-blue-50 border-t border-slate-100 font-medium transition-colors"
-                  >
-                    Ver todos los resultados para "{search}" →
-                  </button>
+                  {renderSuggestionItems()}
                 </div>
               )}
             </form>
@@ -194,10 +275,20 @@ export default function Navbar() {
               Catálogo
             </Link>
 
-              {/* Toggle claro / oscuro — agregado por nosotros, no está en el template */}
+              {/* Lupa — solo cuando la búsqueda pill no se ve (< lg): despliega la barra mobile */}
               <button
-                onClick={() => setTheme(theme === "oscuro" ? "clasico" : "oscuro")}
-                className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
+                onClick={toggleMobileSearch}
+                className={`lg:hidden text-white active:scale-95 transition-all ${mobileSearchOpen ? "opacity-100" : "opacity-80 hover:opacity-100"}`}
+                aria-label={mobileSearchOpen ? "Cerrar búsqueda" : "Buscar"}
+                aria-expanded={mobileSearchOpen}
+              >
+                <span className="material-symbols-outlined">{mobileSearchOpen ? "close" : "search"}</span>
+              </button>
+
+              {/* Toggle claro / oscuro — en mobile vive como switch dentro del menú lateral */}
+              <button
+                onClick={toggleTheme}
+                className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                 aria-label={theme === "oscuro" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
                 title={theme === "oscuro" ? "Modo claro" : "Modo oscuro"}
               >
@@ -208,7 +299,7 @@ export default function Navbar() {
 
               {/* Ícono de usuario — person (material symbol exacto del template) */}
               {customer ? (
-                <div className="relative" ref={dropdownRef}>
+                <div className="relative hidden md:block" ref={dropdownRef}>
                   <button
                     onClick={() => setUserDropdownOpen((o) => !o)}
                     className="relative text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
@@ -303,7 +394,7 @@ export default function Navbar() {
               ) : (
                 <Link
                   to="/login"
-                  className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
+                  className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                   aria-label="Iniciar sesión"
                   title="Iniciar sesión"
                 >
@@ -328,67 +419,248 @@ export default function Navbar() {
                 </button>
               )}
 
-              {/* Menú móvil — usa material symbols para consistencia */}
+              {/* Menú móvil — abre el panel lateral (drawer) */}
               <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                onClick={openMobileMenu}
                 className="md:hidden text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
-                aria-label="Menú"
+                aria-label="Abrir menú"
+                aria-expanded={mobileMenuOpen}
               >
-                <span className="material-symbols-outlined">
-                  {mobileMenuOpen ? "close" : "menu"}
-                </span>
+                <span className="material-symbols-outlined">menu</span>
               </button>
             </div>
         </div>
 
-        {/* Menú móvil expandido */}
-        {mobileMenuOpen && (
-          <div className="md:hidden pb-4 space-y-2 border-t border-[#bdcaba]/20 pt-4 px-10">
-            <form onSubmit={handleSearch}>
+        {/* ── Búsqueda mobile (< lg): barra que se despliega debajo del nav con animación ── */}
+        <div
+          ref={mobileSearchRef}
+          className={`lg:hidden absolute left-0 right-0 top-full bg-[#0F172A] border-t border-white/10 shadow-xl transition-all duration-300 ease-out ${
+            mobileSearchOpen ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 -translate-y-3 pointer-events-none"
+          }`}
+          aria-hidden={!mobileSearchOpen}
+        >
+          <form onSubmit={handleSearch} className="px-4 sm:px-6 py-3">
+            <div className="flex items-center bg-white/10 rounded-full px-4 py-2 border border-[#bdcaba]/30 gap-2">
+              <span className="material-symbols-outlined text-white/60">search</span>
               <input
-                type="text"
+                ref={mobileSearchInputRef}
+                type="search"
                 placeholder="Buscar productos..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-white/10 border border-[#bdcaba]/30 rounded-full px-4 py-2 text-sm focus:outline-none text-white placeholder-white/50"
+                onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                className="bg-transparent text-base text-white placeholder-white/50 focus:outline-none focus:ring-0 flex-1 border-0 outline-none min-w-0"
+                autoComplete="off"
+                tabIndex={mobileSearchOpen ? 0 : -1}
               />
-            </form>
-            <Link
-              to="/catalogo"
-              className="block py-2 text-white/80 hover:text-white text-sm font-medium"
-              onClick={() => setMobileMenuOpen(false)}
+              {suggestionsLoading && (
+                <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />
+              )}
+            </div>
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-h-[60vh] overflow-y-auto">
+                {renderSuggestionItems()}
+              </div>
+            )}
+          </form>
+        </div>
+      </nav>
+
+      {/* ── Menú lateral mobile: entra desde la derecha (mismo patrón que CartDrawer) ── */}
+      <div
+        className={`md:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 transition-opacity duration-300 ${
+          mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+        onClick={() => setMobileMenuOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        className={`md:hidden fixed top-0 right-0 h-full w-[85vw] max-w-sm bg-[#f8f9ff] z-50 shadow-2xl transform transition-transform duration-300 ease-in-out flex flex-col ${
+          mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menú"
+        aria-hidden={!mobileMenuOpen}
+      >
+        {/* Header oscuro (mismo color que navbar) */}
+        <div className="flex items-center justify-between px-5 py-4 bg-[#0F172A] flex-shrink-0">
+          <Link
+            to="/"
+            onClick={() => setMobileMenuOpen(false)}
+            className="flex items-center gap-2 text-lg font-semibold text-white"
+            style={{ fontFamily: "Outfit, sans-serif" }}
+          >
+            <span className="material-symbols-outlined text-[#7ffc97]">bolt</span>
+            IGWT Store
+          </Link>
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="text-white/60 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+            aria-label="Cerrar menú"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2">
+          {/* 1. Switch modo claro / oscuro */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isDark}
+            onClick={toggleTheme}
+            className={`${drawerItem} justify-between`}
+          >
+            <span className="flex items-center gap-3">
+              <span className="material-symbols-outlined text-slate-500">{isDark ? "dark_mode" : "light_mode"}</span>
+              <span>{isDark ? "Modo oscuro" : "Modo claro"}</span>
+            </span>
+            <span
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors duration-300 ${
+                isDark ? "bg-[#00873a]" : "bg-slate-300"
+              }`}
             >
-              Catálogo
-            </Link>
-            {!customer && (
-              <Link
-                to="/login"
-                className="block py-2 text-white/80 hover:text-white text-sm"
-                onClick={() => setMobileMenuOpen(false)}
-              >
+              <span
+                className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transform transition-transform duration-300 ${
+                  isDark ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </span>
+          </button>
+
+          <div className="my-2 border-t border-slate-200" />
+
+          {/* 2. Perfil */}
+          {customer ? (
+            <>
+              <div className="px-5 py-3 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                  <span className="material-symbols-outlined text-slate-500">person</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{customer.name}</p>
+                  <p className="text-xs text-slate-400 truncate">{customer.email}</p>
+                  <span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                    customer.type === "MAYORISTA" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                  }`}>
+                    {customer.type === "MAYORISTA" ? "Mayorista" : "Minorista"}
+                  </span>
+                </div>
+              </div>
+              <Link to="/perfil" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                <span className="material-symbols-outlined text-slate-500">manage_accounts</span>
+                Mi perfil
+              </Link>
+              <Link to="/pedidos" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                <span className="material-symbols-outlined text-slate-500">receipt_long</span>
+                <span className="flex-1">Mis pedidos</span>
+                {customer.type === "MAYORISTA" && unreadCount > 0 && (
+                  <span className="min-w-[20px] h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </Link>
+              {customer.type === "MAYORISTA" && (
+                <Link to="/cotizaciones" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                  <span className="material-symbols-outlined text-slate-500">request_quote</span>
+                  Mis cotizaciones
+                </Link>
+              )}
+              <Link to="/favoritos" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                <span className="material-symbols-outlined text-red-400">favorite</span>
+                <span className="flex-1">Mis favoritos</span>
+                {wishlist.length > 0 && (
+                  <span className="min-w-[20px] h-5 bg-red-100 text-red-600 text-xs font-bold rounded-full flex items-center justify-center px-1">
+                    {wishlist.length}
+                  </span>
+                )}
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link to="/login" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                <span className="material-symbols-outlined text-slate-500">login</span>
                 Iniciar sesión
               </Link>
-            )}
-            {customer && customer.type === "MAYORISTA" && (
-              <Link
-                to="/cotizaciones"
-                className="block py-2 text-white/80 hover:text-white text-sm"
-                onClick={() => setMobileMenuOpen(false)}
-              >
-                Mis cotizaciones
+              <Link to="/registro" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+                <span className="material-symbols-outlined text-slate-500">person_add</span>
+                Crear cuenta
               </Link>
-            )}
-            {customer && (
-              <button
-                onClick={() => { handleLogout(); setMobileMenuOpen(false); }}
-                className="block w-full text-left py-2 text-red-400 hover:text-red-300 text-sm"
+            </>
+          )}
+
+          <div className="my-2 border-t border-slate-200" />
+
+          {/* 3. Categorías (desplegable) */}
+          <button
+            type="button"
+            onClick={() => setCategoriesExpanded((o) => !o)}
+            className={`${drawerItem} justify-between`}
+            aria-expanded={categoriesExpanded}
+          >
+            <span className="flex items-center gap-3">
+              <span className="material-symbols-outlined text-slate-500">category</span>
+              Categorías
+            </span>
+            <span className={`material-symbols-outlined text-slate-400 transition-transform duration-300 ${categoriesExpanded ? "rotate-180" : ""}`}>
+              expand_more
+            </span>
+          </button>
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
+              categoriesExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+            }`}
+          >
+            <div className="overflow-hidden">
+              {!menuCategoriesLoaded ? (
+                <p className="pl-14 pr-5 py-2 text-sm text-slate-400">Cargando...</p>
+              ) : menuCategories.length === 0 ? (
+                <p className="pl-14 pr-5 py-2 text-sm text-slate-400">Sin categorías</p>
+              ) : (
+                menuCategories.map((cat) => (
+                  <Link
+                    key={cat.id}
+                    to={`/catalogo?category=${cat.slug}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="block pl-14 pr-5 py-2.5 text-sm text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors"
+                  >
+                    {cat.name}
+                  </Link>
+                ))
+              )}
+              <Link
+                to="/catalogo"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block pl-14 pr-5 py-2.5 text-sm font-semibold text-[#00873a] hover:bg-slate-100 transition-colors"
               >
-                Cerrar sesión ({customer.name.split(" ")[0]})
-              </button>
-            )}
+                Ver catálogo completo
+              </Link>
+            </div>
+          </div>
+
+          <div className="my-2 border-t border-slate-200" />
+
+          {/* 4. Inicio */}
+          <Link to="/" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+            <span className="material-symbols-outlined text-slate-500">home</span>
+            Inicio
+          </Link>
+        </div>
+
+        {/* Pie: cerrar sesión */}
+        {customer && (
+          <div className="border-t border-slate-200 flex-shrink-0">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 w-full px-5 py-3.5 text-[15px] text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
+            >
+              <span className="material-symbols-outlined">logout</span>
+              Cerrar sesión
+            </button>
           </div>
         )}
-      </nav>
+      </aside>
 
       {/* Banners ocultos en páginas de auth para no distraer al usuario */}
       {!["/registro", "/login", "/olvide-mi-contrasena"].includes(location.pathname) &&
