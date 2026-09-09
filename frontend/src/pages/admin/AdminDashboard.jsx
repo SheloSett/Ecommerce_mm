@@ -133,7 +133,7 @@ export default function AdminDashboard() {
     const firstAllowed = user?.permissions?.[0];
     const redirectMap = {
       ordenes: "/admin/ordenes", productos: "/admin/productos",
-      clientes: "/admin/clientes", metricas: "/admin/metricas",
+      clientes: "/admin/clientes", metricas: "/admin/metricas", analiticas: "/admin/analiticas",
       caja: "/admin/caja", cupones: "/admin/cupones",
       compras: "/admin/compras", categorias: "/admin/categorias",
     };

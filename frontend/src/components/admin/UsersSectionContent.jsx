@@ -9,6 +9,7 @@ const ALL_PERMISSIONS = [
   { key: "clientes",       label: "Clientes" },
   { key: "categorias",     label: "Categorías" },
   { key: "metricas",       label: "Métricas" },
+  { key: "analiticas",     label: "Analíticas" },
   { key: "cupones",        label: "Cupones" },
   { key: "caja",           label: "Caja" },
   { key: "compras",        label: "Compras" },

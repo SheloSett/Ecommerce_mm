@@ -29,6 +29,7 @@ const adminTestRoutes  = require("./routes/admin-test.routes");
 const supplierRoutes   = require("./routes/supplier.routes");
 const aiRoutes         = require("./routes/ai.routes");
 const seoRoutes        = require("./routes/seo.routes");
+const analyticsRoutes  = require("./routes/analytics.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -162,6 +163,7 @@ app.use("/api/shipping",   shippingRoutes);
 app.use("/api/admin-test", adminTestRoutes);
 app.use("/api/suppliers",  supplierRoutes);
 app.use("/api/ai",         aiRoutes);
+app.use("/api/analytics",  analyticsRoutes);
 app.use("/api",            seoRoutes);
 
 // Health check

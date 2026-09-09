@@ -40,6 +40,7 @@ import AdminOrders from "./pages/admin/AdminOrders";
 import AdminCategories from "./pages/admin/AdminCategories";
 import AdminCustomers from "./pages/admin/AdminCustomers";
 import AdminMetrics from "./pages/admin/AdminMetrics";
+import AdminAnalytics from "./pages/admin/AdminAnalytics";
 import AdminProductCreate from "./pages/admin/AdminProductCreate";
 import AdminCaja from "./pages/admin/AdminCaja";
 import AdminFlyer from "./pages/admin/AdminFlyer";
@@ -204,6 +205,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="metricas"><AdminMetrics /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/analiticas"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="analiticas"><AdminAnalytics /></RequirePermission>
               </ProtectedRoute>
             }
           />

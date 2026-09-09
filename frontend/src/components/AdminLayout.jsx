@@ -86,6 +86,20 @@ export default function AdminLayout({ children, title }) {
     { path: "/admin/categorias", label: "Categorías", icon: "🏷️",  permission: "categorias" },
 
     { path: "/admin/metricas",   label: "Métricas",   icon: "📈",  permission: "metricas" },
+    {
+      path: "/admin/analiticas",
+      label: "Analíticas",
+      icon: "📉",
+      permission: "analiticas",
+      subItems: [
+        { label: "Ventas",          tab: "" },
+        { label: "Origen",          tab: "origen" },
+        { label: "Embudo",          tab: "embudo" },
+        { label: "Clientes",        tab: "clientes" },
+        { label: "Stock",           tab: "stock" },
+        { label: "Ofertas",         tab: "ofertas" },
+      ],
+    },
     { path: "/admin/caja",         label: "Caja",            icon: "💰",  permission: "caja" },
     {
       path: "/admin/compras",

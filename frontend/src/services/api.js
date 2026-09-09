@@ -324,6 +324,16 @@ export const adminUsersApi = {
 };
 
 // ─── Gastos / Caja ────────────────────────────────────────────────────────────
+// ─── Analíticas (admin) ──────────────────────────────────────────────────────
+export const analyticsApi = {
+  ventas:   (params) => api.get("/analytics/ventas",   { params: params || {} }),
+  origen:   (params) => api.get("/analytics/origen",   { params: params || {} }),
+  embudo:   (params) => api.get("/analytics/embudo",   { params: params || {} }),
+  clientes: (params) => api.get("/analytics/clientes", { params: params || {} }),
+  stock:    ()       => api.get("/analytics/stock"),
+  ofertas:  ()       => api.get("/analytics/ofertas"),
+};
+
 export const gastosApi = {
   getAll: (params) => api.get("/gastos", { params: params || {} }),
   create: (data)   => api.post("/gastos", data),

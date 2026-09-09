@@ -80,6 +80,36 @@
    No afecta las páginas públicas de la tienda (.storefront).
    ══════════════════════════════════════════════════════════════════════ */
 
+/* Variables de los gráficos de Analíticas (paleta validada para daltonismo en ambos temas) */
+:root {
+  --viz-s1: #2a78d6;
+  --viz-s2: #eb6834;
+  --viz-s3: #1baf7a;
+  --viz-s4: #eda100;
+  --viz-good: #0ca30c;
+  --viz-bad: #d03b3b;
+  --viz-muted-mark: #cbd5e1;
+  --viz-grid: #e2e8f0;
+  --viz-axis: #cbd5e1;
+  --viz-ink: #0f172a;
+  --viz-ink-2: #64748b;
+  --viz-surface: #ffffff;
+}
+.admin-dark {
+  --viz-s1: #3987e5;
+  --viz-s2: #d95926;
+  --viz-s3: #199e70;
+  --viz-s4: #c98500;
+  --viz-good: #0ca30c;
+  --viz-bad: #e66767;
+  --viz-muted-mark: #475569;
+  --viz-grid: #334155;
+  --viz-axis: #475569;
+  --viz-ink: #e2e8f0;
+  --viz-ink-2: #94a3b8;
+  --viz-surface: #1e293b;
+}
+
 /* Cards */
 .admin-dark .card {
   background-color: #1e293b !important;
