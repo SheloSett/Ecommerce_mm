@@ -333,15 +333,17 @@ export default function AdminProductCreate() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Pedido del cliente: "+ Nuevo producto" en verde (igual que en el listado) e
+                  "Ir al listado" en gris. Antes estaban al revés. */}
               <button
                 onClick={startNewProduct}
-                className="btn-secondary whitespace-nowrap"
+                className="btn-primary whitespace-nowrap"
               >
                 + Nuevo producto
               </button>
               <button
                 onClick={() => navigate("/admin/productos")}
-                className="btn-primary whitespace-nowrap"
+                className="btn-secondary whitespace-nowrap"
               >
                 Ir al listado →
               </button>
