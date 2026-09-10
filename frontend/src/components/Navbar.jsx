@@ -9,6 +9,7 @@ import { useSiteConfig } from "../context/SiteConfigContext";
 import AnnouncementBar from "./AnnouncementBar";
 import CartDrawer from "./CartDrawer";
 import toast from "react-hot-toast";
+import { trackSearch } from "../services/tracking";
 
 export default function Navbar() {
   const { totalItems } = useCart();
@@ -150,6 +151,7 @@ export default function Navbar() {
   };
 
   const handleSelectSuggestion = (product) => {
+    trackSearch(search, suggestions.length);
     navigate(`/producto/${product.slug || product.id}`);
     setSearch("");
     setShowSuggestions(false);

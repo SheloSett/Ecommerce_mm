@@ -5,6 +5,7 @@ import Footer from "../components/Footer";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, couponsApi, shippingApi, getImageUrl } from "../services/api";
+import { getSessionId } from "../services/tracking";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
@@ -287,6 +288,8 @@ export default function Checkout() {
     try {
       // Crear la orden en la BD con el método de pago correspondiente
       const orderRes = await ordersApi.create({
+        // Analíticas: vincula el pedido con la sesión anónima que vio los productos
+        sessionId:     getSessionId(),
         customerName:  form.customerName,
         customerEmail: form.customerEmail,
         customerPhone: form.customerPhone,

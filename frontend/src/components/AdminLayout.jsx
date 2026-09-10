@@ -98,6 +98,8 @@ export default function AdminLayout({ children, title }) {
         { label: "Clientes",        tab: "clientes" },
         { label: "Stock",           tab: "stock" },
         { label: "Ofertas",         tab: "ofertas" },
+        { label: "Búsquedas y vistas", tab: "interes" },
+        { label: "🟢 En vivo",       tab: "envivo" },
       ],
     },
     { path: "/admin/caja",         label: "Caja",            icon: "💰",  permission: "caja" },

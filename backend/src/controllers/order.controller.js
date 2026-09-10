@@ -260,7 +260,10 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, sessionId } = req.body;
+    // sessionId: id anónimo del navegador (el mismo que registra vistas y búsquedas en store_events).
+    // Solo se guarda si tiene la forma esperada; sirve para medir conversión vista → compra en Analíticas.
+    const trackingSessionId = typeof sessionId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(sessionId) ? sessionId : null;
 
     if (!customerName || !customerEmail || !items || items.length === 0) {
       return res.status(400).json({ error: "Datos de la orden incompletos" });
@@ -546,6 +549,7 @@ async function createOrder(req, res) {
         ivaAmount,
         ...(totales.hasUsd ? { ivaAmountUsd: totales.ivaAmountUsd } : {}),
         customerNote: customerNote?.trim() || null,
+        sessionId: trackingSessionId,
         // shippingMethod: "RETIRO" (retiro en el local) o "ENVIO" (acordar envío).
         // Solo se aceptan los dos valores válidos; cualquier otro valor usa el default "RETIRO".
         shippingMethod: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO",

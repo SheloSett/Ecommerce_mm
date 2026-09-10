@@ -6,6 +6,7 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, getImageUrl } from "../services/api";
 import { saveRecent } from "../utils/recentlyViewed";
+import { trackProductView, setPresenceLabel, pingPresence } from "../services/tracking";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
@@ -163,6 +164,10 @@ export default function ProductDetail() {
         }
         setProduct(res.data);
         saveRecent(res.data);
+        // Analíticas: vista de producto + "está mirando <producto>" en el panel En vivo
+        trackProductView(res.data.id);
+        setPresenceLabel(`Producto · ${res.data.name}`);
+        pingPresence();
         // Auto-seleccionar la primera variante DISPONIBLE (con stock) — ya ordenada según el admin.
         const variants = res.data.variants || [];
         if (variants.length > 0) {

@@ -65,6 +65,7 @@ import WhatsAppButton from "./components/WhatsAppButton";
 import ScrollToTop from "./components/ScrollToTop";
 import MaintenancePage from "./pages/MaintenancePage";
 import MaintenanceBanner from "./components/MaintenanceBanner";
+import PresenceTracker from "./components/PresenceTracker";
 
 // Wrapper que aplica el modo mantenimiento y la clase .storefront (para temas CSS)
 // a todas las páginas públicas. Las rutas /admin/* no se ven afectadas.
@@ -84,6 +85,8 @@ function PublicRoute({ children }) {
   return (
     <div className="storefront">
       <MaintenanceBanner />
+      {/* Señal de presencia para el panel "En vivo" de Analíticas (solo tienda pública) */}
+      <PresenceTracker />
       {children}
     </div>
   );

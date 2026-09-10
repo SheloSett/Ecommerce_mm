@@ -203,6 +203,9 @@ model Order {
   // pueda ver el pedido original vs. el modificado.
   isModified       Boolean       @default(false)
   originalSnapshot Json?
+  // Sesión anónima del navegador que hizo el pedido (misma que registra vistas y búsquedas en
+  // store_events). Sirve para medir qué porcentaje de los que vieron un producto lo compraron.
+  sessionId        String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -725,4 +728,24 @@ model ProductVariant {
   updatedAt          DateTime           @updatedAt
 
   @@map("product_variants")
+}
+
+// ─── Eventos de la tienda (analíticas) ────────────────────────────────────────
+// Registro liviano de lo que hacen los visitantes: búsquedas y vistas de producto. Lo escribe el
+// storefront vía POST /api/events (público). sessionId es un id anónimo generado en el navegador
+// (localStorage); customerId se completa si hay sesión de cliente. Solo lectura desde Analíticas.
+model StoreEvent {
+  id         Int      @id @default(autoincrement())
+  type       String   // SEARCH | PRODUCT_VIEW
+  sessionId  String
+  customerId Int?
+  productId  Int?
+  term       String?  // SEARCH: lo que escribió (normalizado en minúsculas, sin espacios extra)
+  results    Int?     // SEARCH: cuántos resultados devolvió (0 = búsqueda sin resultados)
+  createdAt  DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([productId, createdAt])
+  @@index([sessionId])
+  @@map("store_events")
 }

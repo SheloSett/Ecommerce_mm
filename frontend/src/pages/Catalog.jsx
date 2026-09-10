@@ -1,3 +1,4 @@
+import { trackSearch } from "../services/tracking";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
@@ -178,6 +179,7 @@ export default function Catalog() {
   //   return sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   // };
 
+  const lastTrackedSearch = useRef(null);
   const fetchProducts = useCallback(() => {
     setLoading(true);
     // Antes: limit: 20 — el cliente pidió 40 productos por página
@@ -197,6 +199,11 @@ export default function Catalog() {
       .then((res) => {
         setProducts(res.data.products);
         setPagination(res.data.pagination);
+        // Analíticas: una búsqueda por término (la paginación y los filtros no la repiten)
+        if (currentSearch && lastTrackedSearch.current !== currentSearch) {
+          lastTrackedSearch.current = currentSearch;
+          trackSearch(currentSearch, res.data.pagination?.total ?? res.data.products.length);
+        }
       })
       .catch(console.error)
       .finally(() => setLoading(false));

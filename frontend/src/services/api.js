@@ -332,6 +332,8 @@ export const analyticsApi = {
   clientes: (params) => api.get("/analytics/clientes", { params: params || {} }),
   stock:    ()       => api.get("/analytics/stock"),
   ofertas:  ()       => api.get("/analytics/ofertas"),
+  interes:  (params) => api.get("/analytics/interes",  { params: params || {} }),
+  enVivo:   ()       => api.get("/analytics/en-vivo"),
 };
 
 export const gastosApi = {

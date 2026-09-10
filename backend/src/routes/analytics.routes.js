@@ -1,5 +1,5 @@
 const express = require("express");
-const { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas } = require("../controllers/analytics.controller");
+const { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo } = require("../controllers/analytics.controller");
 const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
 
 const router = express.Router();
@@ -11,5 +11,7 @@ router.get("/embudo",   authMiddleware, adminMiddleware, getEmbudo);
 router.get("/clientes", authMiddleware, adminMiddleware, getClientes);
 router.get("/stock",    authMiddleware, adminMiddleware, getStock);
 router.get("/ofertas",  authMiddleware, adminMiddleware, getOfertas);
+router.get("/interes",  authMiddleware, adminMiddleware, getInteres);
+router.get("/en-vivo",  authMiddleware, adminMiddleware, getEnVivo);
 
 module.exports = router;

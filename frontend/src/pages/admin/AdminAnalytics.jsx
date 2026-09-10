@@ -57,10 +57,12 @@ const TABS = [
   { key: "clientes", label: "Clientes", icon: "👥" },
   { key: "stock", label: "Stock", icon: "📦" },
   { key: "ofertas", label: "Ofertas", icon: "🏷️" },
+  { key: "interes", label: "Búsquedas y vistas", icon: "🔍" },
+  { key: "envivo", label: "En vivo", icon: "🟢" },
 ];
 
 // Pestañas que NO dependen del período (foto actual / por campaña)
-const SIN_PERIODO = ["stock", "ofertas"];
+const SIN_PERIODO = ["stock", "ofertas", "envivo"];
 
 // ─── Piezas de UI ─────────────────────────────────────────────────────────────
 function Section({ title, subtitle, children, right }) {
@@ -516,6 +518,114 @@ function OfertasTab({ data }) {
   );
 }
 
+// ─── Pestaña: Búsquedas y vistas ──────────────────────────────────────────────
+function InteresTab({ data }) {
+  const { resumen: r, topTerms, sinResultados, topProducts } = data;
+  const conv = (p) => (
+    <div className="min-w-[150px]">
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-slate-100" style={{ gap: 2 }}>
+        <div style={{ width: `${p.conversion}%`, background: "var(--viz-good)" }} />
+        <div style={{ width: `${100 - p.conversion}%`, background: "var(--viz-muted-mark)" }} />
+      </div>
+      <p className="mt-1 text-xs text-slate-500" style={{ fontVariantNumeric: "tabular-nums" }}>
+        <span className="font-semibold text-emerald-700">{fmtPct(p.conversion)} compró</span> · {fmtPct(100 - p.conversion)} no
+      </p>
+    </div>
+  );
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <StatTile label="Búsquedas" value={fmtNum(r.busquedas)} hint={`${fmtNum(r.terminosDistintos)} términos distintos`} />
+        <StatTile label="Sin resultados" value={fmtNum(r.busquedasSinResultados)} hint={r.busquedas ? `${fmtPct((r.busquedasSinResultados / r.busquedas) * 100)} de las búsquedas` : undefined} upIsGood={false} />
+        <StatTile label="Vistas de producto" value={fmtNum(r.vistas)} hint={`${fmtNum(r.productosVistos)} productos distintos`} />
+        <StatTile label="Visitantes con actividad" value={fmtNum(r.visitantes)} hint="Sesiones que buscaron o vieron un producto" />
+        <StatTile label="Vistas por visitante" value={r.visitantes ? (r.vistas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
+        <StatTile label="Búsquedas por visitante" value={r.visitantes ? (r.busquedas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
+      </div>
+      {data.desde && <p className="-mt-4 text-xs text-slate-400">Se registra desde el {fmtDate(data.desde)}. Los períodos anteriores no tienen datos porque el registro es nuevo.</p>}
+
+      <Section title="Productos más vistos" subtitle="Vistas de la ficha del producto y qué porcentaje de los que la vieron terminó comprándolo (pedido aprobado, misma sesión o misma cuenta)">
+        <Table rows={topProducts} keyFn={(p) => p.productId} cols={[
+          { key: "name", label: "Producto", render: (p) => <ProductCell name={p.name} image={p.image} sub={!p.active ? "Inactivo" : undefined} /> },
+          { key: "vistas", label: "Vistas", align: "right", render: (p) => fmtNum(p.vistas) },
+          { key: "visitantes", label: "Visitantes", align: "right", render: (p) => fmtNum(p.visitantes) },
+          { key: "compradores", label: "Compraron", align: "right", render: (p) => fmtNum(p.compradores) },
+          { key: "conversion", label: "Compraron vs no", render: conv },
+        ]} empty="Todavía no hay vistas registradas en este período" />
+      </Section>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Section title="Palabras más buscadas" subtitle="Lo que la gente escribe en el buscador de la tienda">
+          <BarList items={topTerms.slice(0, 15).map((t) => ({ key: t.term, label: t.term, value: t.busquedas, sesiones: t.sesiones, resultadosProm: t.resultadosProm }))} format={(v) => `${fmtNum(v)}`} sub={(t) => `${fmtNum(t.sesiones)} visitantes · ${t.resultadosProm === null ? "?" : fmtNum(t.resultadosProm)} resultados en promedio`} />
+          {topTerms.length > 15 && (
+            <details className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-500">Ver las 30 primeras</summary><div className="mt-2"><Table rows={topTerms} keyFn={(t) => t.term} cols={[
+              { key: "term", label: "Búsqueda", className: "font-medium text-slate-800" },
+              { key: "busquedas", label: "Veces", align: "right" },
+              { key: "sesiones", label: "Visitantes", align: "right" },
+              { key: "resultadosProm", label: "Resultados", align: "right", render: (t) => (t.resultadosProm === null ? "—" : fmtNum(t.resultadosProm)) },
+            ]} /></div></details>
+          )}
+        </Section>
+        <Section title="Búsquedas sin resultados" subtitle="Productos que la gente busca y no encuentra: oportunidades de catálogo o de nombres / sinónimos">
+          <Table rows={sinResultados} keyFn={(t) => t.term} cols={[
+            { key: "term", label: "Búsqueda", className: "font-medium text-slate-800" },
+            { key: "busquedas", label: "Veces", align: "right" },
+            { key: "sesiones", label: "Visitantes", align: "right" },
+          ]} empty="Ninguna búsqueda se quedó sin resultados" />
+        </Section>
+      </div>
+    </>
+  );
+}
+
+// ─── Pestaña: En vivo ─────────────────────────────────────────────────────────
+const DEVICE_ICON = { celular: "📱", tablet: "📱", escritorio: "🖥️" };
+function secs(s) {
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+function EnVivoTab({ data, refreshedAt }) {
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="card p-4">
+          <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">En la tienda ahora</p>
+          <p className="mt-1 flex items-center gap-2 text-3xl font-extrabold text-slate-800">
+            <span className="relative flex h-3 w-3"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" /></span>
+            {fmtNum(data.total)}
+          </p>
+        </div>
+        <StatTile label="Clientes identificados" value={fmtNum(data.identificados)} hint="Con sesión iniciada" />
+        <StatTile label="Visitantes anónimos" value={fmtNum(data.total - data.identificados)} />
+        <StatTile label="Mirando un producto" value={fmtNum(data.sesiones.filter((s) => (s.path || "").startsWith("/producto/")).length)} />
+      </div>
+      <p className="-mt-4 text-xs text-slate-400">Se actualiza solo cada 10 segundos{refreshedAt ? ` · última actualización ${refreshedAt.toLocaleTimeString("es-AR")}` : ""}. Un visitante deja de contarse a los 75 segundos sin señal (cerró la pestaña o la dejó en segundo plano).</p>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <Section title="Dónde están">
+          <BarList items={data.porPagina.map((p) => ({ key: p.label, label: p.label, value: p.n }))} format={(v) => `${fmtNum(v)}`} />
+        </Section>
+        <div className="xl:col-span-2">
+          <Section title="Quiénes están" subtitle="Cada fila es un navegador. Los anónimos se identifican por un código de sesión.">
+            <Table rows={data.sesiones} keyFn={(s) => s.id} cols={[
+              { key: "who", label: "Visitante", render: (s) => s.customerId ? (
+                <><p className="font-medium text-slate-800">{s.customerName}</p><p className="text-xs text-slate-400">{s.customerEmail} · {s.customerType === "MAYORISTA" ? "Mayorista" : "Minorista"}</p></>
+              ) : (
+                <><p className="font-medium text-slate-600">Visitante anónimo</p><p className="font-mono text-xs text-slate-400">#{s.id}{s.isAdmin ? " · navegador con sesión admin (vos)" : ""}</p></>
+              ) },
+              { key: "label", label: "Está mirando", render: (s) => <><p className="text-slate-800">{s.label || s.path}</p><p className="truncate text-xs text-slate-400 max-w-[260px]">{s.path}</p></> },
+              { key: "device", label: "Dispositivo", render: (s) => <span title={s.device}>{DEVICE_ICON[s.device] || "🖥️"} {s.device}</span> },
+              { key: "secondsOnSite", label: "En el sitio", align: "right", render: (s) => secs(s.secondsOnSite) },
+              { key: "secondsSinceSeen", label: "Última señal", align: "right", render: (s) => `hace ${secs(s.secondsSinceSeen)}` },
+            ]} empty="No hay nadie en la tienda en este momento" />
+          </Section>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function AdminAnalytics() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -526,6 +636,7 @@ export default function AdminAnalytics() {
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [refreshedAt, setRefreshedAt] = useState(null);
   const reqId = useRef(0);
 
   const usesPeriod = !SIN_PERIODO.includes(tab);
@@ -537,11 +648,12 @@ export default function AdminAnalytics() {
     setError(null);
     try {
       const params = { dateFrom, dateTo, ...(tab === "" && granularity ? { granularity } : {}) };
-      const call = { "": () => analyticsApi.ventas(params), origen: () => analyticsApi.origen(params), embudo: () => analyticsApi.embudo(params), clientes: () => analyticsApi.clientes(params), stock: () => analyticsApi.stock(), ofertas: () => analyticsApi.ofertas() }[tab];
+      const call = { "": () => analyticsApi.ventas(params), origen: () => analyticsApi.origen(params), embudo: () => analyticsApi.embudo(params), clientes: () => analyticsApi.clientes(params), stock: () => analyticsApi.stock(), ofertas: () => analyticsApi.ofertas(), interes: () => analyticsApi.interes(params), envivo: () => analyticsApi.enVivo() }[tab];
       if (!call) return;
       const res = await call();
       if (id !== reqId.current) return;
       setData((prev) => ({ ...prev, [cacheKey]: res.data }));
+      setRefreshedAt(new Date());
     } catch (err) {
       if (id !== reqId.current) return;
       console.error(err);
@@ -556,6 +668,14 @@ export default function AdminAnalytics() {
     fetchTab();
   }, [cacheKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // En vivo: se refresca solo cada 10 s mientras la pestaña está abierta y visible
+  useEffect(() => {
+    if (tab !== "envivo") return;
+    const tick = () => { if (document.visibilityState === "visible") fetchTab(); };
+    const t = setInterval(tick, 10000);
+    return () => clearInterval(t);
+  }, [tab, fetchTab]);
+
   const current = data[cacheKey];
   const applyPreset = (key) => { setPreset(key); setRange(presetRange(key)); };
   const setTab = (key) => setSearchParams(key ? { tab: key } : {});
@@ -569,9 +689,11 @@ export default function AdminAnalytics() {
       case "clientes": return <ClientesTab data={current} />;
       case "stock": return <StockTab data={current} />;
       case "ofertas": return <OfertasTab data={current} />;
+      case "interes": return <InteresTab data={current} />;
+      case "envivo": return <EnVivoTab data={current} refreshedAt={refreshedAt} />;
       default: return null;
     }
-  }, [current, tab, granularity]);
+  }, [current, tab, granularity, refreshedAt]);
 
   return (
     <AdminLayout title="Analíticas">
@@ -612,7 +734,7 @@ export default function AdminAnalytics() {
 
         {/* Mientras recarga se mantiene el render anterior atenuado: sin saltos de layout */}
         {current && (
-          <div className={`space-y-6 transition-opacity ${loading ? "opacity-50" : "opacity-100"}`}>
+          <div className={`space-y-6 transition-opacity ${loading && tab !== "envivo" ? "opacity-50" : "opacity-100"}`}>
             {content}
           </div>
         )}

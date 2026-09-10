@@ -14,6 +14,7 @@
 //   - Fechas: la tienda es de Argentina (UTC−3, sin horario de verano). Los cortes por día / semana /
 //     mes y el día de la semana / hora se calculan con ese huso, no con el del servidor.
 const { PrismaClient } = require("@prisma/client");
+const { livePresence } = require("./events.controller");
 
 const prisma = new PrismaClient();
 
@@ -752,4 +753,127 @@ async function getOfertas(req, res) {
   }
 }
 
-module.exports = { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas };
+
+// ─── 7. Búsquedas y vistas de producto ────────────────────────────────────────
+// GET /api/analytics/interes?dateFrom&dateTo
+// Sale de store_events (lo registra el storefront). "Compraron" = sesiones que vieron el producto y
+// después hicieron un pedido APROBADO que lo incluye (misma sesión del navegador, o misma cuenta de
+// cliente si estaba logueado). Un visitante que vio y compró desde otro dispositivo sin loguearse
+// no se puede vincular: la conversión real es igual o mayor a la que se muestra.
+async function getInteres(req, res) {
+  try {
+    const { from, to } = parseRange(req.query);
+    const [events, orders] = await Promise.all([
+      prisma.storeEvent.findMany({
+        where: { createdAt: { gte: from, lte: to } },
+        select: { type: true, sessionId: true, customerId: true, productId: true, term: true, results: true, createdAt: true },
+      }),
+      // Pedidos aprobados desde el inicio del período (una vista de hoy puede convertir mañana)
+      prisma.order.findMany({
+        where: { status: "APPROVED", createdAt: { gte: from } },
+        select: { sessionId: true, customerId: true, items: { select: { productId: true } } },
+      }),
+    ]);
+
+    // ── Búsquedas ──
+    const searches = events.filter((e) => e.type === "SEARCH");
+    const termMap = {};
+    for (const e of searches) {
+      const k = e.term || "";
+      if (!termMap[k]) termMap[k] = { term: k, busquedas: 0, sesiones: new Set(), sinResultados: 0, resultados: [] };
+      termMap[k].busquedas += 1;
+      termMap[k].sesiones.add(e.sessionId);
+      if (e.results === 0) termMap[k].sinResultados += 1;
+      if (e.results !== null) termMap[k].resultados.push(e.results);
+    }
+    const terms = Object.values(termMap).map((t) => ({
+      term: t.term, busquedas: t.busquedas, sesiones: t.sesiones.size, sinResultados: t.sinResultados,
+      resultadosProm: t.resultados.length ? Math.round(t.resultados.reduce((s, r) => s + r, 0) / t.resultados.length) : null,
+    }));
+    const topTerms = [...terms].sort((a, b) => b.busquedas - a.busquedas).slice(0, 30);
+    const sinResultados = terms.filter((t) => t.sinResultados > 0 && t.sinResultados >= t.busquedas / 2).sort((a, b) => b.busquedas - a.busquedas).slice(0, 30);
+
+    // ── Vistas de producto ──
+    const views = events.filter((e) => e.type === "PRODUCT_VIEW" && e.productId);
+    const prodMap = {};
+    for (const e of views) {
+      if (!prodMap[e.productId]) prodMap[e.productId] = { productId: e.productId, vistas: 0, sesiones: new Set() };
+      prodMap[e.productId].vistas += 1;
+      prodMap[e.productId].sesiones.add(e.sessionId);
+    }
+    // Compradores por producto: sesiones y cuentas que hicieron un pedido aprobado con ese producto
+    const buyersByProduct = {};
+    for (const o of orders) {
+      for (const it of o.items) {
+        if (!it.productId) continue;
+        if (!buyersByProduct[it.productId]) buyersByProduct[it.productId] = { sessions: new Set(), customers: new Set() };
+        if (o.sessionId) buyersByProduct[it.productId].sessions.add(o.sessionId);
+        if (o.customerId) buyersByProduct[it.productId].customers.add(o.customerId);
+      }
+    }
+    // Sesión → cuenta de cliente (última conocida), para vincular vistas logueadas con pedidos de esa cuenta
+    const sessionCustomer = {};
+    for (const e of views) if (e.customerId) sessionCustomer[e.sessionId] = e.customerId;
+
+    const productIds = Object.keys(prodMap).map(Number);
+    const products = productIds.length
+      ? await prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, slug: true, images: true, active: true } })
+      : [];
+    const pInfo = Object.fromEntries(products.map((p) => [p.id, p]));
+    const topProducts = Object.values(prodMap).map((p) => {
+      const b = buyersByProduct[p.productId];
+      let compradores = 0;
+      for (const s of p.sesiones) {
+        const bought = b && (b.sessions.has(s) || (sessionCustomer[s] && b.customers.has(sessionCustomer[s])));
+        if (bought) compradores += 1;
+      }
+      const visitantes = p.sesiones.size;
+      const info = pInfo[p.productId];
+      return {
+        productId: p.productId, name: info?.name || "Producto eliminado", slug: info?.slug || null, image: info?.images?.[0] || null, active: info?.active ?? false,
+        vistas: p.vistas, visitantes, compradores,
+        conversion: visitantes > 0 ? round2((compradores / visitantes) * 100) : 0,
+      };
+    }).sort((a, b) => b.vistas - a.vistas).slice(0, 30);
+
+    res.json({
+      range: { from, to },
+      resumen: {
+        busquedas: searches.length,
+        terminosDistintos: terms.length,
+        busquedasSinResultados: searches.filter((e) => e.results === 0).length,
+        vistas: views.length,
+        productosVistos: productIds.length,
+        visitantes: new Set(events.map((e) => e.sessionId)).size,
+      },
+      topTerms, sinResultados, topProducts,
+      desde: events.length ? events.reduce((m, e) => (e.createdAt < m ? e.createdAt : m), events[0].createdAt) : null,
+    });
+  } catch (err) {
+    console.error("analytics.getInteres error:", err);
+    res.status(500).json({ error: "Error al obtener búsquedas y vistas" });
+  }
+}
+
+// ─── 8. En vivo ───────────────────────────────────────────────────────────────
+// GET /api/analytics/en-vivo — quién está en la tienda ahora y qué página mira (memoria del backend)
+function getEnVivo(req, res) {
+  const sessions = livePresence();
+  const porPagina = {};
+  for (const s of sessions) {
+    const k = s.label || s.path;
+    porPagina[k] = (porPagina[k] || 0) + 1;
+  }
+  res.json({
+    ahora: new Date(),
+    total: sessions.length,
+    identificados: sessions.filter((s) => s.customerId).length,
+    porPagina: Object.entries(porPagina).map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n),
+    sesiones: sessions.map((s) => ({
+      id: s.sessionId.slice(0, 8), customerId: s.customerId, customerName: s.customerName, customerEmail: s.customerEmail, customerType: s.customerType,
+      path: s.path, label: s.label, device: s.device, isAdmin: s.isAdmin, secondsOnSite: s.secondsOnSite, secondsSinceSeen: s.secondsSinceSeen,
+    })),
+  });
+}
+
+module.exports = { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo };
