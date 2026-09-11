@@ -766,12 +766,13 @@ async function getInteres(req, res) {
     const [events, orders] = await Promise.all([
       prisma.storeEvent.findMany({
         where: { createdAt: { gte: from, lte: to } },
-        select: { type: true, sessionId: true, customerId: true, productId: true, term: true, results: true, createdAt: true },
+        select: { id: true, type: true, sessionId: true, customerId: true, productId: true, term: true, results: true, path: true, device: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
       }),
       // Pedidos aprobados desde el inicio del período (una vista de hoy puede convertir mañana)
       prisma.order.findMany({
         where: { status: "APPROVED", createdAt: { gte: from } },
-        select: { sessionId: true, customerId: true, items: { select: { productId: true } } },
+        select: { id: true, sessionId: true, customerId: true, customerName: true, total: true, createdAt: true, items: { select: { productId: true } } },
       }),
     ]);
 
@@ -795,6 +796,7 @@ async function getInteres(req, res) {
 
     // ── Vistas de producto ──
     const views = events.filter((e) => e.type === "PRODUCT_VIEW" && e.productId);
+    const pageViews = events.filter((e) => e.type === "PAGE_VIEW");
     const prodMap = {};
     for (const e of views) {
       if (!prodMap[e.productId]) prodMap[e.productId] = { productId: e.productId, vistas: 0, sesiones: new Set() };
@@ -816,8 +818,9 @@ async function getInteres(req, res) {
     for (const e of views) if (e.customerId) sessionCustomer[e.sessionId] = e.customerId;
 
     const productIds = Object.keys(prodMap).map(Number);
-    const products = productIds.length
-      ? await prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, slug: true, images: true, active: true } })
+    const allProductIds = Array.from(new Set([...productIds, ...orders.flatMap((o) => o.items.map((i) => i.productId).filter(Boolean))]));
+    const products = allProductIds.length
+      ? await prisma.product.findMany({ where: { id: { in: allProductIds } }, select: { id: true, name: true, slug: true, images: true, active: true } })
       : [];
     const pInfo = Object.fromEntries(products.map((p) => [p.id, p]));
     const topProducts = Object.values(prodMap).map((p) => {
@@ -836,9 +839,42 @@ async function getInteres(req, res) {
       };
     }).sort((a, b) => b.vistas - a.vistas).slice(0, 30);
 
+    // ── Recorrido por visitante: quién entró, qué buscó, qué vio y si compró ──
+    const sessMap = {};
+    for (const e of events) {
+      if (!sessMap[e.sessionId]) sessMap[e.sessionId] = { sessionId: e.sessionId, customerId: null, device: null, firstSeen: e.createdAt, lastSeen: e.createdAt, busquedas: 0, vistas: 0, paginas: 0, compras: 0, eventos: [] };
+      const s = sessMap[e.sessionId];
+      if (e.customerId) s.customerId = e.customerId;
+      if (e.device) s.device = e.device;
+      if (e.createdAt > s.lastSeen) s.lastSeen = e.createdAt;
+      if (e.type === "SEARCH") s.busquedas += 1; else if (e.type === "PRODUCT_VIEW") s.vistas += 1; else s.paginas += 1;
+      s.eventos.push({ at: e.createdAt, type: e.type, term: e.term, results: e.results, productId: e.productId, productName: e.productId ? (pInfo[e.productId]?.name || "Producto eliminado") : null, path: e.path, label: e.type === "PAGE_VIEW" ? pageLabel(e.path) : null });
+    }
+    // Compras: pedidos aprobados de la misma sesión (o de la misma cuenta logueada en esa sesión)
+    for (const o of orders) {
+      const bySession = o.sessionId && sessMap[o.sessionId] ? [sessMap[o.sessionId]] : [];
+      const byCustomer = o.customerId ? Object.values(sessMap).filter((s) => s.customerId === o.customerId && !bySession.includes(s)) : [];
+      for (const s of [...bySession, ...byCustomer]) {
+        s.compras += 1;
+        s.eventos.push({ at: o.createdAt, type: "COMPRA", orderId: o.id, total: o.total, productos: o.items.map((i) => pInfo[i.productId]?.name || "Producto").slice(0, 5) });
+      }
+    }
+    const customerIds = Array.from(new Set(Object.values(sessMap).map((s) => s.customerId).filter(Boolean)));
+    const customers = customerIds.length ? await prisma.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, name: true, email: true, type: true } }) : [];
+    const cInfo = Object.fromEntries(customers.map((c) => [c.id, c]));
+    const visitantes = Object.values(sessMap)
+      .map((s) => ({
+        ...s, id: s.sessionId.slice(0, 8), customer: s.customerId ? cInfo[s.customerId] || null : null,
+        eventos: s.eventos.sort((a, b) => new Date(a.at) - new Date(b.at)).slice(-60),
+      }))
+      .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
+      .slice(0, 150);
+
     res.json({
       range: { from, to },
+      visitantes,
       resumen: {
+        paginas: pageViews.length,
         busquedas: searches.length,
         terminosDistintos: terms.length,
         busquedasSinResultados: searches.filter((e) => e.results === 0).length,
@@ -853,6 +889,26 @@ async function getInteres(req, res) {
     console.error("analytics.getInteres error:", err);
     res.status(500).json({ error: "Error al obtener búsquedas y vistas" });
   }
+}
+
+// Etiqueta legible de una ruta de la tienda (misma lógica que PresenceTracker en el frontend)
+function pageLabel(path) {
+  if (!path) return "Página";
+  const [pathname, qs] = path.split("?");
+  const params = new URLSearchParams(qs || "");
+  if (pathname === "/") return "Inicio";
+  if (pathname === "/catalogo") {
+    const c = params.get("category");
+    const s = params.get("search");
+    if (s) return `Buscando "${s}"`;
+    return c ? `Catálogo · ${c}` : "Catálogo";
+  }
+  const fixed = { "/carrito": "Carrito", "/checkout": "Checkout", "/login": "Iniciar sesión", "/registro": "Registro", "/favoritos": "Favoritos", "/pedidos": "Mis pedidos", "/cotizaciones": "Mis cotizaciones", "/perfil": "Perfil", "/sobre-nosotros": "Sobre nosotros", "/como-comprar": "Cómo comprar", "/arrepentimiento": "Arrepentimiento" };
+  if (fixed[pathname]) return fixed[pathname];
+  if (pathname.startsWith("/pago/")) return "Resultado de pago";
+  if (pathname.startsWith("/pedidos/")) return "Detalle de pedido";
+  if (pathname.startsWith("/pagar-cotizacion/")) return "Pagando cotización";
+  return pathname;
 }
 
 // ─── 8. En vivo ───────────────────────────────────────────────────────────────

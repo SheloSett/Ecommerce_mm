@@ -32,3 +32,7 @@ CREATE TABLE IF NOT EXISTS "store_events" (
 CREATE INDEX IF NOT EXISTS "store_events_type_createdAt_idx" ON "store_events"("type", "createdAt");
 CREATE INDEX IF NOT EXISTS "store_events_productId_createdAt_idx" ON "store_events"("productId", "createdAt");
 CREATE INDEX IF NOT EXISTS "store_events_sessionId_idx" ON "store_events"("sessionId");
+
+-- 2026-09-11: recorrido por visitante (vistas de página y dispositivo)
+ALTER TABLE "store_events" ADD COLUMN IF NOT EXISTS "path" TEXT;
+ALTER TABLE "store_events" ADD COLUMN IF NOT EXISTS "device" TEXT;

@@ -736,12 +736,14 @@ model ProductVariant {
 // (localStorage); customerId se completa si hay sesión de cliente. Solo lectura desde Analíticas.
 model StoreEvent {
   id         Int      @id @default(autoincrement())
-  type       String   // SEARCH | PRODUCT_VIEW
+  type       String   // SEARCH | PRODUCT_VIEW | PAGE_VIEW
   sessionId  String
   customerId Int?
   productId  Int?
   term       String?  // SEARCH: lo que escribió (normalizado en minúsculas, sin espacios extra)
   results    Int?     // SEARCH: cuántos resultados devolvió (0 = búsqueda sin resultados)
+  path       String?  // PAGE_VIEW: ruta visitada (/, /catalogo?category=cables, /carrito...)
+  device     String?  // celular | tablet | escritorio (según el user-agent, en todos los tipos)
   createdAt  DateTime @default(now())
 
   @@index([type, createdAt])

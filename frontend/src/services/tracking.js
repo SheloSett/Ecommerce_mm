@@ -59,6 +59,13 @@ export function trackSearch(term, results) {
   post("", { type: "SEARCH", term: t, results: Number.isInteger(results) ? results : undefined });
 }
 
+// Entrada a una página (inicio, catálogo, carrito...). Una por navegación; las fichas de producto y
+// las búsquedas ya tienen su propio evento, así que no se duplican acá.
+export function trackPageView(path) {
+  if (!path || !path.startsWith("/")) return;
+  post("", { type: "PAGE_VIEW", path: path.slice(0, 200) });
+}
+
 // Vista de la ficha de un producto. Se deduplica por producto dentro de la misma carga de página
 // para no contar dos veces un re-render.
 const viewed = new Set();

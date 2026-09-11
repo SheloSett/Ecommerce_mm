@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { pingPresence, setPresenceLabel } from "../services/tracking";
+import { pingPresence, setPresenceLabel, trackPageView } from "../services/tracking";
 
 const PING_MS = 25 * 1000;
 
@@ -40,6 +40,10 @@ export default function PresenceTracker() {
     setPresenceLabel(label);
     // La ficha de producto pone su nombre apenas carga; el primer ping lleva la ruta igual.
     pingPresence(path);
+    // Recorrido del visitante para Analíticas. Producto y búsqueda tienen su propio evento.
+    const isProduct = location.pathname.startsWith("/producto/");
+    const isSearch = location.pathname === "/catalogo" && new URLSearchParams(location.search).get("search");
+    if (!isProduct && !isSearch) trackPageView(path);
 
     let timer = null;
     const start = () => { if (!timer) timer = setInterval(() => pingPresence(path), PING_MS); };

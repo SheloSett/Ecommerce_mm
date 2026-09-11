@@ -17,7 +17,7 @@ const prisma = new PrismaClient();
 
 const PRESENCE_TTL_MS = 75 * 1000;
 const SESSION_RE = /^[A-Za-z0-9_-]{8,64}$/;
-const EVENT_TYPES = new Set(["SEARCH", "PRODUCT_VIEW"]);
+const EVENT_TYPES = new Set(["SEARCH", "PRODUCT_VIEW", "PAGE_VIEW"]);
 
 // sessionId → { sessionId, customerId, customerName, customerEmail, customerType, path, label,
 //               device, isAdmin, firstSeen, lastSeen }
@@ -50,13 +50,17 @@ function cleanStr(v, max) {
 // POST /api/events
 async function track(req, res) {
   try {
-    const { type, sessionId, productId, term, results } = req.body || {};
+    const { type, sessionId, productId, term, results, path } = req.body || {};
     if (!EVENT_TYPES.has(type)) return res.status(400).json({ error: "Tipo de evento inválido" });
     if (!SESSION_RE.test(sessionId || "")) return res.status(400).json({ error: "sessionId inválido" });
     const customer = customerFromReq(req);
 
-    const data = { type, sessionId, customerId: customer?.id ?? null };
-    if (type === "SEARCH") {
+    const data = { type, sessionId, customerId: customer?.id ?? null, device: deviceFromUa(req.headers["user-agent"]) };
+    if (type === "PAGE_VIEW") {
+      const p = cleanStr(path, 200);
+      if (!p || !p.startsWith("/")) return res.status(400).json({ error: "path inválido" });
+      data.path = p;
+    } else if (type === "SEARCH") {
       const t = cleanStr(term, 100);
       if (!t) return res.status(400).json({ error: "Falta el término" });
       data.term = t.toLowerCase().replace(/\s+/g, " ");

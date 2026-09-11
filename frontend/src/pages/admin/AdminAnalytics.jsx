@@ -535,10 +535,10 @@ function InteresTab({ data }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <StatTile label="Visitantes" value={fmtNum(r.visitantes)} hint={`${fmtNum(r.paginas || 0)} páginas vistas`} />
         <StatTile label="Búsquedas" value={fmtNum(r.busquedas)} hint={`${fmtNum(r.terminosDistintos)} términos distintos`} />
         <StatTile label="Sin resultados" value={fmtNum(r.busquedasSinResultados)} hint={r.busquedas ? `${fmtPct((r.busquedasSinResultados / r.busquedas) * 100)} de las búsquedas` : undefined} upIsGood={false} />
         <StatTile label="Vistas de producto" value={fmtNum(r.vistas)} hint={`${fmtNum(r.productosVistos)} productos distintos`} />
-        <StatTile label="Visitantes con actividad" value={fmtNum(r.visitantes)} hint="Sesiones que buscaron o vieron un producto" />
         <StatTile label="Vistas por visitante" value={r.visitantes ? (r.vistas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
         <StatTile label="Búsquedas por visitante" value={r.visitantes ? (r.busquedas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
       </div>
@@ -574,7 +574,88 @@ function InteresTab({ data }) {
           ]} empty="Ninguna búsqueda se quedó sin resultados" />
         </Section>
       </div>
+
+      <Section title="Quiénes entraron y qué vieron" subtitle="Un visitante por fila (un navegador). Tocá una fila para ver su recorrido paso a paso: páginas, búsquedas, productos y si terminó comprando.">
+        <VisitantesList visitantes={data.visitantes || []} />
+      </Section>
     </>
+  );
+}
+
+const DEVICE_ICON_SM = { celular: "📱", tablet: "📱", escritorio: "🖥️" };
+const fmtTime = (d) => new Date(d).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+const fmtDateTime = (d) => `${fmtDate(d)} ${fmtTime(d)}`;
+
+function VisitantesList({ visitantes }) {
+  const [open, setOpen] = useState(null);
+  const [filter, setFilter] = useState("todos");
+  const list = visitantes.filter((v) => filter === "todos" || (filter === "clientes" && v.customer) || (filter === "buscaron" && v.busquedas > 0) || (filter === "compraron" && v.compras > 0));
+  if (visitantes.length === 0) return <p className="py-6 text-center text-sm text-slate-400">Todavía no hay visitas registradas en este período</p>;
+  const eventLine = (e) => {
+    if (e.type === "SEARCH") return <><span className="font-semibold text-slate-800">Buscó</span> "{e.term}" <span className={e.results === 0 ? "text-red-500" : "text-slate-400"}>· {e.results === null ? "?" : e.results} resultados</span></>;
+    if (e.type === "PRODUCT_VIEW") return <><span className="font-semibold text-slate-800">Vio</span> {e.productName}</>;
+    if (e.type === "COMPRA") return <><span className="font-semibold text-emerald-700">Compró</span> <Link to={`/admin/ordenes/${e.orderId}`} className="text-blue-600 hover:underline">pedido #{e.orderId}</Link> · {fmtArs(e.total)} · {e.productos.join(", ")}</>;
+    return <><span className="font-semibold text-slate-800">Entró a</span> {e.label || e.path}</>;
+  };
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap gap-1">
+        {[["todos", `Todos (${visitantes.length})`], ["clientes", `Con cuenta (${visitantes.filter((v) => v.customer).length})`], ["buscaron", `Buscaron algo (${visitantes.filter((v) => v.busquedas > 0).length})`], ["compraron", `Compraron (${visitantes.filter((v) => v.compras > 0).length})`]].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${filter === k ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{l}</button>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-3 py-2">Visitante</th>
+              <th className="px-3 py-2">Última actividad</th>
+              <th className="px-3 py-2">Qué hizo</th>
+              <th className="px-3 py-2">Dispositivo</th>
+              <th className="px-3 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((v) => (
+              <>
+                <tr key={v.sessionId} onClick={() => setOpen(open === v.sessionId ? null : v.sessionId)} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50">
+                  <td className="px-3 py-2">
+                    {v.customer ? (
+                      <><p className="font-medium text-slate-800">{v.customer.name}</p><p className="text-xs text-slate-400">{v.customer.email} · {v.customer.type === "MAYORISTA" ? "Mayorista" : "Minorista"}</p></>
+                    ) : (
+                      <><p className="font-medium text-slate-600">Visitante anónimo</p><p className="font-mono text-xs text-slate-400">#{v.id}</p></>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600">{fmtDateTime(v.lastSeen)}</td>
+                  <td className="px-3 py-2 text-xs text-slate-600">
+                    {v.paginas > 0 && <span className="mr-2">{v.paginas} página{v.paginas !== 1 ? "s" : ""}</span>}
+                    {v.busquedas > 0 && <span className="mr-2 rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">{v.busquedas} búsqueda{v.busquedas !== 1 ? "s" : ""}</span>}
+                    {v.vistas > 0 && <span className="mr-2 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">{v.vistas} producto{v.vistas !== 1 ? "s" : ""}</span>}
+                    {v.compras > 0 && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">{v.compras} compra{v.compras !== 1 ? "s" : ""}</span>}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600">{v.device ? <>{DEVICE_ICON_SM[v.device]} {v.device}</> : "—"}</td>
+                  <td className="px-3 py-2 text-right text-slate-400">{open === v.sessionId ? "▲" : "▼"}</td>
+                </tr>
+                {open === v.sessionId && (
+                  <tr key={`${v.sessionId}-d`} className="border-b border-slate-100 bg-slate-50">
+                    <td colSpan={5} className="px-3 py-3">
+                      <ol className="space-y-1.5 border-l-2 border-slate-200 pl-4">
+                        {v.eventos.map((e, i) => (
+                          <li key={i} className="text-sm text-slate-600">
+                            <span className="mr-2 font-mono text-xs text-slate-400" style={{ fontVariantNumeric: "tabular-nums" }}>{fmtDateTime(e.at)}</span>
+                            {eventLine(e)}
+                          </li>
+                        ))}
+                      </ol>
+                    </td>
+                  </tr>
+                )}
+              </>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
