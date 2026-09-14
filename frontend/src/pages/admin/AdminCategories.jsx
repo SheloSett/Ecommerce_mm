@@ -316,8 +316,10 @@ export default function AdminCategories() {
 
       {/* Modal crear/editar */}
       {showModal && (
+        {/* max-h + overflow-y-auto: con la vista previa el formulario supera la altura de la pantalla
+            y antes quedaba cortado sin poder scrollear. Ahora el modal se desplaza por adentro. */}
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="font-bold text-slate-800">
                 {editingCat ? "Editar categoría" : "Nueva categoría"}
