@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
+import { CARD_STYLES } from "../../components/CategoryCard";
 import { categoriesApi, productsApi, getImageUrl } from "../../services/api";
 // La jerarquía ya no está topeada en dos niveles: aplanar el árbol para la tabla y calcular qué
 // ramas hay que excluir del selector de padre necesitan recursión. Ver utils/categoryTree.js.
@@ -37,6 +38,11 @@ export default function AdminCategories() {
   const [parentId, setParentId] = useState("");
   // hidden: los productos de esta categoría no se mezclan en el listado general del catálogo
   const [hidden, setHidden] = useState(false);
+  // Apariencia de la tarjeta en el Home (ver CategoryCard.jsx)
+  const [cardStyle, setCardStyle] = useState("normal");
+  const [featured, setFeatured] = useState(false);
+  const [badgeText, setBadgeText] = useState("");
+  const [ribbonText, setRibbonText] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Modal "ver productos vinculados" a una categoría
@@ -92,6 +98,10 @@ export default function AdminCategories() {
     // Si la categoría tiene padre, pre-seleccionarlo en el dropdown
     setParentId(cat.parentId ? String(cat.parentId) : "");
     setHidden(cat.hidden === true);
+    setCardStyle(cat.cardStyle || "normal");
+    setFeatured(cat.featured === true);
+    setBadgeText(cat.badgeText || "");
+    setRibbonText(cat.ribbonText || "");
     setShowModal(true);
   };
 
@@ -102,7 +112,7 @@ export default function AdminCategories() {
     setSaving(true);
     try {
       // parentId vacío se envía como null (categoría raíz)
-      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden };
+      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden, cardStyle, featured, badgeText, ribbonText };
 
       if (editingCat) {
         await categoriesApi.update(editingCat.id, data);
@@ -205,6 +215,9 @@ export default function AdminCategories() {
                           {cat.name}
                         </span>
                         {/* Badge para las categorías ocultas del catálogo general */}
+                        {cat.cardStyle && cat.cardStyle !== "normal" && (
+                          <span className="ml-2 rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">{CARD_STYLES.find((s) => s.key === cat.cardStyle)?.label || cat.cardStyle}{cat.featured ? " · destacada" : ""}</span>
+                        )}
                         {cat.hidden && (
                           <span
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200"
@@ -374,6 +387,42 @@ export default function AdminCategories() {
                     </span>
                   </span>
                 </label>
+              </div>
+
+              {/* Apariencia de la tarjeta en el Home */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-3">
+                <p className="text-sm font-medium text-slate-700">Tarjeta en el inicio</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {CARD_STYLES.map((s) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => setCardStyle(s.key)}
+                      title={s.hint}
+                      className={`rounded-lg border px-2 py-1.5 text-xs font-semibold transition-colors ${cardStyle === s.key ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"}`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-400 leading-snug">{CARD_STYLES.find((s) => s.key === cardStyle)?.hint}</p>
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input type="checkbox" checked={featured} onChange={(e) => setFeatured(e.target.checked)} className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer" />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-700">Destacada</span>
+                    <span className="block text-xs text-slate-400 mt-0.5 leading-snug">Ocupa el doble de ancho y va primera en la grilla (en el celular, toda la fila).</span>
+                  </span>
+                </label>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Etiqueta debajo del nombre <span className="text-slate-400 font-normal">(opcional)</span></label>
+                  <input type="text" value={badgeText} onChange={(e) => setBadgeText(e.target.value)} maxLength={40} className="input" placeholder="Ej: Precios que no se repiten" />
+                </div>
+                {cardStyle === "sale" && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Texto de la cinta</label>
+                    <input type="text" value={ribbonText} onChange={(e) => setRibbonText(e.target.value)} maxLength={40} className="input" placeholder="Ej: Hasta 40% off" />
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3">

@@ -95,6 +95,19 @@ async function getCategories(req, res) {
 }
 
 // POST /api/categories
+// Apariencia de la tarjeta en el Home: valida y normaliza lo que manda el admin.
+const CARD_STYLES = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice"];
+function cardFields(body, partial = false) {
+  const out = {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  const text = (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 40) : null);
+  if (!partial || has("cardStyle")) out.cardStyle = CARD_STYLES.includes(body.cardStyle) ? body.cardStyle : "normal";
+  if (!partial || has("featured")) out.featured = body.featured === true || body.featured === "true";
+  if (!partial || has("badgeText")) out.badgeText = text(body.badgeText);
+  if (!partial || has("ribbonText")) out.ribbonText = text(body.ribbonText);
+  return out;
+}
+
 // Acepta parentId opcional para crear una subcategoría
 async function createCategory(req, res) {
   try {
@@ -130,6 +143,7 @@ async function createCategory(req, res) {
         // parentId puede ser null (categoría raíz) o un entero (subcategoría)
         parentId: parentId ? parseInt(parentId) : null,
         hidden: hidden === true || hidden === "true",
+        ...cardFields(req.body),
       },
     });
 
@@ -188,6 +202,7 @@ async function updateCategory(req, res) {
         parentId: parentId ? parseInt(parentId) : null,
         // Solo se toca si vino en el body (undefined = no modificar)
         ...(hidden !== undefined ? { hidden: hidden === true || hidden === "true" } : {}),
+        ...cardFields(req.body, true),
       },
     });
 

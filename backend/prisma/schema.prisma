@@ -37,6 +37,11 @@ model Category {
   // general del catálogo (ni "Todos", ni navegando otras categorías). Igual aparece en el filtro de
   // categorías (elegirla es la forma de acceder a esos productos) y siguen apareciendo en la búsqueda.
   hidden    Boolean    @default(false)
+  // Apariencia de la tarjeta en el Home (Admin → Categorías). Ver frontend CategoryCard.jsx.
+  cardStyle  String  @default("normal") // normal | fire | sale | fresh | premium | bolt | neon | ice
+  featured   Boolean @default(false)    // doble ancho y primera en la grilla
+  badgeText  String?                    // etiqueta corta debajo del nombre ("Precios que no se repiten")
+  ribbonText String?                    // texto de la cinta diagonal del estilo Oferta ("Hasta 40% off")
   createdAt DateTime   @default(now())
 
   @@map("categories")

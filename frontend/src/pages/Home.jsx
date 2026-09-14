@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
+import CategoryCard from "../components/CategoryCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
@@ -425,28 +426,15 @@ export default function Home() {
             <h2 className="text-2xl font-bold text-[#0b1c30] mb-6">Explorar por categoría</h2>
             {/* Antes: card p-4 text-center (card blanca) + emoji + text-blue-600 hover */}
             {/* Ahora: card oscura bg-[#0b1c30] + Material Symbol icon + hover verde según template */}
+            {/* Cada tarjeta puede tener un estilo propio (fuego, oferta, etc.) elegido en
+                Admin → Categorías; las destacadas ocupan doble ancho y van primero. Antes era un
+                <Link> fijo azul acá mismo; ahora lo resuelve CategoryCard. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
-              {categories.map((cat) => (
-                <Link
-                  key={cat.id}
-                  to={`/catalogo?category=${cat.slug}`}
-                  className="bg-[#0b1c30]/90 text-white p-4 rounded-xl flex flex-col items-center justify-center text-center group cursor-pointer hover:bg-[#00873a] transition-all duration-300"
-                >
-                  <span
-                    className="material-symbols-outlined text-[#62df7d] group-hover:text-white mb-2 transition-colors"
-                    style={{ fontSize: 32 }}
-                  >
-                    {getCategoryIcon(cat.slug)}
-                  </span>
-                  <p className="text-sm font-semibold leading-tight">{cat.name}</p>
-                  {/* Contador "X productos" oculto a pedido del cliente (no quiere contadores
-                      de categorías ni en el inicio ni en el catálogo):
-                  <p className="text-xs opacity-60 mt-1">
-                    {cat.totalProducts ?? cat._count?.products ?? 0} productos
-                  </p>
-                  */}
-                </Link>
-              ))}
+              {[...categories]
+                .sort((a, b) => (b.featured === true) - (a.featured === true))
+                .map((cat) => (
+                  <CategoryCard key={cat.id} cat={cat} icon={getCategoryIcon(cat.slug)} />
+                ))}
             </div>
           </section>
         )}
