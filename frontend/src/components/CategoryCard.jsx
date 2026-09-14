@@ -36,9 +36,9 @@ const ICON_BY_STYLE = {
   ice: "ac_unit",
 };
 
-function Flames() {
+function Flames({ back = false }) {
   return (
-    <div className="cc-flames" aria-hidden="true">
+    <div className={`cc-flames${back ? " cc-flames-back" : ""}`} aria-hidden="true">
       <svg viewBox="0 0 400 110" preserveAspectRatio="none">
         <path className="cc-flame cc-f1" fill="#ff5a14" fillOpacity="0.9" d="M0 110 C 20 80, 28 60, 24 34 C 40 52, 52 70, 48 96 C 62 78, 70 50, 62 18 C 84 44, 94 78, 88 110 Z" />
         <path className="cc-flame cc-f2" fill="#ff7a1a" fillOpacity="0.9" d="M80 110 C 100 84, 112 58, 104 28 C 122 48, 132 66, 128 88 C 142 70, 150 44, 144 10 C 166 40, 176 78, 168 110 Z" />
@@ -95,7 +95,13 @@ export default function CategoryCard({ cat, icon }) {
       to={`/catalogo?category=${cat.slug}`}
       className={`cc-card cc-${style}${featured ? " cc-featured" : ""} group`}
     >
-      {style === "fire" && <Flames />}
+      {style === "fire" && (
+        <>
+          <Flames back />
+          <Flames />
+          {[0, 1, 2, 3, 4, 5].map((i) => <i key={i} className="cc-spark" aria-hidden="true" />)}
+        </>
+      )}
       {style === "bolt" && <Bolts />}
       {style === "ice" && <Frost />}
       {style === "sale" && ribbon && <span className="cc-ribbon">{ribbon}</span>}
