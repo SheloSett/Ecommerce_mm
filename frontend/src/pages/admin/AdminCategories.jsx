@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
-import { CARD_STYLES } from "../../components/CategoryCard";
+import CategoryCard, { CARD_STYLES } from "../../components/CategoryCard";
 import { categoriesApi, productsApi, getImageUrl } from "../../services/api";
 // La jerarquía ya no está topeada en dos niveles: aplanar el árbol para la tabla y calcular qué
 // ramas hay que excluir del selector de padre necesitan recursión. Ver utils/categoryTree.js.
@@ -406,6 +406,19 @@ export default function AdminCategories() {
                   ))}
                 </div>
                 <p className="text-xs text-slate-400 leading-snug">{CARD_STYLES.find((s) => s.key === cardStyle)?.hint}</p>
+
+                {/* Vista previa en vivo: la misma tarjeta que se ve en el inicio, con lo que hay
+                    cargado en el formulario. pointer-events-none para que el link no navegue. */}
+                <div className="rounded-xl bg-[#f8f9ff] border border-slate-200 p-3">
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">Vista previa</p>
+                  <div className="grid grid-cols-2 gap-3 pointer-events-none select-none" style={{ maxWidth: 340 }}>
+                    <CategoryCard
+                      cat={{ id: 0, slug: "preview", name: name.trim() || "Nombre de la categoría", cardStyle, featured, badgeText, ribbonText }}
+                      icon="category"
+                    />
+                    {!featured && <CategoryCard cat={{ id: -1, slug: "preview-2", name: "Otra categoría" }} icon="category" />}
+                  </div>
+                </div>
                 <label className="flex items-start gap-2.5 cursor-pointer">
                   <input type="checkbox" checked={featured} onChange={(e) => setFeatured(e.target.checked)} className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer" />
                   <span>
