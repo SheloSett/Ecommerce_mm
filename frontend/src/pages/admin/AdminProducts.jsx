@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
+import FileDropZone from "../../components/admin/FileDropZone";
 import { productsApi, categoriesApi, suppliersApi, variantsApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
@@ -260,7 +261,9 @@ export default function AdminProducts() {
   const [keepVideos, setKeepVideos] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showVariants, setShowVariants] = useState(false);
-  const [search, setSearch] = useState("");
+  // El término buscado vive también en la URL (?search=): así sobrevive a un F5 y a los cambios de
+  // pestaña. Antes se perdía al refrescar.
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
 
   // ── Filtros del listado (solo panel admin) ──────────────────────────────────
   // Van en estado local y no en la URL como el tab: los botones de tab hacen setSearchParams({}),
@@ -323,7 +326,7 @@ export default function AdminProducts() {
   };
 
   useEffect(() => {
-    fetchProducts();
+    fetchProducts(searchParams.get("search") || "");
     categoriesApi.getAll().then((res) => setCategories(res.data));
     suppliersApi.getAll().then((res) => setSuppliers(res.data)).catch(() => {});
   }, []);
@@ -378,6 +381,21 @@ export default function AdminProducts() {
     e.preventDefault();
     setPage(1); // volver a la primera página al hacer una búsqueda nueva
     fetchProducts(search);
+    // Guardar lo buscado en la URL sin pisar el tab
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (search.trim()) p.set("search", search.trim()); else p.delete("search");
+      return p;
+    }, { replace: true });
+  };
+
+  // Cambiar de pestaña conservando la búsqueda (antes setSearchParams({ tab }) la borraba)
+  const goTab = (key) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (key && key !== "all") p.set("tab", key); else p.delete("tab");
+      return p;
+    });
   };
 
   // Al cambiar de tab (Todos / Sin stock / Quiebre) o de filtro volvemos a la primera página:
@@ -1200,7 +1218,7 @@ export default function AdminProducts() {
                 {/* Clickeable: filtra la lista a los productos contabilizados (con stock finito y costo) */}
                 <button
                   type="button"
-                  onClick={() => setSearchParams({ tab: "contabilizados" })}
+                  onClick={() => goTab("contabilizados")}
                   title="Ver solo los productos contabilizados"
                   className={`text-left sm:text-right hover:underline cursor-pointer transition-colors ${
                     isContabilizados ? "text-white font-semibold" : "text-slate-300 hover:text-white"
@@ -1217,7 +1235,7 @@ export default function AdminProducts() {
                   // Clickeable: filtra la lista a los productos con stock ilimitado (no sumados al capital)
                   <button
                     type="button"
-                    onClick={() => setSearchParams({ tab: "ilimitados" })}
+                    onClick={() => goTab("ilimitados")}
                     title="Ver solo los productos con stock ilimitado"
                     className={`text-left sm:text-right hover:underline cursor-pointer transition-colors ${
                       isIlimitados ? "text-white font-semibold" : "text-slate-400 hover:text-white"
@@ -1307,7 +1325,7 @@ export default function AdminProducts() {
               {tabs.map(t => (
                 <button
                   key={t.key}
-                  onClick={() => { t.key === "all" ? setSearchParams({}) : setSearchParams({ tab: t.key }); }}
+                  onClick={() => goTab(t.key)}
                   className={[
                     "px-4 py-1.5 rounded-full text-sm font-semibold border transition-colors",
                     activeTab === t.key
@@ -2131,15 +2149,6 @@ export default function AdminProducts() {
             onDragLeave={onModalDragLeave}
             onDrop={onModalDrop}
           >
-            {/* Aviso mientras se arrastran archivos por encima del modal */}
-            {droppingFiles && (
-              <div className="pointer-events-none sticky top-0 z-30 h-0">
-                <div className="mx-4 mt-4 rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/95 px-4 py-6 text-center shadow-lg">
-                  <p className="text-base font-bold text-blue-700">Soltá acá las fotos o videos</p>
-                  <p className="text-xs text-blue-600 mt-1">Las fotos se agregan a las imágenes nuevas y los videos a los videos nuevos</p>
-                </div>
-              </div>
-            )}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">
                 Editar producto
@@ -2797,15 +2806,15 @@ export default function AdminProducts() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   {editingProduct ? "Agregar nuevas imágenes" : "Imágenes"} (máx. 10, 5MB c/u)
-                  <span className="ml-2 text-xs font-normal text-slate-400">o arrastralas y soltalas sobre esta ventana</span>
                 </label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
+                <FileDropZone
+                  inputRef={fileInputRef}
                   accept="image/*"
-                  multiple
-                  onChange={handleImageSelect}
-                  className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                  onFiles={addImages}
+                  tone="blue"
+                  icon="add_photo_alternate"
+                  title="Arrastrá las fotos acá o hacé clic para elegirlas"
+                  hint="JPG, PNG o WEBP · hasta 10 fotos de 5 MB"
                 />
                 {newImages.length > 0 && (
                   <>
@@ -2849,7 +2858,6 @@ export default function AdminProducts() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   {editingProduct ? "Agregar nuevos videos" : "Videos"} (máx. 5, 100MB c/u · MP4, WEBM o MOV)
-                  <span className="ml-2 text-xs font-normal text-slate-400">o arrastralos y soltalos sobre esta ventana</span>
                 </label>
 
                 {/* Videos ya guardados en este producto */}
@@ -2871,13 +2879,14 @@ export default function AdminProducts() {
                   </div>
                 )}
 
-                <input
-                  ref={videoInputRef}
-                  type="file"
+                <FileDropZone
+                  inputRef={videoInputRef}
                   accept="video/mp4,video/webm,video/quicktime"
-                  multiple
-                  onChange={handleVideoSelect}
-                  className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100 cursor-pointer"
+                  onFiles={addVideos}
+                  tone="violet"
+                  icon="video_call"
+                  title="Arrastrá los videos acá o hacé clic para elegirlos"
+                  hint="MP4, WEBM o MOV · hasta 5 videos de 100 MB"
                 />
 
                 {newVideos.length > 0 && (
