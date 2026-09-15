@@ -1,4 +1,5 @@
 import { trackSearch } from "../services/tracking";
+import { CategoryChip } from "../components/CategoryCard";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
@@ -42,7 +43,10 @@ function FilterSection({ title, defaultOpen = true, children, activeCount = 0 })
 }
 
 // ─── Ítem de categoría con checkbox ──────────────────────────────────────────
-function CategoryItem({ label, count, checked, onClick, indent = false }) {
+function CategoryItem({ label, count, checked, onClick, indent = false, cat = null }) {
+  // Si la categoría tiene un estilo de tarjeta (fuego, oferta...), se muestra como chip en
+  // miniatura con el mismo aspecto que en el inicio; si no, texto plano como siempre.
+  const chip = cat ? <CategoryChip cat={cat} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} /> : null;
   return (
     <button
       onClick={onClick}
@@ -68,7 +72,7 @@ function CategoryItem({ label, count, checked, onClick, indent = false }) {
           checked ? "text-[#006b2c] font-semibold" : "text-[#565e74] group-hover:text-[#0b1c30]"
         }`}
       >
-        {label}
+        {chip || label}
       </span>
       {/* Contador por categoría oculto a pedido del cliente (no quiere contadores en los filtros).
           La prop `count` se sigue recibiendo por si se quiere volver a mostrar:
@@ -320,6 +324,7 @@ export default function Catalog() {
     <div key={cat.id}>
       <CategoryItem
         label={cat.name}
+        cat={cat}
         count={branchTotal(cat)}
         checked={selectedCategorySlugs.includes(cat.slug)}
         indent={depth > 0}

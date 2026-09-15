@@ -83,6 +83,21 @@ function Frost() {
   );
 }
 
+// Chip para la lista de filtros del catálogo. Devuelve null si la categoría no tiene estilo,
+// así el que lo usa muestra el texto plano de siempre.
+export function CategoryChip({ cat, className = "" }) {
+  const style = CARD_STYLES.some((s) => s.key === cat.cardStyle) ? cat.cardStyle : "normal";
+  if (style === "normal") return null;
+  return (
+    <span className={`cc-chip cc-${style} ${className}`}>
+      {style === "fire" && <Flames />}
+      {style === "ice" && <Frost />}
+      <span className="material-symbols-outlined cc-icon">{ICON_BY_STYLE[style]}</span>
+      <span className="cc-name">{cat.name}</span>
+    </span>
+  );
+}
+
 export default function CategoryCard({ cat, icon }) {
   const style = CARD_STYLES.some((s) => s.key === cat.cardStyle) ? cat.cardStyle : "normal";
   const featured = cat.featured === true;

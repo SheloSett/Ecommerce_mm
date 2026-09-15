@@ -162,3 +162,25 @@
   .cc-flame, .cc-fire, .cc-fire::before, .cc-fire .cc-icon, .cc-spark, .cc-fresh::after, .cc-bolt .cc-icon, .cc-b1, .cc-b2, .cc-neon::before, .cc-flake { animation: none; }
   .cc-card { transition: none; }
 }
+
+/* ── Chip: versión miniatura para la lista de filtros del catálogo ──
+   Mismo fondo e ícono que la tarjeta, sin altura ni chispas. Solo se usa cuando la categoría tiene
+   un estilo distinto de "normal"; las demás siguen como texto plano. */
+.cc-chip {
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 7px; border-radius: 999px;
+  color: #fff; font-size: 12px; font-weight: 700; line-height: 1.2;
+  max-width: 100%; vertical-align: middle;
+}
+.cc-chip .cc-icon { font-size: 15px; margin: 0; }
+.cc-chip .cc-name { font-size: 12px; font-weight: 700; text-align: left; }
+.cc-chip:hover { transform: none; }
+.cc-chip.cc-fire::before { inset: 0; height: 100%; }
+.cc-chip .cc-flames { height: 80%; }
+.cc-chip.cc-premium::before, .cc-chip.cc-premium::after { display: none; }
+.cc-chip.cc-premium { box-shadow: inset 0 0 0 1px #d6b25e; }
+.cc-chip.cc-neon::after { inset: 1.5px; border-radius: 999px; }
+.cc-chip.cc-ice .cc-frost { height: 55%; }
+.cc-chip .cc-flake { font-size: 7px; }
+.cc-chip.cc-bolt .cc-bolts { display: none; }
