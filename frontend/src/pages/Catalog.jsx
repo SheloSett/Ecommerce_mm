@@ -481,7 +481,10 @@ export default function Catalog() {
 
           {/* ─── Sidebar desktop ─────────────────────────────────────────── */}
           <aside className="hidden md:block w-64 flex-shrink-0">
-            <div className="bg-white rounded-xl border border-[#bdcaba]/30 p-5 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] sticky top-24">
+            {/* max-h + overflow-y-auto: el panel es sticky y, con subcategorías desplegadas, crecía más que la
+                pantalla y la parte de abajo quedaba inalcanzable hasta llegar al final de la página. Ahora
+                nunca supera el alto visible y se desplaza por adentro. */}
+            <div className="bg-white rounded-xl border border-[#bdcaba]/30 p-5 shadow-[0px_4px_20px_rgba(15,23,42,0.05)] sticky top-24 max-h-[calc(100vh-7rem)] overflow-y-auto overscroll-contain">
               <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[#bdcaba]/40">
                 <span className="material-symbols-outlined text-[#006b2c] text-[20px]">filter_list</span>
                 <h2 className="font-bold text-[#0b1c30] text-sm tracking-wide uppercase">Filtros</h2>
