@@ -3,10 +3,16 @@
 @tailwind utilities;
 
 @layer base {
+  /* Evita scroll horizontal en mobile — cualquier elemento que desborde queda recortado.
+     Va en html Y en body: en iOS Safari, con la regla solo en body la página igual se corría
+     hacia el costado al deslizar (se notaba editando un producto desde el teléfono). */
+  html {
+    overflow-x: hidden;
+  }
   body {
     @apply bg-slate-50 text-slate-900;
-    /* Evita scroll horizontal en mobile — cualquier elemento que desborde queda recortado */
     overflow-x: hidden;
+    max-width: 100vw;
   }
 }
 

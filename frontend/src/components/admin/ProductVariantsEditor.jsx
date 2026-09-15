@@ -866,7 +866,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                                 onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, pickerOpen: false } }))}
                               >
                                 <div
-                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto"
+                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto overflow-x-hidden"
                                   onClick={(ev) => ev.stopPropagation()}
                                 >
                                   <div className="flex items-center justify-between mb-2">
@@ -940,7 +940,7 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
                                 onClick={() => setEditing((p) => ({ ...p, [v.id]: { ...e, videoPickerOpen: false } }))}
                               >
                                 <div
-                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto"
+                                  className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[80vh] overflow-y-auto overflow-x-hidden"
                                   onClick={(ev) => ev.stopPropagation()}
                                 >
                                   <div className="flex items-center justify-between mb-2">
