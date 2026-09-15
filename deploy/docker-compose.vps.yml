@@ -33,6 +33,9 @@ services:
       - ../backend/.env
     environment:
       PORT: 4000
+      # De dónde toma el backend el index.html para las fichas de producto con Open Graph
+      # (/api/og/producto/:slug): el nginx interno del contenedor del frontend.
+      FRONTEND_INTERNAL_URL: http://127.0.0.1:8090
 
     # Las imágenes subidas viven FUERA del contenedor para sobrevivir a los redeploys.
     # Es la misma carpeta que ya usás; no se pierde nada.

@@ -10,6 +10,15 @@
     <!-- Título y descripción base — react-helmet-async los sobreescribe por página -->
     <title>IGWT Store</title>
     <meta name="description" content="Venta de artículos y accesorios electrónicos." />
+    <!-- Open Graph por defecto (inicio, catálogo, etc.). Las fichas de producto lo reemplazan
+         en el servidor (backend /api/og/producto/:slug) para que WhatsApp muestre la foto. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="IGWT Store" />
+    <meta property="og:title" content="IGWT Store" />
+    <meta property="og:description" content="Venta de artículos y accesorios electrónicos. Envíos a todo Argentina." />
+    <meta property="og:image" content="https://igwtstore.com.ar/og-image.png" />
+    <meta property="og:locale" content="es_AR" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="author" content="IGWT Store" />
 
     <!-- Preconnect PRIMERO para que el navegador prestablezca conexión antes de descargar los fonts -->
