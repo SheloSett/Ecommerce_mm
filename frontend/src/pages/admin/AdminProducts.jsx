@@ -450,14 +450,20 @@ export default function AdminProducts() {
     setShowModal(true);
   };
 
+  // Agrega fotos nuevas (desde el <input> o soltándolas sobre el modal).
+  // Acumula en vez de reemplazar. Tope total = 10 (contando las imágenes ya guardadas que se conservan)
+  const addImages = (files) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (imgs.length === 0) return;
+    const maxNew = Math.max(0, 10 - keepImages.length);
+    const total = newImages.length + imgs.length;
+    setNewImages((prev) => [...prev, ...imgs].slice(0, maxNew));
+    if (total > maxNew) toast.error("Máximo 10 imágenes en total");
+  };
   const handleImageSelect = (e) => {
     const files = Array.from(e.target.files);
     e.target.value = ""; // resetea el input: permite volver a elegir (incluso el mismo archivo)
-    // Acumula en vez de reemplazar. Tope total = 10 (contando las imágenes ya guardadas que se conservan)
-    const maxNew = Math.max(0, 10 - keepImages.length);
-    const total = newImages.length + files.length;
-    setNewImages((prev) => [...prev, ...files].slice(0, maxNew));
-    if (total > maxNew) toast.error("Máximo 10 imágenes en total");
+    addImages(files);
   };
 
   const removeKeepImage = (img) => {
@@ -467,19 +473,59 @@ export default function AdminProducts() {
   // Videos: tope de 5 y control de peso en el cliente para no hacer esperar una subida
   // de 100 MB que el backend va a rechazar igual.
   const MAX_VIDEO_MB = 100;
-  const handleVideoSelect = (e) => {
-    const files = Array.from(e.target.files);
-    e.target.value = "";
-    const tooBig = files.filter((f) => f.size > MAX_VIDEO_MB * 1024 * 1024);
+  const addVideos = (files) => {
+    const vids = files.filter((f) => f.type.startsWith("video/"));
+    if (vids.length === 0) return;
+    const tooBig = vids.filter((f) => f.size > MAX_VIDEO_MB * 1024 * 1024);
     if (tooBig.length > 0) {
       toast.error(`${tooBig.length === 1 ? "El video supera" : "Algunos videos superan"} los ${MAX_VIDEO_MB} MB y no se agregaron`);
     }
-    const ok = files.filter((f) => f.size <= MAX_VIDEO_MB * 1024 * 1024);
+    const ok = vids.filter((f) => f.size <= MAX_VIDEO_MB * 1024 * 1024);
     if (ok.length === 0) return;
     const maxNew = Math.max(0, 5 - keepVideos.length);
     const total = newVideos.length + ok.length;
     setNewVideos((prev) => [...prev, ...ok].slice(0, maxNew));
     if (total > maxNew) toast.error("Máximo 5 videos en total");
+  };
+  const handleVideoSelect = (e) => {
+    const files = Array.from(e.target.files);
+    e.target.value = "";
+    addVideos(files);
+  };
+
+  // ── Soltar archivos sobre el modal (drag & drop desde el explorador) ─────────
+  // Las fotos van a "nuevas imágenes" y los videos a "nuevos videos", sin importar dónde se
+  // suelten dentro del modal. Se distingue del arrastre para REORDENAR fotos (que no trae
+  // archivos) mirando dataTransfer.types.
+  const [droppingFiles, setDroppingFiles] = useState(false);
+  const dragDepth = useRef(0);
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
+  const onModalDragEnter = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDroppingFiles(true);
+  };
+  const onModalDragOver = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); // sin esto el navegador abre el archivo en vez de soltarlo acá
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onModalDragLeave = (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDroppingFiles(false);
+  };
+  const onModalDrop = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDroppingFiles(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    const otros = files.filter((f) => !f.type.startsWith("image/") && !f.type.startsWith("video/"));
+    addImages(files);
+    addVideos(files);
+    if (otros.length > 0) toast.error(`${otros.length} archivo${otros.length > 1 ? "s" : ""} ignorado${otros.length > 1 ? "s" : ""}: solo fotos o videos`);
   };
 
   const removeKeepVideo = (vid) => {
@@ -2078,7 +2124,22 @@ export default function AdminProducts() {
       {/* Modal editar producto (crear va a /admin/productos/nuevo) */}
       {showModal && editingProduct && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto overflow-x-hidden overscroll-contain"
+            onDragEnter={onModalDragEnter}
+            onDragOver={onModalDragOver}
+            onDragLeave={onModalDragLeave}
+            onDrop={onModalDrop}
+          >
+            {/* Aviso mientras se arrastran archivos por encima del modal */}
+            {droppingFiles && (
+              <div className="pointer-events-none sticky top-0 z-30 h-0">
+                <div className="mx-4 mt-4 rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/95 px-4 py-6 text-center shadow-lg">
+                  <p className="text-base font-bold text-blue-700">Soltá acá las fotos o videos</p>
+                  <p className="text-xs text-blue-600 mt-1">Las fotos se agregan a las imágenes nuevas y los videos a los videos nuevos</p>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">
                 Editar producto
@@ -2736,6 +2797,7 @@ export default function AdminProducts() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   {editingProduct ? "Agregar nuevas imágenes" : "Imágenes"} (máx. 10, 5MB c/u)
+                  <span className="ml-2 text-xs font-normal text-slate-400">o arrastralas y soltalas sobre esta ventana</span>
                 </label>
                 <input
                   ref={fileInputRef}
@@ -2787,6 +2849,7 @@ export default function AdminProducts() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   {editingProduct ? "Agregar nuevos videos" : "Videos"} (máx. 5, 100MB c/u · MP4, WEBM o MOV)
+                  <span className="ml-2 text-xs font-normal text-slate-400">o arrastralos y soltalos sobre esta ventana</span>
                 </label>
 
                 {/* Videos ya guardados en este producto */}
