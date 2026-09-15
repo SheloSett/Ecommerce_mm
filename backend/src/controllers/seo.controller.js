@@ -210,6 +210,13 @@ async function getProductOgPage(req, res) {
       .replace(/<\/head>/i, `    ${block}\n  </head>`);
   }
 
+  // Helmet le pone a TODAS las respuestas del backend una Content-Security-Policy pensada para la
+  // API (img-src solo el propio dominio, script-src solo el propio dominio). Esta respuesta es la
+  // página de la tienda: con esa política el navegador bloqueaba las fotos de Cloudinary y
+  // cualquier script externo (Mercado Pago), y como la tienda es una SPA el bloqueo se arrastraba
+  // al navegar al catálogo. El frontend servido por nginx no manda CSP, así que acá tampoco.
+  res.removeHeader("Content-Security-Policy");
+  res.removeHeader("Cross-Origin-Opener-Policy");
   res.set("Content-Type", "text/html; charset=utf-8");
   res.set("Cache-Control", "no-cache, no-store, must-revalidate");
   res.send(html);
