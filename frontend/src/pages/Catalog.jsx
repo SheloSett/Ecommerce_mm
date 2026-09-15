@@ -46,7 +46,10 @@ function FilterSection({ title, defaultOpen = true, children, activeCount = 0 })
 function CategoryItem({ label, count, checked, onClick, indent = false, cat = null }) {
   // Si la categoría tiene un estilo de tarjeta (fuego, oferta...), se muestra como chip en
   // miniatura con el mismo aspecto que en el inicio; si no, texto plano como siempre.
-  const chip = cat ? <CategoryChip cat={cat} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} /> : null;
+  // OJO: un elemento React es "truthy" aunque el componente devuelva null, así que se decide acá
+  // (por el estilo) y no con `chip || label`. Antes las categorías normales quedaban sin nombre.
+  const hasStyle = !!cat && !!cat.cardStyle && cat.cardStyle !== "normal";
+  const chip = hasStyle ? <CategoryChip cat={cat} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} /> : null;
   return (
     <button
       onClick={onClick}
