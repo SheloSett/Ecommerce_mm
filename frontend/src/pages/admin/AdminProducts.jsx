@@ -592,14 +592,25 @@ export default function AdminProducts() {
         } else {
           formData.append("keepVideos", "__NONE__");
         }
-        await productsApi.update(editingProduct.id, formData);
-        toast.success("Producto actualizado");
+        const res = await productsApi.update(editingProduct.id, formData);
+        toast.success("Cambios guardados");
+        // Pedido del cliente: al guardar una edición el modal NO se cierra, así se puede seguir
+        // editando (fotos, variantes, etc.) sin volver a abrirlo. Se sincroniza el estado de
+        // fotos y videos con lo que quedó guardado para que la próxima vez no se vuelvan a subir
+        // las que ya se subieron. El formulario se deja como está (ya refleja lo guardado).
+        // Antes: setShowModal(false) en los dos casos.
+        const saved = res.data || editingProduct;
+        setEditingProduct(saved);
+        setNewImages([]);
+        setKeepImages(saved.images || []);
+        setNewVideos([]);
+        setKeepVideos(saved.videos || []);
       } else {
         await productsApi.create(formData);
         toast.success("Producto creado");
+        setShowModal(false);
       }
 
-      setShowModal(false);
       fetchProducts(search);
     } catch (err) {
       const msg = err.response?.data?.error || "Error al guardar el producto";
