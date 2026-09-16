@@ -1434,9 +1434,12 @@ ${pagesHtml}
                         // con lo tipeado, después el resto alfabético (insensible a mayúsculas/tildes).
                         const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
                         const term = normName(sel.search);
-                        const matches = !sel.search ? [] : (allProducts || []).filter((p) =>
-                          p.name.toLowerCase().includes(sel.search.toLowerCase()) ||
-                          (p.sku && p.sku.toLowerCase().includes(sel.search.toLowerCase()))
+                        // Por palabras: todas tienen que estar en el nombre, en cualquier orden
+                        // ("cable iphone" → "CABLE USB A IPHONE..."). Antes: frase entera pegada.
+                        const words = term.split(/\s+/).filter(Boolean);
+                        const matches = words.length === 0 ? [] : (allProducts || []).filter((p) =>
+                          words.every((w) => normName(p.name).includes(w)) ||
+                          (p.sku && normName(p.sku).includes(term))
                         ).sort((a, b) => {
                           const aS = normName(a.name).startsWith(term) ? 0 : 1;
                           const bS = normName(b.name).startsWith(term) ? 0 : 1;
@@ -2285,10 +2288,13 @@ ${pagesHtml}
                     // Sin slice: se muestran TODAS las coincidencias (la lista scrollea).
                     const normName = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
                     const term = normName(productSearch[idx] || "");
+                    // Por palabras: todas tienen que estar en el nombre, en cualquier orden
+                    // ("cable iphone" → "CABLE USB A IPHONE..."). Antes: frase entera pegada.
+                    const words = term.split(/\s+/).filter(Boolean);
                     const filtered = (allProducts || []).filter((p) =>
-                      productSearch[idx]
-                        ? p.name.toLowerCase().includes(productSearch[idx].toLowerCase()) ||
-                          (p.sku && p.sku.toLowerCase().includes(productSearch[idx].toLowerCase()))
+                      words.length > 0
+                        ? words.every((w) => normName(p.name).includes(w)) ||
+                          (p.sku && normName(p.sku).includes(term))
                         : false
                     ).sort((a, b) => {
                       const aStarts = normName(a.name).startsWith(term) ? 0 : 1;

@@ -1,4 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Prisma } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
 const { uploadBuffer, uploadVideoBuffer, deleteByUrl } = require("../config/cloudinary");
@@ -71,16 +71,25 @@ async function generateUniqueProductSlug(name, excludeId = null) {
 // extensión `unaccent` de Postgres (unaccent(name) ILIKE unaccent(term)). Así "camara" encuentra
 // "CÁMARA" y viceversa. Devuelve el array de IDs que coinciden, o `null` si la extensión no está
 // instalada / falla — en ese caso el caller usa el filtro normal (sensible a tildes) como fallback.
+// Búsqueda POR PALABRAS: "cable iphone" encuentra "CABLE USB A IPHONE FICHA CODO", porque cada
+// palabra tiene que aparecer en el nombre pero no hace falta que estén juntas ni en ese orden.
+// Antes se buscaba la frase entera pegada (ILIKE '%cable iphone%') y no aparecía nada.
+// El SKU se sigue comparando con el término completo (los SKUs no tienen espacios).
+function searchWords(term) {
+  return (term || "").trim().split(/\s+/).filter(Boolean);
+}
 async function searchProductIds(term, { includeSku = false } = {}) {
   const t = (term || "").trim();
   if (!t) return null;
   // Escapar comodines de LIKE para que % y _ del usuario se traten como literales.
-  const safe = t.replace(/[\\%_]/g, (m) => "\\" + m);
-  const like = `%${safe}%`;
+  const esc = (s) => s.replace(/[\\%_]/g, (m) => "\\" + m);
+  const like = `%${esc(t)}%`;
+  const words = searchWords(t).map((w) => `%${esc(w)}%`);
   try {
+    const nameCond = Prisma.join(words.map((w) => Prisma.sql`unaccent(name) ILIKE unaccent(${w})`), " AND ");
     const rows = includeSku
-      ? await prisma.$queryRaw`SELECT id FROM products WHERE unaccent(name) ILIKE unaccent(${like}) OR sku ILIKE ${like}`
-      : await prisma.$queryRaw`SELECT id FROM products WHERE unaccent(name) ILIKE unaccent(${like})`;
+      ? await prisma.$queryRaw`SELECT id FROM products WHERE (${nameCond}) OR sku ILIKE ${like}`
+      : await prisma.$queryRaw`SELECT id FROM products WHERE (${nameCond})`;
     return rows.map((r) => r.id);
   } catch (e) {
     console.warn("searchProductIds: 'unaccent' no disponible, usando fallback sensible a tildes:", e.message);
@@ -177,7 +186,7 @@ async function getProducts(req, res) {
         where.id = { in: ids };
       } else {
         where.OR = [
-          { name: { contains: search, mode: "insensitive" } },
+          { AND: searchWords(search).map((w) => ({ name: { contains: w, mode: "insensitive" } })) },
           { sku:  { contains: search, mode: "insensitive" } },
         ];
       }
@@ -547,7 +556,7 @@ async function getProductsAdmin(req, res) {
       // Búsqueda insensible a tildes vía unaccent (fallback al filtro por nombre si no está la extensión).
       const ids = await searchProductIds(search, { includeSku: false });
       if (ids !== null) where.id = { in: ids };
-      else where.name = { contains: search, mode: "insensitive" };
+      else where.AND = searchWords(search).map((w) => ({ name: { contains: w, mode: "insensitive" } }));
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -1403,7 +1412,7 @@ async function getProductFacets(req, res) {
         where.id = { in: ids };
       } else {
         where.OR = [
-          { name: { contains: search, mode: "insensitive" } },
+          { AND: searchWords(search).map((w) => ({ name: { contains: w, mode: "insensitive" } })) },
           { sku:  { contains: search, mode: "insensitive" } },
         ];
       }
