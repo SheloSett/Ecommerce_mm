@@ -4,9 +4,10 @@ const {
   getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
-  applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,
+  applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen, uploadManualItemImage,
 } = require("../controllers/order.controller");
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const upload = require("../middleware/upload.middleware");
 const { validateOrder } = require("../middleware/validate.middleware");
 
 const router = express.Router();
@@ -32,6 +33,8 @@ router.get("/my-quotes/:id", authMiddleware, customerMiddleware, getMyQuoteById)
 // Admin: registrar una venta manual (presencial, por teléfono, etc.)
 // IMPORTANTE: va antes de /:id para que /admin/manual no sea interpretado como un ID
 router.post("/admin/manual", authMiddleware, adminMiddleware, createManualOrder);
+// Admin: foto opcional de un producto libre de la venta manual (se sube a Cloudinary y se guarda la URL)
+router.post("/admin/manual/upload-image", authMiddleware, adminMiddleware, upload.single("image"), upload.verifyImageBytes, uploadManualItemImage);
 
 // Admin: contadores de pendientes para badges del sidebar
 router.get("/badge-counts", authMiddleware, adminMiddleware, getBadgeCounts);

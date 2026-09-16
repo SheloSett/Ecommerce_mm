@@ -1,6 +1,7 @@
 const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
+const { uploadBuffer } = require("../config/cloudinary");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -2239,10 +2240,18 @@ async function createManualOrder(req, res) {
         const costFreeRaw = item.cost !== undefined && item.cost !== null && item.cost !== "" ? parseFloat(item.cost) : null;
         const costFree    = costFreeRaw != null && !isNaN(costFreeRaw) && costFreeRaw >= 0 ? costFreeRaw : null;
 
+        // Foto opcional del producto libre: URL de Cloudinary devuelta por /admin/manual/upload-image.
+        // Se guarda en productImage (la misma columna del snapshot de productos borrados), así todas
+        // las vistas la muestran vía hydrateDeletedProducts sin ningún cambio extra.
+        const imgFree = typeof item.productImage === "string" && /^https:\/\/res\.cloudinary\.com\//.test(item.productImage)
+          ? item.productImage.slice(0, 500)
+          : null;
+
         total += priceFree * qtyFree;
         orderItems.push({
           productId:    null,
           productName:  freeName, // se muestra en todas las vistas vía hydrateDeletedProducts
+          productImage: imgFree,
           quantity:     qtyFree,
           price:        priceFree,
           cost:         costFree,
@@ -2742,7 +2751,21 @@ async function markOrderSeen(req, res) {
   } catch { res.status(500).json({ error: "Error al marcar como visto" }); }
 }
 
+// POST /api/orders/admin/manual/upload-image — foto opcional de un producto libre (venta manual).
+// Sube la imagen a Cloudinary y devuelve la URL; el front la manda después en item.productImage.
+async function uploadManualItemImage(req, res) {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Falta la imagen" });
+    const r = await uploadBuffer(req.file.buffer, "ecommerce/manual-items");
+    res.json({ url: r.secure_url });
+  } catch (err) {
+    console.error("uploadManualItemImage error:", err);
+    res.status(500).json({ error: "No se pudo subir la imagen" });
+  }
+}
+
 module.exports = {
+  uploadManualItemImage,
   getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getStatsUsd, getMetrics, deleteOrder,
   getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,

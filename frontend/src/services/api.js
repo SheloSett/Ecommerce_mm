@@ -175,6 +175,12 @@ export const ordersApi = {
   create: (data) => api.post("/orders", data),
   // Admin: registrar una venta manual (presencial, teléfono, etc.)
   createManual: (data) => api.post("/orders/admin/manual", data),
+  // Admin: foto opcional de un producto libre de la venta manual → { url }
+  uploadManualImage: (file) => {
+    const fd = new FormData();
+    fd.append("image", file);
+    return api.post("/orders/admin/manual/upload-image", fd, { headers: { "Content-Type": "multipart/form-data" } });
+  },
   getAll: (params) => api.get("/orders", { params }),
   getById: (id) => api.get(`/orders/${id}`),
   updateStatus: (id, status) => api.patch(`/orders/${id}/status`, { status }),

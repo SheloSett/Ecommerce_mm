@@ -184,9 +184,10 @@ export default function AdminOrders() {
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
-    items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
+    items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
   });
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
+  const [uploadingImg, setUploadingImg] = useState({}); // { [idx]: bool } — foto del producto libre subiéndose
   const [savingManual, setSavingManual] = useState(false);
 
   // ── Selector de modo de cliente en venta manual ──────────────────────────────
@@ -263,7 +264,7 @@ export default function AdminOrders() {
   };
 
   const addManualItem = () =>
-    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }] }));
+    setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }] }));
 
   const removeManualItem = (idx) =>
     setManualForm((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
@@ -397,7 +398,7 @@ export default function AdminOrders() {
       customerType: "MINORISTA",
       salesChannel: "MOSTRADOR",
       paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-      items: [{ productId: "", productName: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
+      items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
     });
   };
 
@@ -453,10 +454,11 @@ export default function AdminOrders() {
       if (it.isCustom) {
         const c = it.cost === "" || it.cost == null ? undefined : parseFloat(it.cost);
         return {
-          productName: it.productName.trim(),
-          quantity:    parseInt(it.quantity),
-          price:       parseFloat(it.price),
-          cost:        c != null && !isNaN(c) ? c : undefined,
+          productName:  it.productName.trim(),
+          productImage: it.productImage || undefined, // foto opcional (URL de Cloudinary)
+          quantity:     parseInt(it.quantity),
+          price:        parseFloat(it.price),
+          cost:         c != null && !isNaN(c) ? c : undefined,
         };
       }
       const prod    = allProducts.find((p) => p.id === it.productId);
@@ -2330,6 +2332,46 @@ ${pagesHtml}
                             <p className="text-[11px] text-amber-600 mt-1">
                               Producto puntual: se anota en la venta pero no se registra en tu catálogo ni afecta el stock.
                             </p>
+                            {/* Foto opcional del producto libre: se sube al elegirla y queda en el pedido */}
+                            <div className="mt-2 flex items-center gap-2">
+                              {item.productImage ? (
+                                <>
+                                  <img src={item.productImage} alt="" className="w-12 h-12 rounded-lg object-cover border border-amber-200 bg-white" />
+                                  <button
+                                    type="button"
+                                    onClick={() => setManualItem(idx, "productImage", "")}
+                                    className="text-xs text-red-600 hover:underline"
+                                  >
+                                    Quitar foto
+                                  </button>
+                                </>
+                              ) : (
+                                <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-white text-xs font-semibold text-amber-700 hover:bg-amber-50 cursor-pointer ${uploadingImg[idx] ? "opacity-60 pointer-events-none" : ""}`}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add_a_photo</span>
+                                  {uploadingImg[idx] ? "Subiendo..." : "Agregar foto (opcional)"}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      e.target.value = "";
+                                      if (!file) return;
+                                      if (file.size > 5 * 1024 * 1024) { toast.error("La foto supera los 5 MB"); return; }
+                                      setUploadingImg((p) => ({ ...p, [idx]: true }));
+                                      try {
+                                        const r = await ordersApi.uploadManualImage(file);
+                                        setManualItem(idx, "productImage", r.data.url);
+                                      } catch (err) {
+                                        toast.error(err.response?.data?.error || "No se pudo subir la foto");
+                                      } finally {
+                                        setUploadingImg((p) => ({ ...p, [idx]: false }));
+                                      }
+                                    }}
+                                  />
+                                </label>
+                              )}
+                            </div>
                           </div>
                         ) : (
                         /* Buscador de producto */
