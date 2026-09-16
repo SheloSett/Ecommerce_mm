@@ -45,6 +45,9 @@ model Category {
   // Regla automática (categoría inteligente): { type: "lowStock", max } | { type: "onSale" } |
   // { type: "newDays", days } | { type: "hotSeller" } | { type: "priceMax", max }. Ver utils/categoryRules.js.
   rule       Json?
+  // Ícono de la tarjeta (nombre de Material Symbols, ej. "headphones"). Null = se elige solo según
+  // el nombre (getCategoryIcon en Home.jsx).
+  icon       String?
   createdAt DateTime   @default(now())
 
   @@map("categories")

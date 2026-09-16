@@ -118,6 +118,8 @@ function cardFields(body, partial = false) {
   if (!partial || has("featured")) out.featured = body.featured === true || body.featured === "true";
   if (!partial || has("badgeText")) out.badgeText = text(body.badgeText);
   if (!partial || has("ribbonText")) out.ribbonText = text(body.ribbonText);
+  // Ícono: nombre de Material Symbols (letras, números, guion bajo). Vacío = automático.
+  if (!partial || has("icon")) out.icon = typeof body.icon === "string" && /^[a-z0-9_]{1,60}$/.test(body.icon.trim()) ? body.icon.trim() : null;
   return out;
 }
 

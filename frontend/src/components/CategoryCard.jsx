@@ -92,7 +92,7 @@ export function CategoryChip({ cat, className = "" }) {
     <span className={`cc-chip cc-${style} ${className}`}>
       {style === "fire" && <Flames />}
       {style === "ice" && <Frost />}
-      <span className="material-symbols-outlined cc-icon">{ICON_BY_STYLE[style]}</span>
+      <span className="material-symbols-outlined cc-icon">{cat.icon || ICON_BY_STYLE[style]}</span>
       <span className="cc-name">{cat.name}</span>
     </span>
   );
@@ -103,7 +103,8 @@ export default function CategoryCard({ cat, icon }) {
   const featured = cat.featured === true;
   const badge = (cat.badgeText || "").trim();
   const ribbon = (cat.ribbonText || "").trim();
-  const iconName = style !== "normal" ? ICON_BY_STYLE[style] : icon;
+  // El ícono elegido en el admin manda; si no hay, el del estilo; si no, el automático por nombre.
+  const iconName = cat.icon || (style !== "normal" ? ICON_BY_STYLE[style] : icon);
 
   return (
     <Link

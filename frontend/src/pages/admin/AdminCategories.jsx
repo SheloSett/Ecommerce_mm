@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import CategoryCard, { CARD_STYLES } from "../../components/CategoryCard";
+import IconPicker from "../../components/admin/IconPicker";
 import { categoriesApi, productsApi, getImageUrl } from "../../services/api";
 // La jerarquía ya no está topeada en dos niveles: aplanar el árbol para la tabla y calcular qué
 // ramas hay que excluir del selector de padre necesitan recursión. Ver utils/categoryTree.js.
@@ -44,6 +45,7 @@ export default function AdminCategories() {
   const [badgeText, setBadgeText] = useState("");
   const [ribbonText, setRibbonText] = useState("");
   // Regla automática (categoría inteligente): "" = sin regla
+  const [icon, setIcon] = useState("");
   const [ruleType, setRuleType] = useState("");
   const [ruleValue, setRuleValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -88,6 +90,8 @@ export default function AdminCategories() {
   }, []);
 
   const openCreate = () => {
+    // Al crear se limpian también apariencia, ícono y regla (antes quedaban los de la última editada)
+    setIcon(""); setCardStyle("normal"); setFeatured(false); setBadgeText(""); setRibbonText(""); setRuleType(""); setRuleValue("");
     setEditingCat(null);
     setName("");
     setParentId("");
@@ -105,6 +109,7 @@ export default function AdminCategories() {
     setFeatured(cat.featured === true);
     setBadgeText(cat.badgeText || "");
     setRibbonText(cat.ribbonText || "");
+    setIcon(cat.icon || "");
     setRuleType(cat.rule?.type || "");
     setRuleValue(cat.rule?.max ?? cat.rule?.days ?? "");
     setShowModal(true);
@@ -122,7 +127,7 @@ export default function AdminCategories() {
         : ruleType === "newDays" ? { type: "newDays", days: parseInt(ruleValue) || 30 }
         : ruleType === "priceMax" ? { type: "priceMax", max: parseInt(ruleValue) || 10000 }
         : { type: ruleType };
-      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden, cardStyle, featured, badgeText, ribbonText, rule };
+      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden, cardStyle, featured, badgeText, ribbonText, rule, icon };
 
       if (editingCat) {
         await categoriesApi.update(editingCat.id, data);
@@ -221,6 +226,7 @@ export default function AdminCategories() {
                         style={{ paddingLeft: cat.depth > 0 ? `${cat.depth * 16}px` : undefined }}
                       >
                         {cat.depth > 0 && <span className="text-blue-400 text-xs">↳</span>}
+                        {cat.icon && <span className="material-symbols-outlined text-slate-400" style={{ fontSize: 18 }} title={cat.icon}>{cat.icon}</span>}
                         <span className={cat.depth === 0 ? "font-semibold text-slate-800" : "text-slate-700 font-medium"}>
                           {cat.name}
                         </span>
@@ -451,13 +457,18 @@ export default function AdminCategories() {
                 </div>
                 <p className="text-xs text-slate-400 leading-snug">{CARD_STYLES.find((s) => s.key === cardStyle)?.hint}</p>
 
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Ícono de la tarjeta</label>
+                  <IconPicker value={icon} onChange={setIcon} fallback="category" />
+                </div>
+
                 {/* Vista previa en vivo: la misma tarjeta que se ve en el inicio, con lo que hay
                     cargado en el formulario. pointer-events-none para que el link no navegue. */}
                 <div className="rounded-xl bg-[#f8f9ff] border border-slate-200 p-3">
                   <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">Vista previa</p>
                   <div className="grid grid-cols-2 gap-3 pointer-events-none select-none" style={{ maxWidth: 340 }}>
                     <CategoryCard
-                      cat={{ id: 0, slug: "preview", name: name.trim() || "Nombre de la categoría", cardStyle, featured, badgeText, ribbonText }}
+                      cat={{ id: 0, slug: "preview", name: name.trim() || "Nombre de la categoría", cardStyle, featured, badgeText, ribbonText, icon }}
                       icon="category"
                     />
                     {!featured && <CategoryCard cat={{ id: -1, slug: "preview-2", name: "Otra categoría" }} icon="category" />}
