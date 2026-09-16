@@ -395,16 +395,9 @@ export default function Catalog() {
               setSearchParams(newParams);
             }}
           />
-          <AttrItem
-            value="⚡ Pocas unidades"
-            checked={currentLowStock}
-            onToggle={() => {
-              const newParams = new URLSearchParams(searchParams);
-              if (!currentLowStock) { newParams.set("lowStock", "true"); } else { newParams.delete("lowStock"); }
-              newParams.delete("page");
-              setSearchParams(newParams);
-            }}
-          />
+          {/* "Pocas unidades" se sacó del panel a pedido del cliente: lo reemplaza la categoría con
+              regla automática "Stock bajo" (Admin → Categorías), que tiene tarjeta en el inicio y
+              tope configurable. El parámetro ?lowStock=true sigue funcionando por URL. */}
         </div>
       </FilterSection>
 
