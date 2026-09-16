@@ -1,4 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient, Prisma } = require("@prisma/client");
+const { normalizeRule, ruleProductIds } = require("../utils/categoryRules");
 // Helpers de jerarquía: el anidado ya no está topeado en dos niveles, así que armar el árbol y
 // validar que un movimiento no cierre un ciclo necesita recursión. Ver utils/categoryTree.js.
 const { buildTree, wouldCreateCycle } = require("../utils/categoryTree");
@@ -74,6 +75,18 @@ async function getCategories(req, res) {
       orderBy: { name: "asc" },
     });
 
+    // Categorías con regla: el conteo suma los productos que cumplen la regla y NO están ya
+    // asignados a mano (para no contarlos dos veces). Son pocas categorías, una consulta cada una.
+    for (const cat of flat) {
+      if (!cat.rule) continue;
+      const ids = await ruleProductIds(prisma, cat.rule, { visibleFor });
+      if (ids.length === 0) continue;
+      const extra = await prisma.product.count({
+        where: { id: { in: ids }, ...productCountWhere, NOT: { categories: { some: { id: cat.id } } } },
+      });
+      cat._count = { ...(cat._count || {}), products: (cat._count?.products || 0) + extra };
+    }
+
     const tree = buildTree(flat);
 
     // totalProducts: productos propios + los de TODA la descendencia, no solo los hijos directos.
@@ -144,6 +157,8 @@ async function createCategory(req, res) {
         parentId: parentId ? parseInt(parentId) : null,
         hidden: hidden === true || hidden === "true",
         ...cardFields(req.body),
+        // Regla automática (null = categoría normal)
+        rule: normalizeRule(req.body.rule) ?? Prisma.DbNull,
       },
     });
 
@@ -203,6 +218,8 @@ async function updateCategory(req, res) {
         // Solo se toca si vino en el body (undefined = no modificar)
         ...(hidden !== undefined ? { hidden: hidden === true || hidden === "true" } : {}),
         ...cardFields(req.body, true),
+        // Solo se toca si vino en el body (undefined = no modificar); null borra la regla
+        ...(req.body.rule !== undefined ? { rule: normalizeRule(req.body.rule) ?? Prisma.DbNull } : {}),
       },
     });
 

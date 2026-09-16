@@ -2,6 +2,7 @@ const { PrismaClient, Prisma } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
 const { uploadBuffer, uploadVideoBuffer, deleteByUrl } = require("../config/cloudinary");
+const { categoryFilterWhere } = require("../utils/categoryRules");
 const { isVideoMime } = require("../middleware/upload.middleware");
 // Filtrar por una categoría incluye a toda su descendencia, y la jerarquía ya no está topeada en
 // dos niveles, así que la expansión es recursiva. Ver utils/categoryTree.js.
@@ -169,13 +170,14 @@ async function getProducts(req, res) {
         //   const categoryIds = cats.flatMap((c) => [c.id, ...c.children.map((ch) => ch.id)]);
         // Con el anidado libre eso dejaba afuera a los nietos: filtrar por "Audio" no traía lo
         // cargado en "Audio › Auriculares › Inalámbricos". descendantIdsBySlugs baja hasta el final.
-        const categoryIds = await descendantIdsBySlugs(prisma, slugs);
-        if (categoryIds) {
-          where.categories = { some: { id: { in: categoryIds } } };
-        } else {
-          // Si ninguno de los slugs existe, devolver vacío
-          where.categories = { every: { id: -1 }, some: {} };
-        }
+        // Antes:
+        //   const categoryIds = await descendantIdsBySlugs(prisma, slugs);
+        //   where.categories = categoryIds ? { some: { id: { in: categoryIds } } } : { every: { id: -1 }, some: {} };
+        // Ahora pasa por categoryFilterWhere, que además de las subcategorías contempla las categorías
+        // con REGLA (stock bajo, en oferta, novedades...): la categoría muestra lo asignado a mano
+        // más lo que cumple la regla. Va en AND para no pisar el OR de la búsqueda.
+        const catWhere = await categoryFilterWhere(prisma, slugs, { visibleFor, descendantIdsBySlugs });
+        where.AND = [...(where.AND || []), catWhere];
       }
     }
 
@@ -1397,12 +1399,10 @@ async function getProductFacets(req, res) {
       //   const categoryIds = [cat.id, ...cat.children.map((c) => c.id)];
       // Tiene que usar el MISMO criterio que getProducts o los filtros de características quedarían
       // calculados sobre un conjunto de productos distinto del que se muestra en la grilla.
-      const categoryIds = await descendantIdsBySlugs(prisma, [category]);
-      if (categoryIds) {
-        where.categories = { some: { id: { in: categoryIds } } };
-      } else {
-        where.categories = { every: { id: -1 }, some: {} };
-      }
+      // Mismo criterio que getProducts, incluidas las categorías con regla.
+      const slugsF = category.split("|").map((s) => s.trim()).filter(Boolean);
+      const catWhere = await categoryFilterWhere(prisma, slugsF, { visibleFor, descendantIdsBySlugs });
+      where.AND = [...(where.AND || []), catWhere];
     }
 
     if (search) {

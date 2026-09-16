@@ -43,6 +43,9 @@ export default function AdminCategories() {
   const [featured, setFeatured] = useState(false);
   const [badgeText, setBadgeText] = useState("");
   const [ribbonText, setRibbonText] = useState("");
+  // Regla automática (categoría inteligente): "" = sin regla
+  const [ruleType, setRuleType] = useState("");
+  const [ruleValue, setRuleValue] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Modal "ver productos vinculados" a una categoría
@@ -102,6 +105,8 @@ export default function AdminCategories() {
     setFeatured(cat.featured === true);
     setBadgeText(cat.badgeText || "");
     setRibbonText(cat.ribbonText || "");
+    setRuleType(cat.rule?.type || "");
+    setRuleValue(cat.rule?.max ?? cat.rule?.days ?? "");
     setShowModal(true);
   };
 
@@ -112,7 +117,12 @@ export default function AdminCategories() {
     setSaving(true);
     try {
       // parentId vacío se envía como null (categoría raíz)
-      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden, cardStyle, featured, badgeText, ribbonText };
+      const rule = !ruleType ? null
+        : ruleType === "lowStock" ? { type: "lowStock", max: parseInt(ruleValue) || 5 }
+        : ruleType === "newDays" ? { type: "newDays", days: parseInt(ruleValue) || 30 }
+        : ruleType === "priceMax" ? { type: "priceMax", max: parseInt(ruleValue) || 10000 }
+        : { type: ruleType };
+      const data = { name, parentId: parentId ? parseInt(parentId) : null, hidden, cardStyle, featured, badgeText, ribbonText, rule };
 
       if (editingCat) {
         await categoriesApi.update(editingCat.id, data);
@@ -217,6 +227,11 @@ export default function AdminCategories() {
                         {/* Badge para las categorías ocultas del catálogo general */}
                         {cat.cardStyle && cat.cardStyle !== "normal" && (
                           <span className="ml-2 rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-700">{CARD_STYLES.find((s) => s.key === cat.cardStyle)?.label || cat.cardStyle}{cat.featured ? " · destacada" : ""}</span>
+                        )}
+                        {cat.rule && (
+                          <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700" title="Categoría con regla automática">
+                            ⚡ {cat.rule.type === "lowStock" ? `stock ≤ ${cat.rule.max}` : cat.rule.type === "onSale" ? "en oferta" : cat.rule.type === "newDays" ? `últimos ${cat.rule.days} días` : cat.rule.type === "hotSeller" ? "más vendidos" : `hasta $${cat.rule.max}`}
+                          </span>
                         )}
                         {cat.hidden && (
                           <span
@@ -389,6 +404,33 @@ export default function AdminCategories() {
                     </span>
                   </span>
                 </label>
+              </div>
+
+              {/* Regla automática: la categoría muestra lo asignado a mano MÁS lo que cumple la regla */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                <p className="text-sm font-medium text-slate-700">Regla automática <span className="text-slate-400 font-normal">(opcional)</span></p>
+                <select value={ruleType} onChange={(e) => { setRuleType(e.target.value); setRuleValue(e.target.value === "lowStock" ? "5" : e.target.value === "newDays" ? "30" : e.target.value === "priceMax" ? "10000" : ""); }} className="input">
+                  <option value="">Sin regla (solo los productos asignados a mano)</option>
+                  <option value="lowStock">Stock bajo: productos con pocas unidades</option>
+                  <option value="onSale">En oferta: productos con precio de oferta</option>
+                  <option value="newDays">Novedades: productos cargados hace poco</option>
+                  <option value="hotSeller">Más vendidos: productos marcados como más vendidos</option>
+                  <option value="priceMax">Precio hasta un tope</option>
+                </select>
+                {(ruleType === "lowStock" || ruleType === "newDays" || ruleType === "priceMax") && (
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <span className="shrink-0">{ruleType === "lowStock" ? "Hasta" : ruleType === "newDays" ? "Últimos" : "Hasta $"}</span>
+                    <input type="number" min="1" value={ruleValue} onChange={(e) => setRuleValue(e.target.value)} className="input w-28" />
+                    <span className="shrink-0">{ruleType === "lowStock" ? "unidades" : ruleType === "newDays" ? "días" : ""}</span>
+                  </label>
+                )}
+                {ruleType && (
+                  <p className="text-xs text-slate-400 leading-snug">
+                    Se evalúa al momento, no asigna productos: cuando un producto deja de cumplir la regla, deja de aparecer. Los productos asignados a mano se muestran igual.
+                    {ruleType === "lowStock" && " Con variantes se suma el stock de todas; los de stock ilimitado quedan afuera."}
+                    {ruleType === "priceMax" && " Solo productos en pesos; para mayoristas mira el precio mayorista."}
+                  </p>
+                )}
               </div>
 
               {/* Apariencia de la tarjeta en el Home */}

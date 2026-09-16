@@ -42,6 +42,9 @@ model Category {
   featured   Boolean @default(false)    // doble ancho y primera en la grilla
   badgeText  String?                    // etiqueta corta debajo del nombre ("Precios que no se repiten")
   ribbonText String?                    // texto de la cinta diagonal del estilo Oferta ("Hasta 40% off")
+  // Regla automática (categoría inteligente): { type: "lowStock", max } | { type: "onSale" } |
+  // { type: "newDays", days } | { type: "hotSeller" } | { type: "priceMax", max }. Ver utils/categoryRules.js.
+  rule       Json?
   createdAt DateTime   @default(now())
 
   @@map("categories")
