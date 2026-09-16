@@ -97,6 +97,22 @@ export default function AdminOrderDetail() {
   // Modo edición de pedido (Feature 90)
   const [editMode, setEditMode] = useState(false);
   const [editItems, setEditItems] = useState([]);
+  const [uploadingItemImg, setUploadingItemImg] = useState({}); // { [idx]: bool }
+
+  // Foto para un ítem libre sin imagen (modo edición): se sube a Cloudinary y queda en el ítem al guardar
+  const uploadItemImage = async (idx, file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error("La foto supera los 5 MB"); return; }
+    setUploadingItemImg((p) => ({ ...p, [idx]: true }));
+    try {
+      const r = await ordersApi.uploadManualImage(file);
+      setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, image: r.data.url, productImage: r.data.url } : it));
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo subir la foto");
+    } finally {
+      setUploadingItemImg((p) => ({ ...p, [idx]: false }));
+    }
+  };
   const [savingEdit, setSavingEdit] = useState(false);
   // Modal que pregunta si el cambio de costo también se aplica al producto (próximos pedidos).
   // Guarda el payload ya armado para enviarlo según la respuesta (Sí/No).
@@ -180,6 +196,9 @@ export default function AdminOrderDetail() {
       productId:    i.productId,
       name:         i.product?.name || "Producto",
       image:        i.product?.images?.[0] || null,
+      // Ítem libre (sin producto en el catálogo): se le puede cargar una foto desde acá
+      isFree:       !i.productId,
+      productImage: i.productImage || null,
       quantity:     i.quantity,
       price:        i.price,
       // cost: costo efectivo actual (ítem → variante → producto) para mostrarlo como default editable
@@ -300,6 +319,8 @@ export default function AdminOrderDetail() {
         cost:         it.cost === "" || it.cost === null || it.cost === undefined ? "" : it.cost,
         variantId:    it.variantId || undefined,
         variantLabel: it.variantLabel || undefined,
+        // Foto cargada desde el modo edición (solo ítems libres)
+        productImage: it.productImage || undefined,
       }));
       const res = await ordersApi.modifyOrder(order.id, payload, applyCostToProduct);
       setOrder(res.data);
@@ -726,6 +747,15 @@ export default function AdminOrderDetail() {
                       <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 flex-shrink-0">
                         {item.image ? (
                           <img src={getImageUrl(item.image)} alt="" className="w-full h-full object-contain p-0.5" />
+                        ) : item.isFree ? (
+                          /* Ítem libre sin foto: la cajita es un botón para subir una */
+                          <label
+                            title="Agregar foto a este producto"
+                            className={`w-full h-full flex items-center justify-center cursor-pointer text-amber-600 hover:bg-amber-50 border-2 border-dashed border-amber-300 rounded-lg ${uploadingItemImg[idx] ? "opacity-50 pointer-events-none" : ""}`}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>{uploadingItemImg[idx] ? "hourglass_top" : "add_a_photo"}</span>
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; uploadItemImage(idx, f); }} />
+                          </label>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-slate-300">📦</div>
                         )}

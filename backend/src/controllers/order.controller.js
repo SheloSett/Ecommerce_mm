@@ -2600,7 +2600,8 @@ async function modifyOrder(req, res) {
             await prisma.productVariant.update({ where: { id: v.id }, data: { stock: newStock } });
             await syncProductVisibility(existingItem.productId);
           }
-        } else {
+        } else if (existingItem.productId) {
+          // (ítems libres, productId null: no hay stock que tocar — antes findUnique con id null tiraba error)
           const p = await prisma.product.findUnique({ where: { id: existingItem.productId } });
           if (p && !p.stockUnlimited) {
             const newStock = Math.max(0, p.stock - qtyDiff);
@@ -2616,9 +2617,15 @@ async function modifyOrder(req, res) {
         ? (incoming.cost === "" || incoming.cost === null ? null : parseFloat(incoming.cost))
         : undefined;
 
+      // productImage: foto opcional de un ítem LIBRE (productId null), subida vía
+      // /admin/manual/upload-image. Los ítems de catálogo no la aceptan: su foto es la del producto.
+      const imgUpdate = !existingItem.productId && typeof incoming.productImage === "string" && /^https:\/\/res\.cloudinary\.com\//.test(incoming.productImage)
+        ? incoming.productImage.slice(0, 500)
+        : undefined;
+
       await prisma.orderItem.update({
         where: { id: existingItem.id },
-        data:  { quantity: newQty, price: newPrice, ...(costUpdate !== undefined ? { cost: costUpdate } : {}) },
+        data:  { quantity: newQty, price: newPrice, ...(costUpdate !== undefined ? { cost: costUpdate } : {}), ...(imgUpdate !== undefined ? { productImage: imgUpdate } : {}) },
       });
 
       // Si el admin confirmó propagar al producto y este item tiene un costo numérico, anotarlo.
