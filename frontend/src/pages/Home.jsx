@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -197,21 +197,38 @@ export default function Home() {
       .catch(console.error);
   }, [recentIds, customer?.type]);
 
-  // Auto-avance del carrusel
+  // Auto-avance del carrusel. Se pausa mientras el carrusel no está a la vista (menos de la mitad
+  // en pantalla): en el teléfono la franja de texto cambia de alto según el slide, y si siguiera
+  // avanzando con la página scrolleada más abajo el contenido saltaría (Safari no compensa el scroll
+  // cuando cambia el alto de algo que está más arriba).
+  const heroRef = useRef(null);
+  const [heroVisible, setHeroVisible] = useState(true);
+  const hasSlides = slides.length > 0;
+  useEffect(() => {
+    const el = heroRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([entry]) => setHeroVisible(entry.intersectionRatio >= 0.5),
+      { threshold: [0, 0.5, 1] }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasSlides]);
+
   const next = useCallback(() => {
     setCurrentSlide((prev) => (prev + 1) % Math.max(slides.length, 1));
   }, [slides.length]);
 
   useEffect(() => {
-    if (slides.length <= 1) return;
+    if (slides.length <= 1 || !heroVisible) return;
     timerRef.current = setInterval(next, 5000);
     return () => clearInterval(timerRef.current);
-  }, [slides.length, next]);
+  }, [slides.length, next, heroVisible]);
 
   const goTo = (idx) => {
     clearInterval(timerRef.current);
     setCurrentSlide(idx);
-    if (slides.length > 1) timerRef.current = setInterval(next, 5000);
+    if (slides.length > 1 && heroVisible) timerRef.current = setInterval(next, 5000);
   };
 
   // ── Carrusel en el teléfono ──
@@ -224,6 +241,18 @@ export default function Home() {
   // Título/subtítulo: en el teléfono van en una franja debajo de la imagen (encima se pisaban con
   // el texto propio de los flyers). En compu y tablet siguen encima, como siempre.
   const heroHasCaptions = slides.some((s) => s.title || s.subtitle);
+  // Alto de la franja de texto: el del texto del slide actual (0 si no tiene), medido del DOM para
+  // poder animarlo. Se vuelve a medir si cambia el ancho (girar el teléfono) o carga la tipografía.
+  const captionRefs = useRef([]);
+  const [captionH, setCaptionH] = useState(null);
+  useLayoutEffect(() => {
+    const measure = () => setCaptionH(captionRefs.current[currentSlide]?.offsetHeight ?? 0);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    captionRefs.current.forEach((el) => el && ro.observe(el));
+    return () => ro.disconnect();
+  }, [currentSlide, slides]);
 
   // Deslizar con el dedo para cambiar de slide (en el teléfono no hay flechas)
   const heroTouch = useRef(null);
@@ -302,6 +331,7 @@ export default function Home() {
             Ahora: en el teléfono la proporción de la versión de celular (o 3:1), con tope de 70% del alto
             de la pantalla (celular acostado); en md+ la de siempre. */}
         <section
+          ref={heroRef}
           className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/600] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
           style={{ "--hero-m": heroMobileRatio }}
           onTouchStart={onHeroTouchStart}
@@ -413,28 +443,38 @@ export default function Home() {
         </section>
 
         {/* ── Franja del teléfono: título/subtítulo del slide actual + puntos ──
-            Todos los textos se apilan en la misma celda de la grilla, así la franja toma el alto del
-            más largo y no salta al cambiar de slide; solo se ve el del slide actual. Sin textos, la
-            franja es solo la fila de puntos. */}
+            Antes: todos los textos apilados en la misma celda, así la franja tomaba siempre el alto del
+            más largo, y los slides sin texto dejaban un bloque vacío. Ahora el alto sigue al slide
+            actual (captionH, con animación): con texto, texto + puntos; sin texto, solo los puntos.
+            Los textos siguen apilados para el fundido entre uno y otro. */}
         {(heroHasCaptions || slides.length > 1) && (
-          <div className={`md:hidden bg-[#0b1c30] px-4 text-white ${heroHasCaptions ? "py-3" : "py-2.5"}`}>
+          <div className="md:hidden bg-[#0b1c30] text-white">
             {heroHasCaptions && (
-            <div className="grid">
-              {slides.map((slide, idx) => (
-                <div
-                  key={slide.id}
-                  aria-hidden={idx !== currentSlide}
-                  onClick={() => handleSlideClick(slide)}
-                  className={`[grid-area:1/1] transition-opacity duration-700 ${idx === currentSlide ? "opacity-100" : "opacity-0 pointer-events-none"} ${slide.url ? "cursor-pointer" : ""}`}
-                >
-                  {slide.title && <p className="text-base font-bold leading-snug line-clamp-1">{slide.title}</p>}
-                  {slide.subtitle && <p className="mt-0.5 text-sm leading-snug text-white/75 line-clamp-2">{slide.subtitle}</p>}
+              <div
+                className="overflow-hidden transition-[height] duration-500 ease-out motion-reduce:transition-none"
+                style={captionH === null ? undefined : { height: captionH }}
+              >
+                <div className="grid">
+                  {slides.map((slide, idx) => {
+                    const hasText = !!(slide.title || slide.subtitle);
+                    return (
+                      <div
+                        key={slide.id}
+                        ref={(el) => { captionRefs.current[idx] = el; }}
+                        aria-hidden={idx !== currentSlide}
+                        onClick={() => handleSlideClick(slide)}
+                        className={`[grid-area:1/1] self-start transition-opacity duration-700 ${hasText ? `px-4 pt-3 ${slides.length > 1 ? "" : "pb-3"}` : ""} ${idx === currentSlide ? "opacity-100" : "opacity-0 pointer-events-none"} ${slide.url ? "cursor-pointer" : ""}`}
+                      >
+                        {slide.title && <p className="text-base font-bold leading-snug line-clamp-1">{slide.title}</p>}
+                        {slide.subtitle && <p className="mt-0.5 text-sm leading-snug text-white/75 line-clamp-2">{slide.subtitle}</p>}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+              </div>
             )}
             {slides.length > 1 && (
-              <div className={`${heroHasCaptions ? "mt-2.5" : ""} flex justify-center gap-2`}>
+              <div className="flex justify-center gap-2 py-2.5">
                 {slides.map((_, idx) => (
                   <button
                     key={idx}
