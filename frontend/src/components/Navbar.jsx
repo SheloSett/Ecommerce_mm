@@ -9,6 +9,7 @@ import { useSiteConfig } from "../context/SiteConfigContext";
 import AnnouncementBar from "./AnnouncementBar";
 import CartDrawer from "./CartDrawer";
 import MobileBottomNav from "./MobileBottomNav";
+import useScrollLock from "../utils/useScrollLock";
 import toast from "react-hot-toast";
 import { trackSearch } from "../services/tracking";
 
@@ -93,13 +94,9 @@ export default function Navbar() {
     setShowSuggestions(false);
   }, [location.pathname, location.search]);
 
-  // Bloquea el scroll del body mientras el menú lateral está abierto
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [mobileMenuOpen]);
+  // Bloquea el scroll de la página (y el "tirar para recargar") mientras el menú lateral está abierto.
+  // Antes: solo document.body.style.overflow = "hidden", que en iOS no alcanzaba.
+  useScrollLock(mobileMenuOpen);
 
   // Categorías del menú lateral: se piden una sola vez, la primera vez que se abre
   useEffect(() => {
@@ -503,7 +500,7 @@ export default function Navbar() {
 
       {/* ── Menú lateral mobile: entra desde la derecha (mismo patrón que CartDrawer) ── */}
       <div
-        className={`md:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 transition-opacity duration-300 ${
+        className={`md:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 touch-none transition-opacity duration-300 ${
           mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setMobileMenuOpen(false)}
@@ -519,7 +516,7 @@ export default function Navbar() {
         aria-hidden={!mobileMenuOpen}
       >
         {/* Header oscuro (mismo color que navbar) */}
-        <div className="flex items-center justify-between px-5 py-4 bg-[#0F172A] flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 bg-[#0F172A] flex-shrink-0 touch-none">
           <Link
             to="/"
             onClick={() => setMobileMenuOpen(false)}
@@ -538,7 +535,7 @@ export default function Navbar() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain py-2">
           {/* 1. Switch modo claro / oscuro */}
           <button
             type="button"
