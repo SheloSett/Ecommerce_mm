@@ -74,15 +74,43 @@ export default function MobileBottomNav({ menuOpen, onMenu, searchOpen, onSearch
     return () => el.classList.remove("has-bnav");
   }, [hidden]);
 
-  // Esconder la barra mientras se escribe
+  // Esconder la barra mientras el TECLADO está arriba (si no, en algunos celulares queda flotando
+  // encima del teclado).
+  //
+  // Antes se miraba solo el foco: con un campo enfocado la barra se escondía. Pero en el iPhone se
+  // puede bajar el teclado sin que el campo pierda el foco, y la barra quedaba escondida hasta tocar
+  // otra cosa. Ahora, con un campo enfocado, se mira además el alto visible (visualViewport): cuando
+  // sube el teclado se achica unos 300 px. "base" es el alto visible sin teclado; se actualiza cada vez
+  // que no hay campo enfocado (así se adapta al girar el teléfono o cuando se esconde la barra del
+  // navegador, que mueve el alto solo unos 50-80 px, por debajo del umbral).
   useEffect(() => {
-    const onIn = (e) => { if (isTextField(e.target)) setTyping(true); };
-    const onOut = () => setTimeout(() => setTyping(isTextField(document.activeElement)), 0);
-    document.addEventListener("focusin", onIn);
-    document.addEventListener("focusout", onOut);
+    const vv = window.visualViewport;
+    let base = vv ? vv.height : 0;
+    let baseW = vv ? vv.width : 0;
+    const update = () => {
+      if (vv) {
+        // Giró el teléfono: el alto de referencia se toma de nuevo
+        if (Math.abs(vv.width - baseW) > 1) { baseW = vv.width; base = vv.height; }
+        // Si se ve más alto que la referencia, ahí no hay teclado: esa pasa a ser la referencia
+        if (vv.height > base) base = vv.height;
+      }
+      if (!isTextField(document.activeElement)) {
+        if (vv) base = vv.height;
+        setTyping(false);
+        return;
+      }
+      if (!vv) { setTyping(true); return; } // navegador sin visualViewport: criterio anterior
+      const keyboardUp = vv.scale < 1.05 && base - vv.height > 120;
+      setTyping(keyboardUp);
+    };
+    const onFocusChange = () => setTimeout(update, 0);
+    document.addEventListener("focusin", onFocusChange);
+    document.addEventListener("focusout", onFocusChange);
+    vv?.addEventListener("resize", update);
     return () => {
-      document.removeEventListener("focusin", onIn);
-      document.removeEventListener("focusout", onOut);
+      document.removeEventListener("focusin", onFocusChange);
+      document.removeEventListener("focusout", onFocusChange);
+      vv?.removeEventListener("resize", update);
     };
   }, []);
 
