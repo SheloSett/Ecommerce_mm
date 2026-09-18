@@ -631,7 +631,14 @@ export default function Navbar() {
 
           <div className="my-2 border-t border-slate-200" />
 
-          {/* 3. Categorías (desplegable) */}
+          {/* 3. Inicio — antes iba al final, debajo de Categorías: con la lista desplegada quedaba
+              muy abajo y había que scrollear para encontrarlo */}
+          <Link to="/" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+            <span className="material-symbols-outlined text-slate-500">home</span>
+            Inicio
+          </Link>
+
+          {/* 4. Categorías (desplegable) */}
           <button
             type="button"
             onClick={() => setCategoriesExpanded((o) => !o)}
@@ -677,14 +684,6 @@ export default function Navbar() {
               </Link>
             </div>
           </div>
-
-          <div className="my-2 border-t border-slate-200" />
-
-          {/* 4. Inicio */}
-          <Link to="/" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
-            <span className="material-symbols-outlined text-slate-500">home</span>
-            Inicio
-          </Link>
         </div>
 
         {/* Pie: cerrar sesión */}

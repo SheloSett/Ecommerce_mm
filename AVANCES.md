@@ -314,6 +314,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 148- carrusel en el celular, franja de texto: en los slides sin título ni subtítulo quedaba un bloque azul vacío debajo de la imagen, porque la franja tomaba siempre el alto del texto más largo. Ahora el alto sigue al slide que se está viendo, con una animación suave: con texto, texto + puntitos; sin texto, solo los puntitos. Para que ese cambio de alto no mueva la página mientras se mira más abajo, el carrusel se pausa cuando no está a la vista y sigue al volver arriba. ✅
 
+149- menú lateral del celular: Inicio pasa arriba de Categorías, justo debajo de la cuenta. Antes estaba al final y, con la lista de categorías desplegada, quedaba muy abajo y había que scrollear para encontrarlo. ✅
+
 ##
 
 
