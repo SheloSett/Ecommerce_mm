@@ -448,9 +448,16 @@ export default function Navbar() {
                 </button>
               )}
 
-              {/* Menú móvil: la hamburguesa de acá arriba pasó a la pestaña "Menú" de la barra
-                  inferior (MobileBottomNav), que abre el mismo menú lateral de siempre. Antes:
-                  <button onClick={openMobileMenu} className="md:hidden ..."><span>menu</span></button> */}
+              {/* Menú móvil — abre el panel lateral (drawer). A pedido del cliente queda también acá
+                  arriba aunque la barra inferior tenga la pestaña "Menú": las dos abren el mismo menú. */}
+              <button
+                onClick={openMobileMenu}
+                className="md:hidden text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
+                aria-label="Abrir menú"
+                aria-expanded={mobileMenuOpen}
+              >
+                <span className="material-symbols-outlined">menu</span>
+              </button>
             </div>
         </div>
 
