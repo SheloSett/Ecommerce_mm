@@ -450,7 +450,9 @@ export default function AdminSettings() {
           </aside>
 
           {/* ── Contenido de la sección activa ── */}
-          <div className="flex-1 space-y-5">
+          {/* min-w-0: sin esto un texto largo que no se corta (ej. el subtítulo de un slide) ensanchaba la
+              columna y empujaba los botones fuera de la pantalla */}
+          <div className="flex-1 min-w-0 space-y-5">
 
             {activeSection === "mantenimiento" && (
               <>

@@ -15,6 +15,40 @@ const SLIDE_EAGER = {
   fetch_format: "webp",
 };
 
+// Versión para celular: vertical o cuadrada (1080×1350 o 1080×1080 recomendado). "limit" solo achica
+// si se pasa de ese tamaño; nunca recorta, así se conserva la proporción que eligió quien la diseñó.
+const SLIDE_MOBILE_EAGER = {
+  width: 1080, height: 1350,
+  crop: "limit",
+  quality: "auto",
+  fetch_format: "webp",
+};
+
+// Archivos de la request (upload.fields): { image: [file], mobileImage: [file] }
+const fileOf = (req, name) => req.files?.[name]?.[0] || (name === "image" ? req.file : undefined);
+
+// Sube la imagen de celular y devuelve los campos a guardar, con las medidas de la versión final
+async function uploadMobile(file) {
+  const up = await uploadBuffer(file.buffer, "ecommerce/slides", SLIDE_MOBILE_EAGER);
+  const e = up.eager?.[0];
+  return {
+    mobileImage: up.secure_url,
+    mobileWidth: e?.width ?? up.width ?? null,
+    mobileHeight: e?.height ?? up.height ?? null,
+  };
+}
+
+// Borra una imagen de slide: de Cloudinary si es URL, del disco si es un archivo local (slides viejos)
+async function removeSlideImage(img) {
+  if (!img) return;
+  if (img.startsWith("http")) {
+    await deleteByUrl(img);
+  } else {
+    const p = path.join(__dirname, "../../uploads", img);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+}
+
 // GET /api/slides — Listar slides activos (público, para el carrusel)
 async function getSlides(req, res) {
   try {
@@ -35,15 +69,19 @@ async function createSlide(req, res) {
   try {
     const { title, subtitle, url, order, active } = req.body;
 
-    if (!req.file) {
+    const imageFile = fileOf(req, "image");
+    if (!imageFile) {
       return res.status(400).json({ error: "La imagen es requerida" });
     }
 
-    const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides", SLIDE_EAGER);
+    const uploaded = await uploadBuffer(imageFile.buffer, "ecommerce/slides", SLIDE_EAGER);
+    const mobileFile = fileOf(req, "mobileImage");
+    const mobile = mobileFile ? await uploadMobile(mobileFile) : {};
 
     const slide = await prisma.slide.create({
       data: {
         image: uploaded.secure_url,
+        ...mobile,
         title: title || null,
         subtitle: subtitle || null,
         url: url || null,
@@ -76,16 +114,24 @@ async function updateSlide(req, res) {
     if (active !== undefined) data.active = active === true || active === "true";
 
     // Si se subió nueva imagen, subir a Cloudinary y eliminar la anterior
-    if (req.file) {
-      const uploaded = await uploadBuffer(req.file.buffer, "ecommerce/slides", SLIDE_EAGER);
+    const imageFile = fileOf(req, "image");
+    if (imageFile) {
+      const uploaded = await uploadBuffer(imageFile.buffer, "ecommerce/slides", SLIDE_EAGER);
       data.image = uploaded.secure_url;
       // Eliminar imagen anterior: Cloudinary si es URL, disco si es path local (slide viejo)
-      if (existing.image?.startsWith("http")) {
-        await deleteByUrl(existing.image);
-      } else if (existing.image) {
-        const oldPath = path.join(__dirname, "../../uploads", existing.image);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-      }
+      await removeSlideImage(existing.image);
+    }
+
+    // Versión para celular: nueva (reemplaza a la anterior) o quitada a pedido del admin
+    const mobileFile = fileOf(req, "mobileImage");
+    if (mobileFile) {
+      Object.assign(data, await uploadMobile(mobileFile));
+      await removeSlideImage(existing.mobileImage);
+    } else if (req.body.removeMobileImage === "true" && existing.mobileImage) {
+      await removeSlideImage(existing.mobileImage);
+      data.mobileImage = null;
+      data.mobileWidth = null;
+      data.mobileHeight = null;
     }
 
     const slide = await prisma.slide.update({
@@ -107,13 +153,9 @@ async function deleteSlide(req, res) {
     const slide = await prisma.slide.findUnique({ where: { id: parseInt(id) } });
     if (!slide) return res.status(404).json({ error: "Slide no encontrado" });
 
-    // Eliminar imagen: Cloudinary si es URL, disco si es path local (slide viejo)
-    if (slide.image?.startsWith("http")) {
-      await deleteByUrl(slide.image);
-    } else if (slide.image) {
-      const imgPath = path.join(__dirname, "../../uploads", slide.image);
-      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-    }
+    // Eliminar imágenes: Cloudinary si es URL, disco si es path local (slide viejo)
+    await removeSlideImage(slide.image);
+    await removeSlideImage(slide.mobileImage);
 
     await prisma.slide.delete({ where: { id: parseInt(id) } });
     res.json({ ok: true });

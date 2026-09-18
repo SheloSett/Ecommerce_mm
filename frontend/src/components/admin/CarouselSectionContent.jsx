@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { slidesApi, settingsApi, getImageUrl } from "../../services/api";
+import FileDropZone from "./FileDropZone";
 import { useSiteConfig } from "../../context/SiteConfigContext";
 import toast from "react-hot-toast";
 
@@ -160,6 +161,11 @@ export default function CarouselSectionContent() {
   const [imageFiles, setImageFiles]   = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
   const fileInputRef = useRef(null);
+  // Versión para celular (opcional): archivo nuevo, su vista previa y si se pidió quitar la actual
+  const [mobileFile, setMobileFile] = useState(null);
+  const [mobilePreview, setMobilePreview] = useState(null);
+  const [removeMobile, setRemoveMobile] = useState(false);
+  const mobileInputRef = useRef(null);
 
   // ── Estado de banners de anuncio ────────────────────────────────────────────
   const [banners, setBanners]         = useState([]);
@@ -201,9 +207,14 @@ export default function CarouselSectionContent() {
     finally { setLoadingSlides(false); }
   }
 
+  function resetMobile() {
+    setMobileFile(null); setMobilePreview(null); setRemoveMobile(false);
+  }
+
   function openCreate() {
     setEditing(null); setForm(EMPTY_SLIDE);
     setImageFiles([]); setImagePreviews([]);
+    resetMobile();
     setShowModal(true);
   }
 
@@ -211,11 +222,25 @@ export default function CarouselSectionContent() {
     setEditing(slide);
     setForm({ title: slide.title || "", subtitle: slide.subtitle || "", url: slide.url || "", active: slide.active });
     setImageFiles([]); setImagePreviews([]);
+    resetMobile();
     setShowModal(true);
   }
 
-  function handleFileChange(e) {
-    const files = Array.from(e.target.files);
+  // Solo imágenes: el accept del input filtra lo que se elige, pero no lo que se arrastra
+  const onlyImages = (files) => files.filter((f) => f.type.startsWith("image/"));
+
+  function handleMobileFiles(list) {
+    const f = onlyImages(list)[0];
+    if (!f) return;
+    setMobileFile(f);
+    setMobilePreview(URL.createObjectURL(f));
+    setRemoveMobile(false);
+  }
+
+  // Antes: handleFileChange(e) leía e.target.files del input; ahora recibe los archivos del recuadro
+  // (elegidos o arrastrados). El recuadro ya resetea el input.
+  function handleFiles(list) {
+    const files = onlyImages(list);
     if (!files.length) return;
     if (editing) {
       setImageFiles([files[0]]);
@@ -224,7 +249,6 @@ export default function CarouselSectionContent() {
       setImageFiles((prev) => [...prev, ...files]);
       setImagePreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
     }
-    e.target.value = "";
   }
 
   function removePreview(idx) {
@@ -239,6 +263,8 @@ export default function CarouselSectionContent() {
       try {
         const fd = new FormData();
         if (imageFiles[0]) fd.append("image", imageFiles[0]);
+        if (mobileFile) fd.append("mobileImage", mobileFile);
+        else if (removeMobile) fd.append("removeMobileImage", "true");
         fd.append("title", form.title); fd.append("subtitle", form.subtitle);
         fd.append("url", form.url); fd.append("active", form.active ? "true" : "false");
         await slidesApi.update(editing.id, fd);
@@ -254,6 +280,7 @@ export default function CarouselSectionContent() {
         for (let i = 0; i < imageFiles.length; i++) {
           const fd = new FormData();
           fd.append("image", imageFiles[i]); fd.append("title", form.title);
+          if (mobileFile && imageFiles.length === 1) fd.append("mobileImage", mobileFile);
           fd.append("subtitle", form.subtitle); fd.append("url", form.url);
           fd.append("active", form.active ? "true" : "false");
           fd.append("order", slides.length + i);
@@ -373,6 +400,11 @@ export default function CarouselSectionContent() {
                     </p>
                     {slide.subtitle && <p className="text-sm text-slate-500 truncate">{slide.subtitle}</p>}
                     {slide.url && <p className="text-xs text-blue-500 truncate mt-0.5">{slide.url}</p>}
+                    {slide.mobileImage ? (
+                      <span className="inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">📱 Con versión para celular</span>
+                    ) : (
+                      <span className="inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">📱 Sin versión para celular</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <div className="flex flex-col gap-0.5">
@@ -460,7 +492,7 @@ export default function CarouselSectionContent() {
                 </label>
                 {editing && (
                   <div className="mb-3 w-full h-40 rounded-xl overflow-hidden bg-slate-100">
-                    <img src={imagePreviews[0] || getImageUrl(`/uploads/${editing.image}`)} alt="" className="w-full h-full object-cover" />
+                    <img src={imagePreviews[0] || getImageUrl(editing.image?.startsWith("http") ? editing.image : `/uploads/${editing.image}`)} alt="" className="w-full h-full object-cover" />
                   </div>
                 )}
                 {!editing && imagePreviews.length > 0 && (
@@ -474,20 +506,71 @@ export default function CarouselSectionContent() {
                     ))}
                   </div>
                 )}
-                <div onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                  <svg className="w-8 h-8 mx-auto text-slate-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <p className="text-slate-500 text-sm font-medium">
-                    {editing ? "Click para cambiar la imagen"
-                      : imagePreviews.length > 0 ? `${imagePreviews.length} imagen${imagePreviews.length !== 1 ? "es" : ""} · click para agregar más`
-                      : "Click para seleccionar imágenes"}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">JPG, PNG, WEBP · recomendado 1920×600px</p>
-                </div>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple={!editing} onChange={handleFileChange} className="hidden" />
+                {/* Antes: recuadro punteado solo con clic + <input> aparte. Ahora también se puede arrastrar. */}
+                <FileDropZone
+                  accept="image/*"
+                  multiple={!editing}
+                  onFiles={handleFiles}
+                  inputRef={fileInputRef}
+                  icon="add_photo_alternate"
+                  title={editing ? "Arrastrá la imagen o hacé clic para cambiarla"
+                    : imagePreviews.length > 0 ? `${imagePreviews.length} imagen${imagePreviews.length !== 1 ? "es" : ""} · arrastrá o hacé clic para agregar más`
+                    : "Arrastrá las imágenes o hacé clic para elegirlas"}
+                  hint="JPG, PNG, WEBP · recomendado 1920×600px"
+                />
               </div>
+
+              {/* ── Versión para celular (opcional) ── */}
+              {(editing || imageFiles.length <= 1) ? (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Imagen para celular <span className="text-slate-400 font-normal">— opcional</span>
+                  </label>
+                  <p className="text-xs text-slate-400 mb-2 leading-snug">
+                    En los teléfonos se muestra esta en lugar de la imagen ancha, que ahí queda chica. Formato vertical
+                    1080×1350 o cuadrado 1080×1080, con el mismo diseño reacomodado. Conviene usar el mismo formato en
+                    todos los slides. Si no la cargás, en el teléfono se ve la imagen ancha completa, más chica.
+                  </p>
+                  {(mobilePreview || (editing?.mobileImage && !removeMobile)) && (
+                    <div className="relative inline-block mb-2">
+                      <img
+                        src={mobilePreview || getImageUrl(editing.mobileImage)}
+                        alt=""
+                        className="h-40 w-auto rounded-xl border border-slate-200 bg-slate-100 object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (mobileFile) { setMobileFile(null); setMobilePreview(null); }
+                          else setRemoveMobile(true);
+                        }}
+                        className="absolute top-1 right-1 bg-black/60 hover:bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm"
+                        title={mobileFile ? "Descartar esta imagen" : "Quitar la imagen para celular"}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                  <FileDropZone
+                    accept="image/*"
+                    multiple={false}
+                    onFiles={handleMobileFiles}
+                    inputRef={mobileInputRef}
+                    icon="smartphone"
+                    title={mobilePreview || (editing?.mobileImage && !removeMobile)
+                      ? "Arrastrá o hacé clic para cambiar la imagen para celular"
+                      : "Arrastrá la imagen para celular o hacé clic para elegirla"}
+                    hint="Vertical 1080×1350 o cuadrada 1080×1080"
+                  />
+                  {removeMobile && !mobileFile && (
+                    <p className="text-xs text-amber-600 mt-1">Se va a quitar la imagen para celular al guardar.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                  📱 La imagen para celular se carga de a un slide: después de crearlos, editá cada uno.
+                </p>
+              )}
 
               {!editing && imagePreviews.length > 1 && (
                 <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">

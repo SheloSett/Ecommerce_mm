@@ -214,7 +214,40 @@ export default function Home() {
     if (slides.length > 1) timerRef.current = setInterval(next, 5000);
   };
 
+  // ── Carrusel en el teléfono ──
+  // Proporción del recuadro: la de la versión para celular (medidas guardadas al subirla, así no
+  // salta al cargar). Si ningún slide tiene versión de celular, la del banner ancho (3:1): se ve
+  // completo, sin recortar. Antes el recuadro tenía 220 px de alto mínimo y la imagen ancha se
+  // agrandaba para llenarlo, cortando los costados (y el texto de los flyers).
+  const heroMobile = slides.find((s) => s.mobileImage && s.mobileWidth && s.mobileHeight);
+  const heroMobileRatio = heroMobile ? `${heroMobile.mobileWidth} / ${heroMobile.mobileHeight}` : "3 / 1";
+  // Título/subtítulo: en el teléfono van en una franja debajo de la imagen (encima se pisaban con
+  // el texto propio de los flyers). En compu y tablet siguen encima, como siempre.
+  const heroHasCaptions = slides.some((s) => s.title || s.subtitle);
+
+  // Deslizar con el dedo para cambiar de slide (en el teléfono no hay flechas)
+  const heroTouch = useRef(null);
+  const heroSwiped = useRef(false);
+  const onHeroTouchStart = (e) => {
+    const t = e.touches[0];
+    heroTouch.current = { x: t.clientX, y: t.clientY };
+    heroSwiped.current = false;
+  };
+  const onHeroTouchEnd = (e) => {
+    const start = heroTouch.current;
+    heroTouch.current = null;
+    if (!start || slides.length < 2) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      heroSwiped.current = true; // que el deslizamiento no cuente como toque en el slide
+      goTo(dx < 0 ? (currentSlide + 1) % slides.length : (currentSlide - 1 + slides.length) % slides.length);
+    }
+  };
+
   const handleSlideClick = (slide) => {
+    if (heroSwiped.current) { heroSwiped.current = false; return; }
     if (!slide.url) return;
     if (slide.url.startsWith("http")) {
       window.open(slide.url, "_blank", "noopener,noreferrer");
@@ -264,9 +297,15 @@ export default function Home() {
 
       {/* ── Carrusel hero ─────────────────────────────────────────────────── */}
       {slides.length > 0 ? (
+        <div>
+        {/* Antes: style={{ aspectRatio: "1920 / 600", minHeight: "220px" }} en todos los tamaños.
+            Ahora: en el teléfono la proporción de la versión de celular (o 3:1), con tope de 70% del alto
+            de la pantalla (celular acostado); en md+ la de siempre. */}
         <section
-          className="relative w-full overflow-hidden bg-[#0b1c30]"
-          style={{ aspectRatio: "1920 / 600", minHeight: "220px" }}
+          className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/600] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
+          style={{ "--hero-m": heroMobileRatio }}
+          onTouchStart={onHeroTouchStart}
+          onTouchEnd={onHeroTouchEnd}
         >
           {/* Slides */}
           {slides.map((slide, idx) => (
@@ -277,26 +316,34 @@ export default function Home() {
                 idx === currentSlide ? "opacity-100 z-10" : "opacity-0 z-0"
               } ${slide.url ? "cursor-pointer" : ""}`}
             >
-              {/* Fondo desenfocado: rellena el espacio sin importar la proporción de la imagen */}
-              <img
-                src={getImageUrl(slide.image)}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
-              />
-              {/* Imagen principal: el contenedor ya respeta la proporción 1920×600, así que cover no recorta nada */}
-              <img
-                src={getImageUrl(slide.image)}
-                alt={slide.title || ""}
-                className="absolute inset-0 w-full h-full object-cover z-10"
-              />
-              {/* Gradiente para legibilidad del texto */}
+              {/* Fondo desenfocado: rellena el espacio sin importar la proporción de la imagen.
+                  <picture>: en el teléfono usa la versión de celular si el slide la tiene. */}
+              <picture>
+                {slide.mobileImage && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                <img
+                  src={getImageUrl(slide.image)}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
+                />
+              </picture>
+              {/* Imagen principal. En el teléfono "contain": nunca se corta (si la proporción no coincide,
+                  el fondo desenfocado rellena). En md+ "cover" como siempre. */}
+              <picture>
+                {slide.mobileImage && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                <img
+                  src={getImageUrl(slide.image)}
+                  alt={slide.title || ""}
+                  className="absolute inset-0 w-full h-full object-contain md:object-cover z-10"
+                />
+              </picture>
+              {/* Gradiente para legibilidad del texto (solo md+: en el teléfono el texto va debajo) */}
               {(slide.title || slide.subtitle) && (
-                <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                <div className="hidden md:block absolute inset-0 z-20 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
               )}
-              {/* Texto superpuesto */}
+              {/* Texto superpuesto (solo md+) */}
               {(slide.title || slide.subtitle) && (
-                <div className="absolute bottom-0 left-0 right-0 p-8 text-white z-30">
+                <div className="hidden md:block absolute bottom-0 left-0 right-0 p-8 text-white z-30">
                   <div className="max-w-4xl mx-auto">
                     {slide.title && (
                       <h2 className="text-3xl md:text-5xl font-extrabold mb-2 drop-shadow-lg">
@@ -319,7 +366,8 @@ export default function Home() {
             <>
               <button
                 onClick={(e) => { e.stopPropagation(); goTo((currentSlide - 1 + slides.length) % slides.length); }}
-                className="absolute left-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
+                aria-label="Slide anterior"
+                className="hidden md:flex absolute left-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 items-center justify-center transition-colors"
               >
                 {/*
                   Antes: SVG chevron inline
@@ -331,7 +379,8 @@ export default function Home() {
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); goTo((currentSlide + 1) % slides.length); }}
-                className="absolute right-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors"
+                aria-label="Slide siguiente"
+                className="hidden md:flex absolute right-6 top-1/2 -translate-y-1/2 z-20 bg-[#0b1c30]/50 hover:bg-[#00873a] text-white rounded-full w-10 h-10 items-center justify-center transition-colors"
               >
                 {/*
                   Antes: SVG chevron inline
@@ -344,9 +393,9 @@ export default function Home() {
             </>
           )}
 
-          {/* Puntos de navegación */}
+          {/* Puntos de navegación (md+; en el teléfono van en la franja de abajo, así no tapan el flyer) */}
           {slides.length > 1 && (
-            <div className="absolute bottom-4 left-0 right-0 z-20 flex justify-center gap-2">
+            <div className="hidden md:flex absolute bottom-4 left-0 right-0 z-20 justify-center gap-2">
               {slides.map((_, idx) => (
                 <button
                   key={idx}
@@ -362,6 +411,43 @@ export default function Home() {
             </div>
           )}
         </section>
+
+        {/* ── Franja del teléfono: título/subtítulo del slide actual + puntos ──
+            Todos los textos se apilan en la misma celda de la grilla, así la franja toma el alto del
+            más largo y no salta al cambiar de slide; solo se ve el del slide actual. Sin textos, la
+            franja es solo la fila de puntos. */}
+        {(heroHasCaptions || slides.length > 1) && (
+          <div className={`md:hidden bg-[#0b1c30] px-4 text-white ${heroHasCaptions ? "py-3" : "py-2.5"}`}>
+            {heroHasCaptions && (
+            <div className="grid">
+              {slides.map((slide, idx) => (
+                <div
+                  key={slide.id}
+                  aria-hidden={idx !== currentSlide}
+                  onClick={() => handleSlideClick(slide)}
+                  className={`[grid-area:1/1] transition-opacity duration-700 ${idx === currentSlide ? "opacity-100" : "opacity-0 pointer-events-none"} ${slide.url ? "cursor-pointer" : ""}`}
+                >
+                  {slide.title && <p className="text-base font-bold leading-snug line-clamp-1">{slide.title}</p>}
+                  {slide.subtitle && <p className="mt-0.5 text-sm leading-snug text-white/75 line-clamp-2">{slide.subtitle}</p>}
+                </div>
+              ))}
+            </div>
+            )}
+            {slides.length > 1 && (
+              <div className={`${heroHasCaptions ? "mt-2.5" : ""} flex justify-center gap-2`}>
+                {slides.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => goTo(idx)}
+                    aria-label={`Ir al slide ${idx + 1}`}
+                    className={`rounded-full transition-all ${idx === currentSlide ? "bg-[#62df7d] w-6 h-2" : "bg-white/40 w-2 h-2"}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        </div>
       ) : (
         /* Hero estático si no hay slides configurados */
         /* Antes: from-slate-900 via-blue-950 — actualizado a tokens del sistema de diseño */

@@ -499,6 +499,11 @@ model Slide {
   title     String?  // título opcional superpuesto sobre la imagen
   subtitle  String?  // subtítulo opcional
   url       String?  // URL de destino al hacer click en el slide (puede ser relativa o absoluta)
+  // Versión para celular (opcional): en teléfonos se muestra esta en lugar de la ancha. Las medidas
+  // se guardan al subirla para que el carrusel del teléfono tome su proporción sin saltos al cargar.
+  mobileImage  String?
+  mobileWidth  Int?
+  mobileHeight Int?
   order     Int      @default(0) // posición en el carrusel (menor = primero)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
