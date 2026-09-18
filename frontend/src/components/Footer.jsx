@@ -206,7 +206,8 @@ export default function Footer({ light = false, noMargin = false }) {
           <div className="flex flex-col items-center sm:items-start gap-1">
             <span className={w.copy}>© {new Date().getFullYear()} IGWT Store. Todos los derechos reservados.</span>
             {/* Crédito desarrollador — SheloSettDev */}
-            <div className="flex items-center gap-2 text-xs opacity-50 hover:opacity-80 transition-opacity">
+            {/* flex-wrap: en el celular la fila no entraba en el ancho y se cortaba a los dos costados */}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1 text-xs opacity-50 hover:opacity-80 transition-opacity">
               <span className={`${w.copy} !text-xs`}>Desarrollado por</span>
               <a
                 href="https://www.instagram.com/SheloSettDev"

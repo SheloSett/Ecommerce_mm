@@ -83,7 +83,7 @@ function PublicRoute({ children }) {
   );
   if (maintenance) return <Navigate to="/mantenimiento" replace />;
   return (
-    <div className="storefront">
+    <div className="storefront storefront-root">
       <MaintenanceBanner />
       {/* Señal de presencia para el panel "En vivo" de Analíticas (solo tienda pública) */}
       <PresenceTracker />

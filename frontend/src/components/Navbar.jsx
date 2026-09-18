@@ -8,6 +8,7 @@ import { useWishlist } from "../context/WishlistContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import AnnouncementBar from "./AnnouncementBar";
 import CartDrawer from "./CartDrawer";
+import MobileBottomNav from "./MobileBottomNav";
 import toast from "react-hot-toast";
 import { trackSearch } from "../services/tracking";
 
@@ -137,7 +138,36 @@ export default function Navbar() {
 
   const toggleMobileSearch = () => {
     setMobileMenuOpen(false);
-    setMobileSearchOpen((o) => !o);
+    const willOpen = !mobileSearchOpen;
+    setMobileSearchOpen(willOpen);
+    // Foco en el mismo toque: iOS solo abre el teclado si el focus ocurre dentro del gesto del
+    // usuario (el efecto con setTimeout de arriba queda como respaldo). El input existe siempre en
+    // el DOM, solo está transparente, así que se lo puede enfocar antes de que termine la animación.
+    if (willOpen) mobileSearchInputRef.current?.focus({ preventScroll: true });
+  };
+
+  // ── Barra inferior del celular (MobileBottomNav) ──
+  const toggleMobileMenuFromBar = () => {
+    setMobileSearchOpen(false);
+    setCartOpen(false);
+    setMobileMenuOpen((o) => !o);
+  };
+  const toggleSearchFromBar = () => {
+    setCartOpen(false);
+    toggleMobileSearch();
+  };
+  const openCartFromBar = () => {
+    setMobileMenuOpen(false);
+    setMobileSearchOpen(false);
+    if (customer) { setCartOpen((o) => !o); return; }
+    // Sin sesión no hay carrito (la compra requiere cuenta): se lo manda a iniciar sesión
+    toast("Iniciá sesión para usar el carrito", { icon: "🛒" });
+    navigate("/login");
+  };
+  const closeMobileOverlays = () => {
+    setMobileMenuOpen(false);
+    setMobileSearchOpen(false);
+    setCartOpen(false);
   };
 
   const handleSearch = (e) => {
@@ -280,7 +310,7 @@ export default function Navbar() {
               {/* Lupa — solo cuando la búsqueda pill no se ve (< lg): despliega la barra mobile */}
               <button
                 onClick={toggleMobileSearch}
-                className={`lg:hidden text-white active:scale-95 transition-all ${mobileSearchOpen ? "opacity-100" : "opacity-80 hover:opacity-100"}`}
+                className={`hidden md:inline-flex lg:hidden text-white active:scale-95 transition-all ${mobileSearchOpen ? "opacity-100" : "opacity-80 hover:opacity-100"}`}
                 aria-label={mobileSearchOpen ? "Cerrar búsqueda" : "Buscar"}
                 aria-expanded={mobileSearchOpen}
               >
@@ -409,7 +439,7 @@ export default function Navbar() {
               {customer && (
                 <button
                   onClick={() => setCartOpen(true)}
-                  className="text-white opacity-80 hover:opacity-100 active:scale-95 transition-all relative"
+                  className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all relative"
                   aria-label="Carrito"
                 >
                   <span className="material-symbols-outlined">shopping_cart</span>
@@ -421,15 +451,9 @@ export default function Navbar() {
                 </button>
               )}
 
-              {/* Menú móvil — abre el panel lateral (drawer) */}
-              <button
-                onClick={openMobileMenu}
-                className="md:hidden text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
-                aria-label="Abrir menú"
-                aria-expanded={mobileMenuOpen}
-              >
-                <span className="material-symbols-outlined">menu</span>
-              </button>
+              {/* Menú móvil: la hamburguesa de acá arriba pasó a la pestaña "Menú" de la barra
+                  inferior (MobileBottomNav), que abre el mismo menú lateral de siempre. Antes:
+                  <button onClick={openMobileMenu} className="md:hidden ..."><span>menu</span></button> */}
             </div>
         </div>
 
@@ -458,6 +482,15 @@ export default function Navbar() {
               {suggestionsLoading && (
                 <span className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin inline-block flex-shrink-0" />
               )}
+              <button
+                type="button"
+                onClick={() => { setMobileSearchOpen(false); mobileSearchInputRef.current?.blur(); }}
+                className="md:hidden text-white/60 hover:text-white flex-shrink-0 leading-none"
+                aria-label="Cerrar búsqueda"
+                tabIndex={mobileSearchOpen ? 0 : -1}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+              </button>
             </div>
             {showSuggestions && suggestions.length > 0 && (
               <div className="mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-h-[60vh] overflow-y-auto">
@@ -685,6 +718,17 @@ export default function Navbar() {
 
       {/* CartDrawer solo si hay sesión de cliente */}
       {customer && <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />}
+
+      {/* Barra de navegación inferior (solo celular) */}
+      <MobileBottomNav
+        menuOpen={mobileMenuOpen}
+        onMenu={toggleMobileMenuFromBar}
+        searchOpen={mobileSearchOpen}
+        onSearch={toggleSearchFromBar}
+        cartOpen={cartOpen}
+        onCart={openCartFromBar}
+        onCloseOverlays={closeMobileOverlays}
+      />
     </>
   );
 }

@@ -22,7 +22,9 @@ export default function WhatsAppButton() {
       {showTop && (
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="fixed bottom-24 right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-slate-700 hover:bg-slate-600 hover:scale-110 transition-all"
+          className="fixed right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full shadow-lg bg-slate-700 hover:bg-slate-600 hover:scale-110 transition-all"
+          // --bnav: alto de la barra inferior del celular (0 en escritorio). Antes: bottom-24
+          style={{ bottom: "calc(6rem + var(--bnav, 0px))" }}
           aria-label="Volver arriba"
         >
           <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -35,8 +37,9 @@ export default function WhatsAppButton() {
         href={`https://wa.me/${WHATSAPP_NUMBER}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="fixed bottom-6 right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full shadow-lg hover:scale-110 transition-transform"
-        style={{ backgroundColor: "#25D366" }}
+        className="fixed right-6 z-50 flex items-center justify-center w-14 h-14 rounded-full shadow-lg hover:scale-110 transition-transform"
+        // --bnav: alto de la barra inferior del celular (0 en escritorio). Antes: bottom-6
+        style={{ backgroundColor: "#25D366", bottom: "calc(1.5rem + var(--bnav, 0px))" }}
         aria-label="Contactar por WhatsApp"
       >
         <svg viewBox="0 0 32 32" width="30" height="30" fill="white" xmlns="http://www.w3.org/2000/svg">

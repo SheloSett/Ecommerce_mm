@@ -86,6 +86,22 @@
    No afecta las páginas públicas de la tienda (.storefront).
    ══════════════════════════════════════════════════════════════════════ */
 
+/* ── Barra de navegación inferior del celular (MobileBottomNav) ──
+   --bnav = alto de la barra + la franja del gesto de inicio del iPhone. La barra le pone la clase
+   has-bnav al <html> mientras está visible; el margen inferior de la tienda y los botones flotantes
+   (WhatsApp, volver arriba) usan la variable para no quedar tapados. En md+ la barra no existe. */
+:root { --bnav: 0px; }
+@media (max-width: 767.98px) {
+  html.has-bnav { --bnav: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  html.has-bnav .storefront-root { padding-bottom: var(--bnav); }
+}
+/* viewport-fit=cover (index.html) hace que el contenido llegue a los bordes físicos del iPhone:
+   en horizontal se deja libre la zona del notch, igual que hacía Safari por su cuenta. */
+body {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
 /* Variables de los gráficos de Analíticas (paleta validada para daltonismo en ambos temas) */
 :root {
   --viz-s1: #2a78d6;
