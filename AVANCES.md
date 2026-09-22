@@ -316,6 +316,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 149- menú lateral del celular: Inicio pasa arriba de Categorías, justo debajo de la cuenta. Antes estaba al final y, con la lista de categorías desplegada, quedaba muy abajo y había que scrollear para encontrarlo. ✅
 
+<-- //TODO cotizaciones editables por el cliente + venta manual como cotizacion: investigacion completa en TODO-cotizaciones-editables.md -->
+
 ##
 
 
