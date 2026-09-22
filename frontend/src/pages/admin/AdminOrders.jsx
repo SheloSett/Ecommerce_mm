@@ -69,7 +69,13 @@ export default function AdminOrders() {
 
   // Estado para edición inline de items en cotizaciones
   const [editingQty, setEditingQty]     = useState({}); // { [itemId]: string }
-  const [editingPrice, setEditingPrice] = useState({}); // { [itemId]: string }
+  const [editingPrice, setEditingPrice] = useState({}); // { [itemId]: string } — precio de LISTA
+  // editingDesc: % de descuento de esa línea. El precio de arriba es el de lista y este lo baja;
+  // lo que se guarda es el precio final + el de lista (para mostrarlo tachado al cliente).
+  const [editingDesc, setEditingDesc]   = useState({}); // { [itemId]: string }
+  // descGeneral: descuento sobre toda la cotización, por orden { [orderId]: { type, value } }
+  const [descGeneral, setDescGeneral]   = useState({});
+  const [savingDesc, setSavingDesc]     = useState(null);
   const [savingItem, setSavingItem]     = useState(null);
   // dirtyOrders: set de orderId que tuvieron cambios sin publicar al cliente
   const [dirtyOrders, setDirtyOrders] = useState(new Set());
@@ -729,25 +735,46 @@ export default function AdminOrders() {
   };
 
   // Guardar cantidad y/o precio editado de un item (cotizaciones)
-  const handleSaveQty = async (orderId, itemId) => {
+  // Precio de lista y % de descuento actuales de una línea (lo que muestran los inputs)
+  const listaDeItem = (item) => (item.listPrice && item.listPrice > item.price ? item.listPrice : item.price);
+  const descDeItem  = (item) => (item.listPrice && item.listPrice > item.price
+    ? String(Math.round((1 - item.price / item.listPrice) * 1000) / 10)
+    : "");
+  const precioFinalLinea = (lista, desc) => {
+    const d = Math.min(100, Math.max(0, parseFloat(desc) || 0));
+    return d > 0 ? Math.round((parseFloat(lista) || 0) * (1 - d / 100) * 100) / 100 : (parseFloat(lista) || 0);
+  };
+
+  const handleSaveQty = async (orderId, itemId, item) => {
     const qty = parseInt(editingQty[itemId]);
     if (!qty || qty < 1) { toast.error("La cantidad debe ser al menos 1"); return; }
-    const priceVal = editingPrice[itemId] !== undefined ? parseFloat(editingPrice[itemId]) : undefined;
-    if (priceVal !== undefined && (isNaN(priceVal) || priceVal <= 0)) {
+    // El input de precio es el de LISTA; el descuento de la línea se aplica encima.
+    const listaOriginal = listaDeItem(item);
+    const lista = editingPrice[itemId] !== undefined ? parseFloat(editingPrice[itemId]) : listaOriginal;
+    if (isNaN(lista) || lista <= 0) {
       toast.error("El precio debe ser mayor a 0");
       return;
     }
+    const desc  = editingDesc[itemId] !== undefined ? editingDesc[itemId] : descDeItem(item);
+    const final = precioFinalLinea(lista, desc);
+    const priceVal  = final;
+    const listPrice = final < lista ? lista : null;
+    // Solo se ofrece actualizar el precio del catálogo si cambió el de LISTA (no si solo se puso un
+    // descuento: ese descuento es de esta venta, el producto no cambia de precio).
+    const cambioLaLista = Math.abs(lista - listaOriginal) > 0.009;
+
     setSavingItem(itemId);
     try {
-      const res = await ordersApi.updateItem(orderId, itemId, qty, priceVal);
+      const res = await ordersApi.updateItem(orderId, itemId, qty, priceVal, listPrice);
       setOrders((prev) => prev.map((o) => o.id === orderId ? res.data : o));
       setEditingQty((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
       setEditingPrice((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
+      setEditingDesc((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
       // Marcar la orden como "tiene cambios sin publicar"
       setDirtyOrders((prev) => new Set(prev).add(orderId));
 
-      // Si se cambió el precio, preguntar si también se quiere actualizar el producto global
-      if (priceVal !== undefined) {
+      // Si se cambió el precio de lista, preguntar si también se actualiza el del catálogo
+      if (cambioLaLista) {
         const updatedOrder = res.data;
         const updatedItem = updatedOrder.items?.find((i) => i.id === itemId);
         if (updatedItem?.productId) {
@@ -755,7 +782,7 @@ export default function AdminOrders() {
           setPriceUpdateConfirm({
             productId:   updatedItem.productId,
             productName: updatedItem.product?.name || "el producto",
-            newPrice:    priceVal,
+            newPrice:    lista,
           });
         }
       }
@@ -763,6 +790,26 @@ export default function AdminOrders() {
       toast.error("Error al actualizar");
     } finally {
       setSavingItem(null);
+    }
+  };
+
+  // Aplica (o saca) el descuento sobre toda la cotización
+  const handleDescGeneral = async (orderId) => {
+    const d = descGeneral[orderId] || { type: "PERCENTAGE", value: "" };
+    const valor = parseFloat(d.value);
+    setSavingDesc(orderId);
+    try {
+      const res = await ordersApi.updateFields(orderId, {
+        manualDiscountType:  d.value !== "" && valor > 0 ? d.type : null,
+        manualDiscountValue: d.value !== "" && valor > 0 ? valor : null,
+      });
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, ...res.data } : o)));
+      setDirtyOrders((prev) => new Set(prev).add(orderId));
+      toast.success(d.value && valor > 0 ? "Descuento aplicado" : "Descuento quitado");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo aplicar el descuento");
+    } finally {
+      setSavingDesc(null);
     }
   };
 
@@ -1409,14 +1456,14 @@ ${pagesHtml}
                               >+</button>
                             </div>
 
-                            {/* Input de precio unitario */}
+                            {/* Input de precio de lista (sin el descuento de la línea) */}
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <span className="text-xs text-slate-400">$</span>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={editingPrice[item.id] !== undefined ? editingPrice[item.id] : item.price}
+                                value={editingPrice[item.id] !== undefined ? editingPrice[item.id] : listaDeItem(item)}
                                 onChange={(e) => {
                                   setEditingPrice((p) => ({ ...p, [item.id]: e.target.value }));
                                   if (editingQty[item.id] === undefined) {
@@ -1424,20 +1471,59 @@ ${pagesHtml}
                                   }
                                 }}
                                 className="w-24 text-center text-sm border border-slate-300 rounded-lg py-1 px-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                                title="Precio unitario para esta cotización"
+                                title="Precio unitario de lista para esta cotización"
                               />
                             </div>
 
-                            {/* Subtotal */}
-                            <span className="text-sm font-bold text-slate-800 flex-shrink-0">
-                              = {formatPrice(displayPrice * (editingQty[item.id] !== undefined ? (parseInt(editingQty[item.id]) || 0) : item.quantity))}
-                            </span>
+                            {/* Descuento de esta línea: solo afecta a esta cotización */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <span className="text-xs font-bold text-emerald-700">🏷</span>
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="1"
+                                  placeholder="0"
+                                  value={editingDesc[item.id] !== undefined ? editingDesc[item.id] : descDeItem(item)}
+                                  onChange={(e) => {
+                                    setEditingDesc((p) => ({ ...p, [item.id]: e.target.value }));
+                                    if (editingQty[item.id] === undefined) {
+                                      setEditingQty((p) => ({ ...p, [item.id]: String(item.quantity) }));
+                                    }
+                                  }}
+                                  className={`w-16 text-center text-sm rounded-lg py-1 pl-1 pr-4 border-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 ${
+                                    parseFloat(editingDesc[item.id] !== undefined ? editingDesc[item.id] : descDeItem(item)) > 0
+                                      ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
+                                      : "border-emerald-200 bg-emerald-50/40"
+                                  }`}
+                                  title="Descuento de este producto, solo para esta cotización"
+                                />
+                                <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] text-emerald-600 pointer-events-none">%</span>
+                              </div>
+                            </div>
+
+                            {/* Subtotal (con el descuento de la línea ya aplicado) */}
+                            {(() => {
+                              const lista  = editingPrice[item.id] !== undefined ? editingPrice[item.id] : listaDeItem(item);
+                              const desc   = editingDesc[item.id] !== undefined ? editingDesc[item.id] : descDeItem(item);
+                              const unidad = precioFinalLinea(lista, desc);
+                              const cant   = editingQty[item.id] !== undefined ? (parseInt(editingQty[item.id]) || 0) : item.quantity;
+                              return (
+                                <span className="text-sm font-bold text-slate-800 flex-shrink-0">
+                                  {parseFloat(desc) > 0 && (
+                                    <span className="text-emerald-600 font-semibold mr-1">{formatPrice(unidad)} c/u →</span>
+                                  )}
+                                  = {formatPrice(unidad * cant)}
+                                </span>
+                              );
+                            })()}
 
                             {/* Guardar / Cancelar edición */}
-                            {(editingQty[item.id] !== undefined || editingPrice[item.id] !== undefined) && (
+                            {(editingQty[item.id] !== undefined || editingPrice[item.id] !== undefined || editingDesc[item.id] !== undefined) && (
                               <>
                                 <button
-                                  onClick={() => handleSaveQty(order.id, item.id)}
+                                  onClick={() => handleSaveQty(order.id, item.id, item)}
                                   disabled={isSaving}
                                   className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-60 font-semibold"
                                 >
@@ -1447,6 +1533,7 @@ ${pagesHtml}
                                   onClick={() => {
                                     setEditingQty((p) => { const n = { ...p }; delete n[item.id]; return n; });
                                     setEditingPrice((p) => { const n = { ...p }; delete n[item.id]; return n; });
+                                    setEditingDesc((p) => { const n = { ...p }; delete n[item.id]; return n; });
                                   }}
                                   className="text-slate-400 hover:text-slate-600 text-xs"
                                 >✕</button>
@@ -1626,6 +1713,64 @@ ${pagesHtml}
                             </div>
                             <p className="text-xs text-slate-400">
                               El precio se toma del producto según el tipo de cliente; después podés editarlo en la línea.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
+                      {/* ── Descuento sobre toda la cotización ──
+                          Va aparte del descuento de cada producto y solo afecta a esta cotización:
+                          ni el precio del catálogo ni el de otros pedidos cambian. */}
+                      {order.status !== "CANCELLED" && (() => {
+                        const d = descGeneral[order.id] || {
+                          type:  order.manualDiscountType || "PERCENTAGE",
+                          value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
+                        };
+                        const T = getOrderTotals(order);
+                        return (
+                          <div className="border border-dashed border-emerald-300 bg-emerald-50/40 rounded-xl p-3 mt-3">
+                            <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">🏷 Descuento general de la cotización</p>
+                            <div className="flex gap-2 items-center flex-wrap">
+                              <select
+                                value={d.type}
+                                onChange={(e) => setDescGeneral((p) => ({ ...p, [order.id]: { ...d, type: e.target.value } }))}
+                                className="px-3 py-2 border-2 border-emerald-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                              >
+                                <option value="PERCENTAGE">Porcentaje (%)</option>
+                                <option value="FIXED">Monto fijo ($)</option>
+                              </select>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={d.value}
+                                onChange={(e) => setDescGeneral((p) => ({ ...p, [order.id]: { ...d, value: e.target.value } }))}
+                                placeholder={d.type === "PERCENTAGE" ? "0 %" : "$ 0"}
+                                className="w-28 px-3 py-2 border-2 border-emerald-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleDescGeneral(order.id)}
+                                disabled={savingDesc === order.id}
+                                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors"
+                              >
+                                {savingDesc === order.id ? "Aplicando..." : "Aplicar"}
+                              </button>
+                              {(T.ars.discount > 0 || T.usd.discount > 0) && (
+                                <span className="text-xs text-slate-600">
+                                  Subtotal {formatPrice(T.ars.subtotal)}
+                                  {T.hasUsd && T.usd.subtotal > 0 && ` + ${formatPriceWithCurrency(T.usd.subtotal, "USD")}`}
+                                  {" · "}
+                                  <span className="text-emerald-700 font-semibold">
+                                    −{formatPrice(T.ars.discount)}
+                                    {T.usd.discount > 0 && ` / −${formatPriceWithCurrency(T.usd.discount, "USD")}`}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1.5">
+                              Se aplica sobre el subtotal, además del descuento de cada producto. Dejalo vacío para sacarlo.
+                              Vale solo para esta cotización.
                             </p>
                           </div>
                         );

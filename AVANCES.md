@@ -328,6 +328,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 155- descuentos discriminados: donde antes había un solo renglón (y en el detalle del pedido decía "Cupón" aunque no hubiera ninguno), ahora se lista por separado "Descuento en productos", "Cupón" y "Descuento general (X%)", con el total al final. Va así en el detalle del pedido del admin, en la cotización del cliente (que cierra con "Ahorrás"), en la pantalla de pago y en la hoja impresa. Además, el botón Cancelar de "Modificando pedido" pasó de ser un texto subrayado chiquito a un botón con borde. ✅
 
+156- descuentos también en el panel de Cotizaciones: cada línea tiene su campo 🏷 de descuento al lado del precio (el precio que editás es el de lista y el descuento lo baja; se ve "queda $X c/u" y el subtotal ya con el descuento), y abajo hay un bloque "Descuento general de la cotización" en porcentaje o monto fijo, con su resumen de subtotal y descuento total. Los descuentos valen SOLO para esa cotización: no cambian el precio del producto en el catálogo ni el de otros pedidos. El cartel que pregunta si querés actualizar el precio del producto ahora aparece solo si cambiás el precio de lista, no si ponés un descuento. ✅
+
 ##
 
 

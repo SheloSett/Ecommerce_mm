@@ -1290,6 +1290,12 @@ async function updateOrderItem(req, res) {
     // Actualizar item
     const updateData = { quantity: newQty };
     if (price !== undefined && parseFloat(price) > 0) updateData.price = parseFloat(price);
+    // listPrice: precio antes del descuento de esa línea. Se manda null para sacarle el descuento.
+    if (req.body.listPrice !== undefined) {
+      const lp = parseFloat(req.body.listPrice);
+      const precioFinal = updateData.price ?? item.price;
+      updateData.listPrice = !isNaN(lp) && lp > precioFinal ? lp : null;
+    }
     await prisma.orderItem.update({ where: { id: itemId }, data: updateData });
 
     // Recalcular total y snapshot
@@ -2795,14 +2801,22 @@ async function createManualOrder(req, res) {
   }
 }
 
-// PATCH /api/orders/:id/fields — actualiza paymentMethod, fulfillmentStatus y/o shippingMethod
+// PATCH /api/orders/:id/fields — actualiza paymentMethod, fulfillmentStatus, shippingMethod
+// y/o el descuento general del pedido
 async function updateOrderFields(req, res) {
   try {
     const { id } = req.params;
     // shippingMethod: antes no estaba incluido → al enviarlo desde el frontend data quedaba vacío → 400
-    const { paymentMethod, fulfillmentStatus, shippingMethod } = req.body;
+    const { paymentMethod, fulfillmentStatus, shippingMethod, manualDiscountType, manualDiscountValue } = req.body;
 
     const data = {};
+
+    // Descuento sobre todo el pedido (lo usa el panel de cotizaciones). Mandar value vacío o 0 lo
+    // saca. Al aplicarlo hay que recalcular los totales, así que se resuelve al final.
+    let recalcularPorDescuento = false;
+    if (manualDiscountType !== undefined || manualDiscountValue !== undefined) {
+      recalcularPorDescuento = true;
+    }
 
     if (paymentMethod) {
       const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION", "A_CONVENIR"];
@@ -2828,8 +2842,16 @@ async function updateOrderFields(req, res) {
       data.shippingMethod = shippingMethod;
     }
 
-    if (Object.keys(data).length === 0) {
+    if (Object.keys(data).length === 0 && !recalcularPorDescuento) {
       return res.status(400).json({ error: "No se envió ningún campo para actualizar" });
+    }
+
+    if (recalcularPorDescuento) {
+      const manual = parseManualDiscount(manualDiscountType, manualDiscountValue);
+      Object.assign(data, await recalcOrderTotals(parseInt(id), manual));
+      // El cliente ve el snapshot: se republica para que el total nuevo le llegue junto con los ítems.
+      const orden = await prisma.order.findUnique({ where: { id: parseInt(id) }, select: { paymentMethod: true } });
+      if (orden?.paymentMethod === "COTIZACION") data.clientSnapshot = await buildSnapshot(parseInt(id));
     }
 
     // Obtener la orden antes de actualizar para tener customerEmail y shippingMethod

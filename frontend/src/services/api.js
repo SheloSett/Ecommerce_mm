@@ -199,7 +199,8 @@ export const ordersApi = {
   // Cliente MAYORISTA: cotizaciones enviadas (paymentMethod: COTIZACION)
   getMyCotizaciones: () => customerAuthApi.get("/orders/my-quotes"),
   // Admin: editar/eliminar un item de una cotización
-  updateItem: (orderId, itemId, quantity, price) => api.patch(`/orders/${orderId}/items/${itemId}`, { quantity, ...(price !== undefined && { price }) }),
+  // listPrice: precio de lista de la línea cuando tiene descuento (null = sacarle el descuento)
+  updateItem: (orderId, itemId, quantity, price, listPrice) => api.patch(`/orders/${orderId}/items/${itemId}`, { quantity, ...(price !== undefined && { price }), ...(listPrice !== undefined && { listPrice }) }),
   deleteItem: (orderId, itemId) => api.delete(`/orders/${orderId}/items/${itemId}`),
   addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
   // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
