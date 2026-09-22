@@ -44,9 +44,12 @@ function sumItems(items, currency) {
  * @param {Object} coupon   - cupón YA VALIDADO ({ discountType, discountValue }) o null
  * @param {Object} ivaRates - null = sin factura. Si viene, es un mapa { [productId]: porcentaje }
  *                            con la alícuota de cada producto (21, 10.5, ...).
- * @returns {Object} subtotal / descuento / IVA / total, por moneda.
+ * @param {Object} manualDiscount - descuento que puso el vendedor sobre toda la venta:
+ *                            { type: "PERCENTAGE" | "FIXED", value } o null. Se aplica DESPUÉS del
+ *                            cupón (sobre lo que queda) y con las mismas reglas de moneda.
+ * @returns {Object} subtotal / descuentos / IVA / total, por moneda.
  */
-function computeOrderTotals({ items, coupon = null, ivaRates = null }) {
+function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null }) {
   const subtotalArs = sumItems(items, "ARS");
   const subtotalUsd = sumItems(items, "USD");
 
@@ -65,6 +68,24 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null }) {
     }
   }
 
+  // ── Descuento manual del vendedor ──────────────────────────────────────────
+  // Va después del cupón y sobre lo que quedó, así entre los dos nunca superan el subtotal.
+  let manualDiscountArs = 0;
+  let manualDiscountUsd = 0;
+  if (manualDiscount && manualDiscount.value > 0) {
+    const restanteArs = Math.max(0, subtotalArs - couponDiscountArs);
+    const restanteUsd = Math.max(0, subtotalUsd - couponDiscountUsd);
+    if (manualDiscount.type === "PERCENTAGE") {
+      const pct = Math.min(100, manualDiscount.value);
+      manualDiscountArs = round2((restanteArs * pct) / 100);
+      manualDiscountUsd = round2((restanteUsd * pct) / 100);
+    } else {
+      // Monto fijo: está en pesos, igual que los cupones de monto → no toca la parte en dólares.
+      manualDiscountArs = round2(Math.min(manualDiscount.value, restanteArs));
+      manualDiscountUsd = 0;
+    }
+  }
+
   // ── IVA ────────────────────────────────────────────────────────────────────
   // ORDEN DE LAS OPERACIONES (importante): primero se descuenta el cupón del subtotal y RECIÉN
   // AHÍ se calcula el IVA sobre esa base ya descontada.
@@ -78,8 +99,9 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null }) {
   // El descuento se reparte proporcionalmente entre las líneas de la misma moneda. Hace falta
   // prorratear (y no aplicar el % suelto) porque cada producto puede tener su propia alícuota
   // (21% o 10,5%): la base de cada línea tiene que bajar en la misma proporción que el total.
-  const factorArs = subtotalArs > 0 ? (subtotalArs - couponDiscountArs) / subtotalArs : 1;
-  const factorUsd = subtotalUsd > 0 ? (subtotalUsd - couponDiscountUsd) / subtotalUsd : 1;
+  // Los dos descuentos (cupón y el manual del vendedor) bajan la base imponible.
+  const factorArs = subtotalArs > 0 ? (subtotalArs - couponDiscountArs - manualDiscountArs) / subtotalArs : 1;
+  const factorUsd = subtotalUsd > 0 ? (subtotalUsd - couponDiscountUsd - manualDiscountUsd) / subtotalUsd : 1;
 
   let ivaAmountArs = 0;
   let ivaAmountUsd = 0;
@@ -100,12 +122,13 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null }) {
   // ── Totales ────────────────────────────────────────────────────────────────
   // (subtotal − cupón) + IVA — en ese orden, ver la explicación de arriba.
   // Math.max(0, ...) por las dudas: un cupón nunca puede dejar un total negativo.
-  const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs + ivaAmountArs));
-  const totalUsd = round2(Math.max(0, subtotalUsd - couponDiscountUsd + ivaAmountUsd));
+  const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs));
+  const totalUsd = round2(Math.max(0, subtotalUsd - couponDiscountUsd - manualDiscountUsd + ivaAmountUsd));
 
   return {
     subtotalArs, subtotalUsd,
     couponDiscountArs, couponDiscountUsd,
+    manualDiscountArs, manualDiscountUsd,
     ivaAmountArs, ivaAmountUsd,
     totalArs, totalUsd,
     hasUsd: subtotalUsd > 0 || (items || []).some((i) => lineCurrency(i) === "USD"),

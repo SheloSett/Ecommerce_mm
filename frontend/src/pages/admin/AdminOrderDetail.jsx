@@ -97,6 +97,9 @@ export default function AdminOrderDetail() {
   // Modo edición de pedido (Feature 90)
   const [editMode, setEditMode] = useState(false);
   const [editItems, setEditItems] = useState([]);
+  // editDiscount: descuento sobre TODO el pedido, editable junto con los productos.
+  // type "PERCENTAGE" (%) | "FIXED" (monto en pesos); value vacío = sin descuento.
+  const [editDiscount, setEditDiscount] = useState({ type: "PERCENTAGE", value: "" });
   const [uploadingItemImg, setUploadingItemImg] = useState({}); // { [idx]: bool }
 
   // Foto para un ítem libre sin imagen (modo edición): se sube a Cloudinary y queda en el ítem al guardar
@@ -200,7 +203,12 @@ export default function AdminOrderDetail() {
       isFree:       !i.productId,
       productImage: i.productImage || null,
       quantity:     i.quantity,
-      price:        i.price,
+      // price muestra el precio de LISTA (sin el descuento de la línea) y "desc" el % aplicado, para
+      // poder editar las dos cosas por separado. Si la línea no tiene descuento, listPrice es null.
+      price:        i.listPrice ?? i.price,
+      desc:         i.listPrice && i.listPrice > i.price
+        ? String(Math.round((1 - i.price / i.listPrice) * 1000) / 10)
+        : "",
       // cost: costo efectivo actual (ítem → variante → producto) para mostrarlo como default editable
       cost:         i.cost ?? i.variant?.cost ?? i.product?.cost ?? "",
       // currency: solo para mostrar bien el "Total estimado" mientras se edita (no se envía al
@@ -209,6 +217,10 @@ export default function AdminOrderDetail() {
       variantId:    i.variantId || null,
       variantLabel: i.variantLabel || null,
     })));
+    setEditDiscount({
+      type:  order.manualDiscountType || "PERCENTAGE",
+      value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
+    });
     setProductSearch("");
     setSearchResults([]);
     setEditMode(true);
@@ -229,6 +241,17 @@ export default function AdminOrderDetail() {
 
   const updateEditPrice = (idx, val) => {
     setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, price: val } : it));
+  };
+
+  // Precio final de una línea = precio de lista menos su %
+  const precioLineaConDesc = (it) => {
+    const base = parseFloat(it.price) || 0;
+    const d    = Math.min(100, Math.max(0, parseFloat(it.desc) || 0));
+    return d > 0 ? Math.round(base * (1 - d / 100) * 100) / 100 : base;
+  };
+
+  const updateEditDesc = (idx, val) => {
+    setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, desc: val } : it));
   };
 
   const updateEditCost = (idx, val) => {
@@ -310,19 +333,30 @@ export default function AdminOrderDetail() {
     setCostModal(null);
     setSavingEdit(true);
     try {
-      const payload = editItems.map((it) => ({
+      const payload = editItems.map((it) => {
+        const lista = parseFloat(it.price) || 0;
+        const final = precioLineaConDesc(it);
+        return {
         ...(it.itemId ? { itemId: it.itemId } : {}),
         productId:    it.productId,
         quantity:     parseInt(it.quantity),
-        price:        parseFloat(it.price),
+        // price es el precio ya con el descuento de la línea; listPrice el de lista (o null si no
+        // tiene descuento, así el backend limpia el que hubiera).
+        price:        final,
+        listPrice:    final < lista ? lista : null,
         // cost: se envía siempre (vacío → el backend lo guarda como null y usa el costo del producto)
         cost:         it.cost === "" || it.cost === null || it.cost === undefined ? "" : it.cost,
         variantId:    it.variantId || undefined,
         variantLabel: it.variantLabel || undefined,
         // Foto cargada desde el modo edición (solo ítems libres)
         productImage: it.productImage || undefined,
-      }));
-      const res = await ordersApi.modifyOrder(order.id, payload, applyCostToProduct);
+        };
+      });
+      const res = await ordersApi.modifyOrder(order.id, payload, applyCostToProduct, {
+        // Se mandan siempre (aunque estén vacíos) para poder sacar un descuento que ya existía.
+        manualDiscountType:  editDiscount.value ? editDiscount.type : null,
+        manualDiscountValue: editDiscount.value ? parseFloat(editDiscount.value) : null,
+      });
       setOrder(res.data);
       setEditMode(false);
       setEditItems([]);
@@ -791,6 +825,27 @@ export default function AdminOrderDetail() {
                           />
                         </div>
                         <div className="flex items-center gap-1">
+                          {/* Descuento de este producto: baja su precio de venta. El de lista queda
+                              guardado para mostrarlo tachado en la cotización y en la impresión. */}
+                          <span className="text-[10px] text-slate-400 w-12 text-right">Desc. %</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={item.desc || ""}
+                            onChange={(e) => updateEditDesc(idx, e.target.value)}
+                            placeholder="0"
+                            title="Descuento de este producto"
+                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                          />
+                        </div>
+                        {parseFloat(item.desc) > 0 && (
+                          <p className="text-[11px] text-emerald-600 font-semibold">
+                            Queda {formatPrice(precioLineaConDesc(item))} c/u
+                          </p>
+                        )}
+                        <div className="flex items-center gap-1">
                           <span className="text-[10px] text-slate-400 w-12 text-right">Cant. ×</span>
                           <input
                             type="number"
@@ -852,6 +907,31 @@ export default function AdminOrderDetail() {
                   )}
                 </div>
 
+                {/* Descuento sobre todo el pedido */}
+                <div className="flex items-end gap-2 mt-4 pt-4 border-t border-slate-100">
+                  <div className="w-40">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Descuento general</label>
+                    <select
+                      value={editDiscount.type}
+                      onChange={(e) => setEditDiscount((d) => ({ ...d, type: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value="PERCENTAGE">Porcentaje (%)</option>
+                      <option value="FIXED">Monto fijo ($)</option>
+                    </select>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editDiscount.value}
+                    onChange={(e) => setEditDiscount((d) => ({ ...d, value: e.target.value }))}
+                    placeholder={editDiscount.type === "PERCENTAGE" ? "0 %" : "$ 0"}
+                    className="w-32 px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                  />
+                  <p className="text-xs text-slate-400 pb-2.5">Además del descuento de cada producto. Vacío = sin descuento.</p>
+                </div>
+
                 {/* Total estimado + botón guardar */}
                 <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
                   <div className="text-sm text-slate-500">
@@ -859,17 +939,30 @@ export default function AdminOrderDetail() {
                     {/* Separado por moneda: si la edición mezcla pesos y dólares se muestran los dos
                         montos, nunca sumados entre sí. */}
                     {(() => {
+                      // Los subtotales ya llevan el descuento de cada línea aplicado.
                       const sum = (cur) => editItems
                         .filter((i) => (i.currency || "ARS") === cur)
-                        .reduce((s, i) => s + parseFloat(i.price || 0) * parseInt(i.quantity || 0), 0);
+                        .reduce((s, i) => s + precioLineaConDesc(i) * parseInt(i.quantity || 0), 0);
                       const ars = sum("ARS");
                       const usd = sum("USD");
                       const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
+                      // Descuento general sobre lo que quedó (mismo criterio que el backend: el % va
+                      // a las dos monedas, el monto fijo está en pesos y solo baja los pesos).
+                      const v = parseFloat(editDiscount.value) || 0;
+                      const esPct = editDiscount.type === "PERCENTAGE";
+                      const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
+                      const dUsd = v > 0 && esPct ? Math.round(usd * Math.min(100, v)) / 100 : 0;
                       return (
                         <span className="font-bold text-slate-800">
-                          {(!anyUsd || ars > 0) && formatPrice(ars)}
+                          {dArs > 0 || dUsd > 0 ? (
+                            <span className="block text-[11px] font-normal text-slate-500">
+                              Subtotal {formatPrice(ars)}{anyUsd && ` + ${formatPriceWithCurrency(usd, "USD")}`} ·
+                              <span className="text-emerald-600"> −{formatPrice(dArs)}{dUsd > 0 && ` / −${formatPriceWithCurrency(dUsd, "USD")}`}</span>
+                            </span>
+                          ) : null}
+                          {(!anyUsd || ars > 0) && formatPrice(Math.max(0, ars - dArs))}
                           {(!anyUsd || ars > 0) && anyUsd && " + "}
-                          {anyUsd && formatPriceWithCurrency(usd, "USD")}
+                          {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd), "USD")}
                         </span>
                       );
                     })()}

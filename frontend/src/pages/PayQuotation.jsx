@@ -256,7 +256,15 @@ export default function PayQuotation() {
                   <div className="flex-1 min-w-0">
                     {/* Antes: text-slate-800 / text-slate-400 */}
                     <p className="text-sm font-medium text-[#0b1c30] truncate">{item.name}</p>
-                    <p className="text-xs text-[#565e74]">{formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}</p>
+                    <p className="text-xs text-[#565e74]">
+                      {/* Precio tachado si la tienda le hizo un descuento a este producto */}
+                      {item.listPrice > item.price && (
+                        <span className="line-through mr-1 opacity-60">{formatPriceWithCurrency(item.listPrice, item.currency)}</span>
+                      )}
+                      <span className={item.listPrice > item.price ? "text-[#006b2c] font-semibold" : ""}>
+                        {formatPriceWithCurrency(item.price, item.currency)}
+                      </span> × {item.quantity}
+                    </p>
                   </div>
                   {/* Antes: text-slate-700 */}
                   <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">

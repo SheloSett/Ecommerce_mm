@@ -92,6 +92,7 @@ export default function QuotationHistory() {
         name:      i.name,
         image:     i.image,
         price:     i.price,
+        listPrice: i.listPrice ?? null,
         currency:  i.currency,
         quantity:  i.quantity,
         isNew:     false,
@@ -486,6 +487,9 @@ export default function QuotationHistory() {
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-[#0b1c30] leading-snug line-clamp-2">{it.name}</p>
                               <p className="text-xs text-[#565e74] mt-0.5">
+                                {it.listPrice > it.price && (
+                                  <span className="line-through mr-1 opacity-60">{formatPriceWithCurrency(it.listPrice, it.currency)}</span>
+                                )}
                                 {formatPriceWithCurrency(it.price, it.currency)} c/u
                                 {it.isNew && <span className="ml-1 text-[#00873a] font-semibold">· precio a confirmar</span>}
                               </p>
@@ -624,7 +628,14 @@ export default function QuotationHistory() {
                                 </div>
                               )}
                               <p className="text-xs text-[#565e74]">
-                                {formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}
+                                {/* listPrice: precio antes del descuento que le hizo la tienda a este
+                                    producto. Se muestra tachado al lado del precio final. */}
+                                {item.listPrice > item.price && (
+                                  <span className="line-through mr-1 opacity-60">{formatPriceWithCurrency(item.listPrice, item.currency)}</span>
+                                )}
+                                <span className={item.listPrice > item.price ? "text-[#006b2c] font-semibold" : ""}>
+                                  {formatPriceWithCurrency(item.price, item.currency)}
+                                </span> × {item.quantity}
                               </p>
                             </div>
                             <p className="text-sm font-semibold text-[#0b1c30] flex-shrink-0">

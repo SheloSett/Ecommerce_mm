@@ -1,10 +1,12 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migración: cotizaciones desde venta manual + el cliente puede modificarlas
+-- Migración: cotizaciones desde venta manual + el cliente puede modificarlas + descuentos manuales
 -- Fecha: 2026-09-22
 --
--- Aditiva e idempotente: dos columnas nuevas en orders.
---   · stockDeducted      → si el stock de esa orden ya se descontó del catálogo
---   · customerModifiedAt → cuándo el cliente modificó su cotización por última vez
+-- Aditiva e idempotente: columnas nuevas en orders y en order_items.
+--   · stockDeducted       → si el stock de esa orden ya se descontó del catálogo
+--   · customerModifiedAt  → cuándo el cliente modificó su cotización por última vez
+--   · manualDiscount*     → descuento que el vendedor le pone a toda la venta/cotización
+--   · order_items.listPrice → precio de la línea ANTES del descuento de ese producto
 --
 -- Los UPDATE del final NO cambian datos de negocio: solo marcan el estado real del stock de las
 -- órdenes que ya existen, para que a partir de ahora no se descuente dos veces.
@@ -32,3 +34,13 @@ UPDATE "orders"
  WHERE "salesChannel" <> 'WEB'
    AND "status" = 'PENDING'
    AND "stockDeducted" = false;
+
+-- ── Descuentos manuales ──────────────────────────────────────────────────────
+-- Descuento sobre toda la venta o cotización (aparte del cupón).
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "manualDiscountType"  TEXT;
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "manualDiscountValue" DOUBLE PRECISION;
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "manualDiscount"      DOUBLE PRECISION;
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "manualDiscountUsd"   DOUBLE PRECISION;
+
+-- Precio de la línea antes del descuento de ese producto (null = sin descuento).
+ALTER TABLE "order_items" ADD COLUMN IF NOT EXISTS "listPrice" DOUBLE PRECISION;

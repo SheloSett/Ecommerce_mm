@@ -215,6 +215,17 @@ model Order {
   // marcarlas abonadas: doble descuento. Mismo problema con una venta manual PENDING que se aprueba.
   // Se pone en true donde se descuenta y vuelve a false cuando se devuelve el stock (cancelar/rechazar).
   stockDeducted   Boolean       @default(false)
+  // ── Descuento manual del pedido (aparte del cupón) ──
+  // Lo pone el vendedor al armar una venta o una cotización, o al modificarla después.
+  //   manualDiscountType  → "PERCENTAGE" (se aplica a las dos monedas) | "FIXED" (monto EN PESOS,
+  //                          solo afecta la parte en pesos, mismo criterio que los cupones)
+  //   manualDiscountValue → lo que escribió el vendedor (el % o el monto)
+  //   manualDiscount / manualDiscountUsd → el monto ya calculado, para que las pantallas muestren el
+  //   desglose sin recalcular (igual que couponDiscount).
+  manualDiscountType  String?
+  manualDiscountValue Float?
+  manualDiscount      Float?
+  manualDiscountUsd   Float?
   // customerModifiedAt: última vez que el CLIENTE modificó su cotización desde su perfil (cantidades,
   // productos que sacó o agregó). Al modificar, la cotización vuelve a PENDING para que el admin la
   // revise y la apruebe de nuevo. null = nunca la tocó el cliente.
@@ -259,6 +270,10 @@ model OrderItem {
   productId    Int?
   quantity     Int
   price        Float
+  // listPrice: precio unitario ANTES del descuento de esta línea. null = la línea no tiene descuento
+  // (price es directamente el precio acordado). Sirve para mostrar el precio tachado y el % tanto al
+  // cliente como en la hoja impresa.
+  listPrice    Float?
   // cost: costo de este ítem para ESTE pedido (lo que se le paga al proveedor). Editable desde la
   // modificación del pedido y usado en la orden de compra. Si es null, se usa el costo del
   // producto/variante (fallback). No afecta el costo maestro del producto.

@@ -183,16 +183,26 @@ export default function AdminOrders() {
     salesChannel: "MOSTRADOR",
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
     // crearCuenta: en una cotización a un cliente nuevo con email, crearle la cuenta para que pueda
-    // verla y pagarla online (se le manda un mail para que elija su contraseña).
+    // verla y pagarla online. La contraseña la pone el vendedor y se la pasa al cliente.
     crearCuenta: true,
+    cuentaPassword: "",
+    // manualDiscountType/Value: descuento sobre TODA la venta ("PERCENTAGE" con % o "FIXED" con
+    // un monto en pesos). Es aparte del descuento que se le puede poner a cada producto (item.desc).
+    manualDiscountType: "PERCENTAGE",
+    manualDiscountValue: "",
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
-    items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
+    // desc: % de descuento de ESA línea. El precio unitario sigue siendo el de lista; el precio con
+    // descuento se calcula al vuelo y es el que se guarda (el de lista queda como listPrice).
+    items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", desc: "", isCustom: false }],
   });
   // manualKind: el mismo modal sirve para registrar una venta ya hecha ("SALE") o para armarle
   // una cotización al cliente ("QUOTE"). La cotización se guarda como un pedido con método
   // COTIZACION, en estado "aprobada", y el cliente la ve en "Mis cotizaciones" si tiene cuenta.
   const [manualKind, setManualKind] = useState("SALE");
+  // cuentaCreadaModal: { email, password } — cartel con los datos de la cuenta recién creada, para
+  // que el vendedor se los pase al cliente (no se mandan por mail).
+  const [cuentaCreadaModal, setCuentaCreadaModal] = useState(null);
   const esCotizacionManual = manualKind === "QUOTE";
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [uploadingImg, setUploadingImg] = useState({}); // { [idx]: bool } — foto del producto libre subiéndose
@@ -258,8 +268,13 @@ export default function AdminOrders() {
   };
 
   // Carga productos al abrir el modal (solo la primera vez)
+  // Contraseña sugerida para la cuenta que se le crea al cliente: corta y fácil de dictar por
+  // teléfono (sin caracteres que se confundan). El vendedor la puede cambiar antes de guardar.
+  const sugerirPassword = () => "igwt" + Math.floor(1000 + Math.random() * 9000);
+
   const openManualModal = async (kind = "SALE") => {
     setManualKind(kind);
+    setManualForm((p) => ({ ...p, cuentaPassword: sugerirPassword() }));
     setManualModal(true);
     if (allProducts.length === 0) {
       try {
@@ -399,13 +414,35 @@ export default function AdminOrders() {
     });
   };
 
-  const manualTotal = manualForm.items.reduce(
-    (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
+  // Precio final de una línea: el de lista menos su % de descuento.
+  const precioConDesc = (it) => {
+    const base = parseFloat(it.price) || 0;
+    const d    = Math.min(100, Math.max(0, parseFloat(it.desc) || 0));
+    return d > 0 ? Math.round(base * (1 - d / 100) * 100) / 100 : base;
+  };
+
+  // Subtotal: la suma de las líneas YA con el descuento de cada producto aplicado.
+  const manualSubtotal = manualForm.items.reduce(
+    (sum, it) => sum + precioConDesc(it) * (parseInt(it.quantity) || 0), 0
   );
+
+  // Descuento sobre toda la venta (el de cada producto ya está dentro del subtotal).
+  // Mismo criterio que el backend: el porcentaje se aplica al subtotal, el monto fijo se topea.
+  const manualDescGeneral = (() => {
+    const v = parseFloat(manualForm.manualDiscountValue) || 0;
+    if (v <= 0) return 0;
+    if (manualForm.manualDiscountType === "PERCENTAGE") {
+      return Math.round(manualSubtotal * Math.min(100, v)) / 100;
+    }
+    return Math.min(v, manualSubtotal);
+  })();
+
+  const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
 
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
   const resetManualForm = () => {
     setManualKind("SALE");
+    setCuentaCreadaModal(null);
     setCustomerMode("new");
     setSelectedCustomer(null);
     setCustomerSearch("");
@@ -417,7 +454,9 @@ export default function AdminOrders() {
       customerType: "MINORISTA",
       salesChannel: "MOSTRADOR",
       paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
-      items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
+      crearCuenta: true, cuentaPassword: "",
+      manualDiscountType: "PERCENTAGE", manualDiscountValue: "",
+      items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", desc: "", isCustom: false }],
     });
   };
 
@@ -472,11 +511,16 @@ export default function AdminOrders() {
       // No aplica el cartel de "actualizar costo maestro" (no hay producto que actualizar).
       if (it.isCustom) {
         const c = it.cost === "" || it.cost == null ? undefined : parseFloat(it.cost);
+        const final = precioConDesc(it);
+        const lista = parseFloat(it.price);
         return {
           productName:  it.productName.trim(),
           productImage: it.productImage || undefined, // foto opcional (URL de Cloudinary)
           quantity:     parseInt(it.quantity),
-          price:        parseFloat(it.price),
+          // price es el precio YA con el descuento de la línea; listPrice es el de lista, para poder
+          // mostrarlo tachado en la cotización y en la hoja impresa.
+          price:        final,
+          listPrice:    final < lista ? lista : undefined,
           cost:         c != null && !isNaN(c) ? c : undefined,
         };
       }
@@ -494,10 +538,13 @@ export default function AdminOrders() {
           `Aceptar = actualiza el producto en la base\nCancelar = usa este costo SOLO para esta venta`
         );
       }
+      const finalCat = precioConDesc(it);
+      const listaCat  = parseFloat(it.price);
       return {
         productId: it.productId,
         quantity:  parseInt(it.quantity),
-        price:     parseFloat(it.price),
+        price:     finalCat,
+        listPrice: finalCat < listaCat ? listaCat : undefined,
         // variantId: variante elegida (si el producto tiene variantes). El backend valida
         // pertenencia/stock y guarda el label — el descuento de stock va sobre la variante.
         variantId: it.variantId || undefined,
@@ -523,6 +570,9 @@ export default function AdminOrders() {
         paymentMethod: esCotizacionManual ? "COTIZACION" : manualForm.paymentMethod,
         status:        manualForm.status,
         crearCuenta:   esCotizacionManual && customerMode === "new" && !!manualForm.customerEmail.trim() && manualForm.crearCuenta,
+        cuentaPassword: manualForm.cuentaPassword || undefined,
+        manualDiscountType:  manualForm.manualDiscountValue ? manualForm.manualDiscountType : undefined,
+        manualDiscountValue: manualForm.manualDiscountValue || undefined,
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
@@ -538,7 +588,10 @@ export default function AdminOrders() {
       });
       // Avisar qué pasó con la cuenta del cliente (solo en cotizaciones)
       if (creada?.cuentaCreada) {
-        toast.success(`Cotización creada. Le creamos la cuenta a ${creada.cuentaCreada} y le mandamos un mail para que elija su contraseña.`, { duration: 7000 });
+        toast.success("Cotización creada y cuenta lista");
+        // El cartel queda abierto hasta que el vendedor lo cierre: es el único lugar donde ve la
+        // contraseña (no se manda por mail).
+        setCuentaCreadaModal({ email: creada.cuentaCreada, password: manualForm.cuentaPassword });
       } else if (creada?.cuentaVinculada) {
         toast.success(`Cotización creada y vinculada a la cuenta de ${creada.cuentaVinculada} (ya tenía cuenta con ese email).`, { duration: 7000 });
       } else {
@@ -1003,7 +1056,9 @@ ${pagesHtml}
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
+              <div style="font-size:11px;color:#94a3b8">${item.listPrice > item.price
+                ? `<span style="text-decoration:line-through;opacity:.6">${formatPriceWithCurrency(item.listPrice, item.currency)}</span> <span style="color:#16a34a;font-weight:700">${formatPriceWithCurrency(item.price, item.currency)}</span>`
+                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
             </div>
           </div>
         </td>
@@ -2146,6 +2201,48 @@ ${pagesHtml}
         </div>
       )}
 
+      {/* ══ Cartel: cuenta creada para el cliente ══ */}
+      {cuentaCreadaModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h3 className="font-bold text-slate-800 text-lg mb-1">Cuenta creada ✅</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Pasale estos datos al cliente para que entre a ver su cotización. Esta contraseña no se muestra
+              de nuevo ni se manda por mail.
+            </p>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 mb-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Email</p>
+                <p className="text-sm font-mono text-slate-800 break-all">{cuentaCreadaModal.email}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Contraseña</p>
+                <p className="text-lg font-mono font-bold text-slate-900">{cuentaCreadaModal.password || "(se la elige el cliente por mail)"}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {cuentaCreadaModal.password && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(`Entrá a igwtstore.com.ar con: ${cuentaCreadaModal.email} / ${cuentaCreadaModal.password}`);
+                    toast.success("Copiado");
+                  }}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+                >
+                  📋 Copiar para WhatsApp
+                </button>
+              )}
+              <button
+                onClick={() => setCuentaCreadaModal(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══ Modal: Nueva Venta Manual ══ */}
       {manualModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
@@ -2580,6 +2677,21 @@ ${pagesHtml}
                               placeholder="0.00"
                             />
                           </div>
+                          <div className="w-20">
+                            {/* Descuento de ESTE producto: baja el precio unitario de la línea. El
+                                precio de lista se guarda igual, para mostrarlo tachado. */}
+                            <label className="block text-xs text-slate-500 mb-1">Desc. %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={item.desc}
+                              onChange={(e) => setManualItem(idx, "desc", e.target.value)}
+                              className="w-full px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="0"
+                            />
+                          </div>
                           <div className="w-24">
                             <label className="block text-xs text-slate-500 mb-1">Cantidad *</label>
                             <input
@@ -2605,7 +2717,13 @@ ${pagesHtml}
                         {/* Antes: item.productId && ... — ahora también muestra el subtotal de los productos libres */}
                         {(item.productId || item.isCustom) && item.price && item.quantity && (
                           <p className="text-xs text-slate-500 text-right">
-                            Subtotal: {formatPrice(parseFloat(item.price) * parseInt(item.quantity))}
+                            {parseFloat(item.desc) > 0 && (
+                              <span className="text-emerald-600 font-semibold mr-2">
+                                {formatPrice(precioConDesc(item))} c/u
+                                <span className="text-slate-400 line-through ml-1 font-normal">{formatPrice(parseFloat(item.price))}</span>
+                              </span>
+                            )}
+                            Subtotal: {formatPrice(precioConDesc(item) * parseInt(item.quantity))}
                           </p>
                         )}
                       </div>
@@ -2632,10 +2750,38 @@ ${pagesHtml}
                     className="mt-0.5"
                   />
                   <span>
-                    Crearle la cuenta para que pueda ver, modificar y pagar la cotización online. Le llega un mail
-                    para que elija su contraseña. Si ese email ya tiene cuenta, se vincula a la suya.
+                    Crearle la cuenta para que pueda ver, modificar y pagar la cotización online. Si ese email ya
+                    tiene cuenta, se vincula a la suya.
                   </span>
                 </label>
+              )}
+
+              {/* Contraseña de esa cuenta: la elige el vendedor y se la pasa al cliente. No se manda
+                  por mail (viajaría en texto plano). Si se deja vacía, al cliente le llega un link
+                  para que la elija él. */}
+              {esCotizacionManual && !manualForm.customerId && customerMode === "new" &&
+                manualForm.customerEmail.trim() && manualForm.crearCuenta && (
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Contraseña para el cliente <span className="text-slate-400 font-normal">— se la pasás vos, no se manda por mail</span>
+                    </label>
+                    <input
+                      value={manualForm.cuentaPassword}
+                      onChange={(e) => setManualForm((p) => ({ ...p, cuentaPassword: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Mínimo 6 caracteres (vacío = se la elige el cliente por mail)"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setManualForm((p) => ({ ...p, cuentaPassword: sugerirPassword() }))}
+                    className="px-3 py-2 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors whitespace-nowrap"
+                    title="Generar otra contraseña"
+                  >
+                    🎲 Otra
+                  </button>
+                </div>
               )}
 
               {/* Cotización sin cuenta posible: el cliente no la va a poder ver online */}
@@ -2709,9 +2855,43 @@ ${pagesHtml}
                 </div>
               </div>
 
+              {/* Descuento sobre toda la venta */}
+              <div className="flex items-end gap-2">
+                <div className="w-40">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Descuento general</label>
+                  <select
+                    value={manualForm.manualDiscountType}
+                    onChange={(e) => setManualForm((p) => ({ ...p, manualDiscountType: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="PERCENTAGE">Porcentaje (%)</option>
+                    <option value="FIXED">Monto fijo ($)</option>
+                  </select>
+                </div>
+                <div className="w-32">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={manualForm.manualDiscountValue}
+                    onChange={(e) => setManualForm((p) => ({ ...p, manualDiscountValue: e.target.value }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder={manualForm.manualDiscountType === "PERCENTAGE" ? "0 %" : "$ 0"}
+                  />
+                </div>
+                <p className="text-xs text-slate-400 pb-2.5">
+                  Se aplica sobre el subtotal, además del descuento de cada producto.
+                </p>
+              </div>
+
               {/* Total y acciones */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div className="text-sm font-bold text-slate-800">
+                  {manualDescGeneral > 0 && (
+                    <span className="block text-xs font-normal text-slate-500">
+                      Subtotal: {formatPrice(manualSubtotal)} · Descuento: <span className="text-emerald-600">−{formatPrice(manualDescGeneral)}</span>
+                    </span>
+                  )}
                   Total: <span className="text-blue-600 text-base">{formatPrice(manualTotal)}</span>
                 </div>
                 <div className="flex gap-2">

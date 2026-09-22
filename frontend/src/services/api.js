@@ -204,8 +204,9 @@ export const ordersApi = {
   addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
   // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
   // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
-  modifyOrder: (orderId, items, applyCostToProduct = false) =>
-    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct }),
+  // extra: { manualDiscountType, manualDiscountValue } — descuento sobre todo el pedido (opcional)
+  modifyOrder: (orderId, items, applyCostToProduct = false, extra = {}) =>
+    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct, ...extra }),
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
   // notify=false publica los cambios SIN avisarle al cliente (igual que en aprobar).
   // Antes: publishCotizacion: (orderId, adminNotes) => api.post(`/orders/${orderId}/publish`, { adminNotes }),
@@ -231,8 +232,8 @@ export const ordersApi = {
   // Admin: modificar un pedido ya aprobado (post-pago)
   // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
   // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
-  modifyOrder: (orderId, items, applyCostToProduct = false) =>
-    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct }),
+  modifyOrder: (orderId, items, applyCostToProduct = false, extra = {}) =>
+    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct, ...extra }),
 };
 
 // ─── Pagos ────────────────────────────────────────────────────────────────────

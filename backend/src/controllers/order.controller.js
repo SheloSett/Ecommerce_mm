@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
@@ -1627,7 +1628,9 @@ async function getMyCotizaciones(req, res) {
 //
 // Ahora los seis usan esta función, que recalcula con computeOrderTotals(): cada moneda por su
 // lado y en el orden correcto — (subtotal − cupón) + IVA sobre la base ya descontada.
-async function recalcOrderTotals(orderId) {
+// overrideManual: { type, value } | null → si viene, reemplaza al descuento manual guardado (lo usa
+// la edición del pedido, donde el vendedor puede cambiarlo en el mismo guardado).
+async function recalcOrderTotals(orderId, overrideManual = undefined) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -1636,6 +1639,10 @@ async function recalcOrderTotals(orderId) {
     },
   });
   if (!order) return {};
+
+  const manual = overrideManual !== undefined
+    ? overrideManual
+    : parseManualDiscount(order.manualDiscountType, order.manualDiscountValue);
 
   // Las alícuotas solo se consultan si la orden lleva factura.
   let ivaRates = null;
@@ -1647,10 +1654,14 @@ async function recalcOrderTotals(orderId) {
     ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
   }
 
-  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates });
+  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual });
 
   return {
     total:     t.totalArs,
+    // Descuento manual: se recalcula siempre (si es un %, el monto cambia cuando cambian los ítems).
+    ...(overrideManual !== undefined ? { manualDiscountType: manual?.type ?? null, manualDiscountValue: manual?.value ?? null } : {}),
+    manualDiscount:    t.manualDiscountArs || null,
+    manualDiscountUsd: t.hasUsd ? (t.manualDiscountUsd || null) : null,
     ivaAmount: order.wantsInvoice ? t.ivaAmountArs : (order.ivaAmount || 0),
     // El descuento solo se toca si la orden tiene un cupón aplicado.
     ...(order.couponId ? { couponDiscount: t.couponDiscountArs } : {}),
@@ -1662,6 +1673,17 @@ async function recalcOrderTotals(orderId) {
       ...(order.couponId ? { couponDiscountUsd: t.couponDiscountUsd } : {}),
     } : {}),
   };
+}
+
+// ── Helper: descuento manual que llega del panel ──────────────────────────────
+// Devuelve { type, value } listo para computeOrderTotals, o null si no hay descuento.
+// type: "PERCENTAGE" (0-100) | "FIXED" (monto en pesos). Cualquier cosa rara → null.
+function parseManualDiscount(type, value) {
+  const v = parseFloat(value);
+  if (!type || isNaN(v) || v <= 0) return null;
+  const t = type === "PERCENTAGE" || type === "FIXED" ? type : null;
+  if (!t) return null;
+  return { type: t, value: t === "PERCENTAGE" ? Math.min(100, v) : v };
 }
 
 // ── Helper: crear snapshot de items actuales de una orden ─────────────────────
@@ -1679,6 +1701,9 @@ async function buildSnapshot(orderId) {
     // guarda la propia línea.
     name:      i.product?.name || i.productName || "",
     price:     i.price,
+    // listPrice: precio antes del descuento de esa línea (null si no tiene). Lo usa la pantalla del
+    // cliente para mostrarlo tachado al lado del precio con descuento.
+    listPrice: i.listPrice ?? null,
     currency:  i.currency,
     quantity:  i.quantity,
     image:     i.product?.images?.[0] || i.productImage || null,
@@ -2391,7 +2416,11 @@ async function applyCouponToOrder(req, res) {
       });
       ivaRatesQuote = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
     }
-    const totalesQuote = computeOrderTotals({ items: order.items, coupon, ivaRates: ivaRatesQuote });
+    const totalesQuote = computeOrderTotals({
+      items: order.items, coupon, ivaRates: ivaRatesQuote,
+      // Si el vendedor ya le había puesto un descuento a mano, se mantiene además del cupón.
+      manualDiscount: parseManualDiscount(order.manualDiscountType, order.manualDiscountValue),
+    });
     const discount = totalesQuote.couponDiscountArs;
     const newTotal = totalesQuote.totalArs;
 
@@ -2437,7 +2466,8 @@ async function applyCouponToOrder(req, res) {
 // El stock se descuenta igual que en una venta normal.
 async function createManualOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta } = req.body;
+    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta, cuentaPassword,
+            manualDiscountType, manualDiscountValue } = req.body;
 
     // Email es opcional en ventas manuales — solo el nombre es obligatorio
     if (!customerName) {
@@ -2495,6 +2525,9 @@ async function createManualOrder(req, res) {
           ? item.productImage.slice(0, 500)
           : null;
 
+        // listPrice: precio antes del descuento de esta línea (lo manda el panel cuando el vendedor
+        // le aplica un % al producto). Solo se guarda si es mayor al precio final.
+        const listFree = parseFloat(item.listPrice);
         total += priceFree * qtyFree;
         orderItems.push({
           productId:    null,
@@ -2502,6 +2535,7 @@ async function createManualOrder(req, res) {
           productImage: imgFree,
           quantity:     qtyFree,
           price:        priceFree,
+          listPrice:    !isNaN(listFree) && listFree > priceFree ? listFree : null,
           cost:         costFree,
           variantId:    null,
           variantLabel: null,
@@ -2565,10 +2599,12 @@ async function createManualOrder(req, res) {
 
       // Antes: orderItems.push({ productId: product.id, quantity: qty, price });
       // Ahora también persiste la variante elegida (id + label + sku) igual que las ventas web.
+      const listItem = parseFloat(item.listPrice);
       orderItems.push({
         productId:    product.id,
         quantity:     qty,
         price,
+        listPrice:    !isNaN(listItem) && listItem > price ? listItem : null,
         cost:         validCost,
         // currency: faltaba acá también. Una venta manual de un producto en dólares se guardaba
         // como pesos, así que entraba mal en la Caja y en el total del pedido.
@@ -2582,7 +2618,8 @@ async function createManualOrder(req, res) {
     // Totales por moneda. La venta manual no lleva cupón ni factura con IVA, así que acá
     // computeOrderTotals solo separa pesos de dólares — pero se usa la misma función que el resto
     // para que el criterio sea uno solo. Los ítems libres (sin productId) van en pesos.
-    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null });
+    const descuentoManual = parseManualDiscount(manualDiscountType, manualDiscountValue);
+    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null, manualDiscount: descuentoManual });
     // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
     total = totalesManual.totalArs;
 
@@ -2603,28 +2640,37 @@ async function createManualOrder(req, res) {
         customerIdFinal = existente.id;
         cuentaVinculada = existente.name;
       } else if (crearCuenta) {
+        // La contraseña la pone el vendedor en el panel y se la pasa al cliente en el momento
+        // (por WhatsApp o en el mostrador). NO se manda por mail: viajaría escrita en texto plano.
+        const passPlano = typeof cuentaPassword === "string" ? cuentaPassword.trim() : "";
+        if (passPlano && passPlano.length < 6) {
+          return res.status(400).json({ error: "La contraseña de la cuenta tiene que tener al menos 6 caracteres" });
+        }
+
         const nuevo = await prisma.customer.create({
           data: {
-            name:   customerName,
-            email:  customerEmail.trim(),
-            phone:  customerPhone || null,
-            type:   customerType === "MAYORISTA" ? "MAYORISTA" : "MINORISTA",
-            status: "APPROVED",
-            // Sin contraseña: la elige el cliente con el link del mail.
+            name:     customerName,
+            email:    customerEmail.trim(),
+            phone:    customerPhone || null,
+            type:     customerType === "MAYORISTA" ? "MAYORISTA" : "MINORISTA",
+            status:   "APPROVED",
+            password: passPlano ? await bcrypt.hash(passPlano, 10) : null,
           },
         });
         customerIdFinal = nuevo.id;
         cuentaCreada    = nuevo.email;
 
-        // Mismo mecanismo que "olvidé mi contraseña", pero con 7 días de validez: el cliente puede
-        // leer el mail bastante después de que le pasaron la cotización.
-        const token = crypto.randomBytes(32).toString("hex");
-        await prisma.customer.update({
-          where: { id: nuevo.id },
-          data:  { resetToken: token, resetTokenExpiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
-        });
-        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-        sendPasswordResetEmail(nuevo, `${frontendUrl}/reset-password/${token}`, { cuentaNueva: true }).catch(() => {});
+        // Sin contraseña (el vendedor dejó el campo vacío): se cae al mismo mecanismo que
+        // "olvidé mi contraseña", con 7 días de validez, para que el cliente la elija él.
+        if (!passPlano) {
+          const token = crypto.randomBytes(32).toString("hex");
+          await prisma.customer.update({
+            where: { id: nuevo.id },
+            data:  { resetToken: token, resetTokenExpiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+          });
+          const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+          sendPasswordResetEmail(nuevo, `${frontendUrl}/reset-password/${token}`, { cuentaNueva: true }).catch(() => {});
+        }
       }
     }
 
@@ -2687,7 +2733,11 @@ async function createManualOrder(req, res) {
           // Sin esta marca, una venta manual Pendiente que después se pasa a Abonada volvía a
           // descontarlo, y lo mismo pasaba con una cotización manual cuando el cliente la pagaba.
           stockDeducted: true,
-          ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd } : {}),
+          // Descuento que el vendedor le puso a toda la venta (aparte del de cada producto)
+          manualDiscountType:  descuentoManual?.type  ?? null,
+          manualDiscountValue: descuentoManual?.value ?? null,
+          manualDiscount:      totalesManual.manualDiscountArs || null,
+          ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd, manualDiscountUsd: totalesManual.manualDiscountUsd || null } : {}),
           items: { create: orderItems },
         },
         include: {
@@ -2836,7 +2886,9 @@ async function modifyOrder(req, res) {
     // applyCostToProduct: lo envía el modal del front. Si es true, además de guardar el costo en la
     // orden, se actualiza el costo MAESTRO del producto (para los próximos pedidos) y se congela el
     // costo viejo en las órdenes anteriores para que esas NO cambien.
-    const { items, applyCostToProduct } = req.body;
+    // manualDiscountType/Value: descuento sobre TODO el pedido, editable desde el mismo modal.
+    // Si no vienen en el body, se deja el que ya tenía la orden.
+    const { items, applyCostToProduct, manualDiscountType, manualDiscountValue } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
@@ -2942,9 +2994,14 @@ async function modifyOrder(req, res) {
         ? incoming.productImage.slice(0, 500)
         : undefined;
 
+      // listPrice: precio antes del descuento de la línea. Si el panel no lo manda, se limpia
+      // (significa que esa línea ya no tiene descuento, el precio es el acordado).
+      const listRaw  = parseFloat(incoming.listPrice);
+      const listNext = !isNaN(listRaw) && listRaw > newPrice ? listRaw : null;
+
       await prisma.orderItem.update({
         where: { id: existingItem.id },
-        data:  { quantity: newQty, price: newPrice, ...(costUpdate !== undefined ? { cost: costUpdate } : {}), ...(imgUpdate !== undefined ? { productImage: imgUpdate } : {}) },
+        data:  { quantity: newQty, price: newPrice, listPrice: listNext, ...(costUpdate !== undefined ? { cost: costUpdate } : {}), ...(imgUpdate !== undefined ? { productImage: imgUpdate } : {}) },
       });
 
       // Si el admin confirmó propagar al producto y este item tiene un costo numérico, anotarlo.
@@ -2988,6 +3045,7 @@ async function modifyOrder(req, res) {
           product:      { connect: { id: pid } },
           quantity:     qty,
           price:        price,
+          listPrice:    (() => { const l = parseFloat(newItem.listPrice); return !isNaN(l) && l > price ? l : null; })(),
           cost:         newItemCost,
           // currency: faltaba. Sin esto la línea tomaba el default del schema (ARS), así que
           // agregar un producto en dólares desde "Modificar pedido" lo guardaba como si fuera en
@@ -3046,7 +3104,12 @@ async function modifyOrder(req, res) {
     //
     // Ahora lo hace el mismo helper que el resto de las ediciones, con el cupón recalculado sobre
     // el subtotal nuevo y el IVA sobre la base ya descontada.
-    const totalsData = await recalcOrderTotals(orderId);
+    // Si el panel mandó el descuento general (aunque sea 0 para sacarlo), se usa ese; si no vino,
+    // se mantiene el que la orden ya tenía.
+    const overrideManual = manualDiscountType !== undefined || manualDiscountValue !== undefined
+      ? parseManualDiscount(manualDiscountType, manualDiscountValue)
+      : undefined;
+    const totalsData = await recalcOrderTotals(orderId, overrideManual);
 
     const updated = await prisma.order.update({
       where: { id: orderId },

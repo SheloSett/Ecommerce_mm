@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
+import FileDropZone from "../../components/admin/FileDropZone";
 import { productsApi, categoriesApi, suppliersApi, aiApi } from "../../services/api"; // getImageUrl no se usa en creación (sin imágenes previas)
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
@@ -82,9 +83,12 @@ export default function AdminProductCreate() {
     suppliersApi.getAll().then((res) => setSuppliers(res.data)).catch(() => {});
   }, []);
 
-  const handleImageSelect = (e) => {
-    const files = Array.from(e.target.files);
-    e.target.value = ""; // resetea el input: permite volver a elegir (incluso el mismo archivo)
+  // Antes: handleImageSelect(e) leía e.target.files del <input> nativo. Ahora recibe los archivos
+  // del recuadro punteado (elegidos con el explorador o arrastrados), igual que en la edición de
+  // productos. El recuadro ya resetea el input.
+  const handleImageSelect = (list) => {
+    const files = Array.from(list || []).filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return;
     const total = newImages.length + files.length;
     // Acumula en vez de reemplazar; tope de 10 imágenes (lo que dice el label)
     setNewImages((prev) => [...prev, ...files].slice(0, 10));
@@ -95,9 +99,9 @@ export default function AdminProductCreate() {
   // El backend igual rechaza los que se pasen, pero avisar acá evita esperar una subida de
   // 100 MB para recién ahí enterarse de que no entraba.
   const MAX_VIDEO_MB = 100;
-  const handleVideoSelect = (e) => {
-    const files = Array.from(e.target.files);
-    e.target.value = "";
+  const handleVideoSelect = (list) => {
+    const files = Array.from(list || []);
+    if (files.length === 0) return;
     const tooBig = files.filter((f) => f.size > MAX_VIDEO_MB * 1024 * 1024);
     if (tooBig.length > 0) {
       toast.error(`${tooBig.length === 1 ? "El video supera" : "Algunos videos superan"} los ${MAX_VIDEO_MB} MB y no se agregaron`);
@@ -869,16 +873,19 @@ export default function AdminProductCreate() {
 
           {/* Imágenes */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-2">
               Imágenes (máx. 10, 5MB c/u)
             </label>
-            <input
-              ref={fileInputRef}
-              type="file"
+            {/* Antes: <input type="file"> con el botón gris "Elegir archivos". Ahora el mismo
+                recuadro para arrastrar que ya tenía la edición de productos. */}
+            <FileDropZone
+              inputRef={fileInputRef}
               accept="image/*"
-              multiple
-              onChange={handleImageSelect}
-              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+              onFiles={handleImageSelect}
+              tone="blue"
+              icon="add_photo_alternate"
+              title="Arrastrá las fotos acá o hacé clic para elegirlas"
+              hint="JPG, PNG o WEBP · hasta 10 fotos de 5 MB"
             />
             {/* Miniaturas de las fotos seleccionadas (incluye las agregadas por IA) */}
             {imagePreviews.length > 0 && (
@@ -910,16 +917,17 @@ export default function AdminProductCreate() {
             {/* Videos — van a un campo aparte de las fotos: se muestran solo en la galería
                 del producto, nunca como miniatura en el catálogo, carrito ni pedidos. */}
             <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
                 Videos (máx. 5, 100MB c/u · MP4, WEBM o MOV)
               </label>
-              <input
-                ref={videoInputRef}
-                type="file"
+              <FileDropZone
+                inputRef={videoInputRef}
                 accept="video/mp4,video/webm,video/quicktime"
-                multiple
-                onChange={handleVideoSelect}
-                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100 cursor-pointer"
+                onFiles={handleVideoSelect}
+                tone="violet"
+                icon="video_call"
+                title="Arrastrá los videos acá o hacé clic para elegirlos"
+                hint="MP4, WEBM o MOV · hasta 5 videos de 100 MB"
               />
               {videoPreviews.length > 0 && (
                 <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">

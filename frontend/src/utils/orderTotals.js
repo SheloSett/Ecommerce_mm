@@ -32,7 +32,9 @@ export function getOrderTotals(order) {
 
   // ── Caso 1: sin dólares ────────────────────────────────────────────────────
   if (!hasUsd) {
-    const discount = order?.couponDiscount || 0;
+    // discount junta el cupón y el descuento manual que puso el vendedor: los dos ya están restados
+    // dentro de order.total, así que el subtotal solo cierra si se suman los dos de vuelta.
+    const discount = (order?.couponDiscount || 0) + (order?.manualDiscount || 0);
     const iva      = order?.ivaAmount || 0;
     const total    = order?.total || 0;
     return {
@@ -59,9 +61,9 @@ export function getOrderTotals(order) {
   }
 
   // ── Caso 2: pedido mixto nuevo ─────────────────────────────────────────────
-  const dArs = order.couponDiscount || 0;
+  const dArs = (order.couponDiscount || 0) + (order.manualDiscount || 0);
   const iArs = order.ivaAmount || 0;
-  const dUsd = order.couponDiscountUsd || 0;
+  const dUsd = (order.couponDiscountUsd || 0) + (order.manualDiscountUsd || 0);
   const iUsd = order.ivaAmountUsd || 0;
   return {
     hasUsd: true,
