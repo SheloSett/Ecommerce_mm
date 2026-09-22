@@ -336,6 +336,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 159- cotizaciones, el cliente no veia los descuentos: si le ponias el descuento a un producto DESPUES de crear la cotizacion (desde el panel), al cliente le seguian apareciendo los precios de lista aunque el total ya venia rebajado, y no le salia ningun desglose. Era porque el cliente solo ve una copia publicada de la cotizacion, y al editar una linea esa copia solo se actualizaba si el pedido ya estaba aprobado. Ahora las cotizaciones se republican en cada cambio (precio, cantidad, descuento o producto eliminado). Las cotizaciones que ya estaban mal se arreglan con el script republicar-snapshots-cotizaciones.js. ✅
 
+160- el stock ya no se reserva al hacer una cotizacion: se descuenta recien cuando la marcas Abonada, igual que cualquier otro pedido. Antes una cotizacion descontaba el stock apenas se creaba, asi que mientras la negociabas esa mercaderia quedaba bloqueada para el resto de la tienda, y si un producto llegaba a cero se despublicaba solo del catalogo. Sigue validando que haya stock cuando la armas, cuando el cliente la modifica y cuando le asignas una variante: lo que cambia es que no lo aparta. De paso quedaron arreglados tres agujeros viejos: sacarle un producto a una cotizacion o a una venta manual pendiente dejaba esas unidades reservadas para siempre; cancelar una venta ya cobrada no devolvia el stock; y pagar con MercadoPago un producto con variantes le descontaba al producto en vez de a la variante. Para el stock que las cotizaciones de hoy tienen retenido esta el script liberar-stock-cotizaciones.js. ✅
+
 ##
 
 

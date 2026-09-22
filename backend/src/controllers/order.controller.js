@@ -596,28 +596,24 @@ async function createOrder(req, res) {
     //   });
     // }
 
-    // Para cotizaciones: reservar stock inmediatamente al crear la orden.
-    // SOLO para productos sin variantes — para productos con variantes el stock se descuenta
-    // cuando el admin asigna las variantes al confirmar la cotización (approveCotizacion).
-    if (method === "COTIZACION") {
-      for (const item of orderItems) {
-        if (itemHasVariants[item.productId]) continue; // variantes: stock se descuenta al confirmar
-        const product = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (!product || product.stockUnlimited) continue;
-        const newStock = Math.max(0, product.stock - item.quantity);
-        await prisma.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: newStock,
-            // Si llega a 0, despublicar para que no aparezca en el catálogo
-            ...(newStock === 0 ? { active: false } : {}),
-          },
-        });
-      }
-    }
-
-    // El stock se descuenta cuando el admin confirma el pago (APPROVED via updateOrderStatus).
-    // QUOTE_APPROVED no descuenta stock — el pedido está aceptado pero el pago aún no está confirmado.
+    // COMENTADO: acá la cotización reservaba el stock de los productos sin variantes apenas se
+    // creaba. Una cotización es un presupuesto, no una venta: mientras se negociaba (a veces días)
+    // esa mercadería quedaba bloqueada para el resto de la tienda, y si el stock llegaba a cero el
+    // producto se despublicaba solo del catálogo. Ahora el stock se descuenta cuando la orden pasa a
+    // APPROVED (abonada), que es el mismo momento en que lo hace cualquier otro pedido.
+    // if (method === "COTIZACION") {
+    //   for (const item of orderItems) {
+    //     if (itemHasVariants[item.productId]) continue;
+    //     const product = await prisma.product.findUnique({ where: { id: item.productId } });
+    //     if (!product || product.stockUnlimited) continue;
+    //     const newStock = Math.max(0, product.stock - item.quantity);
+    //     await prisma.product.update({
+    //       where: { id: item.productId },
+    //       data: { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
+    //     });
+    //   }
+    // }
+    // Sigue validándose el stock disponible más arriba: no se puede cotizar más de lo que hay.
 
     // Para cotizaciones: guardar clientSnapshot con los items iniciales.
     // El cliente siempre verá esta copia hasta que el admin presione "Actualizar cotización".
@@ -627,11 +623,9 @@ async function createOrder(req, res) {
       const snapshot = await buildSnapshot(order.id);
       await prisma.order.update({
         where: { id: order.id },
-        // stockDeducted: el flujo de cotización ya se encargó del stock (acá se reservan los
-        // productos sin variantes; las variantes se descuentan al aprobar). Sin esta marca,
-        // updateOrderStatus volvía a descontar todo cuando la cotización se marcaba abonada,
-        // porque al pagarla el cliente deja de tener paymentMethod COTIZACION.
-        data:  { clientSnapshot: snapshot, stockDeducted: true },
+        // stockDeducted queda en false: la cotización no reserva nada. Se marca recién cuando la
+        // orden pasa a APPROVED y updateOrderStatus descuenta de verdad.
+        data:  { clientSnapshot: snapshot },
       });
       order.clientSnapshot = snapshot;
     }
@@ -686,13 +680,18 @@ async function updateOrderStatus(req, res) {
     });
     if (!existing) return res.status(404).json({ error: "Orden no encontrada" });
 
-    // Devolver stock si una COTIZACION pasa a CANCELLED o REJECTED
-    // - Productos sin variantes: stock fue reservado al crear → devolverlo
-    // - Productos con variantes Y variantId asignado: stock fue descontado al confirmar → devolverlo
-    // - Productos con variantes SIN variantId: nunca se reservó stock → nada que devolver
-    const wasCotizacion = existing.paymentMethod === "COTIZACION";
-    const wasResolved   = ["APPROVED", "CANCELLED", "REJECTED"].includes(existing.status);
-    const willReturnStock = (status === "CANCELLED" || status === "REJECTED") && wasCotizacion && !wasResolved;
+    // Devolver stock al cancelar o rechazar, si esta orden efectivamente lo tenía descontado.
+    // Antes la condición era "es una COTIZACION y todavía no estaba resuelta", y eso fallaba en dos
+    // casos: una cotización ya pagada (confirmCotizacionPayment le cambia el paymentMethod, así que
+    // dejaba de contar como cotización) y una venta manual, que descuenta al registrarse. Con
+    // stockDeducted como fuente de verdad los dos quedan cubiertos y no hay forma de devolver stock
+    // que nunca se descontó.
+    const wasCotizacion   = existing.paymentMethod === "COTIZACION";
+    const willReturnStock = (status === "CANCELLED" || status === "REJECTED") && existing.stockDeducted;
+    // yaDescontado: esta orden ya tiene su stock descontado por otro camino — una venta manual
+    // (descuenta al registrarse) o una cotización vieja, anterior a que dejaran de reservar stock.
+    const yaDescontado    = existing.stockDeducted;
+    const willDeductStock = status === "APPROVED" && existing.status !== "APPROVED" && !yaDescontado;
 
     const updateData = { status };
     // Al abonar, pasar automáticamente a "En preparación" si estaba en Pendiente
@@ -701,6 +700,9 @@ async function updateOrderStatus(req, res) {
     }
     // Se devuelve el stock: la orden vuelve a no tener nada descontado
     if (willReturnStock) updateData.stockDeducted = false;
+    // Se descuenta acá abajo: queda marcado para que no se descuente dos veces y para que, si
+    // después se cancela, se sepa que ese stock hay que devolverlo.
+    if (willDeductStock)  updateData.stockDeducted = true;
 
     const order = await prisma.order.update({
       where: { id: parseInt(id) },
@@ -736,13 +738,12 @@ async function updateOrderStatus(req, res) {
     }
 
     // Descontar stock solo si pasa a APPROVED y antes NO estaba APPROVED.
-    // EXCEPCIÓN 1: las cotizaciones ya descontaron el stock al crearse → no descontar de nuevo.
-    // EXCEPCIÓN 2 (stockDeducted): la orden ya tiene su stock descontado por otro camino. Pasa con
-    //   las cotizaciones que el cliente paga (confirmCotizacionPayment les cambia el paymentMethod,
-    //   así que dejan de ser COTIZACION y la excepción 1 ya no las cubría: se descontaba dos veces)
-    //   y con las ventas manuales, que descuentan al registrarse aunque queden en Pendiente.
-    const yaDescontado = existing.stockDeducted;
-    if (status === "APPROVED" && existing.status !== "APPROVED" && !wasCotizacion && !yaDescontado) {
+    // Antes se excluía a las cotizaciones porque descontaban al crearse; ya no lo hacen, así que
+    // este es el único lugar donde una cotización descuenta stock: cuando se marca abonada.
+    // stockDeducted sigue frenando el doble descuento de lo que sí descontó por otro camino: las
+    // ventas manuales (descuentan al registrarse) y las cotizaciones viejas, anteriores a este
+    // cambio, que todavía tienen su stock reservado.
+    if (willDeductStock) {
       for (const item of existing.items) {
         // Si el item tiene variante, descontar stock de la variante; si no, del producto base.
         if (item.variantId) {
@@ -809,23 +810,18 @@ async function updateOrderStatus(req, res) {
 
           // Recalcular el total y actualizar clientSnapshot con los items actuales en BD
           // (el snapshot es lo que el cliente ve — debe reflejar que su item fue reducido/eliminado)
-          const remainingItems = await prisma.orderItem.findMany({
-            where:   { orderId: affected.orderId },
-            include: { product: { select: { name: true, images: true } } },
-          });
+          // Antes: const remainingItems = await prisma.orderItem.findMany(...) y de ahí salían el
+          // total y el snapshot. Ahora los arman recalcOrderTotals y buildSnapshot, que leen los
+          // mismos ítems, así que esa consulta quedó al pedo.
           // Antes: const newTotal = remainingItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
           // Comentado: mismo problema que los demás recálculos (monedas mezcladas, cupón e IVA
           // descartados). Acá importa especialmente: si a una cotización con descuento se le agota
           // un producto, el ajuste automático le devolvía el precio de lista al cliente.
           const totalsData  = await recalcOrderTotals(affected.orderId);
-          const newSnapshot = remainingItems.map((i) => ({
-            id:        i.id,
-            productId: i.productId,
-            name:      i.product?.name || "",
-            price:     i.price,
-            quantity:  i.quantity,
-            image:     i.product?.images?.[0] || null,
-          }));
+          // Antes este snapshot se armaba a mano acá y se quedaba corto: sin listPrice (el cliente
+          // perdía el descuento por producto), sin currency, sin el nombre de los ítems libres y sin
+          // la variante. buildSnapshot es el mismo que usa el resto del circuito.
+          const newSnapshot = await buildSnapshot(affected.orderId);
 
           // Notificar al cliente que su cotización fue ajustada por falta de stock
           const affectedOrder = await prisma.order.findUnique({ where: { id: affected.orderId } });
@@ -835,7 +831,7 @@ async function updateOrderStatus(req, res) {
             : `"${productName}" fue eliminado de tu cotización porque se agotó el stock.`;
 
           // Si no quedan items, cancelar la orden automáticamente
-          const autoCancel = remainingItems.length === 0;
+          const autoCancel = newSnapshot.length === 0;
           await prisma.order.update({
             where: { id: affected.orderId },
             data:  {
@@ -1269,8 +1265,13 @@ async function updateOrderItem(req, res) {
     const newQty  = parseInt(quantity);
     const qtyDiff = newQty - item.quantity; // + = aumenta (deducir stock), - = reduce (restaurar stock)
 
-    // Si el pedido está APPROVED, ajustar stock por el delta de cantidad
-    if (order.status === "APPROVED" && qtyDiff !== 0) {
+    // ajustaStock: hay stock descontado a nombre de esta orden, así que cambiar una línea tiene que
+    // moverlo. Antes la condición era solo APPROVED y se olvidaba de las ventas manuales Pendientes
+    // y de las cotizaciones viejas, que descuentan al registrarse: sacarles un producto dejaba esas
+    // unidades reservadas para siempre.
+    const ajustaStock = order.status === "APPROVED" || order.stockDeducted;
+    // Ajustar stock por el delta de cantidad
+    if (ajustaStock && qtyDiff !== 0) {
       if (item.variantId) {
         const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
         if (variant && !variant.stockUnlimited) {
@@ -1284,8 +1285,11 @@ async function updateOrderItem(req, res) {
           await syncProductVisibility(item.productId);
         }
       }
-      await saveOriginalAndMarkModified(orderId, order);
     }
+    // saveOriginalAndMarkModified va aparte del stock: marcar el pedido como "modificado"
+    // (y guardar cómo estaba) solo tiene sentido si el cliente ya lo vio aprobado. Una venta manual
+    // Pendiente que el vendedor sigue corrigiendo no es una modificación post-venta.
+    if (order.status === "APPROVED") await saveOriginalAndMarkModified(orderId, order);
 
     // Actualizar item
     const updateData = { quantity: newQty };
@@ -1348,8 +1352,13 @@ async function deleteOrderItem(req, res) {
 
     const order = await prisma.order.findUnique({ where: { id: orderId } });
 
-    // Si el pedido está APPROVED, restaurar stock del item eliminado
-    if (order.status === "APPROVED") {
+    // ajustaStock: hay stock descontado a nombre de esta orden, así que cambiar una línea tiene que
+    // moverlo. Antes la condición era solo APPROVED y se olvidaba de las ventas manuales Pendientes
+    // y de las cotizaciones viejas, que descuentan al registrarse: sacarles un producto dejaba esas
+    // unidades reservadas para siempre.
+    const ajustaStock = order.status === "APPROVED" || order.stockDeducted;
+    // Restaurar el stock del ítem eliminado
+    if (ajustaStock) {
       if (item.variantId) {
         const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
         if (variant && !variant.stockUnlimited) {
@@ -1363,8 +1372,11 @@ async function deleteOrderItem(req, res) {
           await syncProductVisibility(item.productId);
         }
       }
-      await saveOriginalAndMarkModified(orderId, order);
     }
+    // saveOriginalAndMarkModified va aparte del stock: marcar el pedido como "modificado"
+    // (y guardar cómo estaba) solo tiene sentido si el cliente ya lo vio aprobado. Una venta manual
+    // Pendiente que el vendedor sigue corrigiendo no es una modificación post-venta.
+    if (order.status === "APPROVED") await saveOriginalAndMarkModified(orderId, order);
 
     await prisma.orderItem.delete({ where: { id: itemId } });
 
@@ -1418,6 +1430,9 @@ async function addItemToOrder(req, res) {
     // deleteOrderItem). En una COTIZACIÓN PENDING el stock se descuenta recién al aprobarla, así que
     // descontarlo acá provocaba un doble descuento.
     const isApproved = order.status === "APPROVED";
+    // ajustaStock: ídem updateOrderItem — hay stock a nombre de esta orden, así que sumar un
+    // producto tiene que descontarlo. Una cotización no reserva nada, así que no toca stock.
+    const ajustaStock = isApproved || order.stockDeducted;
     // Precio por defecto según el tipo de cliente de la orden (una cotización mayorista debe tomar
     // el precio mayorista, no el minorista). Si el admin manda price, ese manda.
     const isMayoristaOrder = order.customerType === "MAYORISTA";
@@ -1435,7 +1450,7 @@ async function addItemToOrder(req, res) {
       if (!variant.stockUnlimited && variant.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${variant.stock}` });
       }
-      if (isApproved && !variant.stockUnlimited) {
+      if (ajustaStock && !variant.stockUnlimited) {
         await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, variant.stock - qty) } });
         await syncProductVisibility(product.id);
       }
@@ -1452,7 +1467,7 @@ async function addItemToOrder(req, res) {
       if (!product.stockUnlimited && product.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${product.stock}` });
       }
-      if (isApproved && !product.stockUnlimited) {
+      if (ajustaStock && !product.stockUnlimited) {
         await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, product.stock - qty) } });
         await syncProductVisibility(product.id);
       }
@@ -1840,13 +1855,17 @@ async function approveCotizacion(req, res) {
               error: `Stock insuficiente en "${combo}" para "${orderItem.product?.name}". Disponible: ${variant.stock}, requerido: ${qty}`,
             });
           }
-          if (!variant.stockUnlimited) {
-            await prisma.productVariant.update({
-              where: { id: variant.id },
-              data:  { stock: Math.max(0, variant.stock - qty) },
-            });
-            await syncProductVisibility(variant.productId);
-          }
+          // COMENTADO: acá se descontaba el stock de la variante al asignarla. Aprobar una
+          // cotización es acordar el precio, no cobrarla: el stock se descuenta cuando la orden
+          // pasa a APPROVED. La validación de stock de arriba se mantiene, así que no se puede
+          // asignar una variante que no tenga unidades.
+          // if (!variant.stockUnlimited) {
+          //   await prisma.productVariant.update({
+          //     where: { id: variant.id },
+          //     data:  { stock: Math.max(0, variant.stock - qty) },
+          //   });
+          //   await syncProductVisibility(variant.productId);
+          // }
         }
 
         // Actualizar el OrderItem con la variante asignada (o label de surtido si hay varias)
@@ -1898,10 +1917,12 @@ async function approveCotizacion(req, res) {
     // Solo pasa a APPROVED cuando se confirma el pago (manual o via webhook).
     const updated = await prisma.order.update({
       where: { id: orderId },
-      // stockDeducted: acá arriba se descontó el stock de las variantes asignadas, y el de los
-      // productos sin variantes ya estaba reservado desde que se creó la cotización. Con la marca,
-      // cuando el cliente la pague no se vuelve a descontar todo de nuevo.
-      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, stockDeducted: true, ...totalsData },
+      // stockDeducted NO se toca acá a propósito. Aprobar una cotización ya no descuenta stock,
+      // así que las nuevas se quedan en false; pero una cotización VIEJA, de antes del cambio, ya
+      // tiene su stock reservado y pisarlo con false haría que se descontara de nuevo al cobrarla.
+      // Antes esta línea ponía stockDeducted: true porque acá arriba se restaba el stock de las
+      // variantes asignadas.
+      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, ...totalsData },
     });
 
     // Solo notificar al cliente si notify !== false ("Aprobar sin notificar" lo saltea).
@@ -2038,15 +2059,51 @@ async function updateMyQuoteItems(req, res) {
       movimientos.set(key, prev);
     };
 
-    for (const { item, quantity } of cambios) sumar(reservaDe(item), quantity - item.quantity);
-    for (const item of eliminadas)            sumar(reservaDe(item), -item.quantity);
-    for (const n of nuevas) {
-      // Un producto con variantes que agrega el cliente no reserva stock: la variante la elige el
-      // admin al aprobar, y ahí se descuenta.
-      if (!conVariantes[n.product.id]) sumar({ tipo: "producto", id: n.product.id }, n.quantity);
+    // reservaActiva: si esta cotización tiene stock descontado. Las cotizaciones ya no reservan
+    // nada (el stock se descuenta al cobrarlas), así que esto solo es true en las viejas, de antes
+    // del cambio: esas sí tienen que seguir ajustando el stock cuando el cliente cambia cantidades.
+    const reservaActiva = order.stockDeducted;
+    if (reservaActiva) {
+      for (const { item, quantity } of cambios) sumar(reservaDe(item), quantity - item.quantity);
+      for (const item of eliminadas)            sumar(reservaDe(item), -item.quantity);
+      for (const n of nuevas) {
+        // Un producto con variantes que agrega el cliente no reserva stock: la variante la elige el
+        // admin al aprobar, y ahí se descuenta.
+        if (!conVariantes[n.product.id]) sumar({ tipo: "producto", id: n.product.id }, n.quantity);
+      }
     }
 
-    // ── 4. Verificar que haya stock para lo que aumenta ──
+    // ── 4. Verificar que el stock alcance ──
+    // Sin reserva se valida la cantidad TOTAL que queda pedida, no el aumento: la cotización no
+    // tiene nada guardado a su nombre, así que lo que importa es que haya unidades para todo lo que
+    // pide. (Con reserva se valida solo el aumento, porque lo anterior ya está descontado.)
+    if (!reservaActiva) {
+      const pedido = new Map(); // "tipo:id" -> { tipo, id, cantidad }
+      const pedir = (ref, cantidad) => {
+        if (!ref || cantidad <= 0) return;
+        const key  = `${ref.tipo}:${ref.id}`;
+        const prev = pedido.get(key) || { ...ref, cantidad: 0 };
+        prev.cantidad += cantidad;
+        pedido.set(key, prev);
+      };
+      for (const { item, quantity } of cambios) pedir(reservaDe(item), quantity);
+      for (const n of nuevas) {
+        if (!conVariantes[n.product.id]) pedir({ tipo: "producto", id: n.product.id }, n.quantity);
+      }
+      for (const req of pedido.values()) {
+        if (req.tipo === "variante") {
+          const v = await prisma.productVariant.findUnique({ where: { id: req.id }, include: { product: { select: { name: true } } } });
+          if (v && !v.stockUnlimited && v.stock < req.cantidad) {
+            return res.status(400).json({ error: `No hay stock suficiente de "${v.product?.name || "ese producto"}": quedan ${v.stock} unidades disponibles` });
+          }
+        } else {
+          const prod = await prisma.product.findUnique({ where: { id: req.id } });
+          if (prod && !prod.stockUnlimited && prod.stock < req.cantidad) {
+            return res.status(400).json({ error: `No hay stock suficiente de "${prod.name}": quedan ${prod.stock} unidades disponibles` });
+          }
+        }
+      }
+    }
     for (const mov of movimientos.values()) {
       if (mov.delta <= 0) continue;
       if (mov.tipo === "variante") {
@@ -2166,10 +2223,27 @@ async function cancelByCustomer(req, res) {
     });
     if (!order) return res.status(404).json({ error: "Cotización no encontrada" });
 
-    // Devolver el stock reservado si la cotización aún no estaba resuelta
-    const wasResolved = ["APPROVED", "CANCELLED", "REJECTED"].includes(order.status);
-    if (!wasResolved) {
+    // Devolver el stock SOLO si esta cotización lo tenía descontado. Con el circuito nuevo no lo
+    // tiene (una cotización no reserva nada), así que esto solo corre para las viejas, anteriores
+    // al cambio. Antes la condición era "todavía no estaba resuelta" y devolvía siempre al producto
+    // padre: a un ítem con variante le sumaba stock que nunca se le había restado, y a un producto
+    // con variantes sin asignar le inventaba unidades.
+    if (order.stockDeducted) {
       for (const item of order.items) {
+        if (!item.productId) continue; // ítem libre: no existe en el catálogo
+        if (item.variantId) {
+          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+          if (!variant || variant.stockUnlimited) continue;
+          await prisma.productVariant.update({
+            where: { id: item.variantId },
+            data:  { stock: variant.stock + item.quantity },
+          });
+          await syncProductVisibility(item.productId);
+          continue;
+        }
+        // Sin variante asignada: si el producto tiene variantes, nunca se reservó nada
+        const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
+        if (variantCount > 0) continue;
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
         await prisma.product.update({
@@ -2184,7 +2258,7 @@ async function cancelByCustomer(req, res) {
 
     const updated = await prisma.order.update({
       where: { id: orderId },
-      data:  { status: "CANCELLED", cancelReason: reason || null },
+      data:  { status: "CANCELLED", cancelReason: reason || null, ...(order.stockDeducted ? { stockDeducted: false } : {}) },
     });
 
     res.json(updated);
@@ -2708,8 +2782,10 @@ async function createManualOrder(req, res) {
         }
       }
 
-      // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no
-      for (const item of orderItems) {
+      // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no.
+      // Solo para VENTAS. Una cotización es un presupuesto: no reserva nada hasta que se cobra
+      // (ahí pasa a APPROVED y el stock lo descuenta updateOrderStatus).
+      for (const item of esCotizacion ? [] : orderItems) {
         // Ítem libre (productId null): no existe en la base, no hay stock que descontar.
         if (!item.productId) continue;
         if (item.variantId) {
@@ -2754,8 +2830,9 @@ async function createManualOrder(req, res) {
           seenByAdmin:   true,
           // stockDeducted: la venta manual descuenta el stock acá arriba, en esta misma transacción.
           // Sin esta marca, una venta manual Pendiente que después se pasa a Abonada volvía a
-          // descontarlo, y lo mismo pasaba con una cotización manual cuando el cliente la pagaba.
-          stockDeducted: true,
+          // descontarlo. Una cotización no descuenta nada, así que queda en false y el stock recién
+          // se toca cuando se marca abonada.
+          stockDeducted: !esCotizacion,
           // Descuento que el vendedor le puso a toda la venta (aparte del de cada producto)
           manualDiscountType:  descuentoManual?.type  ?? null,
           manualDiscountValue: descuentoManual?.value ?? null,

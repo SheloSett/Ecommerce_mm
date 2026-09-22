@@ -293,8 +293,10 @@ async function handleWebhook(req, res) {
         include: { items: { include: { product: true } }, coupon: true },
       });
 
-      // stockDeducted: las cotizaciones (y las ventas manuales) ya descontaron su stock antes de
-      // llegar acá. Sin este chequeo, pagar una cotización por MercadoPago lo descontaba dos veces.
+      // stockDeducted: la orden ya tiene el stock descontado por otro camino — una venta manual
+      // (descuenta al registrarse) o una cotización vieja, de cuando reservaban stock al crearse.
+      // Sin este chequeo se descontaba dos veces. Una cotización de ahora llega con esto en false:
+      // no reserva nada, así que su stock sale acá, al confirmarse el pago.
       if (order && order.stockDeducted) {
         console.log(`[WEBHOOK] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
       } else if (order) {
@@ -447,10 +449,27 @@ async function getOrderPaymentStatus(req, res) {
                 where:   { id: orderIdInt },
                 include: { items: true },
               });
-              // stockDeducted: ídem webhook — cotizaciones y ventas manuales ya descontaron.
+              // stockDeducted: ídem webhook — la orden ya descontó por otro camino (venta manual
+              // o cotización vieja). Las cotizaciones de ahora descuentan recién acá.
               if (fullOrder && !fullOrder.stockDeducted) {
                 for (const item of fullOrder.items) {
                   if (!item.productId) continue; // ítem libre: no hay producto que tocar
+                  // Si el ítem tiene variante, el stock vive en la VARIANTE. Este camino (el que
+                  // sincroniza el estado cuando se consulta el pago) descontaba siempre del producto
+                  // base: la variante no perdía nada y el producto perdía stock que no era suyo.
+                  // Es el mismo arreglo que ya tenía el webhook, unas líneas más arriba.
+                  if (item.variantId) {
+                    const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+                    if (variant && !variant.stockUnlimited) {
+                      await prisma.productVariant.update({
+                        where: { id: item.variantId },
+                        data:  { stock: Math.max(0, variant.stock - item.quantity) },
+                      });
+                    }
+                    continue;
+                  }
+                  const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
+                  if (!baseProduct || baseProduct.stockUnlimited) continue;
                   const updated = await prisma.product.update({
                     where: { id: item.productId },
                     data:  { stock: { decrement: item.quantity } },
