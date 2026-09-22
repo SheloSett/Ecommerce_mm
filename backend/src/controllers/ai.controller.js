@@ -23,7 +23,7 @@ const TEXT_MODEL         = process.env.GEMINI_TEXT_MODEL  || "gemini-3.5-flash";
 const IMAGE_MODEL        = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 // Claude (texto/visión). Default al modelo más capaz; overrideable por env.
-const CLAUDE_MODEL       = process.env.CLAUDE_MODEL       || "claude-opus-4-8";
+const CLAUDE_MODEL       = process.env.CLAUDE_MODEL       || "claude-opus-5";
 
 let _ai = null;
 function getClient() {
@@ -149,7 +149,11 @@ async function claudeSuggestText(base64, mimeType) {
   if (!client) return null;
   const msg = await withRetry(() => client.messages.create({
     model: CLAUDE_MODEL,
-    max_tokens: 1024,
+    // 2048 + effort bajo: en Opus 5 el razonamiento viene activado por defecto y consume tokens de
+    // la respuesta, así que con 1024 la salida podía cortarse antes del JSON. Catalogar una foto no
+    // necesita razonamiento profundo.
+    max_tokens: 2048,
+    output_config: { effort: "low" },
     messages: [{
       role: "user",
       content: [

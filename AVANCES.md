@@ -330,6 +330,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 156- descuentos también en el panel de Cotizaciones: cada línea tiene su campo 🏷 de descuento al lado del precio (el precio que editás es el de lista y el descuento lo baja; se ve "queda $X c/u" y el subtotal ya con el descuento), y abajo hay un bloque "Descuento general de la cotización" en porcentaje o monto fijo, con el desglose completo debajo: subtotal a precio de lista, descuento en productos, cupón, descuento general y total. Los descuentos valen SOLO para esa cotización: no cambian el precio del producto en el catálogo ni el de otros pedidos. El cartel que pregunta si querés actualizar el precio del producto ahora aparece solo si cambiás el precio de lista, no si ponés un descuento. ✅
 
+157- asistente de IA del alta de producto: pasa a usar Claude Opus 5 (antes 4.8) con razonamiento bajo y más margen de respuesta, porque en Opus 5 el razonamiento viene activado y el límite viejo podía cortar la respuesta antes del JSON. Recordatorio: el asistente lee la foto y sugiere nombre, descripción y SKU (eso lo hace Claude); GENERAR fotos parecidas lo hacen Gemini u OpenAI, Claude no genera imágenes. Cada parte necesita su clave en el .env del servidor: sin clave, el asistente responde "IA no configurada". ✅
+
 ##
 
 
