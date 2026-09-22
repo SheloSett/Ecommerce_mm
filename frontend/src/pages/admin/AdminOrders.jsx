@@ -1756,18 +1756,47 @@ ${pagesHtml}
                               >
                                 {savingDesc === order.id ? "Aplicando..." : "Aplicar"}
                               </button>
-                              {(T.ars.discount > 0 || T.usd.discount > 0) && (
-                                <span className="text-xs text-slate-600">
-                                  Subtotal {formatPrice(T.ars.subtotal)}
-                                  {T.hasUsd && T.usd.subtotal > 0 && ` + ${formatPriceWithCurrency(T.usd.subtotal, "USD")}`}
-                                  {" · "}
-                                  <span className="text-emerald-700 font-semibold">
-                                    −{formatPrice(T.ars.discount)}
-                                    {T.usd.discount > 0 && ` / −${formatPriceWithCurrency(T.usd.discount, "USD")}`}
-                                  </span>
-                                </span>
-                              )}
                             </div>
+
+                            {/* Desglose: antes era un solo número que juntaba el descuento de cada
+                                producto con el general y no se podía saber de dónde salía cada parte. */}
+                            {(T.ars.discount > 0 || T.usd.discount > 0) && (() => {
+                              const par = (ars, usd) => `${formatPrice(ars)}${usd > 0 ? ` / ${formatPriceWithCurrency(usd, "USD")}` : ""}`;
+                              return (
+                                <div className="mt-2 pt-2 border-t border-emerald-200/70 text-xs space-y-0.5 max-w-sm">
+                                  <div className="flex justify-between gap-4">
+                                    <span className="text-slate-500">Subtotal (precio de lista)</span>
+                                    <span className="text-slate-700 font-medium">{par(T.ars.subtotal, T.usd.subtotal)}</span>
+                                  </div>
+                                  {(T.ars.line > 0 || T.usd.line > 0) && (
+                                    <div className="flex justify-between gap-4 text-emerald-700">
+                                      <span>Descuento en productos</span>
+                                      <span className="font-semibold">−{par(T.ars.line, T.usd.line)}</span>
+                                    </div>
+                                  )}
+                                  {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
+                                    <div className="flex justify-between gap-4 text-emerald-700">
+                                      <span>Cupón{order.coupon?.code ? ` ${order.coupon.code}` : ""}</span>
+                                      <span className="font-semibold">−{par(T.ars.coupon, T.usd.coupon)}</span>
+                                    </div>
+                                  )}
+                                  {(T.ars.manual > 0 || T.usd.manual > 0) && (
+                                    <div className="flex justify-between gap-4 text-emerald-700">
+                                      <span>
+                                        Descuento general
+                                        {order.manualDiscountType === "PERCENTAGE" && order.manualDiscountValue
+                                          ? ` (${order.manualDiscountValue}%)` : ""}
+                                      </span>
+                                      <span className="font-semibold">−{par(T.ars.manual, T.usd.manual)}</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between gap-4 pt-1 border-t border-emerald-200/70 text-slate-800 font-bold">
+                                    <span>Total</span>
+                                    <span>{par(T.ars.total, T.usd.total)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                             <p className="text-xs text-slate-400 mt-1.5">
                               Se aplica sobre el subtotal, además del descuento de cada producto. Dejalo vacío para sacarlo.
                               Vale solo para esta cotización.
