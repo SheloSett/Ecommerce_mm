@@ -334,6 +334,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 158- alta de producto: ya se puede cambiar el orden de las fotos antes de crear el producto, arrastrándolas o con las flechitas ‹ ›, igual que en la edición. Antes había que crear el producto y volver a entrar para acomodarlas, y eso importa porque la primera foto es la portada del catálogo y además la que analiza la IA. ✅
 
+159- cotizaciones, el cliente no veia los descuentos: si le ponias el descuento a un producto DESPUES de crear la cotizacion (desde el panel), al cliente le seguian apareciendo los precios de lista aunque el total ya venia rebajado, y no le salia ningun desglose. Era porque el cliente solo ve una copia publicada de la cotizacion, y al editar una linea esa copia solo se actualizaba si el pedido ya estaba aprobado. Ahora las cotizaciones se republican en cada cambio (precio, cantidad, descuento o producto eliminado). Las cotizaciones que ya estaban mal se arreglan con el script republicar-snapshots-cotizaciones.js. ✅
+
 ##
 
 

@@ -1311,9 +1311,15 @@ async function updateOrderItem(req, res) {
     const totalsData = await recalcOrderTotals(orderId);
     const snapshot = await buildSnapshot(orderId);
 
+    // publicarSnapshot: el cliente solo ve clientSnapshot. En un pedido normal es la foto de lo que
+    // se aprobó, así que se republica solo si está APPROVED. Una cotización, en cambio, se edita
+    // mientras el cliente ya la tiene a la vista y su total se recalcula en cada guardado: si acá no
+    // se republicaba, veía el total con descuento pero las líneas al precio de lista, sin desglose.
+    const publicarSnapshot = order.status === "APPROVED" || order.paymentMethod === "COTIZACION";
+
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { ...totalsData, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
+      data:  { ...totalsData, ...(publicarSnapshot ? { clientSnapshot: snapshot } : {}) },
       // Antes: include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
       // Comentado: ese select recortado hacía que el panel de cotizaciones perdiera supplier/slug al
       // guardar una cantidad o un precio (el front pisa la orden en memoria con esta respuesta).
@@ -1367,9 +1373,15 @@ async function deleteOrderItem(req, res) {
     const totalsData = await recalcOrderTotals(orderId);
     const snapshot = await buildSnapshot(orderId);
 
+    // publicarSnapshot: el cliente solo ve clientSnapshot. En un pedido normal es la foto de lo que
+    // se aprobó, así que se republica solo si está APPROVED. Una cotización, en cambio, se edita
+    // mientras el cliente ya la tiene a la vista y su total se recalcula en cada guardado: si acá no
+    // se republicaba, veía el total con descuento pero las líneas al precio de lista, sin desglose.
+    const publicarSnapshot = order.status === "APPROVED" || order.paymentMethod === "COTIZACION";
+
     const updatedOrder = await prisma.order.update({
       where: { id: orderId },
-      data:  { ...totalsData, ...(order.status === "APPROVED" ? { clientSnapshot: snapshot } : {}) },
+      data:  { ...totalsData, ...(publicarSnapshot ? { clientSnapshot: snapshot } : {}) },
       // Antes: include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
       // Comentado por el mismo motivo que en updateOrderItem: faltaban supplier/slug en la respuesta.
       include: ORDER_WITH_ITEMS_INCLUDE,
@@ -3187,6 +3199,10 @@ module.exports = {
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
   applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,
+  // buildSnapshot se exporta para scripts/republicar-snapshots-cotizaciones.js, que arregla las
+  // cotizaciones viejas: así reconstruye el snapshot con la MISMA función que usa el circuito real
+  // en vez de una copia que puede quedar desactualizada.
+  buildSnapshot,
   // COMENTADO: estas dos líneas eran duplicados que sobreescribían las entradas correctas de arriba.
   // "modifyOrder" duplicado es un no-op pero confuso; "addItemToOrder: modifyOrder" era incorrecto
   // porque exportaba la función modifyOrder bajo el nombre addItemToOrder, borrando la función real.
