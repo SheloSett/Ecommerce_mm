@@ -280,6 +280,28 @@ export default function PayQuotation() {
               {/* Antes se mostraba un unico "Total a pagar" con quote.total, que es SOLO la parte
                   en pesos: en una cotizacion mixta el cliente veia "$23.000" cuando ademas debia
                   USD 14.000. Ahora cada moneda va en su renglon, igual que en el resto del sitio. */}
+              {/* Desglose: subtotal y descuento. Antes solo se mostraba el total final, así que el
+                  cliente no veía el descuento que le había hecho la tienda (cupón o descuento del
+                  vendedor): el número ya venía rebajado pero parecía el precio de lista. */}
+              {(T.ars.discount > 0 || T.usd.discount > 0) && !T.legacy && (
+                <div className="mb-3 space-y-1 text-sm">
+                  <div className="flex justify-between text-[#565e74]">
+                    <span>Subtotal</span>
+                    <span className="text-right">
+                      {(!quoteHasUsd || T.ars.subtotal > 0) && <div>{formatPrice(T.ars.subtotal)}</div>}
+                      {quoteHasUsd && T.usd.subtotal > 0 && <div>{formatPriceWithCurrency(T.usd.subtotal, "USD")}</div>}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[#006b2c] font-semibold">
+                    <span>Descuento</span>
+                    <span className="text-right">
+                      {T.ars.discount > 0 && <div>−{formatPrice(T.ars.discount)}</div>}
+                      {T.usd.discount > 0 && <div>−{formatPriceWithCurrency(T.usd.discount, "USD")}</div>}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-between items-start">
                 {/* Antes: text-slate-700 / text-slate-800 */}
                 <span className="font-semibold text-[#0b1c30]">{quoteHasUsd ? "Total (por moneda)" : "Total a pagar"}</span>

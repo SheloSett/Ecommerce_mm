@@ -3,6 +3,9 @@ import { useNavigate, Link } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, productsApi, getImageUrl } from "../services/api";
+// getOrderTotals: mismo criterio que el resto del sistema para separar subtotal, descuentos e IVA
+// (contempla el cupón y el descuento que le puso el vendedor a mano).
+import { getOrderTotals } from "../utils/orderTotals";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
@@ -299,6 +302,13 @@ export default function QuotationHistory() {
               const hasUsd     = items.some((i) => i.currency === "USD");
               const totalArs   = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
               const totalUsd   = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
+              // T: desglose real de la cotización (subtotal, descuentos e IVA por moneda). Se usa
+              // para mostrarle al cliente el descuento que le hizo la tienda, que antes quedaba
+              // escondido dentro del total.
+              const T = getOrderTotals(quote);
+              const descArs = T.ars.discount || 0;
+              const descUsd = T.usd.discount || 0;
+              const hayDescuento = descArs > 0 || descUsd > 0;
               const isActive   =
                 quote.status !== "CANCELLED" &&
                 quote.status !== "REJECTED" &&
@@ -347,15 +357,28 @@ export default function QuotationHistory() {
                     {/* Fecha + total */}
                     <div className="mb-6">
                       <p className="text-sm text-[#565e74] mb-1">{formatDate(quote.createdAt)}</p>
+                      {/* Descuento que hizo la tienda (cupón y/o descuento del vendedor) */}
+                      {hayDescuento && !T.legacy && (
+                        <div className="mb-2 text-sm">
+                          <p className="text-[#565e74]">
+                            Subtotal: {formatPrice(T.ars.subtotal)}
+                            {hasUsd && T.usd.subtotal > 0 && ` + ${formatPriceWithCurrency(T.usd.subtotal, "USD")}`}
+                          </p>
+                          <p className="text-[#006b2c] font-semibold">
+                            Descuento: −{formatPrice(descArs)}
+                            {descUsd > 0 && ` / −${formatPriceWithCurrency(descUsd, "USD")}`}
+                          </p>
+                        </div>
+                      )}
                       {hasUsd ? (
                         <div className={cardBorder ? "text-[#006b2c]" : "text-[#0b1c30]"}>
                           <p className="text-xs font-semibold uppercase tracking-wide text-[#565e74] mb-1">
                             {quote.status === "APPROVED" ? "Total" : "Total estimado"} (por moneda)
                           </p>
                           {totalArs > 0 && (
-                            <p className="text-lg font-bold">{formatPrice(totalArs)}</p>
+                            <p className="text-lg font-bold">{formatPrice(T.legacy ? totalArs : T.ars.total)}</p>
                           )}
-                          <p className="text-lg font-bold">{formatPriceWithCurrency(totalUsd, "USD")}</p>
+                          <p className="text-lg font-bold">{formatPriceWithCurrency(T.legacy ? totalUsd : T.usd.total, "USD")}</p>
                         </div>
                       ) : (
                         <p className="text-2xl font-bold text-[#0b1c30]">

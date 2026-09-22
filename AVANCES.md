@@ -322,6 +322,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 152- alta de producto: las fotos y los videos se cargan con el mismo recuadro punteado que ya tenía la edición ("arrastrá acá o hacé clic"), en vez del botón gris "Elegir archivos" del navegador. ✅
 
+153- arreglos sobre las cotizaciones nuevas: 1) una cotización sin pagar ya no aparece además en "Mis pedidos" del cliente (se veía duplicada, y encima como si fuera un pedido ya hecho); recién pasa a Pedidos cuando la paga. 2) el cliente ahora ve el descuento que le hiciste sobre el total de la venta: aparece el subtotal y el renglón "Descuento" arriba del total, tanto en Mis cotizaciones como en la pantalla de pago (antes el total ya venía rebajado pero parecía el precio de lista). El descuento por producto ya se veía tachado. ✅
+
 ##
 
 

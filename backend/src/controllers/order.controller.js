@@ -1173,6 +1173,11 @@ async function getMyOrders(req, res) {
       where: {
         customerId,
         status: { in: ["PENDING", "QUOTE_APPROVED", "APPROVED", "PAYMENT_REVIEW"] },
+        // Una cotización que todavía no se pagó vive en "Mis cotizaciones", no acá. Antes aparecía
+        // en los dos lados: el cliente veía la misma cotización como si ya fuera un pedido hecho
+        // ("Pedido #150 · Aprobada s/pagar"), encima con los ítems reales en vez de los publicados.
+        // Cuando la paga, confirmCotizacionPayment le cambia el método y pasa a "Mis pedidos" sola.
+        NOT: { paymentMethod: "COTIZACION", status: { not: "APPROVED" } },
       },
       include: {
         coupon: { select: { code: true } },
