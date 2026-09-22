@@ -95,6 +95,27 @@ export default function AdminProductCreate() {
     if (total > 10) toast.error("Máximo 10 imágenes — se agregaron hasta completar 10");
   };
 
+  // ── Orden de las fotos ──────────────────────────────────────────────────────
+  // Antes no se podían reordenar hasta después de crear el producto (solo se podía desde la
+  // edición). Como la PRIMERA foto es la portada del catálogo y además la que analiza la IA,
+  // había que crear el producto y volver a entrar solo para acomodarlas.
+  // Solo se reordena newImages (los archivos que se van a subir): imagePreviews se deriva de ahí
+  // con el efecto de más abajo, así que tocar las dos listas sería una segunda fuente de verdad.
+  const [dragImgIdx, setDragImgIdx]         = useState(null);
+  const [dragOverImgIdx, setDragOverImgIdx] = useState(null);
+
+  const moveImage = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    if (to < 0 || to >= newImages.length) return;
+    const mover = (arr) => {
+      const copia = [...arr];
+      const [item] = copia.splice(from, 1);
+      copia.splice(to, 0, item);
+      return copia;
+    };
+    setNewImages((prev) => mover(prev));
+  };
+
   // Videos: mismo patrón que las fotos pero con tope de 5 y validación de peso en el cliente.
   // El backend igual rechaza los que se pasen, pero avisar acá evita esperar una subida de
   // 100 MB para recién ahí enterarse de que no entraba.
@@ -892,24 +913,71 @@ export default function AdminProductCreate() {
               <>
                 <div className="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-2">
                   {imagePreviews.map((img, idx) => (
-                    <div key={idx} className="relative group aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
-                      <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
-                      {idx === 0 && (
-                        <span className="absolute top-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-600 text-white shadow">Principal</span>
+                    <div
+                      key={idx}
+                      // Arrastrar para reordenar (en compu). preventDefault en dragOver es
+                      // obligatorio para que el navegador habilite el drop.
+                      draggable
+                      onDragStart={() => setDragImgIdx(idx)}
+                      onDragOver={(e) => { e.preventDefault(); setDragOverImgIdx(idx); }}
+                      onDragLeave={() => setDragOverImgIdx((cur) => (cur === idx ? null : cur))}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        moveImage(dragImgIdx, idx);
+                        setDragImgIdx(null);
+                        setDragOverImgIdx(null);
+                      }}
+                      onDragEnd={() => { setDragImgIdx(null); setDragOverImgIdx(null); }}
+                      className={`select-none cursor-grab active:cursor-grabbing transition-all ${
+                        dragImgIdx === idx ? "opacity-40" : ""
+                      } ${dragOverImgIdx === idx && dragImgIdx !== idx ? "scale-105" : ""}`}
+                      title="Arrastrá para cambiar el orden"
+                    >
+                      <div className={`relative group aspect-square rounded-lg overflow-hidden border bg-slate-50 ${
+                        dragOverImgIdx === idx && dragImgIdx !== idx ? "border-blue-500 ring-2 ring-blue-500" : "border-slate-200"
+                      }`}>
+                        {/* pointer-events-none: sin esto el navegador arrastra la imagen sola en
+                            vez del contenedor que tiene la lógica de reordenar. */}
+                        <img src={img.url} alt={img.name} className="w-full h-full object-cover pointer-events-none" />
+                        {idx === 0 && (
+                          <span className="absolute top-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-600 text-white shadow pointer-events-none">Principal</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeImageAt(idx)}
+                          title="Quitar"
+                          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-red-600 text-white text-xs leading-none flex items-center justify-center sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      {/* Flechas: en el celular el arrastre de HTML5 no funciona (los gestos
+                          táctiles no disparan dragstart), así que siempre hay una alternativa. */}
+                      {imagePreviews.length > 1 && (
+                        <div className="flex justify-center gap-1 mt-1">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveImage(idx, idx - 1)}
+                            className="w-8 h-6 flex items-center justify-center rounded border border-slate-200 bg-white text-slate-600 text-xs hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Mover a la izquierda"
+                          >‹</button>
+                          <button
+                            type="button"
+                            disabled={idx === imagePreviews.length - 1}
+                            onClick={() => moveImage(idx, idx + 1)}
+                            className="w-8 h-6 flex items-center justify-center rounded border border-slate-200 bg-white text-slate-600 text-xs hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Mover a la derecha"
+                          >›</button>
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => removeImageAt(idx)}
-                        title="Quitar"
-                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 hover:bg-red-600 text-white text-xs leading-none flex items-center justify-center sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                      >
-                        ✕
-                      </button>
                     </div>
                   ))}
                 </div>
                 <p className="text-xs text-slate-500 mt-1.5">
-                  {newImages.length} imagen{newImages.length > 1 ? "es" : ""} · la <strong>principal</strong> es la que usa la IA.
+                  {newImages.length} imagen{newImages.length > 1 ? "es" : ""} · arrastralas (o usá ‹ ›) para cambiar el orden.
+                  La <strong>principal</strong> es la portada del catálogo y la que usa la IA.
                 </p>
               </>
             )}

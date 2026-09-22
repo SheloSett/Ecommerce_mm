@@ -332,6 +332,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 157- asistente de IA del alta de producto: pasa a usar Claude Opus 5 (antes 4.8) con razonamiento bajo y más margen de respuesta, porque en Opus 5 el razonamiento viene activado y el límite viejo podía cortar la respuesta antes del JSON. Recordatorio: el asistente lee la foto y sugiere nombre, descripción y SKU (eso lo hace Claude); GENERAR fotos parecidas lo hacen Gemini u OpenAI, Claude no genera imágenes. Cada parte necesita su clave en el .env del servidor: sin clave, el asistente responde "IA no configurada". ✅
 
+158- alta de producto: ya se puede cambiar el orden de las fotos antes de crear el producto, arrastrándolas o con las flechitas ‹ ›, igual que en la edición. Antes había que crear el producto y volver a entrar para acomodarlas, y eso importa porque la primera foto es la portada del catálogo y además la que analiza la IA. ✅
+
 ##
 
 
