@@ -796,8 +796,10 @@ async function sendOrderNotificationToAdmin(order) {
 
 // ─── Emails de cotizaciones ──────────────────────────────────────────────────
 
-// Confirmación al cliente MAYORISTA
-async function sendCotizacionToCustomer(order) {
+// Confirmación al cliente.
+// opts.fromAdmin = true → la cotización la armó el vendedor desde el panel (venta manual), no la
+// pidió el cliente: cambia los textos, porque "tu solicitud fue recibida" no aplica.
+async function sendCotizacionToCustomer(order, opts = {}) {
   const transporter = createTransporter();
   if (!transporter) {
     console.log(`[EMAIL OMITIDO - SMTP no configurado] Cotización #${order.id} a ${order.customerEmail}`);
@@ -805,7 +807,12 @@ async function sendCotizacionToCustomer(order) {
   }
 
   try {
-    const { html, attachments: imgAttachments } = buildOrderHtml(order, {
+    const { html, attachments: imgAttachments } = buildOrderHtml(order, opts.fromAdmin ? {
+      title: "Te preparamos tu cotización 📋",
+      subtitle: "Preparamos esta cotización con los productos que consultaste, con precio y cantidades ya confirmados.",
+      footer: "Podés verla y pagarla desde tu cuenta, en “Mis cotizaciones”. Si necesitás cambiar algo, escribinos. ¡Gracias por elegirnos!",
+      type: "Cotización",
+    } : {
       title: "¡Cotización recibida! 📋",
       subtitle: "Tu solicitud de cotización fue recibida correctamente. Revisaremos la disponibilidad de stock y te contactaremos para confirmar precio y entrega.",
       footer: "Nos comunicaremos a la brevedad para acordar el precio final y coordinar la entrega. ¡Gracias por elegirnos!",
@@ -816,7 +823,9 @@ async function sendCotizacionToCustomer(order) {
     await transporter.sendMail({
       from: `"IGWT Store" <${process.env.SMTP_USER}>`,
       to: order.customerEmail,
-      subject: `Cotización #${order.id} recibida — IGWT Store`,
+      subject: opts.fromAdmin
+        ? `Tu cotización #${order.id} — IGWT Store`
+        : `Cotización #${order.id} recibida — IGWT Store`,
       html,
       attachments: [
         ...imgAttachments,
@@ -829,8 +838,10 @@ async function sendCotizacionToCustomer(order) {
   }
 }
 
-// Notificación al admin de nueva cotización
-async function sendCotizacionToAdmin(order) {
+// Notificación al admin de nueva cotización.
+// opts.modificadaPorCliente = true → el cliente cambió cantidades, sacó o agregó productos desde su
+// cuenta y la cotización volvió a "pendiente": hay que revisarla y aprobarla de nuevo.
+async function sendCotizacionToAdmin(order, opts = {}) {
   // Antes: const adminEmail = process.env.ADMIN_EMAIL; if (!adminEmail) { ... }
   // Comentado: ídem sendOrderNotificationToAdmin, ahora la cotización va a varias casillas.
   const adminEmails = getAdminRecipients();
@@ -846,7 +857,12 @@ async function sendCotizacionToAdmin(order) {
   }
 
   try {
-    const { html, attachments: imgAttachments } = buildOrderHtml(order, {
+    const { html, attachments: imgAttachments } = buildOrderHtml(order, opts.modificadaPorCliente ? {
+      title: `Cotización #${order.id} modificada por el cliente`,
+      subtitle: `<strong>${order.customerName}</strong> (${order.customerEmail}) cambió su cotización: quedó como se detalla abajo y volvió a estado pendiente para que la revises y la apruebes de nuevo.`,
+      footer: "Entrá al panel → Cotizaciones para revisar precios y stock, y aprobarla otra vez.",
+      type: "Cotización",
+    } : {
       title: `Nueva cotización mayorista #${order.id}`,
       subtitle: `Cliente MAYORISTA: <strong>${order.customerName}</strong> (${order.customerEmail})${order.customerPhone ? ` · Tel: ${order.customerPhone}` : ""}`,
       footer: "Ingresá al panel de administración para contactar al cliente y gestionar la cotización.",
@@ -1533,7 +1549,9 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
 
 // ─── Email de reset de contraseña ────────────────────────────────────────────
 
-async function sendPasswordResetEmail(customer, resetUrl) {
+// opts.cuentaNueva = true → la cuenta se la creó el vendedor al armarle una cotización, así que el
+// cliente nunca tuvo contraseña: el mail lo invita a crearla, no a "restablecerla".
+async function sendPasswordResetEmail(customer, resetUrl, opts = {}) {
   const transporter = createTransporter();
   if (!transporter) {
     console.log(`[EMAIL OMITIDO - SMTP no configurado] Reset password para ${customer.email}`);
@@ -1552,16 +1570,20 @@ async function sendPasswordResetEmail(customer, resetUrl) {
           <span style="font-size:22px;font-weight:900;color:#ffffff">&#9889; IGWT Store</span>
         </td></tr>
         <tr><td style="padding:36px 40px">
-          <h2 style="color:#f1f5f9;font-size:20px;margin:0 0 12px">Restablecer contrase&#241;a</h2>
+          <h2 style="color:#f1f5f9;font-size:20px;margin:0 0 12px">${opts.cuentaNueva ? "Activ&#225; tu cuenta" : "Restablecer contrase&#241;a"}</h2>
           <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 8px">Hola <strong style="color:#e2e8f0">${customer.name}</strong>,</p>
-          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 28px">Recibimos una solicitud para restablecer la contrase&#241;a de tu cuenta. Hac&#233; click en el bot&#243;n de abajo para crear una nueva:</p>
+          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 28px">${opts.cuentaNueva
+            ? "Te creamos una cuenta en IGWT Store para que puedas ver tu cotizaci&#243;n, modificarla y pagarla cuando quieras. Eleg&#237; tu contrase&#241;a con el bot&#243;n de abajo:"
+            : "Recibimos una solicitud para restablecer la contrase&#241;a de tu cuenta. Hac&#233; click en el bot&#243;n de abajo para crear una nueva:"}</p>
           <table cellpadding="0" cellspacing="0" style="margin:0 auto 28px">
             <tr><td align="center" style="background:#16a34a;border-radius:10px">
-              <a href="${resetUrl}" style="display:inline-block;padding:14px 36px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none">Resetear mi contrase&#241;a &#8594;</a>
+              <a href="${resetUrl}" style="display:inline-block;padding:14px 36px;color:#ffffff;font-size:15px;font-weight:700;text-decoration:none">${opts.cuentaNueva ? "Crear mi contrase&#241;a" : "Resetear mi contrase&#241;a"} &#8594;</a>
             </td></tr>
           </table>
-          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0 0 8px">&#9200; Este enlace expira en <strong style="color:#94a3b8">1 hora</strong>.</p>
-          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0">Si no solicitaste este cambio, pod&#233;s ignorar este email. Tu contrase&#241;a actual sigue siendo la misma.</p>
+          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0 0 8px">&#9200; Este enlace expira en <strong style="color:#94a3b8">${opts.cuentaNueva ? "7 d&#237;as" : "1 hora"}</strong>.</p>
+          <p style="color:#64748b;font-size:13px;line-height:1.6;margin:0">${opts.cuentaNueva
+            ? "Si te parece un error, escribinos y lo vemos."
+            : "Si no solicitaste este cambio, pod&#233;s ignorar este email. Tu contrase&#241;a actual sigue siendo la misma."}</p>
         </td></tr>
         <tr><td style="background:#0f172a;padding:20px 40px;text-align:center">
           <p style="color:#475569;font-size:12px;margin:0">&#169; ${new Date().getFullYear()} IGWT Store &#8212; Este es un email autom&#225;tico, no respond&#225;s a este mensaje.</p>
@@ -1574,7 +1596,7 @@ async function sendPasswordResetEmail(customer, resetUrl) {
     await transporter.sendMail({
       from: `"IGWT Store" <${process.env.SMTP_USER}>`,
       to: customer.email,
-      subject: "Restablecer contraseña — IGWT Store",
+      subject: opts.cuentaNueva ? "Activá tu cuenta — IGWT Store" : "Restablecer contraseña — IGWT Store",
       html,
     });
     console.log(`[EMAIL] Reset password enviado a ${customer.email}`);

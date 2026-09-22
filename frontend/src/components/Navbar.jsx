@@ -18,7 +18,7 @@ export default function Navbar() {
   const { customer, customerLogout } = useCustomerAuth();
   const { wishlist } = useWishlist();
   const { theme, setTheme } = useSiteConfig();
-  const { unreadCount } = useNotifications();
+  const { unreadCount, quotesCount } = useNotifications();
   const [cartOpen, setCartOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Búsqueda mobile: la lupa del navbar despliega una barra animada debajo del nav
@@ -600,7 +600,9 @@ export default function Navbar() {
                   </span>
                 )}
               </Link>
-              {customer.type === "MAYORISTA" && (
+              {/* Antes: solo mayoristas. Ahora también cualquier cliente que tenga una cotización
+                  armada por el vendedor desde el panel (quotesCount viene con las notificaciones). */}
+              {(customer.type === "MAYORISTA" || quotesCount > 0) && (
                 <Link to="/cotizaciones" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
                   <span className="material-symbols-outlined text-slate-500">request_quote</span>
                   Mis cotizaciones

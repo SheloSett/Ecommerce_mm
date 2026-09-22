@@ -15,6 +15,9 @@ export function NotificationProvider({ children }) {
   const { customer } = useCustomerAuth();
   const [unreadCount, setUnreadCount]     = useState(0);
   const [notifications, setNotifications] = useState([]);
+  // quotesCount: cuántas cotizaciones vivas tiene el cliente. Lo usan el menú y la barra inferior
+  // para mostrar "Mis cotizaciones" a cualquier cliente que tenga alguna (antes: solo mayoristas).
+  const [quotesCount, setQuotesCount]     = useState(0);
   const eventSourceRef = useRef(null);
 
   // Cierra la conexión SSE activa si hay una
@@ -31,6 +34,7 @@ export function NotificationProvider({ children }) {
     if (!customer) {
       setUnreadCount(0);
       setNotifications([]);
+      setQuotesCount(0);
       closeSSE();
       return;
     }
@@ -40,6 +44,7 @@ export function NotificationProvider({ children }) {
         const res = await notificationsApi.getMy();
         setNotifications(res.data.notifications);
         setUnreadCount(res.data.unreadCount);
+        setQuotesCount(res.data.quotesCount || 0);
       } catch {
         // Falla silenciosa
       }
@@ -115,13 +120,14 @@ export function NotificationProvider({ children }) {
       const res = await notificationsApi.getMy();
       setNotifications(res.data.notifications);
       setUnreadCount(res.data.unreadCount);
+      setQuotesCount(res.data.quotesCount || 0);
     } catch {
       // Falla silenciosa
     }
   }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, notifications, fetchNotifications, markAllRead }}>
+    <NotificationContext.Provider value={{ unreadCount, notifications, quotesCount, fetchNotifications, markAllRead }}>
       {children}
     </NotificationContext.Provider>
   );

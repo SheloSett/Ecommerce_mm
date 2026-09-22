@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
-import { ordersApi, getImageUrl } from "../services/api";
+import { ordersApi, productsApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
@@ -69,6 +69,117 @@ export default function QuotationHistory() {
   const [loading, setLoading]       = useState(true);
   const [expandedId, setExpandedId] = useState(null);
 
+  // ── Modificar una cotización ──────────────────────────────────────────────
+  // editing = { quoteId, wasApproved, items: [...] }. Los ítems son una copia editable de los que
+  // ve el cliente; al guardar se manda la lista completa y el backend recalcula precios y stock.
+  const [editing, setEditing]   = useState(null);
+  const [savingEdit, setSaving] = useState(false);
+  const [addSearch, setAddSearch]   = useState("");
+  const [addResults, setAddResults] = useState([]);
+  const [searchingAdd, setSearching] = useState(false);
+
+  const EDITABLE = ["PENDING", "QUOTE_APPROVED"];
+
+  const startEdit = (quote) => {
+    setExpandedId(quote.id);
+    setEditing({
+      quoteId: quote.id,
+      wasApproved: quote.status === "QUOTE_APPROVED",
+      items: (quote.items || []).map((i, idx) => ({
+        key:       `old-${i.id ?? idx}`,
+        id:        i.id,
+        productId: i.productId,
+        name:      i.name,
+        image:     i.image,
+        price:     i.price,
+        currency:  i.currency,
+        quantity:  i.quantity,
+        isNew:     false,
+      })),
+    });
+    setAddSearch("");
+    setAddResults([]);
+  };
+
+  const cancelEdit = () => { setEditing(null); setAddSearch(""); setAddResults([]); };
+
+  const changeQty = (key, delta) => setEditing((e) => ({
+    ...e,
+    items: e.items.map((i) => (i.key === key ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i)),
+  }));
+
+  const removeLine = (key) => setEditing((e) => ({ ...e, items: e.items.filter((i) => i.key !== key) }));
+
+  // Precio orientativo de un producto del catálogo según el tipo de cliente. El precio final lo
+  // calcula el backend al guardar (y el vendedor lo puede ajustar al revisar la cotización).
+  const precioOrientativo = (p) => (customer?.type === "MAYORISTA"
+    ? (p.wholesaleSalePrice ?? p.wholesalePrice ?? p.salePrice ?? p.price)
+    : (p.salePrice ?? p.price));
+
+  const searchToAdd = async (q) => {
+    setAddSearch(q);
+    if (q.trim().length < 2) { setAddResults([]); return; }
+    setSearching(true);
+    try {
+      const res = await productsApi.getAll({ search: q.trim(), limit: 6, active: true, visibleFor: customer?.type || "MINORISTA" });
+      setAddResults(res.data.products || res.data || []);
+    } catch { setAddResults([]); } finally { setSearching(false); }
+  };
+
+  const addProduct = (p) => {
+    setEditing((e) => {
+      if (e.items.some((i) => i.productId === p.id)) {
+        toast.error("Ese producto ya está en la cotización: cambiale la cantidad");
+        return e;
+      }
+      return {
+        ...e,
+        items: [...e.items, {
+          key:       `new-${p.id}`,
+          productId: p.id,
+          name:      p.name,
+          image:     p.images?.[0] || null,
+          price:     precioOrientativo(p),
+          currency:  p.currency || "ARS",
+          quantity:  1,
+          isNew:     true,
+        }],
+      };
+    });
+    setAddSearch("");
+    setAddResults([]);
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    if (editing.items.length === 0) {
+      toast.error("La cotización tiene que quedar con al menos un producto");
+      return;
+    }
+    const ok = window.confirm(
+      editing.wasApproved
+        ? "Al guardar los cambios, la cotización vuelve a revisión: la tienda confirma precios y stock y te avisa cuando quede aprobada de nuevo.\n\nHasta entonces no vas a poder pagarla.\n\n¿Guardamos los cambios?"
+        : "Al guardar, la tienda vuelve a revisar tu cotización con los cambios.\n\n¿Guardamos los cambios?"
+    );
+    if (!ok) return;
+
+    setSaving(true);
+    try {
+      await ordersApi.updateMyQuoteItems(
+        editing.quoteId,
+        editing.items.map((i) => (i.isNew ? { productId: i.productId, quantity: i.quantity } : { id: i.id, quantity: i.quantity }))
+      );
+      toast.success("Listo: tu cotización volvió a revisión");
+      cancelEdit();
+      loadQuotes();
+      fetchNotifications();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "No se pudo modificar la cotización");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Modal de cancelación
   const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -77,11 +188,13 @@ export default function QuotationHistory() {
   useEffect(() => {
     if (loadingCustomer) return;
     if (!customer) { navigate("/login"); return; }
-    if (customer.type !== "MAYORISTA") { navigate("/"); return; }
+    // Antes: if (customer.type !== "MAYORISTA") { navigate("/"); return; }
+    // Comentado: las cotizaciones eran solo de mayoristas, pero ahora el vendedor le puede armar una
+    // a cualquier cliente desde el panel. El backend ya devuelve solo las del cliente logueado.
   }, [customer, loadingCustomer, navigate]);
 
   const loadQuotes = () => {
-    if (loadingCustomer || !customer || customer.type !== "MAYORISTA") return;
+    if (loadingCustomer || !customer) return;
     ordersApi
       .getMyCotizaciones()
       .then((res) => setQuotes(res.data))
@@ -190,6 +303,8 @@ export default function QuotationHistory() {
                 quote.status !== "REJECTED" &&
                 quote.status !== "APPROVED";
               const { label: statusLabel, badgeCls, cardBorder } = getQuoteDisplay(quote.status);
+              const isEditing  = editing?.quoteId === quote.id;
+              const puedeEditar = EDITABLE.includes(quote.status);
               const isCancelledOrRejected =
                 quote.status === "CANCELLED" || quote.status === "REJECTED";
 
@@ -300,8 +415,8 @@ export default function QuotationHistory() {
                       </div>
                     )}
 
-                    {/* Acciones */}
-                    {isActive && (
+                    {/* Acciones (se ocultan mientras se está modificando la cotización) */}
+                    {isActive && !isEditing && (
                       <div className="flex flex-col sm:flex-row gap-3 mt-2">
                         {/* Pagar orden — solo si aprobada con items y total > 0 */}
                         {quote.status === "QUOTE_APPROVED" &&
@@ -321,6 +436,18 @@ export default function QuotationHistory() {
                             </button>
                           )}
 
+                        {/* Modificar: cambiar cantidades, sacar o agregar productos. Al guardar, la
+                            cotización vuelve a revisión de la tienda. */}
+                        {puedeEditar && (
+                          <button
+                            onClick={() => startEdit(quote)}
+                            className="flex items-center justify-center gap-2 px-6 py-3 border-2 border-[#00873a] text-[#006b2c] font-semibold rounded-lg hover:bg-[#00873a]/5 transition-all"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">edit</span>
+                            Modificar
+                          </button>
+                        )}
+
                         {/* Cancelar */}
                         <button
                           onClick={() => {
@@ -335,8 +462,134 @@ export default function QuotationHistory() {
                     )}
                   </div>
 
+                  {/* ── Modificando la cotización ── */}
+                  {isEditing && (
+                    <div className="border-t border-[#bdcaba]/30 px-6 py-5 bg-[#f8f9ff] space-y-4">
+                      <div className="flex items-start gap-2 bg-[#eff4ff] rounded-lg p-3">
+                        <span className="material-symbols-outlined text-[#00873a] text-[20px] flex-shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+                        <p className="text-sm text-[#3e4a3d] leading-relaxed">
+                          Cambiá las cantidades, sacá lo que no quieras o agregá más productos. Al guardar, la tienda
+                          revisa la cotización con los cambios y te avisa cuando esté aprobada.
+                        </p>
+                      </div>
+
+                      {/* Líneas */}
+                      {editing.items.map((it) => (
+                        <div key={it.key} className="bg-white rounded-lg p-3 border border-[#bdcaba]/40">
+                          {/* Renglón 1: foto + nombre + sacar */}
+                          <div className="flex items-start gap-3">
+                            <div className="w-12 h-12 rounded-lg bg-[#dce9ff] overflow-hidden flex-shrink-0">
+                              {it.image
+                                ? <img src={getImageUrl(it.image)} alt={it.name} className="w-full h-full object-cover" />
+                                : <div className="w-full h-full flex items-center justify-center text-xl">📦</div>}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-[#0b1c30] leading-snug line-clamp-2">{it.name}</p>
+                              <p className="text-xs text-[#565e74] mt-0.5">
+                                {formatPriceWithCurrency(it.price, it.currency)} c/u
+                                {it.isNew && <span className="ml-1 text-[#00873a] font-semibold">· precio a confirmar</span>}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeLine(it.key)}
+                              aria-label={`Sacar ${it.name}`}
+                              className="w-9 h-9 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 transition-colors flex-shrink-0 -mt-1 -mr-1"
+                            >
+                              <span className="material-symbols-outlined text-[20px]">delete</span>
+                            </button>
+                          </div>
+                          {/* Renglón 2: cantidad + subtotal de la línea */}
+                          <div className="flex items-center justify-between gap-3 mt-2 pl-[60px]">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => changeQty(it.key, -1)}
+                                disabled={it.quantity <= 1}
+                                aria-label="Quitar una unidad"
+                                className="w-9 h-9 rounded-lg border border-[#bdcaba] text-[#0b1c30] text-lg font-bold disabled:opacity-40 hover:bg-[#dce9ff]/40 transition-colors"
+                              >−</button>
+                              <span className="w-9 text-center text-sm font-semibold text-[#0b1c30]">{it.quantity}</span>
+                              <button
+                                type="button"
+                                onClick={() => changeQty(it.key, 1)}
+                                aria-label="Agregar una unidad"
+                                className="w-9 h-9 rounded-lg border border-[#bdcaba] text-[#0b1c30] text-lg font-bold hover:bg-[#dce9ff]/40 transition-colors"
+                              >+</button>
+                            </div>
+                            <p className="text-sm font-semibold text-[#0b1c30]">
+                              {formatPriceWithCurrency(it.price * it.quantity, it.currency)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+
+                      {editing.items.length === 0 && (
+                        <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+                          Sacaste todos los productos. Agregá alguno, o cancelá la cotización desde el botón de arriba.
+                        </p>
+                      )}
+
+                      {/* Agregar un producto */}
+                      <div className="relative">
+                        <input
+                          value={addSearch}
+                          onChange={(e) => searchToAdd(e.target.value)}
+                          placeholder="Agregar un producto: escribí su nombre..."
+                          className="w-full px-4 py-2.5 rounded-lg border border-[#bdcaba] text-sm focus:outline-none focus:ring-2 focus:ring-[#00873a]/40"
+                        />
+                        {(searchingAdd || addResults.length > 0) && addSearch.trim().length >= 2 && (
+                          <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-[#bdcaba] rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                            {searchingAdd && <p className="px-4 py-3 text-sm text-[#565e74]">Buscando...</p>}
+                            {!searchingAdd && addResults.length === 0 && (
+                              <p className="px-4 py-3 text-sm text-[#565e74]">No encontramos productos con ese nombre</p>
+                            )}
+                            {addResults.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => addProduct(p)}
+                                className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[#dce9ff]/40 transition-colors text-left"
+                              >
+                                <div className="w-10 h-10 rounded-lg bg-[#dce9ff] overflow-hidden flex-shrink-0">
+                                  {p.images?.[0]
+                                    ? <img src={getImageUrl(p.images[0])} alt="" className="w-full h-full object-cover" />
+                                    : <div className="w-full h-full flex items-center justify-center">📦</div>}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-[#0b1c30] truncate">{p.name}</p>
+                                  <p className="text-xs text-[#565e74]">{formatPriceWithCurrency(precioOrientativo(p), p.currency)}</p>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Guardar / cancelar */}
+                      <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                        <button
+                          type="button"
+                          onClick={saveEdit}
+                          disabled={savingEdit || editing.items.length === 0}
+                          className="flex-1 px-6 py-3 bg-[#00873a] text-white font-bold rounded-lg hover:brightness-110 transition-all disabled:opacity-50"
+                        >
+                          {savingEdit ? "Guardando..." : "Guardar cambios"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          disabled={savingEdit}
+                          className="px-6 py-3 border border-[#bdcaba] text-[#0b1c30] font-semibold rounded-lg hover:bg-white transition-all"
+                        >
+                          Volver sin cambios
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Items (expandibles) */}
-                  {isExpanded && (
+                  {isExpanded && !isEditing && (
                     <div className="border-t border-[#bdcaba]/30 px-6 py-5 bg-[#f8f9ff] space-y-3">
                       {items.length === 0 ? (
                         <p className="text-sm text-[#565e74] text-center py-4">Sin items</p>

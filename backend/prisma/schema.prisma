@@ -209,6 +209,16 @@ model Order {
   trackingNumber      String?
   returnRequests  ReturnRequest[]    // Solicitudes de arrepentimiento vinculadas a esta orden
   seenByAdmin     Boolean       @default(false) // true = el admin abrió el detalle de la cotización
+  // stockDeducted: true = el stock de esta orden YA se descontó (o reservó) del catálogo.
+  // Hacía falta porque las cotizaciones reservan stock al crearse, pero al pagarlas el cliente
+  // cambia paymentMethod (deja de ser COTIZACION) y updateOrderStatus volvía a descontar todo al
+  // marcarlas abonadas: doble descuento. Mismo problema con una venta manual PENDING que se aprueba.
+  // Se pone en true donde se descuenta y vuelve a false cuando se devuelve el stock (cancelar/rechazar).
+  stockDeducted   Boolean       @default(false)
+  // customerModifiedAt: última vez que el CLIENTE modificó su cotización desde su perfil (cantidades,
+  // productos que sacó o agregó). Al modificar, la cotización vuelve a PENDING para que el admin la
+  // revise y la apruebe de nuevo. null = nunca la tocó el cliente.
+  customerModifiedAt DateTime?
   // Modificación post-pago: isModified indica que el admin editó el pedido después de aprobado.
   // originalSnapshot guarda el clientSnapshot previo a la primera modificación para que el cliente
   // pueda ver el pedido original vs. el modificado.

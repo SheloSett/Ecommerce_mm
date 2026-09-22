@@ -1,7 +1,7 @@
 const express = require("express");
 const {
   getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getStatsUsd, getMetrics, deleteOrder,
-  getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
+  getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById, updateMyQuoteItems,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
   applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen, uploadManualItemImage,
@@ -29,6 +29,10 @@ router.get("/my-quotes", authMiddleware, customerMiddleware, getMyCotizaciones);
 // Cliente MAYORISTA: ver una cotización propia por ID (para la página de pago)
 // IMPORTANTE: también debe ir ANTES de /:id
 router.get("/my-quotes/:id", authMiddleware, customerMiddleware, getMyQuoteById);
+// Cliente: modificar su propia cotización (cantidades, sacar o agregar productos).
+// Al modificarla vuelve a "pendiente" para que el admin la revise y la apruebe de nuevo.
+// IMPORTANTE: también va ANTES de /:id
+router.put("/my-quotes/:id/items", authMiddleware, customerMiddleware, updateMyQuoteItems);
 
 // Admin: registrar una venta manual (presencial, por teléfono, etc.)
 // IMPORTANTE: va antes de /:id para que /admin/manual no sea interpretado como un ID

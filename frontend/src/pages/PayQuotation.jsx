@@ -71,7 +71,9 @@ export default function PayQuotation() {
   useEffect(() => {
     if (loadingCustomer) return;
     if (!customer) { navigate("/login"); return; }
-    if (customer.type !== "MAYORISTA") { navigate("/"); return; }
+    // Antes: if (customer.type !== "MAYORISTA") { navigate("/"); return; }
+    // Comentado: ídem QuotationHistory — cualquier cliente puede tener una cotización armada por el
+    // vendedor. El backend valida que la cotización sea suya.
   }, [customer, loadingCustomer, navigate]);
 
   useEffect(() => {

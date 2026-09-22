@@ -50,7 +50,7 @@ export default function MobileBottomNav({ menuOpen, onMenu, searchOpen, onSearch
   const { totalItems } = useCart();
   const { wishlist } = useWishlist();
   const { theme, setTheme } = useSiteConfig();
-  const { unreadCount } = useNotifications();
+  const { unreadCount, quotesCount } = useNotifications();
 
   const [sheet, setSheet] = useState(null); // "categories" | "account" | null
   const [cats, setCats] = useState([]);
@@ -312,7 +312,8 @@ export default function MobileBottomNav({ menuOpen, onMenu, searchOpen, onSearch
                 </span>
               )}
             </Link>
-            {isMayorista && (
+            {/* Antes: solo mayoristas — ver el mismo cambio en Navbar.jsx */}
+            {(isMayorista || quotesCount > 0) && (
               <Link to="/cotizaciones" onClick={closeSheet} className={ROW}>
                 <span className="material-symbols-outlined text-slate-500" aria-hidden="true">request_quote</span>
                 Mis cotizaciones

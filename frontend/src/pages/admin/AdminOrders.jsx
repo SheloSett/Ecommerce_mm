@@ -182,10 +182,18 @@ export default function AdminOrders() {
     // salesChannel: canal por el que llegó el cliente (solo en ventas manuales; las web se marcan automáticamente como "WEB")
     salesChannel: "MOSTRADOR",
     paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
+    // crearCuenta: en una cotización a un cliente nuevo con email, crearle la cuenta para que pueda
+    // verla y pagarla online (se le manda un mail para que elija su contraseña).
+    crearCuenta: true,
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
     items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }],
   });
+  // manualKind: el mismo modal sirve para registrar una venta ya hecha ("SALE") o para armarle
+  // una cotización al cliente ("QUOTE"). La cotización se guarda como un pedido con método
+  // COTIZACION, en estado "aprobada", y el cliente la ve en "Mis cotizaciones" si tiene cuenta.
+  const [manualKind, setManualKind] = useState("SALE");
+  const esCotizacionManual = manualKind === "QUOTE";
   const [productSearch, setProductSearch] = useState({}); // { [idx]: string }
   const [uploadingImg, setUploadingImg] = useState({}); // { [idx]: bool } — foto del producto libre subiéndose
   const [savingManual, setSavingManual] = useState(false);
@@ -250,7 +258,8 @@ export default function AdminOrders() {
   };
 
   // Carga productos al abrir el modal (solo la primera vez)
-  const openManualModal = async () => {
+  const openManualModal = async (kind = "SALE") => {
+    setManualKind(kind);
     setManualModal(true);
     if (allProducts.length === 0) {
       try {
@@ -262,6 +271,15 @@ export default function AdminOrders() {
       } catch { /* silencioso */ }
     }
   };
+
+  // Viene de "+ Nueva cotización" de la pestaña Cotizaciones: abre el modal ya en modo cotización
+  // y limpia el parámetro para que al recargar no se vuelva a abrir solo.
+  useEffect(() => {
+    if (searchParams.get("nueva") !== "cotizacion" || isCotizaciones) return;
+    navigate("/admin/ordenes", { replace: true });
+    openManualModal("QUOTE");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, isCotizaciones]);
 
   const addManualItem = () =>
     setManualForm((p) => ({ ...p, items: [...p.items, { productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", isCustom: false }] }));
@@ -387,6 +405,7 @@ export default function AdminOrders() {
 
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
   const resetManualForm = () => {
+    setManualKind("SALE");
     setCustomerMode("new");
     setSelectedCustomer(null);
     setCustomerSearch("");
@@ -494,13 +513,16 @@ export default function AdminOrders() {
       const nameToSend = customerMode === "street"
         ? (manualForm.customerName.trim() || "Cliente de mostrador")
         : manualForm.customerName;
-      await ordersApi.createManual({
+      const { data: creada } = await ordersApi.createManual({
         customerId:    manualForm.customerId || undefined,
         customerName:  nameToSend,
         customerEmail: manualForm.customerEmail,
         customerPhone: manualForm.customerPhone || undefined,
-        paymentMethod: manualForm.paymentMethod,
+        // En una cotización el método y el estado los fija el backend (COTIZACION + aprobada),
+        // por eso el modal no muestra esos dos selectores cuando es cotización.
+        paymentMethod: esCotizacionManual ? "COTIZACION" : manualForm.paymentMethod,
         status:        manualForm.status,
+        crearCuenta:   esCotizacionManual && customerMode === "new" && !!manualForm.customerEmail.trim() && manualForm.crearCuenta,
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
@@ -514,7 +536,14 @@ export default function AdminOrders() {
         // })),
         items: itemsPayload,
       });
-      toast.success("Venta registrada correctamente");
+      // Avisar qué pasó con la cuenta del cliente (solo en cotizaciones)
+      if (creada?.cuentaCreada) {
+        toast.success(`Cotización creada. Le creamos la cuenta a ${creada.cuentaCreada} y le mandamos un mail para que elija su contraseña.`, { duration: 7000 });
+      } else if (creada?.cuentaVinculada) {
+        toast.success(`Cotización creada y vinculada a la cuenta de ${creada.cuentaVinculada} (ya tenía cuenta con ese email).`, { duration: 7000 });
+      } else {
+        toast.success(esCotizacionManual ? "Cotización creada correctamente" : "Venta registrada correctamente");
+      }
       setManualModal(false);
       // Reset movido al helper resetManualForm (se comparte con el cierre por Cancelar/✕). Antes:
       // setCustomerMode("new");
@@ -937,6 +966,9 @@ ${pagesHtml}
   // individual (handlePrint) y la masiva (handleBulkPrint) — así en la masiva cada orden queda en
   // su propia hoja, SIN mezclarse (page-break entre ellas, ver ORDER_PRINT_STYLES).
   const buildOrderPageHTML = (order) => {
+    // Una cotización se le manda al cliente (impresa o en PDF), así que se imprime distinto: sin la
+    // ubicación en el depósito y con la nota mostrada como "Nota del vendedor" en lugar de interna.
+    const esCotizacion = order.paymentMethod === "COTIZACION";
     const status  = STATUS_CONFIG[order.status]  || { label: order.status };
     const payment = PAYMENT_LABEL[order.paymentMethod] || { label: order.paymentMethod, icon: "" };
     const type    = TYPE_LABEL[order.customerType]     || { label: order.customerType, color: "" };
@@ -957,8 +989,8 @@ ${pagesHtml}
         : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
       // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
       // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
-      const mod   = item.variant?.module ?? item.product?.module;
-      const shelf = item.variant?.shelf  ?? item.product?.shelf;
+      const mod   = esCotizacion ? null : (item.variant?.module ?? item.product?.module);
+      const shelf = esCotizacion ? null : (item.variant?.shelf  ?? item.product?.shelf);
       const locHtml = (mod || shelf)
         ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
         : "";
@@ -1001,7 +1033,7 @@ ${pagesHtml}
       <div class="logo-name">⚡ IGWT Store</div>
     </div>
     <div>
-      <div class="order-badge">Orden #${order.id}</div>
+      <div class="order-badge">${esCotizacion ? "Cotización" : "Orden"} #${order.id}</div>
       <div class="order-date">${formatDate(order.createdAt)}</div>
     </div>
   </div>
@@ -1015,16 +1047,16 @@ ${pagesHtml}
       ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${order.customerPhone}</span></div>` : ""}
     </div>
     <div class="card">
-      <div class="card-title">Pedido</div>
+      <div class="card-title">${esCotizacion ? "Cotización" : "Pedido"}</div>
       <div class="row"><span class="row-label">Estado</span><span class="row-value">${status.label}</span></div>
-      <div class="row"><span class="row-label">Pago</span><span class="row-value">${payment.icon} ${payment.label}</span></div>
-      <div class="row"><span class="row-label">Canal</span><span class="row-value">${channel.icon} ${channel.label}</span></div>
+      ${esCotizacion ? "" : `<div class="row"><span class="row-label">Pago</span><span class="row-value">${payment.icon} ${payment.label}</span></div>
+      <div class="row"><span class="row-label">Canal</span><span class="row-value">${channel.icon} ${channel.label}</span></div>`}
       ${order.wantsInvoice ? `<div class="row"><span class="row-label">Factura</span><span class="row-value" style="color:#2563eb">Solicitada — IVA 21%</span></div>` : ""}
     </div>
   </div>
 
   ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del cliente:</strong> ${order.customerNote}</div>` : ""}
-  ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>Nota interna:</strong> ${order.adminNotes}</div>` : ""}
+  ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>${esCotizacion ? "Nota del vendedor" : "Nota interna"}:</strong> ${order.adminNotes}</div>` : ""}
 
   <div class="section-title">Productos</div>
   <table>
@@ -1041,7 +1073,8 @@ ${pagesHtml}
 
   // Impresión de UNA orden
   const handlePrint = (order) => {
-    openOrdersPrint(`Orden #${order.id} — IGWT Store`, buildOrderPageHTML(order));
+    const titulo = order.paymentMethod === "COTIZACION" ? "Cotización" : "Orden";
+    openOrdersPrint(`${titulo} #${order.id} — IGWT Store`, buildOrderPageHTML(order));
   };
 
   // Impresión MASIVA: todas las órdenes seleccionadas, cada una en su hoja (sin mezclarse).
@@ -1103,6 +1136,15 @@ ${pagesHtml}
     return (
       <AdminLayout title="Cotizaciones">
         <div className="space-y-4">
+          {/* El modal de alta vive en la vista de Órdenes (este return es aparte), así que el botón
+              lleva allá con ?nueva=cotizacion y el efecto de abajo abre el modal ya en Cotización. */}
+          <button
+            onClick={() => navigate("/admin/ordenes?nueva=cotizacion")}
+            className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors"
+          >
+            + Nueva cotización
+          </button>
+
           {loading && (
             <div className="flex justify-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
@@ -1134,6 +1176,16 @@ ${pagesHtml}
                       {dirtyOrders.has(order.id) && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-semibold">
                           ● Cambios sin publicar
+                        </span>
+                      )}
+                      {/* El cliente cambió cantidades, sacó o agregó productos desde su cuenta: la
+                          cotización volvió a Pendiente y hay que revisarla y aprobarla de nuevo. */}
+                      {order.customerModifiedAt && (
+                        <span
+                          className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-semibold"
+                          title={`El cliente la modificó el ${new Date(order.customerModifiedAt).toLocaleString("es-AR")}`}
+                        >
+                          ✏️ La modificó el cliente
                         </span>
                       )}
                     </div>
@@ -1633,10 +1685,16 @@ ${pagesHtml}
         {/* Fila superior: Nueva venta + Buscador + Sort + Tipo */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={openManualModal}
+            onClick={() => openManualModal("SALE")}
             className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors whitespace-nowrap"
           >
             + Nueva venta
+          </button>
+          <button
+            onClick={() => openManualModal("QUOTE")}
+            className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 transition-colors whitespace-nowrap"
+          >
+            + Nueva cotización
           </button>
 
           <div className="w-px h-6 bg-slate-200 mx-1" />
@@ -2093,11 +2151,32 @@ ${pagesHtml}
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h2 className="font-bold text-slate-800 text-lg">Nueva venta manual</h2>
+              <h2 className="font-bold text-slate-800 text-lg">{esCotizacionManual ? "Nueva cotización" : "Nueva venta manual"}</h2>
               {/* Antes: onClick={() => setManualModal(false)} — cerraba sin avisar y dejaba datos viejos cargados */}
               <button onClick={closeManualModal} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
             </div>
             <form onSubmit={handleSaveManual} className="px-6 py-5 space-y-5">
+              {/* Venta o cotización: cambia qué se guarda (una venta hecha vs. un presupuesto que el
+                  cliente puede ver y pagar después desde su cuenta) */}
+              <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm font-semibold">
+                {[
+                  { id: "SALE",  label: "🧾 Venta",      hint: "Ya cobrada o por cobrar" },
+                  { id: "QUOTE", label: "📋 Cotización", hint: "El cliente la paga después" },
+                ].map((k) => (
+                  <button
+                    key={k.id}
+                    type="button"
+                    onClick={() => setManualKind(k.id)}
+                    className={`flex-1 py-2.5 px-2 transition-colors ${
+                      manualKind === k.id ? "bg-slate-800 text-white" : "bg-white text-slate-500 hover:bg-slate-50"
+                    }`}
+                  >
+                    {k.label}
+                    <span className={`block text-[11px] font-normal ${manualKind === k.id ? "text-white/70" : "text-slate-400"}`}>{k.hint}</span>
+                  </button>
+                ))}
+              </div>
+
               {/* Datos del cliente */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Datos del cliente</p>
@@ -2543,8 +2622,36 @@ ${pagesHtml}
                 </div>
               </div>
 
+              {/* Cliente nuevo con email: ofrecer crearle la cuenta para que la vea online */}
+              {esCotizacionManual && !manualForm.customerId && customerMode === "new" && manualForm.customerEmail.trim() && (
+                <label className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-3 py-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={manualForm.crearCuenta}
+                    onChange={(e) => setManualForm((p) => ({ ...p, crearCuenta: e.target.checked }))}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Crearle la cuenta para que pueda ver, modificar y pagar la cotización online. Le llega un mail
+                    para que elija su contraseña. Si ese email ya tiene cuenta, se vincula a la suya.
+                  </span>
+                </label>
+              )}
+
+              {/* Cotización sin cuenta posible: el cliente no la va a poder ver online */}
+              {esCotizacionManual && !manualForm.customerId &&
+                (customerMode === "street" || !manualForm.customerEmail.trim() || !manualForm.crearCuenta) && (
+                <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                  Así como está, esta cotización no va a quedar vinculada a ninguna cuenta y el cliente no la va a ver
+                  en la web. Se la podés pasar con el botón 🖨 de la lista de pedidos (imprimir o guardar como PDF).
+                </p>
+              )}
+
               {/* Método de pago, estado y canal de venta */}
               <div className="grid grid-cols-2 gap-3">
+                {/* En una cotización no se eligen: el método es COTIZACION y nace aprobada para que
+                    el cliente pueda pagarla. Por eso los dos selectores solo se muestran en ventas. */}
+                {!esCotizacionManual && (
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Método de pago</label>
                   <select
@@ -2557,6 +2664,8 @@ ${pagesHtml}
                     <option value="MERCADOPAGO">MercadoPago</option>
                   </select>
                 </div>
+                )}
+                {!esCotizacionManual && (
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Estado</label>
                   <select
@@ -2568,6 +2677,7 @@ ${pagesHtml}
                     <option value="PENDING">Pendiente ⏳</option>
                   </select>
                 </div>
+                )}
                 <div className="col-span-2">
                   {/* Canal de venta: indica por dónde llegó el cliente. Solo editable en ventas manuales;
                       las órdenes web se marcan automáticamente como "WEB" en el backend. */}
@@ -2585,12 +2695,16 @@ ${pagesHtml}
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Notas internas</label>
+                  {/* Ojo: en una cotización este campo (adminNotes) SÍ lo ve el cliente, aparece como
+                      "Nota del vendedor" en su cotización. En una venta es una nota interna. */}
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {esCotizacionManual ? "Nota para el cliente" : "Notas internas"}
+                  </label>
                   <input
                     value={manualForm.notes}
                     onChange={(e) => setManualForm((p) => ({ ...p, notes: e.target.value }))}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Observaciones opcionales..."
+                    placeholder={esCotizacionManual ? "La va a ver el cliente en su cotización..." : "Observaciones opcionales..."}
                   />
                 </div>
               </div>
@@ -2614,7 +2728,7 @@ ${pagesHtml}
                     disabled={savingManual}
                     className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
                   >
-                    {savingManual ? "Guardando..." : "Registrar venta"}
+                    {savingManual ? "Guardando..." : esCotizacionManual ? "Crear cotización" : "Registrar venta"}
                   </button>
                 </div>
               </div>

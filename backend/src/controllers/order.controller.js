@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
@@ -25,11 +26,13 @@ const {
   sendACConvenirToAdmin,
   sendOrderPaymentStatusEmail,
   sendOrderFulfillmentEmail,
+  sendPasswordResetEmail,
 } = require("../services/email.service");
 
 const prisma = new PrismaClient();
 // Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
+const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
 
 // Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
@@ -618,18 +621,16 @@ async function createOrder(req, res) {
     // Para cotizaciones: guardar clientSnapshot con los items iniciales.
     // El cliente siempre verá esta copia hasta que el admin presione "Actualizar cotización".
     if (method === "COTIZACION") {
-      const snapshot = order.items.map((i) => ({
-        id:        i.id,
-        productId: i.productId,
-        name:      i.product?.name || "",
-        price:     i.price,
-        currency:  i.currency,
-        quantity:  i.quantity,
-        image:     i.product?.images?.[0] || null,
-      }));
+      // Antes: el snapshot se armaba acá con un map propio. Ahora usa buildSnapshot, que es el mismo
+      // criterio que el resto del circuito y contempla ítems libres y variantes.
+      const snapshot = await buildSnapshot(order.id);
       await prisma.order.update({
         where: { id: order.id },
-        data:  { clientSnapshot: snapshot },
+        // stockDeducted: el flujo de cotización ya se encargó del stock (acá se reservan los
+        // productos sin variantes; las variantes se descuentan al aprobar). Sin esta marca,
+        // updateOrderStatus volvía a descontar todo cuando la cotización se marcaba abonada,
+        // porque al pagarla el cliente deja de tener paymentMethod COTIZACION.
+        data:  { clientSnapshot: snapshot, stockDeducted: true },
       });
       order.clientSnapshot = snapshot;
     }
@@ -684,24 +685,28 @@ async function updateOrderStatus(req, res) {
     });
     if (!existing) return res.status(404).json({ error: "Orden no encontrada" });
 
-    const updateData = { status };
-    // Al abonar, pasar automáticamente a "En preparación" si estaba en Pendiente
-    if (status === "APPROVED" && existing.fulfillmentStatus === "PENDIENTE") {
-      updateData.fulfillmentStatus = "EN_PREPARACION";
-    }
-
-    const order = await prisma.order.update({
-      where: { id: parseInt(id) },
-      data: updateData,
-    });
-
     // Devolver stock si una COTIZACION pasa a CANCELLED o REJECTED
     // - Productos sin variantes: stock fue reservado al crear → devolverlo
     // - Productos con variantes Y variantId asignado: stock fue descontado al confirmar → devolverlo
     // - Productos con variantes SIN variantId: nunca se reservó stock → nada que devolver
     const wasCotizacion = existing.paymentMethod === "COTIZACION";
     const wasResolved   = ["APPROVED", "CANCELLED", "REJECTED"].includes(existing.status);
-    if ((status === "CANCELLED" || status === "REJECTED") && wasCotizacion && !wasResolved) {
+    const willReturnStock = (status === "CANCELLED" || status === "REJECTED") && wasCotizacion && !wasResolved;
+
+    const updateData = { status };
+    // Al abonar, pasar automáticamente a "En preparación" si estaba en Pendiente
+    if (status === "APPROVED" && existing.fulfillmentStatus === "PENDIENTE") {
+      updateData.fulfillmentStatus = "EN_PREPARACION";
+    }
+    // Se devuelve el stock: la orden vuelve a no tener nada descontado
+    if (willReturnStock) updateData.stockDeducted = false;
+
+    const order = await prisma.order.update({
+      where: { id: parseInt(id) },
+      data: updateData,
+    });
+
+    if (willReturnStock) {
       // Recargar items frescos para capturar variantIds asignados en approveCotizacion
       const freshItems = await prisma.orderItem.findMany({ where: { orderId: existing.id } });
       for (const item of freshItems) {
@@ -730,9 +735,13 @@ async function updateOrderStatus(req, res) {
     }
 
     // Descontar stock solo si pasa a APPROVED y antes NO estaba APPROVED.
-    // EXCEPCIÓN: las cotizaciones ya descontaron el stock al crearse → no descontar de nuevo.
-    // (evita doble descuento)
-    if (status === "APPROVED" && existing.status !== "APPROVED" && !wasCotizacion) {
+    // EXCEPCIÓN 1: las cotizaciones ya descontaron el stock al crearse → no descontar de nuevo.
+    // EXCEPCIÓN 2 (stockDeducted): la orden ya tiene su stock descontado por otro camino. Pasa con
+    //   las cotizaciones que el cliente paga (confirmCotizacionPayment les cambia el paymentMethod,
+    //   así que dejan de ser COTIZACION y la excepción 1 ya no las cubría: se descontaba dos veces)
+    //   y con las ventas manuales, que descuentan al registrarse aunque queden en Pendiente.
+    const yaDescontado = existing.stockDeducted;
+    if (status === "APPROVED" && existing.status !== "APPROVED" && !wasCotizacion && !yaDescontado) {
       for (const item of existing.items) {
         // Si el item tiene variante, descontar stock de la variante; si no, del producto base.
         if (item.variantId) {
@@ -1664,11 +1673,19 @@ async function buildSnapshot(orderId) {
   return items.map((i) => ({
     id:        i.id,
     productId: i.productId,
-    name:      i.product?.name || "",
+    // Antes: name/image salían solo de i.product. Un ítem "libre" (los que el admin escribe a mano
+    // en una venta o cotización manual, sin productId) o un producto borrado quedaban con nombre
+    // vacío e imagen null en la pantalla del cliente. productName/productImage son el snapshot que
+    // guarda la propia línea.
+    name:      i.product?.name || i.productName || "",
     price:     i.price,
     currency:  i.currency,
     quantity:  i.quantity,
-    image:     i.product?.images?.[0] || null,
+    image:     i.product?.images?.[0] || i.productImage || null,
+    // variantLabel: la variante de esa línea. La pantalla del cliente ya la muestra y oculta las
+    // que asigna el admin al aprobar (variantByAdmin), así que se mandan las dos.
+    variantLabel:   i.variantLabel || null,
+    variantByAdmin: i.variantByAdmin,
   }));
 }
 
@@ -1833,7 +1850,10 @@ async function approveCotizacion(req, res) {
     // Solo pasa a APPROVED cuando se confirma el pago (manual o via webhook).
     const updated = await prisma.order.update({
       where: { id: orderId },
-      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, ...totalsData },
+      // stockDeducted: acá arriba se descontó el stock de las variantes asignadas, y el de los
+      // productos sin variantes ya estaba reservado desde que se creó la cotización. Con la marca,
+      // cuando el cliente la pague no se vuelve a descontar todo de nuevo.
+      data:  { status: "QUOTE_APPROVED", clientSnapshot: snapshot, adminNotes: adminNotes || null, stockDeducted: true, ...totalsData },
     });
 
     // Solo notificar al cliente si notify !== false ("Aprobar sin notificar" lo saltea).
@@ -1850,6 +1870,212 @@ async function approveCotizacion(req, res) {
   } catch (err) {
     console.error("approveCotizacion error:", err);
     res.status(500).json({ error: "Error al aprobar la cotización" });
+  }
+}
+
+// PUT /api/orders/my-quotes/:id/items — El CLIENTE modifica su propia cotización
+// Recibe la lista completa de líneas como queda: { items: [{ id?, productId?, quantity }] }
+//   · con id  → línea que ya estaba: solo se le puede cambiar la cantidad (el precio lo pone la tienda)
+//   · con productId → producto que agrega el cliente: el precio SIEMPRE se calcula acá, nunca se
+//     acepta el que mande el navegador
+//   · las líneas que no vengan se eliminan de la cotización
+// Al terminar, la cotización vuelve a PENDING: el admin revisa precios, stock y variantes y la
+// aprueba de nuevo. Hasta entonces el cliente no puede pagarla.
+async function updateMyQuoteItems(req, res) {
+  try {
+    const orderId    = parseInt(req.params.id);
+    const customerId = req.user.id;
+    const { items }  = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "La cotización tiene que quedar con al menos un producto. Si no querés ninguno, cancelala." });
+    }
+
+    const order = await prisma.order.findFirst({
+      where:   { id: orderId, customerId, paymentMethod: "COTIZACION" },
+      include: { items: true },
+    });
+    if (!order) return res.status(404).json({ error: "Cotización no encontrada" });
+
+    // Editable mientras no esté pagada ni resuelta: PENDING (en revisión) o QUOTE_APPROVED (aprobada
+    // y esperando el pago). Una vez que el cliente confirmó el pago ya no se toca.
+    if (!["PENDING", "QUOTE_APPROVED"].includes(order.status)) {
+      return res.status(400).json({ error: "Esta cotización ya no se puede modificar. Escribinos y la vemos juntos." });
+    }
+
+    const isMayorista = order.customerType === "MAYORISTA";
+    const tipoCliente = isMayorista ? "MAYORISTA" : "MINORISTA";
+    const actuales    = new Map(order.items.map((i) => [i.id, i]));
+
+    // ── 1. Interpretar lo que mandó el cliente ──
+    const cambios = []; // líneas que ya existían: { item, quantity }
+    const nuevas  = []; // productos agregados:    { product, quantity, price, currency }
+    const vistos  = new Set();
+
+    for (const raw of items) {
+      const quantity = parseInt(raw.quantity);
+      if (!quantity || quantity < 1) {
+        return res.status(400).json({ error: "Las cantidades tienen que ser de 1 unidad o más" });
+      }
+
+      if (raw.id) {
+        const item = actuales.get(parseInt(raw.id));
+        if (!item)             return res.status(400).json({ error: "Una de las líneas ya no existe en la cotización. Recargá la página." });
+        if (vistos.has(item.id)) return res.status(400).json({ error: "Hay una línea repetida" });
+        vistos.add(item.id);
+        cambios.push({ item, quantity });
+        continue;
+      }
+
+      const productId = parseInt(raw.productId);
+      if (!productId) return res.status(400).json({ error: "Falta el producto en una de las líneas nuevas" });
+      if (order.items.some((i) => i.productId === productId)) {
+        return res.status(400).json({ error: "Ese producto ya está en la cotización: cambiale la cantidad en vez de agregarlo de nuevo" });
+      }
+      if (nuevas.some((n) => n.product.id === productId)) {
+        return res.status(400).json({ error: "Agregaste el mismo producto dos veces" });
+      }
+
+      const product = await prisma.product.findUnique({ where: { id: productId } });
+      // visibility: un minorista no puede meter en la cotización un producto exclusivo de mayoristas
+      // (ni al revés). Es la misma regla con la que se arma el catálogo.
+      if (!product || !product.active || (product.visibility !== "AMBOS" && product.visibility !== tipoCliente)) {
+        return res.status(400).json({ error: "Ese producto ya no está disponible" });
+      }
+
+      nuevas.push({
+        product,
+        quantity,
+        // El precio lo calcula SIEMPRE el servidor, con el precio de lista que le corresponde al
+        // cliente. Después el admin lo puede ajustar al revisar la cotización.
+        price:    effectiveUnitPrice({ product, variant: null, isMayorista, quantity }),
+        currency: effectiveCurrency({ product }),
+      });
+    }
+
+    const eliminadas = order.items.filter((i) => !vistos.has(i.id));
+    if (eliminadas.length === order.items.length && nuevas.length === 0) {
+      return res.status(400).json({ error: "La cotización tiene que quedar con al menos un producto. Si no querés ninguno, cancelala." });
+    }
+
+    // ── 2. Dónde vive el stock de cada línea ──
+    // Mismas reglas que usa el resto del circuito de cotizaciones:
+    //   · línea con variante asignada        → el stock está reservado en esa variante
+    //   · línea sin variante de un producto CON variantes → nunca se reservó nada (se reserva cuando
+    //     el admin asigna la variante al aprobar)
+    //   · línea sin variante de un producto SIN variantes → está reservado en el producto
+    //   · ítem libre (sin productId)         → no existe en el catálogo, no hay stock
+    const productIds = [...new Set([...order.items.map((i) => i.productId), ...nuevas.map((n) => n.product.id)].filter(Boolean))];
+    const conVariantes = {};
+    for (const pid of productIds) {
+      conVariantes[pid] = (await prisma.productVariant.count({ where: { productId: pid, active: true } })) > 0;
+    }
+    // Nota: si el admin repartió una línea entre VARIAS variantes al aprobar, queda variantId en null
+    // y solo el texto en variantLabel, así que no hay forma segura de saber de qué variante devolver:
+    // esas líneas no ajustan stock acá y se reacomodan cuando el admin vuelve a aprobar.
+    const reservaDe = (i) => {
+      if (!i.productId) return null;
+      if (i.variantId)  return { tipo: "variante", id: i.variantId };
+      if (conVariantes[i.productId]) return null;
+      return { tipo: "producto", id: i.productId };
+    };
+
+    // ── 3. Movimientos de stock (delta > 0 = descontar, delta < 0 = devolver) ──
+    const movimientos = new Map(); // "tipo:id" -> { tipo, id, delta }
+    const sumar = (ref, delta) => {
+      if (!ref || delta === 0) return;
+      const key = `${ref.tipo}:${ref.id}`;
+      const prev = movimientos.get(key) || { ...ref, delta: 0 };
+      prev.delta += delta;
+      movimientos.set(key, prev);
+    };
+
+    for (const { item, quantity } of cambios) sumar(reservaDe(item), quantity - item.quantity);
+    for (const item of eliminadas)            sumar(reservaDe(item), -item.quantity);
+    for (const n of nuevas) {
+      // Un producto con variantes que agrega el cliente no reserva stock: la variante la elige el
+      // admin al aprobar, y ahí se descuenta.
+      if (!conVariantes[n.product.id]) sumar({ tipo: "producto", id: n.product.id }, n.quantity);
+    }
+
+    // ── 4. Verificar que haya stock para lo que aumenta ──
+    for (const mov of movimientos.values()) {
+      if (mov.delta <= 0) continue;
+      if (mov.tipo === "variante") {
+        const v = await prisma.productVariant.findUnique({ where: { id: mov.id }, include: { product: { select: { name: true } } } });
+        if (v && !v.stockUnlimited && v.stock < mov.delta) {
+          return res.status(400).json({ error: `No hay stock suficiente de "${v.product?.name || "ese producto"}": quedan ${v.stock} unidades disponibles` });
+        }
+      } else {
+        const prod = await prisma.product.findUnique({ where: { id: mov.id } });
+        if (prod && !prod.stockUnlimited && prod.stock < mov.delta) {
+          return res.status(400).json({ error: `No hay stock suficiente de "${prod.name}": quedan ${prod.stock} unidades disponibles` });
+        }
+      }
+    }
+
+    // ── 5. Aplicar todo junto ──
+    await prisma.$transaction(async (tx) => {
+      for (const item of eliminadas) {
+        await tx.orderItem.delete({ where: { id: item.id } });
+      }
+      for (const { item, quantity } of cambios) {
+        if (quantity !== item.quantity) {
+          await tx.orderItem.update({ where: { id: item.id }, data: { quantity } });
+        }
+      }
+      for (const n of nuevas) {
+        await tx.orderItem.create({
+          data: { orderId, productId: n.product.id, quantity: n.quantity, price: n.price, currency: n.currency },
+        });
+      }
+      for (const mov of movimientos.values()) {
+        if (mov.delta === 0) continue;
+        if (mov.tipo === "variante") {
+          const v = await tx.productVariant.findUnique({ where: { id: mov.id } });
+          if (!v || v.stockUnlimited) continue;
+          await tx.productVariant.update({ where: { id: mov.id }, data: { stock: Math.max(0, v.stock - mov.delta) } });
+        } else {
+          const prod = await tx.product.findUnique({ where: { id: mov.id } });
+          if (!prod || prod.stockUnlimited) continue;
+          const nuevoStock = Math.max(0, prod.stock - mov.delta);
+          await tx.product.update({
+            where: { id: mov.id },
+            // Si al devolver stock el producto vuelve a tener unidades, se vuelve a publicar
+            // (mismo criterio que cuando se cancela una cotización).
+            data:  { stock: nuevoStock, ...(nuevoStock === 0 ? { active: false } : (mov.delta < 0 ? { active: true } : {})) },
+          });
+        }
+      }
+    });
+
+    for (const pid of productIds) {
+      try { await syncProductVisibility(pid); } catch (_) { /* no bloquear por esto */ }
+    }
+
+    // ── 6. La cotización vuelve a revisión ──
+    const totalsData = await recalcOrderTotals(orderId);
+    const snapshot   = await buildSnapshot(orderId);
+    const updated    = await prisma.order.update({
+      where: { id: orderId },
+      data:  {
+        ...totalsData,
+        clientSnapshot:     snapshot,
+        status:             "PENDING",
+        customerModifiedAt: new Date(),
+        // seenByAdmin en false: así vuelve a contar en el badge de Cotizaciones del panel.
+        seenByAdmin:        false,
+      },
+      include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
+    });
+
+    // Avisar al admin por email (el badge del panel ya se enciende con seenByAdmin)
+    sendCotizacionToAdmin({ ...updated, coupon: null }, { modificadaPorCliente: true }).catch(() => {});
+
+    res.json({ ...updated, items: snapshot });
+  } catch (err) {
+    console.error("updateMyQuoteItems error:", err);
+    res.status(500).json({ error: "Error al modificar la cotización" });
   }
 }
 
@@ -2074,10 +2300,14 @@ async function getMetrics(req, res) {
 async function applyCouponToOrder(req, res) {
   try {
     const orderId = parseInt(req.params.id);
-    const { couponCode, customerEmail } = req.body;
+    const { couponCode } = req.body;
+    // Antes: el email venía del body (const { couponCode, customerEmail } = req.body). Como se usa
+    // para los cupones personales y para el tope de usos por cliente, mandando otro email se podían
+    // saltear las dos cosas. Ahora sale de la cuenta con la que está logueado.
+    const customerEmail = req.user.email;
 
-    if (!couponCode || !customerEmail) {
-      return res.status(400).json({ valid: false, error: "Código y email son requeridos" });
+    if (!couponCode) {
+      return res.status(400).json({ valid: false, error: "Falta el código del cupón" });
     }
 
     const order = await prisma.order.findUnique({
@@ -2090,6 +2320,16 @@ async function applyCouponToOrder(req, res) {
       },
     });
     if (!order) return res.status(404).json({ valid: false, error: "Orden no encontrada" });
+
+    // SEGURIDAD: antes la orden se buscaba solo por número, sin mirar de quién era ni en qué estado
+    // estaba. Con eso, cualquier cliente logueado podía aplicarle un cupón a la orden de otro (o a
+    // una ya pagada, cambiándole el total) con solo probar números.
+    if (order.customerId !== req.user.id) {
+      return res.status(404).json({ valid: false, error: "Orden no encontrada" });
+    }
+    if (order.paymentMethod !== "COTIZACION" || !["PENDING", "QUOTE_APPROVED"].includes(order.status)) {
+      return res.status(400).json({ valid: false, error: "Esta orden no admite cupones" });
+    }
     if (order.couponId) return res.status(400).json({ valid: false, error: "Esta cotización ya tiene un cupón aplicado" });
 
     const coupon = await prisma.coupon.findUnique({
@@ -2197,7 +2437,7 @@ async function applyCouponToOrder(req, res) {
 // El stock se descuenta igual que en una venta normal.
 async function createManualOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType } = req.body;
+    const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta } = req.body;
 
     // Email es opcional en ventas manuales — solo el nombre es obligatorio
     if (!customerName) {
@@ -2207,11 +2447,19 @@ async function createManualOrder(req, res) {
       return res.status(400).json({ error: "La venta debe tener al menos un producto" });
     }
 
-    const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA"];
+    // Antes: validMethods no incluía COTIZACION y cualquier valor desconocido caía en EFECTIVO,
+    // así que no había forma de registrar una cotización desde el panel.
+    const validMethods = ["MERCADOPAGO", "EFECTIVO", "TRANSFERENCIA", "COTIZACION"];
     const method = validMethods.includes(paymentMethod) ? paymentMethod : "EFECTIVO";
+    const esCotizacion = method === "COTIZACION";
 
+    // Una cotización que arma el vendedor nace APROBADA: ya tiene los precios puestos, así que el
+    // cliente puede pagarla (o modificarla) apenas la recibe, sin un paso extra de revisión.
+    // Una venta manual sigue como antes: Abonada por defecto, o Pendiente si el admin lo eligió.
     const validStatuses = ["PENDING", "APPROVED"];
-    const orderStatus = validStatuses.includes(status) ? status : "APPROVED";
+    const orderStatus = esCotizacion
+      ? "QUOTE_APPROVED"
+      : (validStatuses.includes(status) ? status : "APPROVED");
 
     // Verificar stock y armar items con el precio que fijó el admin
     let total = 0;
@@ -2338,6 +2586,48 @@ async function createManualOrder(req, res) {
     // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
     total = totalesManual.totalArs;
 
+    // ── Cliente de la cotización ──────────────────────────────────────────────
+    // Una cotización solo se puede ver y pagar online si está vinculada a una cuenta. Por eso, cuando
+    // el vendedor la arma para un cliente que no eligió de la lista:
+    //   · si el email ya tiene cuenta → se vincula a esa (aunque haya cargado los datos a mano)
+    //   · si no tiene y pidió crearla → se crea sin contraseña y se le manda un mail para que la elija
+    //     (el login ya rechaza las cuentas sin contraseña, así que nadie puede entrar mientras tanto)
+    // Una venta normal sigue como antes: no crea ni vincula nada.
+    let customerIdFinal = customerId ? parseInt(customerId) : null;
+    let cuentaVinculada = null; // nombre de la cuenta que ya existía con ese email
+    let cuentaCreada    = null; // email al que se le mandó el "activá tu cuenta"
+
+    if (esCotizacion && !customerIdFinal && customerEmail && customerEmail.trim()) {
+      const existente = await findCustomerByEmail(prisma, customerEmail.trim());
+      if (existente) {
+        customerIdFinal = existente.id;
+        cuentaVinculada = existente.name;
+      } else if (crearCuenta) {
+        const nuevo = await prisma.customer.create({
+          data: {
+            name:   customerName,
+            email:  customerEmail.trim(),
+            phone:  customerPhone || null,
+            type:   customerType === "MAYORISTA" ? "MAYORISTA" : "MINORISTA",
+            status: "APPROVED",
+            // Sin contraseña: la elige el cliente con el link del mail.
+          },
+        });
+        customerIdFinal = nuevo.id;
+        cuentaCreada    = nuevo.email;
+
+        // Mismo mecanismo que "olvidé mi contraseña", pero con 7 días de validez: el cliente puede
+        // leer el mail bastante después de que le pasaron la cotización.
+        const token = crypto.randomBytes(32).toString("hex");
+        await prisma.customer.update({
+          where: { id: nuevo.id },
+          data:  { resetToken: token, resetTokenExpiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+        });
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+        sendPasswordResetEmail(nuevo, `${frontendUrl}/reset-password/${token}`, { cuentaNueva: true }).catch(() => {});
+      }
+    }
+
     // Crear la orden y descontar stock en una transacción
     const order = await prisma.$transaction(async (tx) => {
       // Actualizar el costo maestro de los productos/variantes que el admin confirmó en el cartel
@@ -2379,7 +2669,7 @@ async function createManualOrder(req, res) {
           // (el schema no permite null sin migración, string vacío es equivalente a "sin email")
           customerEmail: customerEmail || "",
           customerPhone: customerPhone || null,
-          customerId:    customerId ? parseInt(customerId) : null,
+          customerId:    customerIdFinal,
           total,
           status:        orderStatus,
           paymentMethod: method,
@@ -2393,6 +2683,10 @@ async function createManualOrder(req, res) {
           // (el default del schema) y la orden salía con el cartelito "NUEVO", y además sumaba al
           // badge de pendientes del sidebar si se registraba con estado Pendiente.
           seenByAdmin:   true,
+          // stockDeducted: la venta manual descuenta el stock acá arriba, en esta misma transacción.
+          // Sin esta marca, una venta manual Pendiente que después se pasa a Abonada volvía a
+          // descontarlo, y lo mismo pasaba con una cotización manual cuando el cliente la pagaba.
+          stockDeducted: true,
           ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd } : {}),
           items: { create: orderItems },
         },
@@ -2413,6 +2707,31 @@ async function createManualOrder(req, res) {
     // Reconstruir el "product" de los ítems libres desde su productName, así la respuesta ya
     // trae nombre para mostrar sin esperar al refetch de la lista (mismas vistas que producto borrado).
     hydrateDeletedProducts(order);
+
+    // ── Cotización: dejarla lista para el cliente ──
+    // clientSnapshot es lo único que ve el cliente en "Mis cotizaciones"; sin esto la vería vacía.
+    if (esCotizacion) {
+      const snapshot = await buildSnapshot(order.id);
+      await prisma.order.update({ where: { id: order.id }, data: { clientSnapshot: snapshot } });
+      order.clientSnapshot = snapshot;
+
+      // Aviso en la campanita (solo si la cotización está vinculada a una cuenta)
+      await createNotification(
+        order.customerId,
+        order.id,
+        "COTIZACION_APROBADA",
+        `Te preparamos la cotización #${order.id}. Podés verla y pagarla desde "Mis cotizaciones".`
+      ).catch(() => {});
+
+      // Email con el PDF adjunto. No se le avisa al admin: la acaba de crear él mismo.
+      if (order.customerEmail) {
+        sendCotizacionToCustomer(order, { fromAdmin: true }).catch(() => {});
+      }
+    }
+
+    // cuentaCreada / cuentaVinculada: para que el panel pueda avisarle al vendedor qué pasó con la
+    // cuenta del cliente (no son columnas de la orden, van solo en esta respuesta).
+    if (esCotizacion) return res.status(201).json({ ...order, cuentaCreada, cuentaVinculada });
 
     res.status(201).json(order);
   } catch (err) {
@@ -2774,7 +3093,7 @@ async function uploadManualItemImage(req, res) {
 module.exports = {
   uploadManualItemImage,
   getOrders, getOrder, createOrder, updateOrderStatus, updateOrderFields, getStats, getStatsUsd, getMetrics, deleteOrder,
-  getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById,
+  getMyOrders, getMyOrderById, getMyCotizaciones, getMyQuoteById, updateMyQuoteItems,
   updateOrderItem, deleteOrderItem, addItemToOrder, modifyOrder,
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
   applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen,

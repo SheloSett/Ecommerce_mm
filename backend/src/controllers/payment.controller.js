@@ -293,8 +293,14 @@ async function handleWebhook(req, res) {
         include: { items: { include: { product: true } }, coupon: true },
       });
 
-      if (order) {
+      // stockDeducted: las cotizaciones (y las ventas manuales) ya descontaron su stock antes de
+      // llegar acá. Sin este chequeo, pagar una cotización por MercadoPago lo descontaba dos veces.
+      if (order && order.stockDeducted) {
+        console.log(`[WEBHOOK] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
+      } else if (order) {
         for (const item of order.items) {
+          // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
+          if (!item.productId) continue;
           // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
           // producto base. Antes este loop descontaba siempre del producto base, así que en
           // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
@@ -328,7 +334,10 @@ async function handleWebhook(req, res) {
             });
           }
         }
+        await prisma.order.update({ where: { id: orderId }, data: { stockDeducted: true } });
+      }
 
+      if (order) {
         // Registrar el uso del cupón AHORA que el pago está confirmado (no al crear la orden).
         // Antes el uso se registraba al crear la orden y un pago rechazado/abandonado igual consumía
         // el cupón (los de un solo uso quedaban inutilizables). Idempotente: el findFirst evita
@@ -438,8 +447,10 @@ async function getOrderPaymentStatus(req, res) {
                 where:   { id: orderIdInt },
                 include: { items: true },
               });
-              if (fullOrder) {
+              // stockDeducted: ídem webhook — cotizaciones y ventas manuales ya descontaron.
+              if (fullOrder && !fullOrder.stockDeducted) {
                 for (const item of fullOrder.items) {
+                  if (!item.productId) continue; // ítem libre: no hay producto que tocar
                   const updated = await prisma.product.update({
                     where: { id: item.productId },
                     data:  { stock: { decrement: item.quantity } },
@@ -451,6 +462,7 @@ async function getOrderPaymentStatus(req, res) {
                     });
                   }
                 }
+                await prisma.order.update({ where: { id: orderIdInt }, data: { stockDeducted: true } });
               }
             }
             // Refrescar el objeto que devolvemos al frontend

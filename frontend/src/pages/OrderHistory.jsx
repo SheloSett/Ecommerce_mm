@@ -2,6 +2,7 @@ import { Fragment, useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { useNotifications } from "../context/NotificationContext";
 import { useCart } from "../context/CartContext";
 import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
@@ -353,6 +354,9 @@ export default function OrderHistory() {
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   const isMayorista = customer?.type === "MAYORISTA";
+  // quotesCount: cotizaciones vivas del cliente — la pestaña COTIZACIONES ahora se muestra a
+  // cualquiera que tenga alguna, no solo a mayoristas.
+  const { quotesCount } = useNotifications();
 
   return (
     <>
@@ -382,7 +386,8 @@ export default function OrderHistory() {
             <span className="px-6 py-4 text-sm font-bold text-[#006b2c] border-b-2 border-[#62df7d] -mb-[2px] tracking-wide">
               PEDIDOS
             </span>
-            {isMayorista && (
+            {/* Antes: solo mayoristas — ver el mismo cambio en Navbar.jsx */}
+            {(isMayorista || quotesCount > 0) && (
               <Link
                 to="/cotizaciones"
                 className="px-6 py-4 text-sm font-semibold text-[#565e74] hover:text-[#0b1c30] tracking-wide transition-colors"

@@ -216,10 +216,16 @@ export const ordersApi = {
   cancelCotizacion: (orderId, reason) => customerAuthApi.post(`/orders/${orderId}/cancel-by-customer`, { reason }),
   // Cliente: obtener una cotización propia por ID (para la página de pago)
   getMyQuoteById: (id) => customerAuthApi.get(`/orders/my-quotes/${id}`),
+  // El cliente modifica su propia cotización: manda la lista completa de líneas como queda.
+  // Cada línea es { id, quantity } si ya estaba, o { productId, quantity } si la agrega.
+  // El precio de lo que agrega lo calcula el backend (nunca se manda desde acá).
+  updateMyQuoteItems: (id, items) => customerAuthApi.put(`/orders/my-quotes/${id}/items`, { items }),
   // Cliente MAYORISTA: confirmar pago manual (efectivo o transferencia) — envía emails
   confirmCotizacionPayment: (orderId, paymentMethod) =>
     customerAuthApi.post(`/orders/${orderId}/confirm-payment`, { paymentMethod }),
   // Cliente MAYORISTA: aplicar cupón a una cotización aprobada antes de pagar
+  // customerEmail ya no lo usa el backend (toma el de la sesión, para que no se pueda mandar
+  // el de otra cuenta): se deja el parámetro para no romper las llamadas existentes.
   applyCoupon: (orderId, couponCode, customerEmail) =>
     customerAuthApi.patch(`/orders/${orderId}/apply-coupon`, { couponCode, customerEmail }),
   // Admin: modificar un pedido ya aprobado (post-pago)

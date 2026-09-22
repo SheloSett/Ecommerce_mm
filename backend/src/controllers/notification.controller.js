@@ -12,7 +12,14 @@ async function getMyNotifications(req, res) {
       take:    50,
     });
     const unreadCount = notifications.filter((n) => !n.read).length;
-    res.json({ notifications, unreadCount });
+    // quotesCount: cotizaciones vivas del cliente (mismo filtro que GET /orders/my-quotes). Se manda
+    // acá, aprovechando el polling que ya existe, para que el menú sepa si mostrar "Mis cotizaciones"
+    // sin una llamada extra. Antes el link se mostraba solo a mayoristas, pero ahora el vendedor
+    // puede armarle una cotización a cualquier cliente desde el panel.
+    const quotesCount = await prisma.order.count({
+      where: { customerId, paymentMethod: "COTIZACION", status: { not: "APPROVED" } },
+    });
+    res.json({ notifications, unreadCount, quotesCount });
   } catch (err) {
     console.error("getMyNotifications error:", err);
     res.status(500).json({ error: "Error al obtener notificaciones" });
