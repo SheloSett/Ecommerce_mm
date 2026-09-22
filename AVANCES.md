@@ -324,6 +324,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 153- arreglos sobre las cotizaciones nuevas: 1) una cotización sin pagar ya no aparece además en "Mis pedidos" del cliente (se veía duplicada, y encima como si fuera un pedido ya hecho); recién pasa a Pedidos cuando la paga. 2) el cliente ahora ve el descuento que le hiciste sobre el total de la venta: aparece el subtotal y el renglón "Descuento" arriba del total, tanto en Mis cotizaciones como en la pantalla de pago (antes el total ya venía rebajado pero parecía el precio de lista). El descuento por producto ya se veía tachado. ✅
 
+154- descuentos, dos retoques: 1) el campo de descuento de cada producto ahora se distingue del resto (etiqueta 🏷 verde, borde propio y el % adentro) — antes parecía un campo más entre Venta, Costo y Cantidad. 2) el resumen contaba mal: el subtotal arrancaba del precio YA rebajado, así que el descuento que le hacías a un producto no figuraba en el total descontado. Ahora el subtotal es a precio de lista y el renglón "Descuento" suma todo (lo de cada producto + el general + cupón), tanto en el panel como en la cotización del cliente y en la hoja impresa. El total final no cambió, solo el desglose. ✅
+
 ##
 
 

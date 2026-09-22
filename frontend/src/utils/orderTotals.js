@@ -20,6 +20,21 @@ import { formatPrice as formatPriceCurrency } from "./formatPrice";
 
 const isUsdItem = (i) => (i?.currency || "ARS") === "USD";
 
+// Descuento que sale de las líneas: lo que se le bajó a cada producto respecto de su precio de
+// lista (item.listPrice). Va aparte del cupón y del descuento general del pedido.
+//
+// Antes el subtotal se armaba con los precios YA rebajados, así que ese descuento no aparecía en
+// ningún total: el cliente veía "Subtotal 8.308,10 · Descuento 830,81" cuando en realidad la lista
+// sumaba 8.398,00 y el descuento total era 920,71. El total final no cambia, solo el desglose.
+function lineDiscount(items, currency) {
+  return (items || [])
+    .filter((i) => (isUsdItem(i) ? "USD" : "ARS") === currency)
+    .reduce((s, i) => {
+      const lista = i?.listPrice || 0;
+      return lista > i.price ? s + (lista - i.price) * i.quantity : s;
+    }, 0);
+}
+
 function sumLines(items, currency) {
   return (items || [])
     .filter((i) => (isUsdItem(i) ? "USD" : "ARS") === currency)
@@ -32,9 +47,10 @@ export function getOrderTotals(order) {
 
   // ── Caso 1: sin dólares ────────────────────────────────────────────────────
   if (!hasUsd) {
-    // discount junta el cupón y el descuento manual que puso el vendedor: los dos ya están restados
-    // dentro de order.total, así que el subtotal solo cierra si se suman los dos de vuelta.
-    const discount = (order?.couponDiscount || 0) + (order?.manualDiscount || 0);
+    // discount junta los tres descuentos posibles: el de cada producto, el cupón y el que puso el
+    // vendedor sobre toda la venta. Los tres ya están restados dentro de order.total, así que el
+    // subtotal (a precio de lista) solo cierra si se suman de vuelta.
+    const discount = (order?.couponDiscount || 0) + (order?.manualDiscount || 0) + lineDiscount(items, "ARS");
     const iva      = order?.ivaAmount || 0;
     const total    = order?.total || 0;
     return {
@@ -61,9 +77,9 @@ export function getOrderTotals(order) {
   }
 
   // ── Caso 2: pedido mixto nuevo ─────────────────────────────────────────────
-  const dArs = (order.couponDiscount || 0) + (order.manualDiscount || 0);
+  const dArs = (order.couponDiscount || 0) + (order.manualDiscount || 0) + lineDiscount(items, "ARS");
   const iArs = order.ivaAmount || 0;
-  const dUsd = (order.couponDiscountUsd || 0) + (order.manualDiscountUsd || 0);
+  const dUsd = (order.couponDiscountUsd || 0) + (order.manualDiscountUsd || 0) + lineDiscount(items, "USD");
   const iUsd = order.ivaAmountUsd || 0;
   return {
     hasUsd: true,

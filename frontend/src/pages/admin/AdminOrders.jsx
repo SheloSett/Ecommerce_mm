@@ -421,10 +421,17 @@ export default function AdminOrders() {
     return d > 0 ? Math.round(base * (1 - d / 100) * 100) / 100 : base;
   };
 
-  // Subtotal: la suma de las líneas YA con el descuento de cada producto aplicado.
-  const manualSubtotal = manualForm.items.reduce(
-    (sum, it) => sum + precioConDesc(it) * (parseInt(it.quantity) || 0), 0
+  // Subtotal a precio de LISTA (sin ningún descuento): es contra este número que se muestra
+  // después cuánto se descontó en total.
+  const manualSubtotalLista = manualForm.items.reduce(
+    (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
   );
+  // Lo que se bajó producto por producto
+  const manualDescLineas = manualForm.items.reduce(
+    (sum, it) => sum + ((parseFloat(it.price) || 0) - precioConDesc(it)) * (parseInt(it.quantity) || 0), 0
+  );
+  // Subtotal ya con los descuentos de cada línea: sobre este se aplica el descuento general.
+  const manualSubtotal = manualSubtotalLista - manualDescLineas;
 
   // Descuento sobre toda la venta (el de cada producto ya está dentro del subtotal).
   // Mismo criterio que el backend: el porcentaje se aplica al subtotal, el monto fijo se topea.
@@ -2677,20 +2684,28 @@ ${pagesHtml}
                               placeholder="0.00"
                             />
                           </div>
-                          <div className="w-20">
+                          <div className="w-24">
                             {/* Descuento de ESTE producto: baja el precio unitario de la línea. El
-                                precio de lista se guarda igual, para mostrarlo tachado. */}
-                            <label className="block text-xs text-slate-500 mb-1">Desc. %</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="1"
-                              value={item.desc}
-                              onChange={(e) => setManualItem(idx, "desc", e.target.value)}
-                              className="w-full px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              placeholder="0"
-                            />
+                                precio de lista se guarda igual, para mostrarlo tachado. Resaltado en
+                                verde para que no se confunda con los otros campos de la fila. */}
+                            <label className="block text-xs font-bold text-emerald-700 mb-1">🏷 Descuento</label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={item.desc}
+                                onChange={(e) => setManualItem(idx, "desc", e.target.value)}
+                                className={`w-full pl-2 pr-6 py-2 rounded-lg text-sm border-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors ${
+                                  parseFloat(item.desc) > 0
+                                    ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
+                                    : "border-emerald-200 bg-emerald-50/40"
+                                }`}
+                                placeholder="0"
+                              />
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-emerald-600 pointer-events-none">%</span>
+                            </div>
                           </div>
                           <div className="w-24">
                             <label className="block text-xs text-slate-500 mb-1">Cantidad *</label>
@@ -2858,7 +2873,7 @@ ${pagesHtml}
               {/* Descuento sobre toda la venta */}
               <div className="flex items-end gap-2">
                 <div className="w-40">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Descuento general</label>
+                  <label className="block text-xs font-bold text-emerald-700 mb-1">🏷 Descuento general</label>
                   <select
                     value={manualForm.manualDiscountType}
                     onChange={(e) => setManualForm((p) => ({ ...p, manualDiscountType: e.target.value }))}
@@ -2887,9 +2902,13 @@ ${pagesHtml}
               {/* Total y acciones */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div className="text-sm font-bold text-slate-800">
-                  {manualDescGeneral > 0 && (
+                  {(manualDescGeneral > 0 || manualDescLineas > 0) && (
                     <span className="block text-xs font-normal text-slate-500">
-                      Subtotal: {formatPrice(manualSubtotal)} · Descuento: <span className="text-emerald-600">−{formatPrice(manualDescGeneral)}</span>
+                      Subtotal: {formatPrice(manualSubtotalLista)} · Descuento:{" "}
+                      <span className="text-emerald-600 font-semibold">−{formatPrice(manualDescLineas + manualDescGeneral)}</span>
+                      {manualDescLineas > 0 && manualDescGeneral > 0 && (
+                        <span className="text-slate-400"> ({formatPrice(manualDescLineas)} en productos + {formatPrice(manualDescGeneral)} general)</span>
+                      )}
                     </span>
                   )}
                   Total: <span className="text-blue-600 text-base">{formatPrice(manualTotal)}</span>

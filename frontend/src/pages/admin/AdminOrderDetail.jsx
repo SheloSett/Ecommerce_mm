@@ -824,24 +824,35 @@ export default function AdminOrderDetail() {
                             className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
                           />
                         </div>
+                        {/* Descuento de este producto: baja su precio de venta. El de lista queda
+                            guardado para mostrarlo tachado en la cotización y en la impresión.
+                            Va resaltado (etiqueta verde + borde propio) porque entre "Venta", "Costo"
+                            y "Cantidad" pasaba por un campo más y no se notaba que era el descuento. */}
                         <div className="flex items-center gap-1">
-                          {/* Descuento de este producto: baja su precio de venta. El de lista queda
-                              guardado para mostrarlo tachado en la cotización y en la impresión. */}
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Desc. %</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="1"
-                            value={item.desc || ""}
-                            onChange={(e) => updateEditDesc(idx, e.target.value)}
-                            placeholder="0"
-                            title="Descuento de este producto"
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
-                          />
+                          <span className={`text-[10px] font-bold w-12 text-right ${parseFloat(item.desc) > 0 ? "text-emerald-700" : "text-emerald-600"}`}>
+                            🏷 Desc.
+                          </span>
+                          <div className="relative w-24">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={item.desc || ""}
+                              onChange={(e) => updateEditDesc(idx, e.target.value)}
+                              placeholder="0"
+                              title="Descuento de este producto, en porcentaje"
+                              className={`w-full text-right rounded-lg pl-2 pr-6 py-1 text-sm border-2 transition-colors ${
+                                parseFloat(item.desc) > 0
+                                  ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
+                                  : "border-emerald-200 bg-emerald-50/40"
+                              }`}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-emerald-600 pointer-events-none">%</span>
+                          </div>
                         </div>
                         {parseFloat(item.desc) > 0 && (
-                          <p className="text-[11px] text-emerald-600 font-semibold">
+                          <p className="text-[11px] text-emerald-700 font-bold bg-emerald-50 rounded px-1.5 py-0.5">
                             Queda {formatPrice(precioLineaConDesc(item))} c/u
                           </p>
                         )}
@@ -910,7 +921,7 @@ export default function AdminOrderDetail() {
                 {/* Descuento sobre todo el pedido */}
                 <div className="flex items-end gap-2 mt-4 pt-4 border-t border-slate-100">
                   <div className="w-40">
-                    <label className="block text-xs font-medium text-slate-600 mb-1">Descuento general</label>
+                    <label className="block text-xs font-bold text-emerald-700 mb-1">🏷 Descuento general</label>
                     <select
                       value={editDiscount.type}
                       onChange={(e) => setEditDiscount((d) => ({ ...d, type: e.target.value }))}
@@ -939,12 +950,19 @@ export default function AdminOrderDetail() {
                     {/* Separado por moneda: si la edición mezcla pesos y dólares se muestran los dos
                         montos, nunca sumados entre sí. */}
                     {(() => {
-                      // Los subtotales ya llevan el descuento de cada línea aplicado.
+                      // ars/usd = subtotales ya con el descuento de cada línea (sobre estos se
+                      // calcula el descuento general). listaArs/listaUsd = los mismos a precio de
+                      // lista, para poder mostrar cuánto se descontó en total.
                       const sum = (cur) => editItems
                         .filter((i) => (i.currency || "ARS") === cur)
                         .reduce((s, i) => s + precioLineaConDesc(i) * parseInt(i.quantity || 0), 0);
+                      const sumLista = (cur) => editItems
+                        .filter((i) => (i.currency || "ARS") === cur)
+                        .reduce((s, i) => s + (parseFloat(i.price) || 0) * parseInt(i.quantity || 0), 0);
                       const ars = sum("ARS");
                       const usd = sum("USD");
+                      const listaArs = sumLista("ARS");
+                      const listaUsd = sumLista("USD");
                       const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
                       // Descuento general sobre lo que quedó (mismo criterio que el backend: el % va
                       // a las dos monedas, el monto fijo está en pesos y solo baja los pesos).
@@ -952,12 +970,15 @@ export default function AdminOrderDetail() {
                       const esPct = editDiscount.type === "PERCENTAGE";
                       const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
                       const dUsd = v > 0 && esPct ? Math.round(usd * Math.min(100, v)) / 100 : 0;
+                      // Descuento total = lo de cada producto + el general
+                      const descTotalArs = (listaArs - ars) + dArs;
+                      const descTotalUsd = (listaUsd - usd) + dUsd;
                       return (
                         <span className="font-bold text-slate-800">
-                          {dArs > 0 || dUsd > 0 ? (
+                          {descTotalArs > 0 || descTotalUsd > 0 ? (
                             <span className="block text-[11px] font-normal text-slate-500">
-                              Subtotal {formatPrice(ars)}{anyUsd && ` + ${formatPriceWithCurrency(usd, "USD")}`} ·
-                              <span className="text-emerald-600"> −{formatPrice(dArs)}{dUsd > 0 && ` / −${formatPriceWithCurrency(dUsd, "USD")}`}</span>
+                              Subtotal {formatPrice(listaArs)}{anyUsd && ` + ${formatPriceWithCurrency(listaUsd, "USD")}`} ·
+                              <span className="text-emerald-600 font-semibold"> −{formatPrice(descTotalArs)}{descTotalUsd > 0 && ` / −${formatPriceWithCurrency(descTotalUsd, "USD")}`}</span>
                             </span>
                           ) : null}
                           {(!anyUsd || ars > 0) && formatPrice(Math.max(0, ars - dArs))}
