@@ -292,8 +292,38 @@ export default function PayQuotation() {
                       {quoteHasUsd && T.usd.subtotal > 0 && <div>{formatPriceWithCurrency(T.usd.subtotal, "USD")}</div>}
                     </span>
                   </div>
-                  <div className="flex justify-between text-[#006b2c] font-semibold">
-                    <span>Descuento</span>
+                  {(T.ars.line > 0 || T.usd.line > 0) && (
+                    <div className="flex justify-between text-[#006b2c]">
+                      <span>Descuento en productos</span>
+                      <span className="text-right">
+                        {T.ars.line > 0 && <div>−{formatPrice(T.ars.line)}</div>}
+                        {T.usd.line > 0 && <div>−{formatPriceWithCurrency(T.usd.line, "USD")}</div>}
+                      </span>
+                    </div>
+                  )}
+                  {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
+                    <div className="flex justify-between text-[#006b2c]">
+                      <span>Cupón{quote.coupon?.code ? ` ${quote.coupon.code}` : ""}</span>
+                      <span className="text-right">
+                        {T.ars.coupon > 0 && <div>−{formatPrice(T.ars.coupon)}</div>}
+                        {T.usd.coupon > 0 && <div>−{formatPriceWithCurrency(T.usd.coupon, "USD")}</div>}
+                      </span>
+                    </div>
+                  )}
+                  {(T.ars.manual > 0 || T.usd.manual > 0) && (
+                    <div className="flex justify-between text-[#006b2c]">
+                      <span>
+                        Descuento general
+                        {quote.manualDiscountType === "PERCENTAGE" && quote.manualDiscountValue ? ` (${quote.manualDiscountValue}%)` : ""}
+                      </span>
+                      <span className="text-right">
+                        {T.ars.manual > 0 && <div>−{formatPrice(T.ars.manual)}</div>}
+                        {T.usd.manual > 0 && <div>−{formatPriceWithCurrency(T.usd.manual, "USD")}</div>}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-[#006b2c] font-bold border-t border-[#bdcaba]/30 pt-1">
+                    <span>Ahorrás</span>
                     <span className="text-right">
                       {T.ars.discount > 0 && <div>−{formatPrice(T.ars.discount)}</div>}
                       {T.usd.discount > 0 && <div>−{formatPriceWithCurrency(T.usd.discount, "USD")}</div>}

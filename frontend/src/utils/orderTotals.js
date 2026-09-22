@@ -50,14 +50,20 @@ export function getOrderTotals(order) {
     // discount junta los tres descuentos posibles: el de cada producto, el cupón y el que puso el
     // vendedor sobre toda la venta. Los tres ya están restados dentro de order.total, así que el
     // subtotal (a precio de lista) solo cierra si se suman de vuelta.
-    const discount = (order?.couponDiscount || 0) + (order?.manualDiscount || 0) + lineDiscount(items, "ARS");
+    // line / coupon / manual: las tres partes del descuento, para poder mostrarlas por separado
+    // ("descuento en productos" vs. "descuento general"). discount es la suma, que es lo que usan
+    // las pantallas que muestran un solo renglón.
+    const line     = lineDiscount(items, "ARS");
+    const coupon   = order?.couponDiscount || 0;
+    const manual   = order?.manualDiscount || 0;
+    const discount = coupon + manual + line;
     const iva      = order?.ivaAmount || 0;
     const total    = order?.total || 0;
     return {
       hasUsd:  false,
       legacy:  false,
-      ars: { subtotal: total + discount - iva, discount, iva, total },
-      usd: { subtotal: 0, discount: 0, iva: 0, total: 0 },
+      ars: { subtotal: total + discount - iva, discount, line, coupon, manual, iva, total },
+      usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: 0 },
     };
   }
 
@@ -71,21 +77,27 @@ export function getOrderTotals(order) {
     return {
       hasUsd: true,
       legacy: true,
-      ars: { subtotal: subtotalArs, discount: 0, iva: 0, total: subtotalArs },
-      usd: { subtotal: subtotalUsd, discount: 0, iva: 0, total: subtotalUsd },
+      ars: { subtotal: subtotalArs, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: subtotalArs },
+      usd: { subtotal: subtotalUsd, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: subtotalUsd },
     };
   }
 
   // ── Caso 2: pedido mixto nuevo ─────────────────────────────────────────────
-  const dArs = (order.couponDiscount || 0) + (order.manualDiscount || 0) + lineDiscount(items, "ARS");
+  const lArs = lineDiscount(items, "ARS");
+  const cArs = order.couponDiscount || 0;
+  const mArs = order.manualDiscount || 0;
+  const dArs = cArs + mArs + lArs;
   const iArs = order.ivaAmount || 0;
-  const dUsd = (order.couponDiscountUsd || 0) + (order.manualDiscountUsd || 0) + lineDiscount(items, "USD");
+  const lUsd = lineDiscount(items, "USD");
+  const cUsd = order.couponDiscountUsd || 0;
+  const mUsd = order.manualDiscountUsd || 0;
+  const dUsd = cUsd + mUsd + lUsd;
   const iUsd = order.ivaAmountUsd || 0;
   return {
     hasUsd: true,
     legacy: false,
-    ars: { subtotal: (order.total || 0) + dArs - iArs, discount: dArs, iva: iArs, total: order.total || 0 },
-    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, iva: iUsd, total: order.totalUsd || 0 },
+    ars: { subtotal: (order.total || 0) + dArs - iArs, discount: dArs, line: lArs, coupon: cArs, manual: mArs, iva: iArs, total: order.total || 0 },
+    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, iva: iUsd, total: order.totalUsd || 0 },
   };
 }
 

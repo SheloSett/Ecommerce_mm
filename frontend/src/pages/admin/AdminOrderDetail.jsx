@@ -771,7 +771,13 @@ export default function AdminOrderDetail() {
               <div className="bg-white rounded-2xl border border-orange-300 p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="font-bold text-slate-800 text-base">✏️ Modificando pedido</h2>
-                  <button onClick={cancelEditMode} className="text-xs text-slate-500 hover:text-slate-700 underline">Cancelar</button>
+                  {/* Antes era un "Cancelar" subrayado chiquito que se perdía en la esquina */}
+                  <button
+                    onClick={cancelEditMode}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border-2 border-slate-300 bg-white text-sm font-bold text-slate-600 hover:bg-slate-100 hover:border-slate-400 hover:text-slate-800 transition-colors"
+                  >
+                    ✕ Cancelar
+                  </button>
                 </div>
 
                 {/* Items editables */}
@@ -1092,7 +1098,26 @@ export default function AdminOrderDetail() {
                         {moneyPair(subtotal, T.usd.subtotal)}
                       </div>
                     )}
-                    {(discount > 0 || T.usd.discount > 0) && (
+                    {/* Antes este renglón decía siempre "Cupón" y sumaba todos los descuentos ahí,
+                        aunque el pedido no tuviera cupón: ahora se separa lo que se rebajó producto
+                        por producto, el cupón y el descuento general de la venta. */}
+                    {(T.ars.line > 0 || T.usd.line > 0) && (
+                      <div className="flex justify-between items-start text-sm text-green-700 font-medium">
+                        <span>Descuento en productos</span>
+                        {moneyPair(T.ars.line, T.usd.line, { prefix: "−" })}
+                      </div>
+                    )}
+                    {(T.ars.manual > 0 || T.usd.manual > 0) && (
+                      <div className="flex justify-between items-start text-sm text-green-700 font-medium">
+                        <span>
+                          Descuento general
+                          {order.manualDiscountType === "PERCENTAGE" && order.manualDiscountValue
+                            ? ` (${order.manualDiscountValue}%)` : ""}
+                        </span>
+                        {moneyPair(T.ars.manual, T.usd.manual, { prefix: "−" })}
+                      </div>
+                    )}
+                    {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
                       <div className="flex justify-between items-start text-sm text-green-700 font-medium">
                         <span>
                           Cupón{" "}
@@ -1102,7 +1127,7 @@ export default function AdminOrderDetail() {
                             </span>
                           )}
                         </span>
-                        {moneyPair(discount, T.usd.discount, { prefix: "−" })}
+                        {moneyPair(T.ars.coupon, T.usd.coupon, { prefix: "−" })}
                       </div>
                     )}
                     {isMayorista && (iva > 0 || T.usd.iva > 0) && (

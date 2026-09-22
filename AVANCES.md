@@ -326,6 +326,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 154- descuentos, dos retoques: 1) el campo de descuento de cada producto ahora se distingue del resto (etiqueta 🏷 verde, borde propio y el % adentro) — antes parecía un campo más entre Venta, Costo y Cantidad. 2) el resumen contaba mal: el subtotal arrancaba del precio YA rebajado, así que el descuento que le hacías a un producto no figuraba en el total descontado. Ahora el subtotal es a precio de lista y el renglón "Descuento" suma todo (lo de cada producto + el general + cupón), tanto en el panel como en la cotización del cliente y en la hoja impresa. El total final no cambió, solo el desglose. ✅
 
+155- descuentos discriminados: donde antes había un solo renglón (y en el detalle del pedido decía "Cupón" aunque no hubiera ninguno), ahora se lista por separado "Descuento en productos", "Cupón" y "Descuento general (X%)", con el total al final. Va así en el detalle del pedido del admin, en la cotización del cliente (que cierra con "Ahorrás"), en la pantalla de pago y en la hoja impresa. Además, el botón Cancelar de "Modificando pedido" pasó de ser un texto subrayado chiquito a un botón con borde. ✅
+
 ##
 
 

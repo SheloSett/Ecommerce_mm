@@ -357,15 +357,36 @@ export default function QuotationHistory() {
                     {/* Fecha + total */}
                     <div className="mb-6">
                       <p className="text-sm text-[#565e74] mb-1">{formatDate(quote.createdAt)}</p>
-                      {/* Descuento que hizo la tienda (cupón y/o descuento del vendedor) */}
+                      {/* Descuentos que hizo la tienda, separados: lo que se rebajó producto por
+                          producto, el cupón y el descuento sobre el total de la cotización. */}
                       {hayDescuento && !T.legacy && (
-                        <div className="mb-2 text-sm">
+                        <div className="mb-2 text-sm space-y-0.5">
                           <p className="text-[#565e74]">
                             Subtotal: {formatPrice(T.ars.subtotal)}
                             {hasUsd && T.usd.subtotal > 0 && ` + ${formatPriceWithCurrency(T.usd.subtotal, "USD")}`}
                           </p>
-                          <p className="text-[#006b2c] font-semibold">
-                            Descuento: −{formatPrice(descArs)}
+                          {(T.ars.line > 0 || T.usd.line > 0) && (
+                            <p className="text-[#006b2c]">
+                              Descuento en productos: −{formatPrice(T.ars.line)}
+                              {T.usd.line > 0 && ` / −${formatPriceWithCurrency(T.usd.line, "USD")}`}
+                            </p>
+                          )}
+                          {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
+                            <p className="text-[#006b2c]">
+                              Cupón{quote.coupon?.code ? ` ${quote.coupon.code}` : ""}: −{formatPrice(T.ars.coupon)}
+                              {T.usd.coupon > 0 && ` / −${formatPriceWithCurrency(T.usd.coupon, "USD")}`}
+                            </p>
+                          )}
+                          {(T.ars.manual > 0 || T.usd.manual > 0) && (
+                            <p className="text-[#006b2c]">
+                              Descuento general
+                              {quote.manualDiscountType === "PERCENTAGE" && quote.manualDiscountValue
+                                ? ` (${quote.manualDiscountValue}%)` : ""}: −{formatPrice(T.ars.manual)}
+                              {T.usd.manual > 0 && ` / −${formatPriceWithCurrency(T.usd.manual, "USD")}`}
+                            </p>
+                          )}
+                          <p className="text-[#006b2c] font-bold">
+                            Ahorrás: −{formatPrice(descArs)}
                             {descUsd > 0 && ` / −${formatPriceWithCurrency(descUsd, "USD")}`}
                           </p>
                         </div>
