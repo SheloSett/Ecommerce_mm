@@ -338,6 +338,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 160- el stock ya no se reserva al hacer una cotizacion: se descuenta recien cuando la marcas Abonada, igual que cualquier otro pedido. Antes una cotizacion descontaba el stock apenas se creaba, asi que mientras la negociabas esa mercaderia quedaba bloqueada para el resto de la tienda, y si un producto llegaba a cero se despublicaba solo del catalogo. Sigue validando que haya stock cuando la armas, cuando el cliente la modifica y cuando le asignas una variante: lo que cambia es que no lo aparta. De paso quedaron arreglados tres agujeros viejos: sacarle un producto a una cotizacion o a una venta manual pendiente dejaba esas unidades reservadas para siempre; cancelar una venta ya cobrada no devolvia el stock; y pagar con MercadoPago un producto con variantes le descontaba al producto en vez de a la variante. Para el stock que las cotizaciones de hoy tienen retenido esta el script liberar-stock-cotizaciones.js. ✅
 
+161- productos que se venden solo a mayoristas (o solo a minoristas): la edicion rapida ya no muestra los campos de precio del publico al que no se le vende. Antes, si pasabas un producto a "solo mayoristas", seguian ahi Precio minorista y Oferta minorista con el precio viejo, y si vaciabas el campo el guardado fallaba con "Error al guardar los cambios" (ahora un precio vacio simplemente no pisa el que estaba). Ademas, ese producto aparecia con "$ 0,00" en la fila del listado de productos y en el buscador de la tienda: ahora la fila muestra el precio que si tiene (con la etiqueta May. o Min.) y el buscador muestra el precio que le corresponde a quien esta mirando, en su moneda, igual que el catalogo. ✅
+
 ##
 
 

@@ -1142,8 +1142,15 @@ async function quickUpdateProduct(req, res) {
 
     const updateData = {};
 
-    // Determinar el precio efectivo (el nuevo o el existente) para validar salePrice
-    const effectivePrice = price !== undefined ? parseFloat(price) : existing.price;
+    // Determinar el precio efectivo (el nuevo o el existente) para validar salePrice.
+    // Antes: parseFloat(price) a secas. Con el campo vacío daba NaN, se guardaba NaN y Prisma
+    // rechazaba el update: el admin veía "Error al guardar los cambios" sin más explicación. Ahora
+    // un precio vacío o no numérico simplemente no pisa el que ya estaba.
+    const priceNum = price !== undefined && price !== null && String(price).trim() !== ""
+      ? parseFloat(price)
+      : NaN;
+    const priceValido  = !isNaN(priceNum);
+    const effectivePrice = priceValido ? priceNum : existing.price;
 
     // Validar que salePrice minorista sea menor al precio minorista
     if (salePrice !== undefined && salePrice) {
@@ -1163,7 +1170,7 @@ async function quickUpdateProduct(req, res) {
     }
 
     // Solo actualizar los campos que vienen en el body
-    if (price !== undefined) updateData.price = effectivePrice;
+    if (priceValido) updateData.price = priceNum;
     if (salePrice !== undefined) updateData.salePrice = salePrice ? parseFloat(salePrice) : null;
     if (wholesalePrice !== undefined) updateData.wholesalePrice = wholesalePrice ? parseFloat(wholesalePrice) : null;
     if (wholesaleSalePrice !== undefined) updateData.wholesaleSalePrice = wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null;

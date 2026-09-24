@@ -12,6 +12,7 @@ import MobileBottomNav from "./MobileBottomNav";
 import useScrollLock from "../utils/useScrollLock";
 import toast from "react-hot-toast";
 import { trackSearch } from "../services/tracking";
+import { formatPrice } from "../utils/formatPrice";
 
 export default function Navbar() {
   const { totalItems } = useCart();
@@ -185,11 +186,22 @@ export default function Navbar() {
     setMobileSearchOpen(false);
   };
 
+  // Mismo criterio que la tarjeta del catálogo (ProductCard): el precio que le corresponde a quien
+  // está mirando. Antes miraba siempre el minorista, así que un producto que se vende SOLO a
+  // mayoristas — y que por eso no tiene precio minorista cargado — salía en el buscador como
+  // "$ 0,00" aunque su ficha mostrara el precio correcto. Tampoco respetaba la moneda: un producto
+  // en dólares se formateaba como pesos.
   const formatSuggestionPrice = (product) => {
-    const price = product.salePrice && product.salePrice < product.price
+    const esMayorista = customer?.type === "MAYORISTA";
+    const minorista = (product.salePrice && product.salePrice < product.price)
       ? product.salePrice
       : product.price;
-    return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
+    const mayorista = (product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice)
+      ? product.wholesaleSalePrice
+      : product.wholesalePrice;
+    // El || cubre al que tiene cargado solo uno de los dos precios: se muestra el que exista.
+    const precio = esMayorista ? (mayorista || minorista) : (minorista || mayorista);
+    return formatPrice(precio || 0, product.currency);
   };
 
   const handleLogout = () => {

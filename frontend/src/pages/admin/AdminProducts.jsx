@@ -1032,6 +1032,14 @@ export default function AdminProducts() {
   const basePrice = (p, type = priceType) =>
     (type === "wholesale" ? p.wholesalePrice : p.price) ?? null;
 
+  // Qué precios tiene sentido mostrar según para quién se vende el producto. Uno que es solo para
+  // mayoristas no tiene precio minorista: la edición rápida mostraba igual esos dos campos, así que
+  // quedaba a la vista un precio viejo que ya no se usa en ningún lado (y que además salía como
+  // "$ 0,00" en la fila del listado si se lo dejaba en cero).
+  // Un producto sin visibility cargada (los viejos) cuenta como "para todos".
+  const vendeAMinoristas = (p) => p.visibility !== "MAYORISTA";
+  const vendeAMayoristas = (p) => p.visibility !== "MINORISTA";
+
   const listPrice = (p, type = priceType) => {
     const base = basePrice(p, type);
     if (base == null) return null;
@@ -1582,13 +1590,21 @@ export default function AdminProducts() {
                             Antes era fijo el minorista:
                               {p.price != null && (... formatPriceCurrency(retailPrice(p), ...))} */}
                         {(() => {
-                          const vigente = listPrice(p);
-                          const base    = basePrice(p);
+                          // El producto puede no venderse al público del filtro (visible solo para
+                          // mayoristas mientras el filtro está en minorista, o al revés). Ahí no
+                          // tiene precio de ese tipo y la fila mostraba "$ 0,00": se muestra el
+                          // precio que sí tiene, aclarando de cuál se trata.
+                          const aplicaAlFiltro = priceType === "wholesale" ? vendeAMayoristas(p) : vendeAMinoristas(p);
+                          const tipo    = aplicaAlFiltro ? priceType : (priceType === "wholesale" ? "retail" : "wholesale");
+                          const vigente = listPrice(p, tipo);
+                          const base    = basePrice(p, tipo);
                           // Sin ese precio cargado (típico del mayorista, que es opcional): se avisa
                           // en vez de no mostrar nada. Filtrar por mayorista sirve también para
                           // encontrar los que falta completar, como "sin proveedor asignado".
+                          // Solo se avisa de lo que de verdad falta: si el producto no se vende a
+                          // ese público, no hay nada que completar.
                           if (vigente == null) {
-                            if (priceType !== "wholesale") return null;
+                            if (priceType !== "wholesale" || !aplicaAlFiltro) return null;
                             return (
                               <span className="text-xs text-amber-600 font-medium">
                                 ⚠️ sin precio mayorista
@@ -1597,10 +1613,13 @@ export default function AdminProducts() {
                           }
                           return (
                             <span className="text-xs text-slate-600 font-semibold">
-                              {/* Con el tipo en mayorista se aclara en la fila: el número solo no
-                                  se distingue del minorista de siempre. */}
-                              {priceType === "wholesale" && (
+                              {/* Se aclara de qué precio se trata cuando no es el minorista de
+                                  siempre: el número solo no se distingue. */}
+                              {tipo === "wholesale" && (
                                 <span className="mr-1 font-bold text-slate-400">May.</span>
+                              )}
+                              {tipo === "retail" && !aplicaAlFiltro && (
+                                <span className="mr-1 font-bold text-slate-400">Min.</span>
                               )}
                               {formatPriceCurrency(vigente, p.currency)}
                               {vigente !== base && (
@@ -1734,10 +1753,16 @@ export default function AdminProducts() {
                               {/* Para productos CON variantes: una sola columna "Precios" con los 4 inputs apilados según visibility.
                                   Para productos SIN variantes: 4 columnas separadas (formato original). */}
                               {(p._count?.variants ?? 0) === 0 ? <>
-                                <th className="px-2 py-3 w-28 xl:w-36">Precio minorista</th>
-                                <th className="px-2 py-3 w-28 xl:w-36">Oferta minorista</th>
-                                <th className="px-2 py-3 w-28 xl:w-36">Precio mayorista</th>
-                                <th className="px-2 py-3 w-28 xl:w-36">Oferta mayorista</th>
+                                {/* Solo las columnas del público al que se le vende este producto:
+                                    las otras no aplican (ver vendeAMinoristas/vendeAMayoristas). */}
+                                {vendeAMinoristas(p) && <>
+                                  <th className="px-2 py-3 w-28 xl:w-36">Precio minorista</th>
+                                  <th className="px-2 py-3 w-28 xl:w-36">Oferta minorista</th>
+                                </>}
+                                {vendeAMayoristas(p) && <>
+                                  <th className="px-2 py-3 w-28 xl:w-36">Precio mayorista</th>
+                                  <th className="px-2 py-3 w-28 xl:w-36">Oferta mayorista</th>
+                                </>}
                               </> : (
                                 <th className="px-2 py-3 w-40 xl:w-48">Precios</th>
                               )}
@@ -1885,14 +1910,18 @@ export default function AdminProducts() {
                               </td>
                               {/* Costo base del producto */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {vendeAMinoristas(p) && <>
                               {/* Precio minorista base del producto */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
                               {/* Oferta minorista */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.salePrice ?? ""} onChange={(e) => setQuickField(p.id, "salePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              </>}
+                              {vendeAMayoristas(p) && <>
                               {/* Precio mayorista */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.wholesalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
                               {/* Oferta mayorista */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.wholesaleSalePrice ?? ""} onChange={(e) => setQuickField(p.id, "wholesaleSalePrice", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              </>}
                               {/* SKU base del producto */}
                               <td className="px-2 xl:px-4 py-4"><input type="text" value={qv.sku ?? ""} onChange={(e) => setQuickField(p.id, "sku", e.target.value)} placeholder="SKU" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></td>
                               <td className="px-2 xl:px-4 py-4">
