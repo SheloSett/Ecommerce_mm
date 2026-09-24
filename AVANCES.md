@@ -340,6 +340,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 161- productos que se venden solo a mayoristas (o solo a minoristas): la edicion rapida ya no muestra los campos de precio del publico al que no se le vende. Antes, si pasabas un producto a "solo mayoristas", seguian ahi Precio minorista y Oferta minorista con el precio viejo, y si vaciabas el campo el guardado fallaba con "Error al guardar los cambios" (ahora un precio vacio simplemente no pisa el que estaba). Ademas, ese producto aparecia con "$ 0,00" en la fila del listado de productos y en el buscador de la tienda: ahora la fila muestra el precio que si tiene (con la etiqueta May. o Min.) y el buscador muestra el precio que le corresponde a quien esta mirando, en su moneda, igual que el catalogo. ✅
 
+162- ficha del producto: las categorias en las que el producto cae por regla (por ejemplo ULTIMAS UNIDADES con stock bajo) ahora aparecen tildadas en verde con la etiqueta "automatica" y la regla. Estan bloqueadas a proposito: no se guardan a mano en el producto, asi que cuando deja de cumplir la regla (le entra stock) sale sola de la categoria. ✅
+
 ##
 
 

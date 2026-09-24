@@ -155,6 +155,8 @@ export const categoriesApi = {
   // params opcional: { visibleFor } hace que los conteos por categoría reflejen solo lo que ese
   // tipo de cliente ve realmente (igual que la grilla). Sin params → cuenta todos los activos (admin).
   getAll: (params) => api.get("/categories", { params }),
+  // Categorías con regla (stock bajo, oferta, etc.) en las que cae ese producto ahora mismo
+  ruleMatches: (productId) => api.get(`/categories/rule-matches/${productId}`),
   create: (data) => api.post("/categories", data),
   update: (id, data) => api.put(`/categories/${id}`, data),
   delete: (id) => api.delete(`/categories/${id}`),

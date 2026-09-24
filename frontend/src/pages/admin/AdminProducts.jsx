@@ -423,7 +423,16 @@ export default function AdminProducts() {
     setShowModal(true);
   };
 
+  // Categorías en las que el producto cae por REGLA (stock bajo, oferta...). No se asignan a mano:
+  // se muestran tildadas y bloqueadas para que se vea que está ahí, y salen solas cuando deja de
+  // cumplir la regla. id (string) -> descripción de la regla.
+  const [ruleCats, setRuleCats] = useState({});
+
   const openEdit = (product) => {
+    setRuleCats({});
+    categoriesApi.ruleMatches(product.id)
+      .then((r) => setRuleCats(Object.fromEntries((r.data || []).map((c) => [c.id.toString(), c.description]))))
+      .catch(() => {});
     setShowVariants(false);
     setEditingProduct(product);
     setForm({
@@ -2550,7 +2559,30 @@ export default function AdminProducts() {
                       producto a una categoría de tercer nivel. flattenTree recorre hasta el fondo y
                       devuelve cada nodo con su `depth`, que acá se usa para la sangría. */}
                   {flattenTree(categories).map((opt) => {
-                    const checked = form.categoryIds.includes(opt.id.toString());
+                    const manual = form.categoryIds.includes(opt.id.toString());
+                    const regla  = ruleCats[opt.id.toString()];
+                    // Por regla y sin asignar a mano: tildada y bloqueada (no hay nada que destildar,
+                    // entra y sale sola). Si además está asignada a mano, se puede destildar normal.
+                    if (regla && !manual) {
+                      return (
+                        <label
+                          key={opt.id}
+                          className="flex items-center gap-2 px-3 py-2 bg-emerald-50/60 cursor-default"
+                          style={{ paddingLeft: `${12 + opt.depth * 16}px` }}
+                          title="Está en esta categoría automáticamente por su regla. Sale sola cuando deje de cumplirla."
+                        >
+                          <input type="checkbox" checked readOnly disabled className="rounded border-slate-300 text-emerald-600" />
+                          <span className="text-sm text-slate-700">
+                            {opt.depth > 0 && <span className="text-blue-400 mr-1">↳</span>}
+                            {opt.name}
+                          </span>
+                          <span className="ml-auto text-[11px] font-medium text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                            automática · {regla}
+                          </span>
+                        </label>
+                      );
+                    }
+                    const checked = manual;
                     return (
                       <label
                         key={opt.id}

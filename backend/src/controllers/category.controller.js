@@ -1,5 +1,5 @@
 const { PrismaClient, Prisma } = require("@prisma/client");
-const { normalizeRule, ruleProductIds } = require("../utils/categoryRules");
+const { normalizeRule, ruleProductIds, describeRule } = require("../utils/categoryRules");
 // Helpers de jerarquía: el anidado ya no está topeado en dos niveles, así que armar el árbol y
 // validar que un movimiento no cierre un ciclo necesita recursión. Ver utils/categoryTree.js.
 const { buildTree, wouldCreateCycle } = require("../utils/categoryTree");
@@ -268,4 +268,38 @@ async function deleteCategory(req, res) {
   }
 }
 
-module.exports = { getCategories, createCategory, updateCategory, deleteCategory };
+// GET /api/categories/rule-matches/:productId — Admin: categorías con regla en las que cae ese
+// producto AHORA. La regla no se guarda en el producto (se evalúa al consultar), así que la ficha
+// no la tenía tildada y parecía que el producto no estaba en esa categoría. Esto le permite a la
+// ficha mostrarla como "automática" sin asignarla a mano.
+async function getRuleMatchesForProduct(req, res) {
+  try {
+    const productId = parseInt(req.params.productId);
+    const product = await prisma.product.findUnique({ where: { id: productId }, select: { visibility: true } });
+    if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+
+    // Las reglas de oferta y de precio miran otro precio según el tipo de cliente: se evalúa con
+    // cada público al que se le vende el producto y alcanza con que cumpla en uno.
+    const publicos = product.visibility === "MAYORISTA" ? ["MAYORISTA"]
+      : product.visibility === "MINORISTA" ? ["MINORISTA"]
+      : ["MINORISTA", "MAYORISTA"];
+
+    const conRegla = (await prisma.category.findMany({ select: { id: true, name: true, rule: true } })).filter((c) => c.rule);
+    const matches = [];
+    for (const cat of conRegla) {
+      for (const visibleFor of publicos) {
+        const ids = await ruleProductIds(prisma, cat.rule, { visibleFor });
+        if (ids.includes(productId)) {
+          matches.push({ id: cat.id, name: cat.name, description: describeRule(cat.rule) });
+          break;
+        }
+      }
+    }
+    res.json(matches);
+  } catch (err) {
+    console.error("getRuleMatchesForProduct error:", err);
+    res.status(500).json({ error: "Error al calcular las categorías automáticas" });
+  }
+}
+
+module.exports = { getCategories, createCategory, updateCategory, deleteCategory, getRuleMatchesForProduct };
