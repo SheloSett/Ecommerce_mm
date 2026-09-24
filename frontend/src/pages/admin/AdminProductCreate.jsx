@@ -345,19 +345,22 @@ export default function AdminProductCreate() {
     return (
       <AdminLayout>
         <div className="max-w-5xl mx-auto">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+          {/* En celular va en columna: título arriba y los dos botones abajo, a lo ancho. Antes era
+              una sola fila y en pantalla angosta el título se aplastaba y "Ir al listado" quedaba
+              cortado afuera de la pantalla. */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div className="flex items-start sm:items-center gap-3 min-w-0">
+              <div className="w-10 h-10 shrink-0 rounded-full bg-green-100 flex items-center justify-center">
                 <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <div>
+              <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-slate-800">¡Producto creado!</h1>
-                <p className="text-sm text-slate-500">{savedProduct.name} — podés agregar variantes ahora o hacerlo después</p>
+                <p className="text-sm text-slate-500 break-words">{savedProduct.name} — podés agregar variantes ahora o hacerlo después</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:shrink-0">
               {/* Pedido del cliente: "+ Nuevo producto" en verde (igual que en el listado) e
                   "Ir al listado" en gris. Antes estaban al revés. */}
               <button
