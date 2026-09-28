@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
+import PrintPricesModal from "../../components/admin/PrintPricesModal";
 import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from "../../services/api";
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
@@ -86,6 +87,8 @@ export default function AdminOrders() {
   const [expandedOrders, setExpandedOrders] = useState(new Set());
   // Modal de confirmación para actualizar precio del producto en la BD
   const [priceUpdateConfirm, setPriceUpdateConfirm] = useState(null); // { productId, productName, newPrice }
+  // Modal "¿con precios o sin precios?" antes de imprimir: { list: órdenes, title }
+  const [printAsk, setPrintAsk] = useState(null);
 
   // Asignación de variantes en cotizaciones mayoristas
   const [variantPanelOpen, setVariantPanelOpen]     = useState({}); // { [itemId]: bool }
@@ -1072,7 +1075,9 @@ ${pagesHtml}
   // Construye el bloque <div class="page">…</div> de UNA orden. Reutilizado por la impresión
   // individual (handlePrint) y la masiva (handleBulkPrint) — así en la masiva cada orden queda en
   // su propia hoja, SIN mezclarse (page-break entre ellas, ver ORDER_PRINT_STYLES).
-  const buildOrderPageHTML = (order) => {
+  // withPrices = false: sin precio por unidad, sin total por línea y sin totales; la cantidad pasa
+  // a la columna de la derecha (se elige en PrintPricesModal).
+  const buildOrderPageHTML = (order, withPrices = true) => {
     // Una cotización se le manda al cliente (impresa o en PDF), así que se imprime distinto: sin la
     // ubicación en el depósito y con la nota mostrada como "Nota del vendedor" en lugar de interna.
     const esCotizacion = order.paymentMethod === "COTIZACION";
@@ -1110,13 +1115,13 @@ ${pagesHtml}
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              <div style="font-size:11px;color:#94a3b8">${item.listPrice > item.price
+              ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${item.listPrice > item.price
                 ? `<span style="text-decoration:line-through;opacity:.6">${formatPriceWithCurrency(item.listPrice, item.currency)}</span> <span style="color:#16a34a;font-weight:700">${formatPriceWithCurrency(item.price, item.currency)}</span>`
-                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
+                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>` : ""}
             </div>
           </div>
         </td>
-        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPriceWithCurrency(item.price * item.quantity, item.currency)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${withPrices ? formatPriceWithCurrency(item.price * item.quantity, item.currency) : `${item.quantity} unid.`}</td>
       </tr>`;
     }).join("");
 
@@ -1136,6 +1141,9 @@ ${pagesHtml}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(Tp.ars.total)}</td></tr>` : ""}
       ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(Tp.usd.total, "USD")}</td></tr>` : ""}`;
+
+    // Sin precios, el cierre de la hoja es solo el total de unidades.
+    const unitsRow = `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>UNIDADES</td><td ${totValueStyle}>${(order.items || []).reduce((s, i) => s + i.quantity, 0)}</td></tr>`;
 
     return `<div class="page">
 
@@ -1175,25 +1183,41 @@ ${pagesHtml}
   </table>
 
   <table class="totals-table">
-    <tbody>${totalRows}</tbody>
+    <tbody>${withPrices ? totalRows : unitsRow}</tbody>
   </table>
 
   <div class="footer">Generado el ${new Date().toLocaleString("es-AR")} · IGWT Store</div>
 </div>`;
   };
 
-  // Impresión de UNA orden
+  // Abre la hoja de una o más órdenes con los precios o sin ellos.
+  const printOrders = (list, withPrices) => {
+    const pages = list.map((o) => buildOrderPageHTML(o, withPrices)).join("\n");
+    if (list.length === 1) {
+      const titulo = list[0].paymentMethod === "COTIZACION" ? "Cotización" : "Orden";
+      openOrdersPrint(`${titulo} #${list[0].id} — IGWT Store`, pages);
+    } else {
+      openOrdersPrint(`${list.length} órdenes — IGWT Store`, pages);
+    }
+  };
+
+  // Impresión de UNA orden. Antes imprimía directo; ahora pregunta si la hoja lleva los precios.
+  // La cotización no pregunta: sin precios no cotiza nada.
   const handlePrint = (order) => {
-    const titulo = order.paymentMethod === "COTIZACION" ? "Cotización" : "Orden";
-    openOrdersPrint(`${titulo} #${order.id} — IGWT Store`, buildOrderPageHTML(order));
+    if (order.paymentMethod === "COTIZACION") return printOrders([order], true);
+    setPrintAsk({ list: [order], title: `Imprimir orden #${order.id}` });
   };
 
   // Impresión MASIVA: todas las órdenes seleccionadas, cada una en su hoja (sin mezclarse).
+  // La elección del modal vale para todas las hojas, cotizaciones incluidas.
   const handleBulkPrint = () => {
     const selected = orders.filter((o) => checkedIds.includes(o.id));
     if (selected.length === 0) return;
-    const pages = selected.map(buildOrderPageHTML).join("\n");
-    openOrdersPrint(`${selected.length} órdenes — IGWT Store`, pages);
+    if (selected.every((o) => o.paymentMethod === "COTIZACION")) return printOrders(selected, true);
+    setPrintAsk({
+      list: selected,
+      title: selected.length === 1 ? `Imprimir orden #${selected[0].id}` : `Imprimir ${selected.length} órdenes`,
+    });
   };
 
   // OC combinada: abre la orden de compra CONSOLIDADA de todas las órdenes seleccionadas
@@ -2331,6 +2355,15 @@ ${pagesHtml}
         )}
       </div>
 
+
+      {/* Modal: ¿la hoja impresa lleva los precios? */}
+      {printAsk && (
+        <PrintPricesModal
+          title={printAsk.title}
+          onCancel={() => setPrintAsk(null)}
+          onChoose={(withPrices) => { printOrders(printAsk.list, withPrices); setPrintAsk(null); }}
+        />
+      )}
 
       {/* Modal: ¿actualizar precio del producto en la BD? */}
       {priceUpdateConfirm && (

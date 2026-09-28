@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
+import PrintPricesModal from "../../components/admin/PrintPricesModal";
 import { ordersApi, productsApi, shippingApi, getImageUrl } from "../../services/api";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
@@ -125,6 +126,8 @@ export default function AdminOrderDetail() {
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef(null);
   const [showOriginal, setShowOriginal] = useState(false);
+  // Modal "¿con precios o sin precios?" antes de imprimir.
+  const [printAsk, setPrintAsk] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -368,9 +371,17 @@ export default function AdminOrderDetail() {
     }
   };
 
+  // Antes el botón imprimía directo; ahora pregunta si la hoja lleva los precios (PrintPricesModal).
+  // La cotización no pregunta: sin precios no cotiza nada.
   const handlePrint = () => {
     if (!order) return;
+    if (order.paymentMethod === "COTIZACION") return printOrder(true);
+    setPrintAsk(true);
+  };
 
+  // withPrices = false: sin precio por unidad, sin total por línea y sin totales; la cantidad pasa
+  // a la columna de la derecha. Misma hoja que la impresión de la lista (AdminOrders.jsx).
+  const printOrder = (withPrices) => {
     const status  = STATUS_CONFIG[order.status]          || STATUS_CONFIG.PENDING;
     const payment = PAYMENT_LABEL[order.paymentMethod]   || PAYMENT_LABEL.EFECTIVO;
     const type    = TYPE_LABEL[order.customerType]        || { label: order.customerType };
@@ -405,11 +416,11 @@ export default function AdminOrderDetail() {
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
+              ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>` : ""}
             </div>
           </div>
         </td>
-        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${formatPriceWithCurrency(item.price * item.quantity, item.currency)}</td>
+        <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;vertical-align:middle">${withPrices ? formatPriceWithCurrency(item.price * item.quantity, item.currency) : `${item.quantity} unid.`}</td>
       </tr>`;
     }).join("");
 
@@ -434,6 +445,9 @@ export default function AdminOrderDetail() {
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
       ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(totalUsdPrint, "USD")}</td></tr>` : ""}`;
+
+    // Sin precios, el cierre de la hoja es solo el total de unidades.
+    const unitsRow = `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>UNIDADES</td><td ${totValueStyle}>${(order.items || []).reduce((s, i) => s + i.quantity, 0)}</td></tr>`;
 
     const html = `<!DOCTYPE html>
 <html lang="es">
@@ -498,7 +512,7 @@ export default function AdminOrderDetail() {
   <div class="section-title">Productos</div>
   <table><tbody>${itemCards}</tbody></table>
 
-  <table class="totals-table"><tbody>${totalRows}</tbody></table>
+  <table class="totals-table"><tbody>${withPrices ? totalRows : unitsRow}</tbody></table>
 
   <div class="footer">Generado el ${new Date().toLocaleString("es-AR")} · IGWT Store</div>
 </div>
@@ -1409,6 +1423,15 @@ export default function AdminOrderDetail() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Modal: ¿la hoja impresa lleva los precios? */}
+      {printAsk && (
+        <PrintPricesModal
+          title={`Imprimir orden #${order.id}`}
+          onCancel={() => setPrintAsk(false)}
+          onChoose={(withPrices) => { printOrder(withPrices); setPrintAsk(false); }}
+        />
       )}
     </AdminLayout>
   );
