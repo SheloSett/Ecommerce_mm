@@ -37,6 +37,11 @@ const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
 
+// Datos del proveedor que viajan en los pedidos del panel (producto y variante). La orden de compra
+// imprime la calle y el teléfono junto al nombre. Antes solo iban id y nombre, y para que la
+// dirección saliera impresa la estaban escribiendo dentro del nombre del proveedor.
+const SUPPLIER_SELECT = { id: true, name: true, street: true, phone: true };
+
 // Adjunta a cada item los datos EN VIVO de su variante actual: ubicación (module/shelf),
 // costo e imágenes. A diferencia del precio o la etiqueta de variante (que se congelan al
 // momento del pedido para historial), estos datos los queremos actualizados: la ubicación
@@ -56,7 +61,7 @@ async function attachVariantDetails(orders) {
     // supplier: proveedor por variante (override del producto) — lo usa la orden de compra
     // para agrupar por el proveedor real de la variante cuando lo tiene.
     // Antes: select: { id: true, module: true, shelf: true, cost: true, images: true },
-    select: { id: true, module: true, shelf: true, cost: true, images: true, supplier: { select: { id: true, name: true } } },
+    select: { id: true, module: true, shelf: true, cost: true, images: true, supplier: { select: SUPPLIER_SELECT } },
   });
   const map = {};
   // Antes: map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images };
@@ -117,7 +122,7 @@ function sanitizeOrdersForCustomer(orders, viewer) {
 const ORDER_ITEM_PRODUCT_SELECT = {
   id: true, name: true, images: true, module: true, shelf: true,
   slug: true, supplierId: true,
-  supplier: { select: { id: true, name: true } },
+  supplier: { select: SUPPLIER_SELECT },
 };
 
 // Include estándar para devolver una orden completa desde los endpoints de edición de ítems.
@@ -207,7 +212,7 @@ async function getOrders(req, res) {
                 select: {
                   id: true, name: true, images: true, module: true, shelf: true,
                   slug: true, supplierId: true,
-                  supplier: { select: { id: true, name: true } },
+                  supplier: { select: SUPPLIER_SELECT },
                 },
               },
             },
@@ -261,7 +266,7 @@ async function getOrder(req, res) {
             // pueda aplicar el mismo criterio que costoMaestroEnMoneda(): el costo maestro solo se
             // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
             // Antes: ... shelf: true, cost: true, supplier: ...
-            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: { id: true, name: true } } } },
+            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
           },
         },
         // Incluir cupón para mostrarlo en el detalle de la orden en el panel admin

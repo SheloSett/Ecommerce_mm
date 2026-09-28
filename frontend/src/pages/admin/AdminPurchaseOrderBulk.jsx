@@ -27,6 +27,9 @@ const moneyHtml = (m) => moneyParts(m).join("<br>");
 const itemPhoto = (item) => (item.variant?.images?.[0]) || item.product?.images?.[0] || null;
 // Proveedor: el de la variante si lo tiene, si no el del producto.
 const itemSupplier = (item) => item.variant?.supplier ?? item.product?.supplier;
+// Calle y teléfono del proveedor, junto al nombre (en pantalla y en la hoja impresa). Vacío si no
+// tiene ninguno cargado. Antes no se mostraban y la dirección se escribía dentro del nombre.
+const supplierContact = (g) => [g.street && `📍 ${g.street}`, g.phone && `📞 ${g.phone}`].filter(Boolean).join(" · ");
 // Clave para consolidar el mismo producto/variante entre varias órdenes.
 const mergeKey = (item) => `${item.productId}::${item.variantId ?? "base"}::${itemCostCurrency(item)}`;
 
@@ -72,7 +75,7 @@ export default function AdminPurchaseOrderBulk() {
         const sup   = itemSupplier(item);
         const sKey  = sup?.id != null ? `s${sup.id}` : "none";
         const sName = sup?.name || "Sin proveedor";
-        if (!supMap.has(sKey)) supMap.set(sKey, { key: sKey, name: sName, lines: new Map() });
+        if (!supMap.has(sKey)) supMap.set(sKey, { key: sKey, name: sName, street: sup?.street || "", phone: sup?.phone || "", lines: new Map() });
         const lines = supMap.get(sKey).lines;
         const mKey  = mergeKey(item);
         if (!lines.has(mKey)) {
@@ -154,10 +157,12 @@ export default function AdminPurchaseOrderBulk() {
         </tr>`;
       }).join("");
       const subtotal = g.lines.reduce((acc, l) => addLine(acc, l), emptyMoney());
+      const contact = supplierContact(g);
       return `
       <section style="margin-bottom:12px;break-inside:avoid">
-        <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">
-          🏭 ${g.name}
+        <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">🏭 ${g.name}</span>
+          ${contact ? `<span style="font-size:11px;font-weight:600">${contact}</span>` : ""}
         </div>
         <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none">
           <tbody>${rows}</tbody>
@@ -306,14 +311,19 @@ export default function AdminPurchaseOrderBulk() {
               <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-700">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
                   <input type="checkbox" checked={groupAllSel} onChange={() => toggleGroup(group, groupAllSel)} className="w-4 h-4 accent-blue-600" />
-                  <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                    🏭 {group.name}
-                    {group.key === "none" && (
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 px-1.5 py-0.5 rounded">
-                        sin asignar
-                      </span>
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                      🏭 {group.name}
+                      {group.key === "none" && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 px-1.5 py-0.5 rounded">
+                          sin asignar
+                        </span>
+                      )}
+                    </span>
+                    {supplierContact(group) && (
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{supplierContact(group)}</div>
                     )}
-                  </span>
+                  </div>
                 </label>
                 <span className="text-sm text-slate-500 dark:text-slate-400">
                   Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(groupSubtotal(group)).join(" + ")}</span>
