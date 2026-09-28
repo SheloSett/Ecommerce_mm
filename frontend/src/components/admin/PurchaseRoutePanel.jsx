@@ -29,8 +29,10 @@ const lsSet = (key, value) => {
 };
 
 // Direcciones ya ubicadas en esta sesión, compartidas entre las dos órdenes de compra.
-const geoCache = new Map(); // dirección → { lat, lng, label } | null (null = no se encontró)
+// corrected: el backend la ubicó corrigiendo un error de tipeo en la calle (ver utils/geocode.js).
+const geoCache = new Map(); // dirección → { lat, lng, label, corrected } | null (null = no se encontró)
 const clean = (address) => (address || "").trim();
+const shortLabel = (label) => (label || "").replace(/, CABA$/, ""); // "AZCUENAGA 179, CABA" → "AZCUENAGA 179"
 const pointOf = (address) => {
   const v = geoCache.get(clean(address));
   return v ? { lat: v.lat, lng: v.lng } : null;
@@ -181,6 +183,9 @@ export default function PurchaseRoutePanel({ groups, onChange }) {
   const startNotFound = routeActive && clean(start) && geoCache.has(clean(start)) && !startPoint;
   const notFound = routeActive ? groups.filter((g) => clean(g.street) && geoCache.get(clean(g.street)) === null) : [];
   const noStreet = routeActive ? groups.filter((g) => !clean(g.street)) : [];
+  // Ubicadas corrigiendo un error de tipeo ("azcuenga" → AZCUENAGA): se muestran para poder controlarlas.
+  const corrected = routeActive ? groups.filter((g) => geoCache.get(clean(g.street))?.corrected) : [];
+  const startGeo = routeActive && clean(start) ? geoCache.get(clean(start)) : null;
 
   return (
     <div className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 space-y-3">
@@ -250,6 +255,16 @@ export default function PurchaseRoutePanel({ groups, onChange }) {
               . Se corrige en Compras → Proveedores.
             </p>
           )}
+          {(corrected.length > 0 || startGeo?.corrected) && (
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              ✓ Corregimos cómo estaba escrita:{" "}
+              {[
+                ...(startGeo?.corrected ? [`salida "${clean(start)}" → ${shortLabel(startGeo.label)}`] : []),
+                ...corrected.map((g) => `${g.name} "${clean(g.street)}" → ${shortLabel(geoCache.get(clean(g.street)).label)}`),
+              ].join(", ")}
+              . Si no es esa, o para dejarla bien, corregila en Compras → Proveedores.
+            </p>
+          )}
 
           {order && order.length > 0 && (
             <ol className="divide-y divide-slate-100 dark:divide-slate-700/60 border border-slate-100 dark:border-slate-700/60 rounded-lg">
@@ -257,14 +272,19 @@ export default function PurchaseRoutePanel({ groups, onChange }) {
                 const g = byKey[key];
                 if (!g) return null;
                 const meters = legs?.legs[key];
-                const located = !!pointOf(g.street);
+                const geo = geoCache.get(clean(g.street));
+                const located = !!geo;
+                // Antes decía "⚠ sin ubicar" para todos los casos; ahora dice por qué.
+                const where = located
+                  ? (geo.corrected ? `${clean(g.street)} → ${shortLabel(geo.label)}` : clean(g.street))
+                  : clean(g.street) ? `⚠ no encontramos "${clean(g.street)}"` : "⚠ sin calle cargada";
                 return (
                   <li key={key} className="flex items-center gap-2 px-3 py-2">
                     <span className="w-7 shrink-0 text-right text-sm font-bold text-blue-600 dark:text-blue-400">{i + 1}°</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{g.name}</div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                        {located ? clean(g.street) : "⚠ sin ubicar"} · {g.units} u.
+                        {where} · {g.units} u.
                         {meters != null && ` · ${formatMeters(meters)} ${i === 0 ? "desde la salida" : "desde el anterior"}`}
                       </div>
                     </div>
