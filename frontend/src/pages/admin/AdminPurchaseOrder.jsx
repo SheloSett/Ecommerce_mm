@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
-import PurchaseRoutePanel, { orderGroupsByRoute, stopPrefix, stopWalk, routeSummaryHtml } from "../../components/admin/PurchaseRoutePanel";
+import PurchaseRoutePanel, { orderGroupsByRoute, stopPrefix, stopWalk, routeSummaryHtml, useCostVisibility } from "../../components/admin/PurchaseRoutePanel";
 import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
@@ -113,6 +113,10 @@ export default function AdminPurchaseOrder() {
     }))
     .filter((g) => g.units > 0), [groups, selected]);
   const orderedGroups = useMemo(() => orderGroupsByRoute(groups, route), [groups, route]);
+  // Costos en la hoja impresa, por proveedor (por defecto sí). Ver useCostVisibility.
+  const { showsCosts, setShowsCosts, setAllCosts } = useCostVisibility();
+  const costsAll  = groups.every((g) => showsCosts(g.key));
+  const costsNone = groups.every((g) => !showsCosts(g.key));
 
   const allItems = order?.items || [];
   const allSelected = allItems.length > 0 && allItems.every((i) => selected.has(i.id));
@@ -141,6 +145,8 @@ export default function AdminPurchaseOrder() {
       .filter((g) => g.items.length > 0);
 
     const groupsHtml = printGroups.map((g) => {
+      // Sin costos: la línea queda sin precio ni total y el proveedor sin subtotal.
+      const withCosts = showsCosts(g.key);
       const rows = g.items.map((item) => {
         const photo = itemPhoto(item);
         const imgHtml = photo
@@ -164,13 +170,19 @@ export default function AdminPurchaseOrder() {
             <div style="font-size:15px;font-weight:800;color:#1e293b">${item.quantity}</div>
           </td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;vertical-align:middle;white-space:nowrap">
+            ${withCosts ? `
             <div style="font-size:10px;color:#94a3b8">${formatPrice(cost, cur)} c/u</div>
-            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(lineTotal, cur)}</div>
+            <div style="font-size:12px;font-weight:700;color:#1e293b">${formatPrice(lineTotal, cur)}</div>` : ""}
           </td>
         </tr>`;
       }).join("");
 
       const subtotal = g.items.reduce((acc, i) => addMoney(acc, i), emptyMoney());
+      const subtotalHtml = withCosts
+        ? `<div style="text-align:right;padding:5px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;font-size:11px">
+          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
+        </div>`
+        : "";
       // Con recorrido: número de parada delante del nombre y metros desde la parada anterior.
       const contact = [supplierContact(g), stopWalk(route, g.key)].filter(Boolean).join(" · ");
       return `
@@ -182,14 +194,21 @@ export default function AdminPurchaseOrder() {
         <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none">
           <tbody>${rows}</tbody>
         </table>
-        <div style="text-align:right;padding:5px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;font-size:11px">
-          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
-        </div>
+        ${subtotalHtml}
       </section>`;
     }).join("");
 
-    const printTotal = printGroups.reduce(
+    // El TOTAL suma solo los proveedores que se imprimen con costos (si sumara los otros, dejaría
+    // adivinar lo que se ocultó). Si ninguno lleva costos, la hoja sale sin total.
+    // Antes: const printTotal = printGroups.reduce(...) sobre todos los proveedores
+    const costGroups = printGroups.filter((g) => showsCosts(g.key));
+    const printTotal = costGroups.reduce(
       (acc, g) => g.items.reduce((a, i) => addMoney(a, i), acc), emptyMoney());
+    const withoutCosts = printGroups.filter((g) => !showsCosts(g.key)).map((g) => g.name);
+    const totalHtml = costGroups.length === 0 ? "" : `
+    <div style="font-size:16px;font-weight:900;text-align:right;line-height:1.35">TOTAL: ${moneyHtml(printTotal)}
+      ${withoutCosts.length ? `<div style="font-size:10px;font-weight:600;opacity:.85">sin contar: ${withoutCosts.join(", ")}</div>` : ""}
+    </div>`;
     const totalUnits = printGroups.reduce(
       (s, g) => s + g.items.reduce((ss, i) => ss + i.quantity, 0), 0);
 
@@ -239,7 +258,7 @@ export default function AdminPurchaseOrder() {
 
   <div class="grand">
     <div style="font-size:11px;opacity:.85">${totalUnits} unidad(es) a comprar</div>
-    <div style="font-size:16px;font-weight:900;text-align:right;line-height:1.35">TOTAL: ${moneyHtml(printTotal)}</div>
+    ${totalHtml}
   </div>
 
   <div class="footer">Orden de compra generada el ${new Date().toLocaleString("es-AR")} · IGWT Store · Documento interno</div>
@@ -311,17 +330,30 @@ export default function AdminPurchaseOrder() {
 
         {/* Toolbar: seleccionar todo + resumen */}
         <div className="flex items-center justify-between gap-3 flex-wrap bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleAll}
-              className="w-4 h-4 accent-blue-600"
-            />
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              Seleccionar todo
-            </span>
-          </label>
+          <div className="flex items-center gap-x-5 gap-y-2 flex-wrap">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                className="w-4 h-4 accent-blue-600"
+              />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                Seleccionar todo
+              </span>
+            </label>
+            {/* Costos en la hoja impresa para todos los proveedores de una vez (a medias si hay de los dos) */}
+            <label className="flex items-center gap-2 cursor-pointer select-none" title="Destildalo para imprimir la hoja sin costos">
+              <input
+                type="checkbox"
+                checked={costsAll}
+                ref={(el) => { if (el) el.indeterminate = !costsAll && !costsNone; }}
+                onChange={() => setAllCosts(groups.map((g) => g.key), !costsAll)}
+                className="w-4 h-4 accent-blue-600"
+              />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Costos en la hoja</span>
+            </label>
+          </div>
           <div className="text-sm text-slate-600 dark:text-slate-300">
             <span className="font-semibold">{selectedCount}</span> de {allItems.length} seleccionados ·
             <span className="ml-1">Total: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(grandTotal).join(" + ")}</span></span>
@@ -363,9 +395,21 @@ export default function AdminPurchaseOrder() {
                     )}
                   </div>
                 </label>
-                <span className="text-sm text-slate-500 dark:text-slate-400">
-                  Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(groupSubtotal(group)).join(" + ")}</span>
-                </span>
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                  {/* Si se destilda, la hoja impresa sale sin los costos de este proveedor */}
+                  <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showsCosts(group.key)}
+                      onChange={(e) => setShowsCosts(group.key, e.target.checked)}
+                      className="w-3.5 h-3.5 accent-blue-600"
+                    />
+                    Costos en la hoja
+                  </label>
+                  <span className="text-sm text-slate-500 dark:text-slate-400">
+                    Subtotal: <span className="font-bold text-slate-800 dark:text-slate-100">{moneyParts(groupSubtotal(group)).join(" + ")}</span>
+                  </span>
+                </div>
               </div>
 
               {/* Items del proveedor */}

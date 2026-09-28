@@ -15,6 +15,7 @@ const LS = {
   start: "igwt.ordenCompra.salida",
   tiers: "igwt.ordenCompra.carga",
   qr:    "igwt.ordenCompra.qr",
+  costs: "igwt.ordenCompra.sinCostos", // proveedores que se imprimen SIN costos (ver useCostVisibility)
 };
 const lsGet = (key, fallback) => {
   try {
@@ -348,6 +349,27 @@ export default function PurchaseRoutePanel({ groups, onChange }) {
 }
 
 // ── Ayudas para las páginas de orden de compra ───────────────────────────────────────────────────
+
+// Mostrar o no los costos de cada proveedor en la hoja impresa (precio por unidad, total de cada
+// línea y subtotal). Por defecto sí. Si se destilda, se recuerda para ese proveedor en este
+// navegador, como las marcas de carga. Solo cambia la hoja: en pantalla los costos se ven siempre.
+export function useCostVisibility() {
+  const [hidden, setHidden] = useState(() => lsGet(LS.costs, {}));
+  const update = (keys, show) => setHidden((prev) => {
+    const next = { ...prev };
+    for (const k of keys) {
+      if (show) delete next[k];
+      else next[k] = true;
+    }
+    lsSet(LS.costs, next);
+    return next;
+  });
+  return {
+    showsCosts:    (key) => !hidden[key],
+    setShowsCosts: (key, show) => update([key], show),
+    setAllCosts:   (keys, show) => update(keys, show),
+  };
+}
 
 // Grupos de la página en el orden del recorrido: primero los del recorrido, en su orden; después
 // los que quedaron afuera (nada seleccionado), en el orden que traían; "Sin proveedor" siempre último.
