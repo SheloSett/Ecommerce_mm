@@ -15,6 +15,9 @@ const PRODUCT_SELECT = (visibleFor) => ({
   active: true,
   stock: true,
   stockUnlimited: true,
+  // visibility: sanitizeProductForViewer la necesita para ocultar el precio de un producto que se
+  // vende solo a mayoristas si lo tiene guardado alguien que no es mayorista.
+  visibility: true,
   categories: { select: { id: true, name: true, slug: true } },
   // _count.variants: variantes ACTIVAS y VISIBLES para este cliente (para el texto del modal
   // "elegí opciones" vs "elegí cantidad" en ProductCard).

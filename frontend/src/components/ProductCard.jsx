@@ -276,7 +276,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
 
   const handleAddToCart = (e) => {
     e.preventDefault(); // Evitar que navegue al detalle al hacer click en el botón
-    if (outOfStock) return;
+    if (outOfStock || product.priceHidden) return;
     // Si no hay usuario logueado, redirigir al login sin mostrar notificación
     if (!customer) {
       navigate("/login");
@@ -549,7 +549,11 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           {/* Abajo: precio + botón. min-w-0 en el contenedor de precio para que no fuerce overflow en mobile */}
           <div className="flex items-end justify-between gap-2 sm:gap-4 mt-3">
             <div className="min-w-0 flex-1">
-              {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
+              {/* priceHidden: producto solo mayoristas visto por alguien que no lo es (el backend no
+                  manda precios). Sin botón de agregar: la ficha ofrece entrar o pedir la cuenta. */}
+              {product.priceHidden ? (
+                <span className="text-sm font-semibold text-[#565e74]">Precio exclusivo mayoristas</span>
+              ) : customer?.type === "MAYORISTA" && product.wholesalePrice ? (
                 product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className="text-xs sm:text-sm text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
@@ -583,7 +587,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
 
             {/* Botón agregar — más compacto en mobile para no romper el layout */}
             <div className="flex-shrink-0">
-              {outOfStock ? (
+              {product.priceHidden ? null : outOfStock ? (
                 <span className="text-xs sm:text-sm text-[#565e74] font-medium">Sin stock</span>
               ) : customer ? (
                 <button
@@ -880,7 +884,10 @@ export default function ProductCard({ product, viewMode = "grid" }) {
         <div className="flex flex-col gap-2">
           {/* Precio: ocupa todo el ancho del card y se achica si no entra */}
           <div className="flex flex-col min-w-0">
-            {customer?.type === "MAYORISTA" && product.wholesalePrice ? (
+            {/* priceHidden: ver el comentario del mismo caso en la vista de lista */}
+            {product.priceHidden ? (
+              <span className="text-sm font-semibold text-[#565e74]">Precio exclusivo mayoristas</span>
+            ) : customer?.type === "MAYORISTA" && product.wholesalePrice ? (
               product.wholesaleSalePrice && product.wholesaleSalePrice < product.wholesalePrice ? (
                 <>
                   <span className="text-xs text-slate-400 line-through">{formatPrice(product.wholesalePrice)}</span>
@@ -909,7 +916,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             )}
           </div>
           {/* Botón ocupa todo el ancho, así nunca compite por espacio con el precio */}
-          {customer ? (
+          {product.priceHidden ? null : customer ? (
             <button
               onClick={handleAddToCart}
               disabled={outOfStock}

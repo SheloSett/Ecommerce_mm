@@ -8,7 +8,7 @@ const { isVideoMime } = require("../middleware/upload.middleware");
 // dos niveles, así que la expansión es recursiva. Ver utils/categoryTree.js.
 const { descendantIdsBySlugs } = require("../utils/categoryTree");
 // Qué precios (costo, mayoristas) puede ver quien pide. Ver utils/productPrivacy.js.
-const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
+const { resolvePriceViewer, sanitizeProductForViewer, effectiveVisibleFor } = require("../utils/productPrivacy");
 
 const prisma = new PrismaClient();
 
@@ -84,14 +84,14 @@ async function searchProductIds(term, { includeSku = false } = {}) {
 async function getProducts(req, res) {
   try {
     const { category, search, featured, page = 1, limit = 20, active, onSale, lowStock, homeOffer, offerId, attrs, sortOrder, sortPrice } = req.query;
-    let { visibleFor } = req.query;
 
     // Quién pide (admin / mayorista aprobado / cualquiera), según el token y no según el query.
     // Define qué precios viajan en la respuesta.
     const viewer = await resolvePriceViewer(req, prisma);
-    // ?visibleFor=MAYORISTA lo puede escribir cualquiera en la URL. Sin cuenta mayorista aprobada
-    // se lo trata como minorista, para que no pueda listar el catálogo solo-mayorista.
-    if (visibleFor === "MAYORISTA" && !viewer.isMayorista) visibleFor = "MINORISTA";
+    // ?visibleFor lo puede escribir cualquiera en la URL (o no mandarlo). Salvo el admin, cada uno
+    // ve el catálogo de su tipo: sin cuenta mayorista aprobada no se listan los productos que se
+    // venden solo a mayoristas. Ver effectiveVisibleFor.
+    const visibleFor = effectiveVisibleFor(req.query.visibleFor, viewer);
 
     const where = {};
 
@@ -110,7 +110,7 @@ async function getProducts(req, res) {
     if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
       where.visibility = { in: ["AMBOS", visibleFor] };
     }
-    // Si no se envía visibleFor, no se filtra (admin o legacy)
+    // Si no se envía visibleFor, no se filtra (solo le pasa al admin: ver effectiveVisibleFor)
 
     // Filtrado automático por stock + visibilidad de variantes según tipo de cliente.
     // Para variantes, además del active+stock, también deben ser visibles para el cliente
@@ -719,9 +719,8 @@ async function getProductsAdmin(req, res) {
 async function getProduct(req, res) {
   try {
     const { id } = req.params;
-    let { visibleFor } = req.query;
     const viewer = await resolvePriceViewer(req, prisma);
-    if (visibleFor === "MAYORISTA" && !viewer.isMayorista) visibleFor = "MINORISTA";
+    const visibleFor = effectiveVisibleFor(req.query.visibleFor, viewer);
 
     // El parámetro puede ser un id numérico (links viejos, QR, PDFs ya impresos) o un slug legible
     // (URLs nuevas). Si es solo dígitos → busca por id; si no → por slug. Así no se rompe nada previo.

@@ -325,7 +325,8 @@ export default function ProductDetail() {
   }, [activeVariant?.id, isMayorista]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddToCart = async () => {
-    if (!product) return;
+    // priceHidden: producto solo mayoristas visto por alguien que no lo es (ver el bloque de precio)
+    if (!product || product.priceHidden) return;
     if (!customer) {
       navigate("/login");
       return;
@@ -612,6 +613,22 @@ export default function ProductDetail() {
                 Si hay una variante activa, usa los precios de la variante (con fallback al del producto si la variante no tiene).
                 Si hay un tier seleccionado (descuento por cantidad), el precio principal muestra el precio del tier. */}
             {(() => {
+              // Producto que se vende SOLO a mayoristas, visto por alguien que no es mayorista
+              // aprobado: el backend no manda ningún precio (priceHidden) — antes mandaba `price`,
+              // que en estos productos es el mayorista. Va este aviso, y los botones de abajo cambian
+              // a "Iniciar sesión" / "Pedir cuenta mayorista".
+              if (product.priceHidden) {
+                return (
+                  <div>
+                    <p className="text-2xl font-bold text-[#0b1c30]">Precio exclusivo para mayoristas</p>
+                    <p className="text-sm text-[#565e74] mt-1">
+                      {customer
+                        ? "Este producto se vende solo a clientes con cuenta mayorista. Podés pedir la tuya desde tu perfil."
+                        : "Este producto se vende solo a clientes con cuenta mayorista. Iniciá sesión con tu cuenta para ver el precio."}
+                    </p>
+                  </div>
+                );
+              }
               const isMayoristaUI = customer?.type === "MAYORISTA";
               // Fallback por GRUPO (no por campo): si la variante define su precio base, la oferta
               // sale SOLO de la variante (vacía = sin oferta). Antes el fallback era campo por campo
@@ -821,7 +838,8 @@ export default function ProductDetail() {
             {/* Selectores de variante — visibles si hay variantes filtradas por visibility para este cliente.
                 Antes había un hard-code !isMayorista que bloqueaba mayoristas; ahora se basa en si el backend
                 devolvió variantes visibles (filtradas por visibility + tipo de cliente). */}
-            {hasVariants && (product.variants?.length || 0) > 0 && (
+            {/* Con priceHidden no se muestran: sin precio ni botón de compra, elegir opción no lleva a nada */}
+            {hasVariants && (product.variants?.length || 0) > 0 && !product.priceHidden && (
               <div className="space-y-4">
                 {product.attributes.map((attr) => (
                   <div key={attr.id}>
@@ -909,7 +927,7 @@ export default function ProductDetail() {
             </div>
 
             {/* Cantidad */}
-            {!outOfStock && (
+            {!outOfStock && !product.priceHidden && (
               <div className="flex items-center gap-4 flex-wrap">
                 <span className="text-sm font-medium text-[#0b1c30]">Cantidad:</span>
                 {/* Antes: botones bg-slate-100 con texto − + — actualizado a bg-[#eff4ff] con Material Symbols */}
@@ -951,8 +969,39 @@ export default function ProductDetail() {
             )}
 
             {/* Botones de acción */}
+            {/* Producto solo mayoristas visto por alguien que no lo es (priceHidden): en vez de
+                comprar, entrar con la cuenta o pedir la cuenta mayorista (se pide desde el perfil). */}
+            {product.priceHidden && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {customer ? (
+                  <Link
+                    to="/perfil"
+                    className="sm:col-span-2 w-full bg-[#00873a] text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-95"
+                  >
+                    <span className="material-symbols-outlined">storefront</span>
+                    Pedir cuenta mayorista
+                  </Link>
+                ) : (
+                  <>
+                    <Link
+                      to="/login"
+                      className="w-full bg-[#00873a] text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-95"
+                    >
+                      <span className="material-symbols-outlined">login</span>
+                      Iniciar sesión
+                    </Link>
+                    <Link
+                      to="/registro"
+                      className="w-full border-2 border-[#0b1c30] text-[#0b1c30] hover:bg-[#0b1c30] hover:text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center transition-all active:scale-95"
+                    >
+                      Crear cuenta
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
             {/* Antes: btn-primary genérico con emoji 🛒 — actualizado a bg-[#00873a] + Material Symbol */}
-            <div className="grid grid-cols-1 gap-3">
+            <div className={`grid grid-cols-1 gap-3 ${product.priceHidden ? "hidden" : ""}`}>
               <button
                 onClick={handleAddToCart}
                 disabled={outOfStock}

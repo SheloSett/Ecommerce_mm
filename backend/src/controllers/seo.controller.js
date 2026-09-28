@@ -177,7 +177,7 @@ async function getProductOgPage(req, res) {
     const where = /^\d+$/.test(String(slug)) ? { id: parseInt(slug) } : { slug: String(slug) };
     product = await prisma.product.findFirst({
       where: { ...where, active: true },
-      select: { id: true, name: true, slug: true, description: true, images: true, price: true, salePrice: true, currency: true },
+      select: { id: true, name: true, slug: true, description: true, images: true, price: true, salePrice: true, currency: true, visibility: true },
     });
   } catch (err) {
     console.error("getProductOgPage (producto):", err.message);
@@ -198,7 +198,13 @@ async function getProductOgPage(req, res) {
     const desc = (stripHtml(product.description) || `${product.name} en IGWT Store. Envíos a todo Argentina.`).slice(0, 200);
     const image = absoluteImage(product.images?.[0]);
     const url = `${SITE_URL}/producto/${product.slug || product.id}`;
-    const price = product.salePrice && product.salePrice < product.price ? product.salePrice : product.price;
+    // Antes: const price = product.salePrice && product.salePrice < product.price ? product.salePrice : product.price;
+    // En un producto que se vende SOLO a mayoristas, `price` es el precio mayorista (el panel lo copia
+    // ahí porque la base lo exige), y esta página la ve cualquiera que abra o comparta el link. Sin
+    // precio: la vista previa sigue mostrando nombre, foto y descripción.
+    const price = product.visibility === "MAYORISTA"
+      ? null
+      : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
     const block = ogBlock({ title, description: desc, image, url, price, currency: product.currency });
     // Se sacan el título, la descripción y las etiquetas og:/twitter: genéricas del index.html:
     // los bots toman la PRIMERA etiqueta de cada tipo, así que si quedaran duplicadas mostrarían

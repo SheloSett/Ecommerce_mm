@@ -264,10 +264,18 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     // carrito un producto que el admin ya despublicó, mostrando "agregado" como si nada.
     const product = await prisma.product.findUnique({
       where:  { id: parseInt(productId) },
-      select: { id: true, active: true },
+      select: { id: true, active: true, visibility: true },
     });
     if (!product || !product.active) {
       return res.status(404).json({ error: "Este producto ya no está disponible" });
+    }
+    // Un producto que se vende SOLO a mayoristas no entra al carrito de otro cliente: la ficha ya no
+    // le muestra el botón, y esto cierra el mismo camino por la API (el checkout también lo valida).
+    if (product.visibility === "MAYORISTA") {
+      const owner = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
+      if (owner?.type !== "MAYORISTA") {
+        return res.status(403).json({ error: "Este producto es exclusivo para clientes mayoristas" });
+      }
     }
     if (variantId) {
       const variant = await prisma.productVariant.findUnique({

@@ -91,14 +91,20 @@ function hydrateDeletedProducts(orders) {
 // Pedidos que se le devuelven AL CLIENTE (Mis pedidos). Antes iban con cada línea entera: el `cost`
 // de la línea (lo que se le paga al proveedor) y, en el producto, los precios mayoristas aunque el
 // cliente fuera minorista. Se saca el costo siempre y los precios mayoristas según quién pide.
+//
+// Un producto que se vende solo a mayoristas, en el pedido de alguien que no lo es, sale además
+// con active: false. En "Mis pedidos" `active` significa "se puede volver a comprar": así la
+// pantalla lo marca "Producto no disponible" y "Repetir pedido" lo saltea, como con un producto
+// despublicado. Sin esto, el carrito lo rechaza y "Repetir pedido" fallaba entero.
 function sanitizeOrdersForCustomer(orders, viewer) {
   const list = Array.isArray(orders) ? orders : [orders];
   for (const o of list) {
     if (!Array.isArray(o?.items)) continue;
-    o.items = o.items.map(({ cost, ...item }) => ({
-      ...item,
-      product: item.product ? sanitizeProductForViewer(item.product, viewer) : item.product,
-    }));
+    o.items = o.items.map(({ cost, ...item }) => {
+      const product = item.product ? sanitizeProductForViewer(item.product, viewer) : item.product;
+      if (product?.priceHidden) product.active = false;
+      return { ...item, product };
+    });
   }
   return orders;
 }
@@ -329,6 +335,16 @@ async function createOrder(req, res) {
 
       if (!product || !product.active) {
         return res.status(400).json({ error: `Producto no disponible: ${item.productId}` });
+      }
+
+      // Un producto que se vende SOLO a mayoristas no se le vende a nadie más. Antes nada lo
+      // impedía: un minorista que entraba por link directo lo compraba a `price`, que en esos
+      // productos es el precio mayorista (el panel lo copia ahí). Las cotizaciones ya lo
+      // validaban (updateMyQuoteItems); ahora también el checkout.
+      if (product.visibility === "MAYORISTA" && !isMayorista) {
+        return res.status(400).json({
+          error: `"${product.name}" es exclusivo para clientes mayoristas. Sacalo del carrito para continuar.`,
+        });
       }
 
       // Determinar si el producto tiene variantes activas para el control de stock
@@ -1156,6 +1172,7 @@ async function getMyOrderById(req, res) {
                 price: true, salePrice: true,
                 wholesalePrice: true, wholesaleSalePrice: true,
                 minQuantity: true,
+                visibility: true, // para sanitizeOrdersForCustomer (productos solo mayoristas)
               },
             },
           },
@@ -1213,6 +1230,7 @@ async function getMyOrders(req, res) {
                 wholesalePrice: true,
                 wholesaleSalePrice: true,
                 minQuantity: true,
+                visibility: true, // para sanitizeOrdersForCustomer (productos solo mayoristas)
               },
             },
           },
