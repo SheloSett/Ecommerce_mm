@@ -3,8 +3,8 @@ const router  = express.Router();
 const { PrismaClient } = require("@prisma/client");
 // FIX seguridad: se agrega adminMiddleware a TODAS las rutas que mutan variantes/atributos.
 // Antes solo tenían authMiddleware (token válido) → un cliente logueado podía cambiar precios,
-// stock y costos de variantes, o borrarlas. Las 2 GET públicas (attributes y /product/:id) NO
-// llevan guard porque el detalle de producto las necesita sin login.
+// stock y costos de variantes, o borrarlas. GET /product/:id/attributes queda pública.
+// GET /product/:id (variantes) ahora también es solo admin: exponía costos y precios mayoristas.
 const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
 const { syncProductVisibility } = require("../controllers/product.controller");
 
@@ -129,7 +129,10 @@ router.delete("/attributes/:id", authMiddleware, adminMiddleware, async (req, re
 // ── Variantes ─────────────────────────────────────────────────────────────────
 
 // GET /api/variants/product/:productId
-router.get("/product/:productId", async (req, res) => {
+// Solo admin. Antes era pública y devolvía cada variante entera: costo, precios mayoristas,
+// depósito y proveedor, para cualquiera. Solo la usa el panel (editor de variantes); la tienda
+// recibe las variantes dentro de GET /api/products/:id, ya filtradas según quién pide.
+router.get("/product/:productId", authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
     const variants  = await prisma.productVariant.findMany({

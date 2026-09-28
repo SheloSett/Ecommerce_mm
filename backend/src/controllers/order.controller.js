@@ -4,6 +4,7 @@ const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
+const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -83,6 +84,21 @@ function hydrateDeletedProducts(orders) {
         };
       }
     }
+  }
+  return orders;
+}
+
+// Pedidos que se le devuelven AL CLIENTE (Mis pedidos). Antes iban con cada línea entera: el `cost`
+// de la línea (lo que se le paga al proveedor) y, en el producto, los precios mayoristas aunque el
+// cliente fuera minorista. Se saca el costo siempre y los precios mayoristas según quién pide.
+function sanitizeOrdersForCustomer(orders, viewer) {
+  const list = Array.isArray(orders) ? orders : [orders];
+  for (const o of list) {
+    if (!Array.isArray(o?.items)) continue;
+    o.items = o.items.map(({ cost, ...item }) => ({
+      ...item,
+      product: item.product ? sanitizeProductForViewer(item.product, viewer) : item.product,
+    }));
   }
   return orders;
 }
@@ -655,7 +671,11 @@ async function createOrder(req, res) {
       sendACConvenirToAdmin(order).catch(() => {});
     }
 
-    res.status(201).json(order);
+    // Sin `cost` en las líneas. Va sobre una copia porque los emails de arriba siguen leyendo `order`
+    // en segundo plano. No se consulta quién pide: el producto de estas líneas solo trae id, nombre
+    // y fotos, y una consulta que fallara acá daría error con el pedido YA creado (el cliente
+    // podría repetirlo).
+    res.status(201).json(sanitizeOrdersForCustomer({ ...order }));
   } catch (err) {
     console.error("createOrder error:", err);
     res.status(500).json({ error: "Error al crear la orden" });
@@ -1145,6 +1165,7 @@ async function getMyOrderById(req, res) {
 
     if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
     hydrateDeletedProducts(order);
+    sanitizeOrdersForCustomer(order, await resolvePriceViewer(req, prisma));
     res.json(order);
   } catch (err) {
     console.error("getMyOrderById error:", err);
@@ -1201,6 +1222,7 @@ async function getMyOrders(req, res) {
     });
 
     hydrateDeletedProducts(orders);
+    sanitizeOrdersForCustomer(orders, await resolvePriceViewer(req, prisma));
     res.json(orders);
   } catch (err) {
     console.error("getMyOrders error:", err);

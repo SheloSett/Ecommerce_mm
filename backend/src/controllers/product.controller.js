@@ -7,32 +7,14 @@ const { isVideoMime } = require("../middleware/upload.middleware");
 // Filtrar por una categoría incluye a toda su descendencia, y la jerarquía ya no está topeada en
 // dos niveles, así que la expansión es recursiva. Ver utils/categoryTree.js.
 const { descendantIdsBySlugs } = require("../utils/categoryTree");
+// Qué precios (costo, mayoristas) puede ver quien pide. Ver utils/productPrivacy.js.
+const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 
 const prisma = new PrismaClient();
 
-// Campos de uso interno (ubicación en depósito + proveedor) que SOLO el admin debe ver.
-// En respuestas públicas (catálogo, detalle para clientes) se eliminan del objeto producto.
-const ADMIN_ONLY_PRODUCT_FIELDS = ["module", "shelf", "supplierId", "supplier"];
-function stripAdminProductFields(product) {
-  if (!product) return product;
-  const clone = { ...product };
-  for (const f of ADMIN_ONLY_PRODUCT_FIELDS) delete clone[f];
-  return clone;
-}
-
-// Determina si la request viene de un admin autenticado (token JWT con rol ADMIN/SUPERADMIN).
-// Se usa para decidir si exponer o no los campos internos del producto.
-function isAdminRequest(req) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
-  try {
-    const jwt = require("jsonwebtoken");
-    const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
-    return decoded.role === "ADMIN" || decoded.role === "SUPERADMIN";
-  } catch {
-    return false;
-  }
-}
+// stripAdminProductFields / isAdminRequest se reemplazaron por sanitizeProductForViewer /
+// resolvePriceViewer (utils/productPrivacy.js): los viejos sacaban depósito y proveedor, pero
+// dejaban el costo y los precios mayoristas en las respuestas públicas.
 
 // Convierte un texto a slug URL-amigable: "Cargador USB Tipo-C" → "cargador-usb-tipo-c".
 // Saca tildes, deja solo alfanumérico + guiones, colapsa guiones y recorta a 80 chars.
@@ -101,12 +83,22 @@ async function searchProductIds(term, { includeSku = false } = {}) {
 // GET /api/products - Listar productos (con filtros opcionales)
 async function getProducts(req, res) {
   try {
-    const { category, search, featured, page = 1, limit = 20, active, visibleFor, onSale, lowStock, homeOffer, offerId, attrs, sortOrder, sortPrice } = req.query;
+    const { category, search, featured, page = 1, limit = 20, active, onSale, lowStock, homeOffer, offerId, attrs, sortOrder, sortPrice } = req.query;
+    let { visibleFor } = req.query;
+
+    // Quién pide (admin / mayorista aprobado / cualquiera), según el token y no según el query.
+    // Define qué precios viajan en la respuesta.
+    const viewer = await resolvePriceViewer(req, prisma);
+    // ?visibleFor=MAYORISTA lo puede escribir cualquiera en la URL. Sin cuenta mayorista aprobada
+    // se lo trata como minorista, para que no pueda listar el catálogo solo-mayorista.
+    if (visibleFor === "MAYORISTA" && !viewer.isMayorista) visibleFor = "MINORISTA";
 
     const where = {};
 
     // Solo mostrar activos en la tienda pública (admin puede ver todos)
-    if (active !== undefined) {
+    // Antes: if (active !== undefined) — cualquiera podía pedir ?active=false y listar los
+    // productos despublicados. Ahora solo el admin puede pedir algo distinto de los activos.
+    if (active !== undefined && viewer.isAdmin) {
       where.active = active === "true";
     } else {
       where.active = true; // Por defecto solo activos
@@ -224,7 +216,7 @@ async function getProducts(req, res) {
     // offerId=N: productos que forman parte de una campaña de oferta (model Offer). Lo usa el Home
     // para armar la sección de cada campaña vigente. Pasa por acá a propósito, y no por un endpoint
     // aparte, para heredar todo lo que ya resuelve este handler: visibilidad por tipo de cliente,
-    // filtro de stock, precio tomado de la primera variante disponible y stripAdminProductFields.
+    // filtro de stock, precio tomado de la primera variante disponible y sanitizeProductForViewer.
     if (offerId) {
       const oid = parseInt(offerId);
       // Antes: where.offerItems = { some: { offerId: oid } }  ← sin chequear vigencia
@@ -413,7 +405,10 @@ async function getProducts(req, res) {
           //   out.currency = avail.currency ?? p.currency ?? "ARS";
           // }
         }
-        return stripAdminProductFields(out);
+        // Antes: return stripAdminProductFields(out);
+        // Sacaba depósito y proveedor, pero el costo y los precios mayoristas salían para
+        // cualquiera. Ahora se filtra según quién pide.
+        return sanitizeProductForViewer(out, viewer);
     });
 
     // Orden por precio: se hace acá, sobre el precio YA resuelto (variante + oferta + mayorista),
@@ -724,7 +719,9 @@ async function getProductsAdmin(req, res) {
 async function getProduct(req, res) {
   try {
     const { id } = req.params;
-    const { visibleFor } = req.query;
+    let { visibleFor } = req.query;
+    const viewer = await resolvePriceViewer(req, prisma);
+    if (visibleFor === "MAYORISTA" && !viewer.isMayorista) visibleFor = "MINORISTA";
 
     // El parámetro puede ser un id numérico (links viejos, QR, PDFs ya impresos) o un slug legible
     // (URLs nuevas). Si es solo dígitos → busca por id; si no → por slug. Así no se rompe nada previo.
@@ -762,25 +759,14 @@ async function getProduct(req, res) {
     // Si el producto está despublicado (sin stock, oculto), solo el admin puede verlo.
     // El cliente que toquetea la URL e intenta entrar a /producto/X de un producto inactivo
     // recibe un 404 como si no existiera.
-    if (!product.active) {
-      let isAdmin = false;
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        try {
-          const jwt = require("jsonwebtoken");
-          const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
-          isAdmin = decoded.role === "ADMIN" || decoded.role === "SUPERADMIN";
-        } catch {
-          // Token inválido — tratamos como anónimo
-        }
-      }
-      if (!isAdmin) {
-        return res.status(404).json({ error: "Producto no encontrado" });
-      }
+    if (!product.active && !viewer.isAdmin) {
+      return res.status(404).json({ error: "Producto no encontrado" });
     }
 
-    // Si quien consulta no es admin, ocultar los campos internos (depósito + proveedor)
-    res.json(isAdminRequest(req) ? product : stripAdminProductFields(product));
+    // Antes: res.json(isAdminRequest(req) ? product : stripAdminProductFields(product));
+    // Ocultaba depósito y proveedor, pero el costo y los precios mayoristas (del producto y de cada
+    // variante) salían para cualquiera. Ahora se filtra según quién pide.
+    res.json(sanitizeProductForViewer(product, viewer));
   } catch (err) {
     console.error("getProduct error:", err);
     res.status(500).json({ error: "Error al obtener el producto" });

@@ -8,7 +8,8 @@
     "start": "npx prisma db push --skip-generate && node src/index.js",
     "migrate": "npx prisma migrate dev",
     "studio": "npx prisma studio",
-    "seed": "node prisma/seed.js"
+    "seed": "node prisma/seed.js",
+    "test": "node --test test/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.0",

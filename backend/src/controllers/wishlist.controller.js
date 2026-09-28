@@ -1,5 +1,6 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
+const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 
 // visibleFor: mismo criterio que getProducts (product.controller.js) — filtra el conteo de
 // variantes según el tipo del cliente dueño de la wishlist.
@@ -25,7 +26,11 @@ const PRODUCT_SELECT = (visibleFor) => ({
 // GET /api/wishlist — devuelve los favoritos del cliente autenticado
 const getWishlist = async (req, res) => {
   try {
-    const visibleFor = req.user.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
+    // Antes: visibleFor salía de req.user.type (el tipo guardado en el token al loguearse) y los
+    // precios mayoristas viajaban siempre, también a un cliente minorista. Ahora el tipo se lee de
+    // la base y los precios mayoristas solo van si la cuenta mayorista está aprobada.
+    const viewer = await resolvePriceViewer(req, prisma);
+    const visibleFor = viewer.isMayorista ? "MAYORISTA" : "MINORISTA";
     const items = await prisma.wishlist.findMany({
       where: { customerId: req.user.id },
       orderBy: { createdAt: "desc" },
@@ -37,7 +42,10 @@ const getWishlist = async (req, res) => {
       // Necesario porque product.stock (del padre) nunca refleja el stock real cuando hay variantes
       // — sin esta señal, ProductCard mostraba "Sin stock" en cualquier producto con variantes
       // guardado en favoritos (mismo bug que ya se corrigió en el listado del catálogo).
-      return { ...product, hasVariants: Array.isArray(attributes) && attributes.length > 0 };
+      return sanitizeProductForViewer(
+        { ...product, hasVariants: Array.isArray(attributes) && attributes.length > 0 },
+        viewer,
+      );
     }));
   } catch (err) {
     res.status(500).json({ error: err.message });

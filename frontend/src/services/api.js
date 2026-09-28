@@ -109,13 +109,25 @@ api.interceptors.response.use(
 );
 
 // ─── Productos ────────────────────────────────────────────────────────────────
+// Las rutas públicas de productos devuelven los precios mayoristas SOLO si el token es de un
+// mayorista aprobado (o de un admin): el ?visibleFor ya no alcanza. `api` manda el admin_token;
+// si no hay, se manda el del cliente para que el mayorista siga viendo sus precios.
+// Token vencido o inválido no da error: el backend lo trata como visitante.
+function storefrontAuthHeaders() {
+  if (localStorage.getItem("admin_token")) return {}; // lo pone el interceptor de `api`
+  const token = localStorage.getItem("customer_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export const productsApi = {
-  getAll: (params) => api.get("/products", { params }),
+  // Antes: getAll: (params) => api.get("/products", { params }),
+  getAll: (params) => api.get("/products", { params, headers: storefrontAuthHeaders() }),
   getFacets: (params) => api.get("/products/facets", { params }),
   getAllAdmin: (params) => api.get("/products/admin/all", { params }),
   // getById acepta params opcionales — pasamos visibleFor para que el backend filtre las variantes
   // según la visibility de cada una y el tipo de cliente actual.
-  getById: (id, params) => api.get(`/products/${id}`, { params }),
+  // Antes: getById: (id, params) => api.get(`/products/${id}`, { params }),
+  getById: (id, params) => api.get(`/products/${id}`, { params, headers: storefrontAuthHeaders() }),
   create: (formData) =>
     api.post("/products", formData, {
       headers: { "Content-Type": "multipart/form-data" },
