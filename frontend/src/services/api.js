@@ -148,11 +148,13 @@ export const productsApi = {
 // Autocompletar datos del producto y generar fotos a partir de una imagen.
 // Timeouts altos: la IA (sobre todo generar imágenes) tarda más que el default de 12s.
 export const aiApi = {
-  // formData con campo "image" → { name, description, sku }
+  // formData con fotos en "images" (hasta 5) → { name, description, sku, weight, length, width,
+  // height, measuresSource }. Antes: campo "image" y timeout de 60 s; ahora la IA puede buscar en
+  // la web el peso y las medidas del modelo, y eso tarda más.
   suggestText: (formData) =>
     api.post("/ai/suggest-text", formData, {
       headers: { "Content-Type": "multipart/form-data" },
-      timeout: 60000,
+      timeout: 120000,
     }),
   // formData con campo "image" (y opcional "count") → { images: [dataURL, ...] }
   suggestImages: (formData) =>

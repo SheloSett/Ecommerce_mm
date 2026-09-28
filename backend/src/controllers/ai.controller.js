@@ -124,13 +124,39 @@ function imageProviders() {
   return list;
 }
 
-// ── Sugerencia de texto (título, descripción, SKU) desde la foto ──────────────
-const TEXT_PROMPT = `Sos un asistente que cataloga productos para una tienda online en Argentina.
-Analizá la imagen del producto y devolvé un JSON con:
+// ── Sugerencia de texto (título, descripción, SKU, peso y medidas) desde las fotos ─
+// Antes era un prompt fijo que pedía solo name/description/sku y miraba una sola foto. Ahora recibe
+// todas las fotos (la etiqueta del empaque suele estar en otra) y pide también peso y medidas, que
+// se usan para cotizar el envío. canSearch: solo Claude tiene búsqueda web (ver claudeSuggestText).
+function buildTextPrompt({ canSearch }) {
+  const fuentes = canSearch
+    ? `lo que se lee en las fotos (empaque, etiqueta, especificaciones impresas) o, si identificás la marca y el modelo exactos, la ficha de ese producto en la web (buscala; sirven el fabricante o una publicación del mismo modelo)`
+    : `lo que se lee en las fotos (empaque, etiqueta, especificaciones impresas) o especificaciones conocidas del modelo exacto`;
+  return `Sos un asistente que cataloga productos para una tienda online en Argentina.
+Te paso una o varias fotos del MISMO producto (frente, dorso, empaque, etiqueta). Devolvé un JSON con:
 - "name": título corto y claro del producto, en español (máx ~60 caracteres).
 - "description": descripción de venta de 2 a 4 oraciones, en español, en texto plano (sin HTML ni markdown).
 - "sku": un código interno corto en MAYÚSCULAS, alfanumérico, derivado del producto (sin espacios; usá guiones si hace falta).
+- "weightKg": peso en kilos (número, ej. 0.024), o null.
+- "lengthCm", "widthCm", "heightCm": largo, ancho y alto en centímetros (números), o null.
+- "measuresSource": de dónde sacaste el peso o las medidas, en pocas palabras (ej. "etiqueta del empaque", "ficha del fabricante"), o null.
+
+El peso y las medidas son para calcular el envío: usá los del producto tal como se vende (con su empaque) si los encontrás; si no, los del producto.
+Sacalos solo de datos concretos: ${fuentes}. Si no encontrás el dato concreto, poné null: no lo estimes ni lo inventes. Cada campo va por separado (podés tener el peso y no el alto).
 Respondé ÚNICAMENTE con el objeto JSON, sin markdown ni explicaciones.`;
+}
+
+// Búsqueda web de Claude (herramienta del servidor de Anthropic: no hay que ejecutar nada acá).
+// max_uses acota costo y demora: alcanza para encontrar la ficha de un modelo. user_location
+// orienta los resultados a publicaciones de Argentina.
+const WEB_SEARCH_TOOL = {
+  type: "web_search_20260209",
+  name: "web_search",
+  max_uses: 3,
+  user_location: { type: "approximate", country: "AR" },
+};
+// Veces que se retoma una respuesta que el servidor pausó en medio de las búsquedas (pause_turn).
+const MAX_RESUMES = 2;
 
 // Extrae un objeto JSON de un texto (tolera fences ```json ... ``` o texto alrededor).
 function parseJsonLoose(text) {
@@ -143,44 +169,74 @@ function parseJsonLoose(text) {
   try { return JSON.parse(t); } catch { return null; }
 }
 
-// Claude (Anthropic) — visión. Devuelve { name, description, sku }, null si no hay key, o lanza.
-async function claudeSuggestText(base64, mimeType) {
-  const client = getAnthropic();
+// Claude (Anthropic) — visión + búsqueda web. images: [{ base64, mimeType }].
+// Devuelve el objeto del prompt, null si no hay key o no dio una respuesta usable, o lanza.
+// client: se puede pasar uno falso en los tests.
+async function claudeSuggestText(images, client = getAnthropic()) {
   if (!client) return null;
-  const msg = await withRetry(() => client.messages.create({
-    model: CLAUDE_MODEL,
-    // 2048 + effort bajo: en Opus 5 el razonamiento viene activado por defecto y consume tokens de
-    // la respuesta, así que con 1024 la salida podía cortarse antes del JSON. Catalogar una foto no
-    // necesita razonamiento profundo.
-    max_tokens: 2048,
-    output_config: { effort: "low" },
-    messages: [{
-      role: "user",
-      content: [
-        { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
-        { type: "text", text: TEXT_PROMPT },
-      ],
-    }],
-  }));
-  const text = (msg.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const messages = [{
+    role: "user",
+    content: [
+      ...images.map((img) => ({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.base64 } })),
+      { type: "text", text: buildTextPrompt({ canSearch: true }) },
+    ],
+  }];
+
+  let msg;
+  for (let i = 0; i <= MAX_RESUMES; i++) {
+    msg = await withRetry(() => client.messages.create({
+      model: CLAUDE_MODEL,
+      // Effort bajo: catalogar no necesita razonamiento profundo y así hace pocas búsquedas.
+      // Antes: max_tokens 2048 sin búsqueda. En Opus 5 el razonamiento viene activado y consume
+      // tokens de la respuesta; con las búsquedas de por medio se deja más margen.
+      max_tokens: 4096,
+      output_config: { effort: "low" },
+      tools: [WEB_SEARCH_TOOL],
+      // Sin output_config.format (JSON forzado) a propósito: la búsqueda web agrega citas y la API
+      // no permite citas con JSON forzado. El JSON se pide en el prompt y se extrae del texto.
+      messages,
+    }));
+    // pause_turn: el servidor cortó su ronda de búsquedas. Se retoma reenviando el turno tal cual
+    // (sin agregar un "seguí"): la API ve la búsqueda pendiente y continúa.
+    if (msg.stop_reason !== "pause_turn") break;
+    messages.push({ role: "assistant", content: msg.content });
+  }
+  // Rechazo o pausa sin terminar: no hay JSON confiable → null, y la cadena prueba con Gemini.
+  if (msg.stop_reason === "refusal" || msg.stop_reason === "pause_turn") return null;
+
+  // Solo el texto posterior a la última búsqueda (el JSON final). Los bloques se unen SIN separador:
+  // las citas de la búsqueda cortan el texto en varios bloques, a veces en medio del JSON.
+  const blocks = msg.content || [];
+  const lastSearch = blocks.map((b) => b.type).lastIndexOf("web_search_tool_result");
+  const text = blocks.slice(lastSearch + 1).filter((b) => b.type === "text").map((b) => b.text).join("");
   return parseJsonLoose(text);
 }
 
-// Gemini — visión (respaldo del texto). Devuelve { name, description, sku }, null si no hay key, o lanza.
-async function geminiSuggestText(base64, mimeType) {
+// Gemini — visión (respaldo del texto, sin búsqueda web). Devuelve el objeto del prompt, null si no
+// hay key, o lanza.
+async function geminiSuggestText(images) {
   const ai = getClient();
   if (!ai) return null;
   const response = await withRetry(() => ai.models.generateContent({
     model: TEXT_MODEL,
     contents: [
-      { inlineData: { mimeType, data: base64 } },
-      { text: TEXT_PROMPT },
+      ...images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.base64 } })),
+      { text: buildTextPrompt({ canSearch: false }) },
     ],
     config: {
       responseMimeType: "application/json",
       responseSchema: {
         type: "object",
-        properties: { name: { type: "string" }, description: { type: "string" }, sku: { type: "string" } },
+        properties: {
+          name:           { type: "string" },
+          description:    { type: "string" },
+          sku:            { type: "string" },
+          weightKg:       { type: "number", nullable: true },
+          lengthCm:       { type: "number", nullable: true },
+          widthCm:        { type: "number", nullable: true },
+          heightCm:       { type: "number", nullable: true },
+          measuresSource: { type: "string", nullable: true },
+        },
         required: ["name", "description", "sku"],
       },
     },
@@ -188,13 +244,51 @@ async function geminiSuggestText(base64, mimeType) {
   return parseJsonLoose(response.text);
 }
 
-// POST /api/ai/suggest-text — analiza la foto y sugiere nombre, descripción y SKU.
-// Preferencia: Claude (primario) → Gemini (respaldo). Si uno falla, prueba el otro.
+// Peso y medidas de la IA → números usables o null. Acepta "0,024" o "23 cm"; descarta ceros,
+// negativos y valores absurdos para un producto de la tienda.
+function cleanMeasure(value, max, decimals) {
+  const n = typeof value === "string" ? parseFloat(value.replace(",", ".")) : value;
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0 || n > max) return null;
+  const f = 10 ** decimals;
+  return Math.round(n * f) / f;
+}
+function cleanMeasures(data) {
+  const out = {
+    weight: cleanMeasure(data?.weightKg, 500, 3),
+    length: cleanMeasure(data?.lengthCm, 500, 1),
+    width:  cleanMeasure(data?.widthCm,  500, 1),
+    height: cleanMeasure(data?.heightCm, 500, 1),
+  };
+  const any = Object.values(out).some((v) => v != null);
+  const source = typeof data?.measuresSource === "string" ? data.measuresSource.trim().slice(0, 120) : "";
+  return { ...out, measuresSource: any && source ? source : null };
+}
+
+// Fotos que se le mandan a la IA: hasta MAX_AI_IMAGES y sin pasarse de ~20 MB en total (la API de
+// Claude acepta pedidos de hasta 32 MB y la foto va en base64, que ocupa un tercio más).
+const MAX_AI_IMAGES = 5;
+const MAX_AI_BYTES = 20 * 1024 * 1024;
+function pickImages(files) {
+  const out = [];
+  let total = 0;
+  for (const f of files.slice(0, MAX_AI_IMAGES)) {
+    const base64 = f.buffer.toString("base64");
+    if (out.length > 0 && total + base64.length > MAX_AI_BYTES) break;
+    total += base64.length;
+    out.push({ base64, mimeType: f.mimetype || "image/jpeg" });
+  }
+  return out;
+}
+
+// POST /api/ai/suggest-text — analiza las fotos y sugiere nombre, descripción, SKU, peso y medidas.
+// Fotos en el campo "images" (varias) o "image" (una, como antes).
+// Preferencia: Claude (primario, con búsqueda web) → Gemini (respaldo). Si uno falla, prueba el otro.
 async function suggestText(req, res) {
   try {
-    if (!req.file) return res.status(400).json({ error: "Subí una imagen para analizar" });
-    const base64 = req.file.buffer.toString("base64");
-    const mimeType = req.file.mimetype || "image/jpeg";
+    // Antes: if (!req.file) ... — una sola foto en el campo "image"
+    const files = [...(req.files?.images || []), ...(req.files?.image || [])];
+    if (files.length === 0) return res.status(400).json({ error: "Subí una imagen para analizar" });
+    const images = pickImages(files);
 
     const providers = [];
     if (process.env.ANTHROPIC_API_KEY) providers.push({ name: "claude", fn: claudeSuggestText });
@@ -206,7 +300,7 @@ async function suggestText(req, res) {
     let data = null, lastErr = null;
     for (const prov of providers) {
       try {
-        data = await prov.fn(base64, mimeType);
+        data = await prov.fn(images);
         if (data) break; // éxito
       } catch (e) {
         lastErr = e;
@@ -225,6 +319,8 @@ async function suggestText(req, res) {
       name:        (data.name || "").trim(),
       description: (data.description || "").trim(),
       sku:         (data.sku || "").trim(),
+      // weight (kg), length/width/height (cm) y measuresSource; null lo que no se encontró
+      ...cleanMeasures(data),
     });
   } catch (err) {
     console.error("suggestText error:", err);
@@ -292,4 +388,4 @@ async function suggestImages(req, res) {
   }
 }
 
-module.exports = { suggestText, suggestImages };
+module.exports = { suggestText, suggestImages, _internals: { claudeSuggestText, cleanMeasures, pickImages } };

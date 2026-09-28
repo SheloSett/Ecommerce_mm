@@ -164,22 +164,33 @@ export default function AdminProductCreate() {
     return () => urls.forEach((u) => URL.revokeObjectURL(u.url));
   }, [newVideos]);
 
-  // Sugerir título, descripción y SKU a partir de la primera foto subida.
+  // Sugerir título, descripción, SKU, peso y medidas a partir de las fotos subidas.
+  // Antes mandaba solo la primera foto (fd.append("image", newImages[0])) y no traía peso ni
+  // medidas. Ahora van hasta 5 fotos: la etiqueta con las medidas suele estar en el dorso o el empaque.
   const handleAiSuggestText = async () => {
-    const base = newImages[0];
-    if (!base) { toast.error("Subí una foto del producto primero"); return; }
+    if (!newImages[0]) { toast.error("Subí una foto del producto primero"); return; }
     setAiLoadingText(true);
     try {
       const fd = new FormData();
-      fd.append("image", base);
+      newImages.slice(0, 5).forEach((img) => fd.append("images", img));
       const res = await aiApi.suggestText(fd);
+      const d = res.data;
+      // Peso y medidas: solo en los campos vacíos (no pisa lo que ya se cargó a mano) y solo si la IA
+      // encontró el dato (en la foto o en la web). Lo que no encontró llega en null y queda vacío.
+      const measureKeys = ["weight", "length", "width", "height"];
+      const filled = measureKeys.filter((k) => d[k] != null && !String(form[k] ?? "").trim());
       setForm((f) => ({
         ...f,
-        name:        (res.data.name || f.name || "").toUpperCase(),
-        description: res.data.description || f.description,
-        sku:         res.data.sku         || f.sku,
+        name:        (d.name || f.name || "").toUpperCase(),
+        description: d.description || f.description,
+        sku:         d.sku         || f.sku,
+        ...Object.fromEntries(filled.map((k) => [k, String(d[k])])),
       }));
-      toast.success("Datos sugeridos por IA ✨");
+      if (filled.length > 0) {
+        toast.success(`Datos sugeridos por IA ✨ · peso/medidas${d.measuresSource ? ` de: ${d.measuresSource}` : ""}. Revisalos.`, { duration: 6000 });
+      } else {
+        toast.success("Datos sugeridos por IA ✨");
+      }
     } catch (err) {
       toast.error(err.response?.data?.error || "No se pudo sugerir con IA");
     } finally {
@@ -1052,7 +1063,8 @@ export default function AdminProductCreate() {
                     </span>
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">Autocompletar datos</span>
-                      <span className="block text-[11px] text-emerald-600 dark:text-emerald-400">Título, descripción y SKU · gratis</span>
+                      {/* Antes: "Título, descripción y SKU · gratis" */}
+                      <span className="block text-[11px] text-emerald-600 dark:text-emerald-400">Título, descripción, SKU, peso y medidas</span>
                     </span>
                   </button>
 
