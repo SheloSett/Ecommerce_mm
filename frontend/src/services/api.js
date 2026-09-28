@@ -182,6 +182,9 @@ export const suppliersApi = {
   create: (data) => api.post("/suppliers", data),
   update: (id, data) => api.put(`/suppliers/${id}`, data),
   remove: (id) => api.delete(`/suppliers/${id}`),
+  // Ubica direcciones de CABA en el mapa (para ordenar la orden de compra por recorrido a pie).
+  // → { results: { [dirección]: { lat, lng, label } | null }, failed: [dirección] }
+  geocode: (addresses) => api.post("/suppliers/geocode", { addresses }),
 };
 
 // ─── Órdenes ──────────────────────────────────────────────────────────────────

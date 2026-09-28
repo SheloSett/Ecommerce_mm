@@ -4,6 +4,7 @@ const {
   createSupplier,
   updateSupplier,
   deleteSupplier,
+  geocodeAddresses,
 } = require("../controllers/supplier.controller");
 const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
 
@@ -15,5 +16,7 @@ router.get("/", authMiddleware, adminMiddleware, getSuppliers);
 router.post("/", authMiddleware, adminMiddleware, createSupplier);
 router.put("/:id", authMiddleware, adminMiddleware, updateSupplier);
 router.delete("/:id", authMiddleware, adminMiddleware, deleteSupplier);
+// Ubica direcciones en el mapa para ordenar la orden de compra por recorrido a pie
+router.post("/geocode", authMiddleware, adminMiddleware, geocodeAddresses);
 
 module.exports = router;

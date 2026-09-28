@@ -1,4 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
+const { geocodeAddress } = require("../utils/geocode");
 
 const prisma = new PrismaClient();
 
@@ -104,4 +105,31 @@ async function deleteSupplier(req, res) {
   }
 }
 
-module.exports = { getSuppliers, createSupplier, updateSupplier, deleteSupplier };
+// POST /api/suppliers/geocode - Ubicar direcciones en el mapa (admin)
+// Body: { addresses: ["pasteur 288", "Av La Plata 744", ...] }
+// Respuesta: { results: { "pasteur 288": { lat, lng, label } | null }, failed: [...] }
+//   null   → no se encontró (mal escrita o fuera de CABA): hay que corregirla en Proveedores.
+//   failed → no se pudo consultar (USIG caído o sin conexión): se puede reintentar.
+// Lo usa la orden de compra para ordenar a los proveedores por recorrido. Ver utils/geocode.js.
+async function geocodeAddresses(req, res) {
+  const list = Array.isArray(req.body?.addresses) ? req.body.addresses : null;
+  if (!list) {
+    return res.status(400).json({ error: "addresses tiene que ser una lista de direcciones" });
+  }
+  // Sin repetidas y con techo: una orden de compra trae a lo sumo un puñado de proveedores.
+  const unique = [...new Set(list.map((a) => String(a || "").trim()).filter(Boolean))].slice(0, 40);
+
+  const results = {};
+  const failed = [];
+  await Promise.all(unique.map(async (address) => {
+    try {
+      results[address] = await geocodeAddress(address);
+    } catch (err) {
+      console.error(`geocodeAddresses "${address}":`, err.message);
+      failed.push(address);
+    }
+  }));
+  res.json({ results, failed });
+}
+
+module.exports = { getSuppliers, createSupplier, updateSupplier, deleteSupplier, geocodeAddresses };

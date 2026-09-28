@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
+import PurchaseRoutePanel, { orderGroupsByRoute, stopPrefix, stopWalk, routeSummaryHtml } from "../../components/admin/PurchaseRoutePanel";
 import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
@@ -102,6 +103,20 @@ export default function AdminPurchaseOrderBulk() {
       .sort((a, b) => (a.key === "none" ? 1 : b.key === "none" ? -1 : a.name.localeCompare(b.name)));
   }, [orders]);
 
+  // Orden de los proveedores (alfabético o por recorrido a pie, ver PurchaseRoutePanel). Entran al
+  // recorrido los que tienen algo seleccionado; "Sin proveedor" no tiene dirección y va al final.
+  const [route, setRoute] = useState(null);
+  const routeGroups = useMemo(() => groups
+    .filter((g) => g.key !== "none")
+    .map((g) => ({
+      key: g.key,
+      name: g.name,
+      street: g.street,
+      units: g.lines.reduce((s, l) => (selected.has(l.key) ? s + l.qty : s), 0),
+    }))
+    .filter((g) => g.units > 0), [groups, selected]);
+  const orderedGroups = useMemo(() => orderGroupsByRoute(groups, route), [groups, route]);
+
   const allLines = groups.flatMap((g) => g.lines);
   const allSelected = allLines.length > 0 && allLines.every((l) => selected.has(l.key));
   const selectedCount = allLines.filter((l) => selected.has(l.key)).length;
@@ -124,7 +139,8 @@ export default function AdminPurchaseOrderBulk() {
   // ── Impresión (consolidada, agrupada por proveedor) ──────────────────────────
   const handlePrint = () => {
     if (selectedCount === 0) return;
-    const printGroups = groups
+    // En el orden elegido (alfabético o recorrido). Antes: const printGroups = groups
+    const printGroups = orderedGroups
       .map((g) => ({ ...g, lines: g.lines.filter((l) => selected.has(l.key)) }))
       .filter((g) => g.lines.length > 0);
 
@@ -157,11 +173,12 @@ export default function AdminPurchaseOrderBulk() {
         </tr>`;
       }).join("");
       const subtotal = g.lines.reduce((acc, l) => addLine(acc, l), emptyMoney());
-      const contact = supplierContact(g);
+      // Con recorrido: número de parada delante del nombre y metros desde la parada anterior.
+      const contact = [supplierContact(g), stopWalk(route, g.key)].filter(Boolean).join(" · ");
       return `
       <section style="margin-bottom:12px;break-inside:avoid">
         <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">🏭 ${g.name}</span>
+          <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">${stopPrefix(route, g.key)}🏭 ${g.name}</span>
           ${contact ? `<span style="font-size:11px;font-weight:600">${contact}</span>` : ""}
         </div>
         <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none">
@@ -214,6 +231,8 @@ export default function AdminPurchaseOrderBulk() {
       <div class="meta">Pedidos ${orderList}</div>
     </div>
   </div>
+
+  ${routeSummaryHtml(route, Object.fromEntries(printGroups.map((g) => [g.key, g.name])))}
 
   ${groupsHtml}
 
@@ -303,8 +322,12 @@ export default function AdminPurchaseOrderBulk() {
           </div>
         </div>
 
-        {/* Grupos por proveedor */}
-        {groups.map((group) => {
+        {/* Orden de los proveedores: alfabético o por recorrido a pie */}
+        <PurchaseRoutePanel groups={routeGroups} onChange={setRoute} />
+
+        {/* Grupos por proveedor, en el orden elegido */}
+        {/* Antes: {groups.map((group) => { */}
+        {orderedGroups.map((group) => {
           const groupAllSel = group.lines.every((l) => selected.has(l.key));
           return (
             <div key={group.key} className="bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
@@ -313,6 +336,9 @@ export default function AdminPurchaseOrderBulk() {
                   <input type="checkbox" checked={groupAllSel} onChange={() => toggleGroup(group, groupAllSel)} className="w-4 h-4 accent-blue-600" />
                   <div className="min-w-0">
                     <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                      {stopPrefix(route, group.key) && (
+                        <span className="text-blue-600 dark:text-blue-400">{stopPrefix(route, group.key).trim()}</span>
+                      )}
                       🏭 {group.name}
                       {group.key === "none" && (
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30 px-1.5 py-0.5 rounded">
