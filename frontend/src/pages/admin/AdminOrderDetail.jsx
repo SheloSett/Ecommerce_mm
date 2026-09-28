@@ -372,10 +372,10 @@ export default function AdminOrderDetail() {
   };
 
   // Antes el botón imprimía directo; ahora pregunta si la hoja lleva los precios (PrintPricesModal).
-  // La cotización no pregunta: sin precios no cotiza nada.
+  // También en las cotizaciones: sin precios sirven para armar el pedido o entregarlo sin mostrar
+  // montos. Antes: if (order.paymentMethod === "COTIZACION") return printOrder(true);
   const handlePrint = () => {
     if (!order) return;
-    if (order.paymentMethod === "COTIZACION") return printOrder(true);
     setPrintAsk(true);
   };
 
@@ -1428,7 +1428,7 @@ export default function AdminOrderDetail() {
       {/* Modal: ¿la hoja impresa lleva los precios? */}
       {printAsk && (
         <PrintPricesModal
-          title={`Imprimir orden #${order.id}`}
+          title={`Imprimir ${order.paymentMethod === "COTIZACION" ? "cotización" : "orden"} #${order.id}`}
           onCancel={() => setPrintAsk(false)}
           onChoose={(withPrices) => { printOrder(withPrices); setPrintAsk(false); }}
         />

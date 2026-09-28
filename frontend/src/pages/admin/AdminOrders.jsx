@@ -1202,18 +1202,19 @@ ${pagesHtml}
   };
 
   // Impresión de UNA orden. Antes imprimía directo; ahora pregunta si la hoja lleva los precios.
-  // La cotización no pregunta: sin precios no cotiza nada.
+  // También en las cotizaciones: sin precios sirven para armar el pedido o entregarlo sin mostrar
+  // montos. Antes: if (order.paymentMethod === "COTIZACION") return printOrders([order], true);
   const handlePrint = (order) => {
-    if (order.paymentMethod === "COTIZACION") return printOrders([order], true);
-    setPrintAsk({ list: [order], title: `Imprimir orden #${order.id}` });
+    const tipo = order.paymentMethod === "COTIZACION" ? "cotización" : "orden";
+    setPrintAsk({ list: [order], title: `Imprimir ${tipo} #${order.id}` });
   };
 
   // Impresión MASIVA: todas las órdenes seleccionadas, cada una en su hoja (sin mezclarse).
-  // La elección del modal vale para todas las hojas, cotizaciones incluidas.
+  // La elección del modal vale para todas las hojas, cotizaciones incluidas (antes, si eran todas
+  // cotizaciones, imprimía directo con precios).
   const handleBulkPrint = () => {
     const selected = orders.filter((o) => checkedIds.includes(o.id));
     if (selected.length === 0) return;
-    if (selected.every((o) => o.paymentMethod === "COTIZACION")) return printOrders(selected, true);
     setPrintAsk({
       list: selected,
       title: selected.length === 1 ? `Imprimir orden #${selected[0].id}` : `Imprimir ${selected.length} órdenes`,
