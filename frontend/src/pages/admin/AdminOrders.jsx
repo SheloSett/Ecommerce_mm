@@ -1117,7 +1117,8 @@ ${pagesHtml}
               ${locHtml}
               ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${item.listPrice > item.price
                 ? `<span style="text-decoration:line-through;opacity:.6">${formatPriceWithCurrency(item.listPrice, item.currency)}</span> <span style="color:#16a34a;font-weight:700">${formatPriceWithCurrency(item.price, item.currency)}</span>`
-                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>` : ""}
+                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.${item.listPrice > item.price
+                ? ` <span style="color:#16a34a;font-weight:700">(-${String(Math.round((1 - item.price / item.listPrice) * 1000) / 10).replace(".", ",")}%)</span>` : ""}</div>` : ""}
             </div>
           </div>
         </td>

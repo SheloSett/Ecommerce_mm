@@ -69,6 +69,11 @@ function formatPrice(price) {
 // muestran en renglones distintos. Cada línea de la orden guarda su moneda (OrderItem.currency,
 // snapshot del momento de la venta), porque un mismo pedido puede mezclar ARS y USD.
 const isUsdItem = (i) => (i.currency || "ARS") === "USD";
+// % de descuento de la línea, o null si no tiene. price ya viene con el descuento aplicado y
+// listPrice (el precio de lista) solo se guarda cuando hubo descuento. Ej: 69.999 → 67.899,03 = 3.
+const lineDiscountPct = (i) => (i.listPrice != null && i.listPrice > i.price
+  ? Math.round((1 - i.price / i.listPrice) * 1000) / 10
+  : null);
 const sumBy = (items, currency, pick) =>
   (items || [])
     .filter((i) => (isUsdItem(i) ? "USD" : "ARS") === currency)
@@ -416,7 +421,10 @@ export default function AdminOrderDetail() {
               <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
               ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
               ${locHtml}
-              ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>` : ""}
+              ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${lineDiscountPct(item) != null
+                ? `<span style="text-decoration:line-through;opacity:.6">${formatPriceWithCurrency(item.listPrice, item.currency)}</span> <span style="color:#16a34a;font-weight:700">${formatPriceWithCurrency(item.price, item.currency)}</span>`
+                : formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.${lineDiscountPct(item) != null
+                ? ` <span style="color:#16a34a;font-weight:700">(-${String(lineDiscountPct(item)).replace(".", ",")}%)</span>` : ""}</div>` : ""}
             </div>
           </div>
         </td>
@@ -1062,8 +1070,21 @@ export default function AdminOrderDetail() {
                           {/* La moneda sale de la línea (snapshot de la venta). En la vista del pedido
                               original el snapshot viejo puede no tenerla → cae a ARS, que es lo que
                               era antes de que existiera el selector de moneda. */}
+                          {/* Con descuento en la línea: precio de lista tachado, el cobrado en verde y el %.
+                              Antes solo mostraba el precio final, sin rastro del descuento. */}
                           <p className="text-xs text-slate-400 mt-0.5">
-                            {formatPriceWithCurrency(item.price, item.currency)} × {item.quantity}
+                            {lineDiscountPct(item) != null && (
+                              <span className="line-through mr-1">{formatPriceWithCurrency(item.listPrice, item.currency)}</span>
+                            )}
+                            <span className={lineDiscountPct(item) != null ? "text-green-600 font-semibold" : ""}>
+                              {formatPriceWithCurrency(item.price, item.currency)}
+                            </span>
+                            {" "}× {item.quantity}
+                            {lineDiscountPct(item) != null && (
+                              <span className="ml-1.5 px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-bold text-[10px]">
+                                -{String(lineDiscountPct(item)).replace(".", ",")}%
+                              </span>
+                            )}
                           </p>
                         </div>
                         <p className="font-bold text-slate-800 text-sm flex-shrink-0">
