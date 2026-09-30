@@ -7,6 +7,7 @@ import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals } from "../../utils/orderTotals";
+import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",           color: "bg-yellow-500 text-white",  icon: "⏳" },
@@ -1059,9 +1060,10 @@ export default function AdminOrders() {
   // Abre una ventana de impresión con uno o más bloques <div class="page">.
   const openOrdersPrint = (title, pagesHtml) => {
     const html = `<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8" /><title>${title}</title><style>${ORDER_PRINT_STYLES}</style></head>
+<html lang="es"><head><meta charset="UTF-8" /><title>${title}</title><style>${ORDER_PRINT_STYLES}${photoSizeCss(40)}</style></head>
 <body>
-<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999">
+<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999;display:flex;align-items:center;gap:8px">
+  ${photoSizeControlsHtml(PHOTO_SIZE_KEYS.orders, 40)}
   <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
 </div>
 ${pagesHtml}
@@ -1096,9 +1098,11 @@ ${pagesHtml}
     // Filas de producto compactas con imagen pequeña
     const itemCards = (order.items || []).map((item) => {
       const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
+      // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
+      // Antes: width:40px;height:40px fijos.
       const imgHtml = imgSrc
-        ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
-        : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
+        ? `<img src="${imgSrc}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
+        : `<div class="ph" style="background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
       // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
       // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
       const mod   = esCotizacion ? null : (item.variant?.module ?? item.product?.module);

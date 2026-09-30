@@ -5,6 +5,7 @@ import PurchaseRoutePanel, { orderGroupsByRoute, stopPrefix, stopWalk, routeSumm
 import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
+import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 
 const formatDate = (d) =>
   new Date(d).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -149,9 +150,11 @@ export default function AdminPurchaseOrder() {
       const withCosts = showsCosts(g.key);
       const rows = g.items.map((item) => {
         const photo = itemPhoto(item);
+        // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
+        // Antes: width:48px;height:48px fijos, y la celda de la foto de 56px.
         const imgHtml = photo
-          ? `<img src="${getImageUrl(photo)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0" />`
-          : `<div style="width:48px;height:48px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:18px">📦</div>`;
+          ? `<img src="${getImageUrl(photo)}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0" />`
+          : `<div class="ph" style="background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:18px">📦</div>`;
         const cost = itemCost(item);
         const cur  = itemCostCurrency(item);
         const lineTotal = cost * item.quantity;
@@ -160,7 +163,7 @@ export default function AdminPurchaseOrder() {
           : "";
         return `
         <tr>
-          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle;width:56px">${imgHtml}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle;width:calc(var(--ph) + 16px)">${imgHtml}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
             <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
             ${variantHtml}
@@ -237,10 +240,12 @@ export default function AdminPurchaseOrder() {
       section { break-inside: avoid; }
       .print-btn { display: none !important; }
     }
+    ${photoSizeCss(48)}
   </style>
 </head>
 <body>
-<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999">
+<div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999;display:flex;align-items:center;gap:8px">
+  ${photoSizeControlsHtml(PHOTO_SIZE_KEYS.purchases, 48)}
   <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
 </div>
 <div class="page">
