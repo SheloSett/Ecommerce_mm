@@ -74,7 +74,9 @@ export default function AdminPurchaseOrder() {
     for (const item of (order?.items || [])) {
       // Proveedor de la VARIANTE si lo tiene (item.variant lo adjunta el backend), sino el del producto.
       // Antes: const sup = item.product?.supplier;
-      const sup  = item.variant?.supplier ?? item.product?.supplier;
+      // Antes: item.variant?.supplier ?? item.product?.supplier — ahora primero el proveedor elegido
+      // para la línea en "Modificar pedido" (OrderItem.supplierId).
+      const sup  = item.supplier ?? item.variant?.supplier ?? item.product?.supplier;
       const key  = sup?.id != null ? `s${sup.id}` : "none";
       const name = sup?.name || "Sin proveedor";
       if (!map.has(key)) map.set(key, { key, name, street: sup?.street || "", phone: sup?.phone || "", items: [] });

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import PrintPricesModal from "../../components/admin/PrintPricesModal";
-import { ordersApi, productsApi, shippingApi, getImageUrl } from "../../services/api";
+import { ordersApi, productsApi, shippingApi, suppliersApi, getImageUrl } from "../../services/api";
+import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import toast from "react-hot-toast";
@@ -124,9 +125,13 @@ export default function AdminOrderDetail() {
     }
   };
   const [savingEdit, setSavingEdit] = useState(false);
-  // Modal que pregunta si el cambio de costo también se aplica al producto (próximos pedidos).
-  // Guarda el payload ya armado para enviarlo según la respuesta (Sí/No).
+  // Modal que pregunta si el cambio de costo y/o de proveedor también se aplica al producto
+  // (próximos pedidos). { open, cost: bool, supplier: bool } — qué cambió, para el texto.
   const [costModal, setCostModal] = useState(null);
+  // Proveedores para el selector de cada línea al modificar el pedido (se cargan al entrar a editar).
+  const [suppliers, setSuppliers] = useState([]);
+  // "Ordenar por" de los productos, en pantalla y en la hoja impresa. Se recuerda en el navegador.
+  const [itemSort, setItemSortState] = useState(loadOrderItemSort);
   const [productSearch, setProductSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -225,7 +230,18 @@ export default function AdminOrderDetail() {
       currency:     i.currency || "ARS",
       variantId:    i.variantId || null,
       variantLabel: i.variantLabel || null,
+      // supplierId: proveedor elegido para ESTE pedido ("" = el de siempre). productSupplier: el de
+      // siempre (variante o producto), para mostrarlo en la opción por defecto del selector.
+      supplierId:      i.supplierId ?? "",
+      lineSupplier:    i.supplier ?? null,
+      productSupplier: i.variant?.supplier ?? i.product?.supplier ?? null,
     })));
+    // Mismo orden que se estaba viendo. Se ordena acá y al cambiar el criterio, no en cada render:
+    // si no, una fila se movería de lugar mientras se escribe su precio o se elige su proveedor.
+    setEditItems((rows) => sortOrderItems(rows, itemSort, editSortOpts));
+    if (suppliers.length === 0) {
+      suppliersApi.getAll().then((r) => setSuppliers(r.data || [])).catch(() => {});
+    }
     setEditDiscount({
       type:  order.manualDiscountType || "PERCENTAGE",
       value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
@@ -266,6 +282,39 @@ export default function AdminOrderDetail() {
   const updateEditCost = (idx, val) => {
     setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, cost: val } : it));
   };
+
+  // Proveedor de la línea para este pedido ("" = el de siempre). Se usa en la orden de compra.
+  const updateEditSupplier = (idx, val) => {
+    setEditItems((prev) => prev.map((it, i) => i === idx ? { ...it, supplierId: val } : it));
+  };
+
+  // Nombre del proveedor de una fila del modo edición (el elegido, o el de siempre), para ordenar.
+  // lineSupplier: el que ya tenía elegido la línea, por si la lista de proveedores no cargó todavía.
+  const editRowSupplierName = (it) => {
+    if (it.supplierId === "" || it.supplierId == null) return it.productSupplier?.name || "";
+    return suppliers.find((s) => String(s.id) === String(it.supplierId))?.name
+      || (String(it.lineSupplier?.id) === String(it.supplierId) ? it.lineSupplier.name : "");
+  };
+  const editSortOpts = { price: (it) => precioLineaConDesc(it), supplierName: editRowSupplierName };
+
+  // Cambiar el "Ordenar por": se recuerda, y si se está editando, reordena las filas una vez.
+  const setItemSort = (v) => {
+    setItemSortState(v);
+    saveOrderItemSort(v);
+    if (editMode) setEditItems((rows) => sortOrderItems(rows, v, editSortOpts));
+  };
+  const renderSortSelect = () => (
+    <label className="flex items-center gap-1.5 text-xs text-slate-500">
+      Ordenar por
+      <select
+        value={itemSort}
+        onChange={(e) => setItemSort(e.target.value)}
+        className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white text-slate-700"
+      >
+        {ORDER_ITEM_SORTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+      </select>
+    </label>
+  );
 
   const removeEditItem = (idx) => {
     setEditItems((prev) => prev.filter((_, i) => i !== idx));
@@ -324,20 +373,33 @@ export default function AdminOrderDetail() {
     });
   };
 
+  // Ídem proveedor: algún item EXISTENTE con otro proveedor elegido que el que tenía la línea.
+  const didSupplierChange = () => {
+    return editItems.some((it) => {
+      if (!it.itemId) return false;
+      const orig = (order.items || []).find((oi) => oi.id === it.itemId);
+      return orig && String(orig.supplierId ?? "") !== String(it.supplierId ?? "");
+    });
+  };
+
   const handleSaveEdit = () => {
     if (editItems.length === 0) {
       toast.error("El pedido debe tener al menos un producto");
       return;
     }
-    // Si cambió algún costo, preguntar si se aplica también al producto (próximos pedidos).
-    if (didCostChange()) {
-      setCostModal({ open: true });
+    // Si cambió algún costo o proveedor, preguntar si se aplica también al producto (próximos pedidos).
+    // Antes: solo el costo.
+    const cost = didCostChange();
+    const supplier = didSupplierChange();
+    if (cost || supplier) {
+      setCostModal({ open: true, cost, supplier });
     } else {
       doSaveEdit(false);
     }
   };
 
-  // Ejecuta la modificación. applyCostToProduct = respuesta del modal (Sí/No).
+  // Ejecuta la modificación. applyCostToProduct = respuesta del modal (Sí/No); vale para el costo
+  // y para el proveedor (es una sola pregunta).
   const doSaveEdit = async (applyCostToProduct) => {
     setCostModal(null);
     setSavingEdit(true);
@@ -355,6 +417,9 @@ export default function AdminOrderDetail() {
         listPrice:    final < lista ? lista : null,
         // cost: se envía siempre (vacío → el backend lo guarda como null y usa el costo del producto)
         cost:         it.cost === "" || it.cost === null || it.cost === undefined ? "" : it.cost,
+        // supplierId: proveedor de la línea para este pedido (null = el de siempre). Los ítems libres
+        // no tienen producto ni proveedor.
+        ...(it.isFree ? {} : { supplierId: it.supplierId === "" || it.supplierId == null ? null : it.supplierId }),
         variantId:    it.variantId || undefined,
         variantLabel: it.variantLabel || undefined,
         // Foto cargada desde el modo edición (solo ítems libres)
@@ -365,6 +430,8 @@ export default function AdminOrderDetail() {
         // Se mandan siempre (aunque estén vacíos) para poder sacar un descuento que ya existía.
         manualDiscountType:  editDiscount.value ? editDiscount.type : null,
         manualDiscountValue: editDiscount.value ? parseFloat(editDiscount.value) : null,
+        // Misma respuesta del modal para el proveedor: también al producto, o solo este pedido.
+        applySupplierToProduct: applyCostToProduct,
       });
       setOrder(res.data);
       setEditMode(false);
@@ -401,7 +468,8 @@ export default function AdminOrderDetail() {
     const hasDiscount = Tp.ars.discount > 0 || Tp.usd.discount > 0;
     const hasIva      = order.wantsInvoice && (Tp.ars.iva > 0 || Tp.usd.iva > 0);
 
-    const itemCards = (order.items || []).map((item) => {
+    // En el orden elegido en "Ordenar por" (antes: (order.items || []) como se cargaron).
+    const itemCards = sortOrderItems(order.items, itemSort).map((item) => {
       const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
       // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
       // Antes: width:40px;height:40px fijos.
@@ -798,13 +866,16 @@ export default function AdminOrderDetail() {
               <div className="bg-white rounded-2xl border border-orange-300 p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="font-bold text-slate-800 text-base">✏️ Modificando pedido</h2>
-                  {/* Antes era un "Cancelar" subrayado chiquito que se perdía en la esquina */}
-                  <button
-                    onClick={cancelEditMode}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border-2 border-slate-300 bg-white text-sm font-bold text-slate-600 hover:bg-slate-100 hover:border-slate-400 hover:text-slate-800 transition-colors"
-                  >
-                    ✕ Cancelar
-                  </button>
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {renderSortSelect()}
+                    {/* Antes era un "Cancelar" subrayado chiquito que se perdía en la esquina */}
+                    <button
+                      onClick={cancelEditMode}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl border-2 border-slate-300 bg-white text-sm font-bold text-slate-600 hover:bg-slate-100 hover:border-slate-400 hover:text-slate-800 transition-colors"
+                    >
+                      ✕ Cancelar
+                    </button>
+                  </div>
                 </div>
 
                 {/* Items editables */}
@@ -857,6 +928,26 @@ export default function AdminOrderDetail() {
                             className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
                           />
                         </div>
+                        {/* Proveedor de este producto para ESTE pedido (como el costo). La primera
+                            opción es el de siempre (variante o producto). Los ítems libres no tienen. */}
+                        {!item.isFree && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-400 w-12 text-right">🏭 Prov.</span>
+                            <select
+                              value={item.supplierId ?? ""}
+                              onChange={(e) => updateEditSupplier(idx, e.target.value)}
+                              title="Proveedor de este producto para este pedido (se usa en la orden de compra)"
+                              className={`w-40 border rounded-lg px-1.5 py-1 text-xs bg-white ${
+                                item.supplierId !== "" && item.supplierId != null ? "border-blue-400 text-blue-800 font-semibold" : "border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              <option value="">{item.productSupplier ? `${item.productSupplier.name} (el de siempre)` : "Sin proveedor"}</option>
+                              {(suppliers.length ? suppliers : item.lineSupplier ? [item.lineSupplier] : [])
+                                .filter((s) => s.id !== item.productSupplier?.id)
+                                .map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </div>
+                        )}
                         {/* Descuento de este producto: baja su precio de venta. El de lista queda
                             guardado para mostrarlo tachado en la cotización y en la impresión.
                             Va resaltado (etiqueta verde + borde propio) porque entre "Venta", "Costo"
@@ -1037,14 +1128,17 @@ export default function AdminOrderDetail() {
                   <h2 className="font-bold text-slate-800 text-base">
                     {showOriginal ? "Pedido original" : "Productos"} ({showOriginal ? originalItems.length : (order.items || []).length})
                   </h2>
-                  {order.isModified && originalItems.length > 0 && (
-                    <button
-                      onClick={() => setShowOriginal((v) => !v)}
-                      className="text-xs text-orange-600 hover:text-orange-800 underline"
-                    >
-                      {showOriginal ? "Ver versión actual" : "Ver pedido original"}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    {!showOriginal && renderSortSelect()}
+                    {order.isModified && originalItems.length > 0 && (
+                      <button
+                        onClick={() => setShowOriginal((v) => !v)}
+                        className="text-xs text-orange-600 hover:text-orange-800 underline"
+                      >
+                        {showOriginal ? "Ver versión actual" : "Ver pedido original"}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Banner de pedido original */}
@@ -1055,7 +1149,8 @@ export default function AdminOrderDetail() {
                 )}
 
                 <div className="space-y-3">
-                  {(showOriginal ? originalItems : (order.items || [])).map((item, idx) => {
+                  {/* Antes: (order.items || []) en el orden en que se cargaron. Ahora según "Ordenar por". */}
+                  {(showOriginal ? originalItems : sortOrderItems(order.items, itemSort)).map((item, idx) => {
                     const img = showOriginal ? item.image : item.product?.images?.[0];
                     const name = showOriginal ? item.name : (item.product?.name || "Producto eliminado");
                     return (
@@ -1091,6 +1186,13 @@ export default function AdminOrderDetail() {
                               </span>
                             )}
                           </p>
+                          {/* Proveedor de la línea (el elegido para este pedido, o el de siempre) */}
+                          {!showOriginal && itemSupplier(item) && (
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              🏭 {itemSupplier(item).name}
+                              {item.supplier && <span className="text-blue-600"> · elegido para este pedido</span>}
+                            </p>
+                          )}
                         </div>
                         <p className="font-bold text-slate-800 text-sm flex-shrink-0">
                           {formatPriceWithCurrency(item.price * item.quantity, item.currency)}
@@ -1409,17 +1511,20 @@ export default function AdminOrderDetail() {
         </div>
       </div>
 
-      {/* Modal: ¿aplicar el nuevo costo también al producto (próximos pedidos)? */}
-      {costModal?.open && (
+      {/* Modal: ¿aplicar el nuevo costo y/o proveedor también al producto (próximos pedidos)?
+          Antes preguntaba solo por el costo. Es una sola respuesta para los dos. */}
+      {costModal?.open && (() => {
+        const que = costModal.cost && costModal.supplier ? "el costo y el proveedor" : costModal.supplier ? "el proveedor" : "el costo";
+        return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
-            <h2 className="text-lg font-bold text-slate-800">Cambiaste el costo</h2>
+            <h2 className="text-lg font-bold text-slate-800">Cambiaste {que}</h2>
             <p className="text-sm text-slate-600">
-              ¿Querés actualizar también el <strong>costo del producto</strong> para los próximos pedidos?
+              ¿Querés actualizar también <strong>{que} del producto</strong> para los próximos pedidos?
             </p>
             <ul className="text-xs text-slate-500 list-disc pl-5 space-y-1">
-              <li><strong>Sí:</strong> se actualiza el costo del producto. Lo usarán este pedido y los próximos; los pedidos anteriores quedan como estaban.</li>
-              <li><strong>No:</strong> el nuevo costo se aplica solo a este pedido.</li>
+              <li><strong>Sí:</strong> se actualiza {que} del producto. Lo usarán este pedido y los próximos{costModal.cost ? "; los pedidos anteriores quedan con su costo" : ""}.</li>
+              <li><strong>No:</strong> el cambio se aplica solo a este pedido.</li>
             </ul>
             <div className="flex gap-3 justify-end pt-2">
               <button
@@ -1449,7 +1554,8 @@ export default function AdminOrderDetail() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Modal: ¿la hoja impresa lleva los precios? */}
       {printAsk && (

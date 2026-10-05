@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals } from "../../utils/orderTotals";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
+import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",           color: "bg-yellow-500 text-white",  icon: "⏳" },
@@ -1096,7 +1097,9 @@ ${pagesHtml}
     const hasIva      = order.wantsInvoice && (Tp.ars.iva > 0 || Tp.usd.iva > 0);
 
     // Filas de producto compactas con imagen pequeña
-    const itemCards = (order.items || []).map((item) => {
+    // En el orden elegido en "Ordenar por" del detalle del pedido (se recuerda en el navegador).
+    // Antes: (order.items || []) como se cargaron.
+    const itemCards = sortOrderItems(order.items, loadOrderItemSort()).map((item) => {
       const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
       // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
       // Antes: width:40px;height:40px fijos.

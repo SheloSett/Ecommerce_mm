@@ -106,7 +106,8 @@ function sanitizeOrdersForCustomer(orders, viewer) {
   const list = Array.isArray(orders) ? orders : [orders];
   for (const o of list) {
     if (!Array.isArray(o?.items)) continue;
-    o.items = o.items.map(({ cost, ...item }) => {
+    // supplierId: proveedor interno de la línea (ver OrderItem.supplierId), tampoco es para el cliente.
+    o.items = o.items.map(({ cost, supplierId, ...item }) => {
       const product = item.product ? sanitizeProductForViewer(item.product, viewer) : item.product;
       if (product?.priceHidden) product.active = false;
       return { ...item, product };
@@ -130,7 +131,8 @@ const ORDER_ITEM_PRODUCT_SELECT = {
 // orderBy id asc: sin esto Prisma no garantiza el orden de los ítems y el panel los veía "saltar".
 const ORDER_WITH_ITEMS_INCLUDE = {
   items: {
-    include: { product: { select: ORDER_ITEM_PRODUCT_SELECT } },
+    // supplier: proveedor elegido para la línea en "Modificar pedido" (null = el del producto)
+    include: { product: { select: ORDER_ITEM_PRODUCT_SELECT }, supplier: { select: SUPPLIER_SELECT } },
     orderBy: { id: "asc" },
   },
   coupon: { select: { code: true, discountType: true, discountValue: true } },
@@ -216,6 +218,8 @@ async function getOrders(req, res) {
                   supplier: { select: SUPPLIER_SELECT },
                 },
               },
+              // proveedor elegido para la línea en "Modificar pedido" (null = el del producto)
+              supplier: { select: SUPPLIER_SELECT },
             },
             // Orden estable de los ítems: sin orderBy Prisma no garantiza el orden y la lista de la
             // cotización podía salir distinta en cada recarga (ítems que "saltan" de lugar).
@@ -268,6 +272,8 @@ async function getOrder(req, res) {
             // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
             // Antes: ... shelf: true, cost: true, supplier: ...
             product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            // proveedor elegido para la línea en "Modificar pedido" (null = el de la variante o del producto)
+            supplier: { select: SUPPLIER_SELECT },
           },
         },
         // Incluir cupón para mostrarlo en el detalle de la orden en el panel admin
@@ -3061,7 +3067,8 @@ async function modifyOrder(req, res) {
     // costo viejo en las órdenes anteriores para que esas NO cambien.
     // manualDiscountType/Value: descuento sobre TODO el pedido, editable desde el mismo modal.
     // Si no vienen en el body, se deja el que ya tenía la orden.
-    const { items, applyCostToProduct, manualDiscountType, manualDiscountValue } = req.body;
+    // applySupplierToProduct: ídem para el proveedor de la línea (misma respuesta del modal).
+    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
@@ -3069,6 +3076,22 @@ async function modifyOrder(req, res) {
 
     // productId -> nuevo costo, para propagar al producto al final (solo si applyCostToProduct).
     const costToPropagate = new Map();
+    // "productId:variantId" -> { productId, variantId, supplierId } (solo si applySupplierToProduct).
+    const supplierToPropagate = new Map();
+
+    // supplierId de cada línea: undefined = no vino (no se toca); null = "el del producto" (se saca el
+    // de la línea); número = ese proveedor. Se valida que exista antes de tocar nada.
+    const parseSupplierId = (v) => (v === undefined ? undefined : v === "" || v === null ? null : parseInt(v, 10));
+    const requestedSuppliers = [...new Set(items.map((i) => parseSupplierId(i.supplierId)).filter((v) => v != null))];
+    if (requestedSuppliers.some((v) => isNaN(v))) {
+      return res.status(400).json({ error: "Proveedor inválido" });
+    }
+    if (requestedSuppliers.length > 0) {
+      const found = await prisma.supplier.count({ where: { id: { in: requestedSuppliers } } });
+      if (found !== requestedSuppliers.length) {
+        return res.status(400).json({ error: "Alguno de los proveedores elegidos ya no existe" });
+      }
+    }
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
@@ -3172,14 +3195,23 @@ async function modifyOrder(req, res) {
       const listRaw  = parseFloat(incoming.listPrice);
       const listNext = !isNaN(listRaw) && listRaw > newPrice ? listRaw : null;
 
+      // supplierId: proveedor de la línea para este pedido (ver OrderItem.supplierId).
+      const supplierUpdate = existingItem.productId ? parseSupplierId(incoming.supplierId) : undefined;
+
       await prisma.orderItem.update({
         where: { id: existingItem.id },
-        data:  { quantity: newQty, price: newPrice, listPrice: listNext, ...(costUpdate !== undefined ? { cost: costUpdate } : {}), ...(imgUpdate !== undefined ? { productImage: imgUpdate } : {}) },
+        data:  { quantity: newQty, price: newPrice, listPrice: listNext, ...(costUpdate !== undefined ? { cost: costUpdate } : {}), ...(imgUpdate !== undefined ? { productImage: imgUpdate } : {}), ...(supplierUpdate !== undefined ? { supplierId: supplierUpdate } : {}) },
       });
 
       // Si el admin confirmó propagar al producto y este item tiene un costo numérico, anotarlo.
       if (applyCostToProduct && typeof costUpdate === "number" && !isNaN(costUpdate)) {
         costToPropagate.set(existingItem.productId, costUpdate);
+      }
+      // Ídem proveedor: solo si cambió respecto del que tenía la línea.
+      if (applySupplierToProduct && typeof supplierUpdate === "number" && supplierUpdate !== existingItem.supplierId) {
+        supplierToPropagate.set(`${existingItem.productId}:${existingItem.variantId ?? ""}`, {
+          productId: existingItem.productId, variantId: existingItem.variantId, supplierId: supplierUpdate,
+        });
       }
     }
 
@@ -3211,6 +3243,12 @@ async function modifyOrder(req, res) {
 
       // cost del ítem para el pedido (vacío → null = usa el costo del producto en la orden de compra)
       const newItemCost = (newItem.cost === "" || newItem.cost === undefined || newItem.cost === null) ? null : parseFloat(newItem.cost);
+      // proveedor de la línea (vacío → null = el de la variante o el del producto)
+      const newItemSupplier = parseSupplierId(newItem.supplierId) ?? null;
+      const newItemVariantId = newItem.variantId ? parseInt(newItem.variantId) : null;
+      if (applySupplierToProduct && newItemSupplier !== null) {
+        supplierToPropagate.set(`${pid}:${newItemVariantId ?? ""}`, { productId: pid, variantId: newItemVariantId, supplierId: newItemSupplier });
+      }
 
       await prisma.orderItem.create({
         data: {
@@ -3220,6 +3258,7 @@ async function modifyOrder(req, res) {
           price:        price,
           listPrice:    (() => { const l = parseFloat(newItem.listPrice); return !isNaN(l) && l > price ? l : null; })(),
           cost:         newItemCost,
+          ...(newItemSupplier !== null ? { supplier: { connect: { id: newItemSupplier } } } : {}),
           // currency: faltaba. Sin esto la línea tomaba el default del schema (ARS), así que
           // agregar un producto en dólares desde "Modificar pedido" lo guardaba como si fuera en
           // pesos — y ahora que los totales se calculan por moneda, esa línea se sumaba a los pesos.
@@ -3254,6 +3293,23 @@ async function modifyOrder(req, res) {
 
       // Actualizar el costo maestro del producto (lo usarán los próximos pedidos)
       await prisma.product.update({ where: { id: pid }, data: { cost: newCost } });
+    }
+
+    // ── Propagar el proveedor al PRODUCTO (solo si el admin lo confirmó en el modal) ──
+    // Va a donde está el proveedor que hoy usa esa línea: si la variante tiene uno propio, a la
+    // variante; si no, al producto. A diferencia del costo, NO se congela en los pedidos anteriores:
+    // un pedido abierto que todavía no se compró conviene que tome el proveedor nuevo, y los que
+    // ya se compraron no vuelven a necesitar la orden de compra.
+    for (const { productId, variantId, supplierId } of supplierToPropagate.values()) {
+      if (!productId) continue;
+      const variant = variantId
+        ? await prisma.productVariant.findUnique({ where: { id: variantId }, select: { id: true, supplierId: true } })
+        : null;
+      if (variant?.supplierId) {
+        await prisma.productVariant.update({ where: { id: variant.id }, data: { supplierId } });
+      } else {
+        await prisma.product.update({ where: { id: productId }, data: { supplierId } });
+      }
     }
 
     // Recalcular total: subtotal de items + IVA (si aplica) - descuento cupón
@@ -3291,12 +3347,22 @@ async function modifyOrder(req, res) {
         isModified:       true,
         originalSnapshot: order.originalSnapshot ? undefined : originalSnapshot, // solo setear la primera vez
       },
+      // Antes: items con product { id, name, images } nada más. El detalle reemplaza el pedido con
+      // esta respuesta, y sin costo/proveedor/ubicación la orden de compra y el "Ordenar por
+      // proveedor" quedaban vacíos hasta recargar. Ahora va lo mismo que getOrder.
       include: {
-        items: { include: { product: { select: { id: true, name: true, images: true } } } },
+        items: {
+          include: {
+            product:  { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            supplier: { select: SUPPLIER_SELECT },
+          },
+          orderBy: { id: "asc" },
+        },
         coupon: { select: { code: true, discountType: true, discountValue: true } },
       },
     });
 
+    await attachVariantDetails(updated);
     hydrateDeletedProducts(updated); // mostrar snapshot si algún producto fue borrado
     res.json(updated);
   } catch (err) {

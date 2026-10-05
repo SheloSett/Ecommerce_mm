@@ -278,6 +278,12 @@ model OrderItem {
   // modificación del pedido y usado en la orden de compra. Si es null, se usa el costo del
   // producto/variante (fallback). No afecta el costo maestro del producto.
   cost         Float?
+  // supplierId: proveedor de este ítem para ESTE pedido (ej. esta vez se compra en otro lado). Mismo
+  // criterio que cost: editable desde la modificación del pedido y usado en la orden de compra. Si es
+  // null, se usa el de la variante o el del producto (fallback). No afecta el proveedor del producto,
+  // salvo que al guardar se elija aplicarlo también ahí.
+  supplierId   Int?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   // currency: moneda en la que se vendió esta línea (snapshot, igual que price/cost). Necesario porque
   // un pedido puede mezclar ítems ARS y USD (ver PaymentMethod.A_CONVENIR).
   currency     Currency @default(ARS)
@@ -571,6 +577,7 @@ model Supplier {
   products  Product[] // Inverso de Product.supplier
   purchases Purchase[] // Inverso de Purchase.supplierRef
   variants  ProductVariant[] // Inverso de ProductVariant.supplier (proveedor por variante)
+  orderItems OrderItem[]     // Inverso de OrderItem.supplier (proveedor elegido para una línea de un pedido)
   createdAt DateTime  @default(now())
 
   @@map("suppliers")

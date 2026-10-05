@@ -28,7 +28,9 @@ const moneyParts = (m) => {
 const moneyHtml = (m) => moneyParts(m).join("<br>");
 const itemPhoto = (item) => (item.variant?.images?.[0]) || item.product?.images?.[0] || null;
 // Proveedor: el de la variante si lo tiene, si no el del producto.
-const itemSupplier = (item) => item.variant?.supplier ?? item.product?.supplier;
+// Antes: item.variant?.supplier ?? item.product?.supplier — ahora primero el proveedor elegido para
+// la línea en "Modificar pedido" (OrderItem.supplierId).
+const itemSupplier = (item) => item.supplier ?? item.variant?.supplier ?? item.product?.supplier;
 // Calle y teléfono del proveedor, junto al nombre (en pantalla y en la hoja impresa). Vacío si no
 // tiene ninguno cargado. Antes no se mostraban y la dirección se escribía dentro del nombre.
 const supplierContact = (g) => [g.street && `📍 ${g.street}`, g.phone && `📞 ${g.phone}`].filter(Boolean).join(" · ");
