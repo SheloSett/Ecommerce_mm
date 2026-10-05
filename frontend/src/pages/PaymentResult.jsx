@@ -8,6 +8,7 @@ export default function PaymentResult({ type }) {
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("orderId");
   const [order, setOrder] = useState(null);
+  const [checked, setChecked] = useState(!orderId); // ya se consultó el estado real del pedido
   const { clearCart } = useCart();
 
   useEffect(() => {
@@ -19,16 +20,39 @@ export default function PaymentResult({ type }) {
         .getOrderStatus(orderId, paymentId)
         .then((res) => {
           setOrder(res.data);
-          // Limpiar el carrito solo si el pago fue aprobado
-          if (type === "success" || res.data.status === "APPROVED") {
-            clearCart();
-          }
+          // Antes: if (type === "success" || res.data.status === "APPROVED") — la dirección de
+          // "éxito" no garantiza que el pago esté aprobado. Igual el servidor saca lo comprado del
+          // carrito cuando se aprueba (utils/cartCleanup.js); esto solo actualiza la pantalla ya.
+          if (res.data.status === "APPROVED") clearCart();
         })
-        .catch(console.error);
+        .catch(console.error)
+        .finally(() => setChecked(true));
     }
   }, [orderId]);
 
+  // Qué se muestra: el estado REAL del pedido, no la dirección a la que volvió MercadoPago. Antes
+  // salía solo de `type` (/pago/exitoso, /pago/fallido, /pago/pendiente) y una pestaña que volvía
+  // por "fallido" mostraba "Pago rechazado" aunque el pedido ya estuviera pagado (ej. el cliente
+  // pagó desde otro navegador). Mientras se consulta, "Verificando el pago…".
+  const shown = !checked
+    ? "checking"
+    : order?.status === "APPROVED"
+      ? "success"
+      : order?.status === "REJECTED" || order?.status === "CANCELLED"
+        ? "failure"
+        : order && type === "success"
+          ? "pending" // MP dijo que salió bien pero todavía no se confirmó: se está procesando
+          : type;
+
   const configs = {
+    checking: {
+      icon: "🔄",
+      color: "text-slate-600",
+      bg: "bg-white",
+      border: "border-slate-200",
+      title: "Verificando el pago…",
+      message: "Estamos confirmando el estado de tu pago con Mercado Pago.",
+    },
     success: {
       icon: "✅",
       color: "text-green-600",
@@ -55,7 +79,8 @@ export default function PaymentResult({ type }) {
     },
   };
 
-  const config = configs[type] || configs.pending;
+  // Antes: configs[type]
+  const config = configs[shown] || configs.pending;
 
   const formatPrice = (price) =>
     new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(price);
@@ -89,7 +114,8 @@ export default function PaymentResult({ type }) {
           )}
 
           <div className="flex flex-col gap-3">
-            {(type === "success" || order?.status === "APPROVED") && (
+            {/* Antes: (type === "success" || order?.status === "APPROVED") */}
+            {shown === "success" && (
               <Link to="/pedidos" className="btn-primary text-center">
                 Ver mis pedidos
               </Link>

@@ -2,6 +2,7 @@ const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
+const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
 
 const prisma = new PrismaClient();
 
@@ -266,13 +267,24 @@ async function handleWebhook(req, res) {
     // pero NO repetimos el descuento ni los emails.
     const existingOrder = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, status: true },
+      // Antes: select: { id: true, status: true }
+      select: { id: true, status: true, mpPaymentId: true },
     });
     if (!existingOrder) {
       console.log("[MP WEBHOOK] orden no encontrada:", orderId);
       return res.sendStatus(200);
     }
     const wasAlreadyApproved = existingOrder.status === "APPROVED";
+
+    // Un pedido ya aprobado no se baja por el aviso de OTRO intento de pago. Un mismo pedido puede
+    // tener varios intentos (ej. uno abandonado o rechazado en una pestaña y otro aprobado en otro
+    // navegador) y MP avisa de todos, en cualquier orden: antes el aviso del rechazado, si llegaba
+    // después, pasaba a REJECTED un pedido cobrado. El aviso del mismo pago aprobado (reintentos,
+    // devoluciones) se sigue procesando como siempre.
+    if (wasAlreadyApproved && newStatus !== "APPROVED" && existingOrder.mpPaymentId !== paymentId.toString()) {
+      console.log(`[MP WEBHOOK] Orden #${orderId} ya aprobada (pago ${existingOrder.mpPaymentId}): se ignora el pago ${paymentId} (${payment.status})`);
+      return res.sendStatus(200);
+    }
 
     // Actualizar la orden con el resultado del pago
     await prisma.order.update({
@@ -359,6 +371,11 @@ async function handleWebhook(req, res) {
           } catch (err) { console.error("[WEBHOOK] Error registrando uso de cupón:", err.message); }
         }
 
+        // Lo comprado sale del carrito del cliente acá, cuando el pago se aprueba, y no en el
+        // navegador: MP a veces devuelve al cliente en otro navegador (sin su sesión) y el carrito
+        // quedaba cargado. Ver utils/cartCleanup.js.
+        await removeOrderedItemsFromCart(prisma, order.id);
+
         // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
         // y enviar confirmación al cliente. No bloqueamos la respuesta del webhook si fallan.
         try {
@@ -419,8 +436,12 @@ async function getOrderPaymentStatus(req, res) {
           // Caso B: buscar payments por external_reference (orderId) en MP
           const search = await paymentClient.search({ options: { external_reference: orderId } });
           const results = search?.results || [];
-          // Quedarse con el más reciente que tenga status definido
-          payment = results.sort((a, b) => new Date(b.date_created) - new Date(a.date_created))[0] || null;
+          // Si alguno de los intentos de pago está aprobado, ese manda: un pedido puede tener un
+          // intento rechazado o abandonado más nuevo que el aprobado (ej. pagó en otro navegador).
+          // Antes: el más reciente, aunque fuera el rechazado. Si no hay aprobado, el más reciente.
+          payment = results.find((p) => p.status === "approved")
+            || results.sort((a, b) => new Date(b.date_created) - new Date(a.date_created))[0]
+            || null;
         }
 
         if (payment && payment.external_reference === orderId.toString()) {
@@ -483,6 +504,8 @@ async function getOrderPaymentStatus(req, res) {
                 }
                 await prisma.order.update({ where: { id: orderIdInt }, data: { stockDeducted: true } });
               }
+              // Lo comprado sale del carrito del cliente (ídem webhook, ver utils/cartCleanup.js)
+              await removeOrderedItemsFromCart(prisma, orderIdInt);
             }
             // Refrescar el objeto que devolvemos al frontend
             order.status      = newStatus;

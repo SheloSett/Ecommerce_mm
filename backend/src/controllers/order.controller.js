@@ -5,6 +5,7 @@ const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
+const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -667,6 +668,14 @@ async function createOrder(req, res) {
       order.clientSnapshot = snapshot;
     }
 
+    // Sacar del carrito lo que se acaba de pedir. Antes lo hacía solo el navegador del cliente
+    // (Checkout → clearCart) y, si esa llamada fallaba, el carrito quedaba cargado aunque el pedido
+    // existiera (pasó con una cotización mayorista). Con MercadoPago se espera a que el pago se
+    // apruebe (webhook / getOrderPaymentStatus): si lo rechazan, el cliente conserva su carrito.
+    if (method !== "MERCADOPAGO") {
+      await removeOrderedItemsFromCart(prisma, order.id);
+    }
+
     // Avanzar la secuencia del ID de forma aleatoria entre 3 y 8 posiciones.
     // Esto hace que el siguiente pedido no sea consecutivo (ej: #31 → #35, no #32).
     // Se suma entre 2 y 7 porque Prisma ya consumió 1 incremento al crear la orden.
@@ -891,6 +900,9 @@ async function updateOrderStatus(req, res) {
     // Antes se registraba al crear la orden y un pago fallido igual lo consumía. Idempotente.
     if (status === "APPROVED" && existing.status !== "APPROVED") {
       await recordCouponUsageOnApproval(existing.id);
+      // Si el admin aprueba a mano (ej. un pago de MercadoPago cuyo aviso no llegó), lo comprado
+      // también sale del carrito del cliente. Ver utils/cartCleanup.js.
+      await removeOrderedItemsFromCart(prisma, existing.id);
     }
 
     // Al aprobar un pedido de un cliente MAYORISTA, resetear su contador de restock
