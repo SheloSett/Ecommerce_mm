@@ -83,15 +83,28 @@ function withOfferLock(offerId, fn) {
 // Precio resultante de aplicar el descuento de la campaña sobre `base`.
 // null = el descuento no da un precio usable (base inválida, resultado <= 0, o no llega a ser menor
 // que la base). Quien llama decide qué motivo mostrar.
-function calcOfferPrice(base, offer) {
+// value: el descuento a aplicar (ver discountFor); si no viene, el general de la campaña.
+function calcOfferPrice(base, offer, value = offer.discountValue) {
   if (base == null || !(base > 0)) return null;
   const raw =
     offer.discountType === "PERCENTAGE"
-      ? base * (1 - offer.discountValue / 100)
-      : base - offer.discountValue;
+      ? base * (1 - value / 100)
+      : base - value;
   const price = round2(raw);
   if (!(price > 0) || price >= base) return null;
   return price;
+}
+
+// Descuento de un producto para un público ("retail" | "wholesale"), de más específico a más
+// general: el que se le cargó a ESE producto en la campaña, el de la campaña para ese público
+// (wholesaleDiscountValue, solo mayoristas) y el general (discountValue).
+// discounts: { discountValue, wholesaleDiscountValue } del producto (el OfferItem, o lo que manda el
+// preview). Antes había un único descuento para todos los productos y los dos públicos.
+function discountFor(offer, discounts, side) {
+  if (side === "wholesale") {
+    return discounts?.wholesaleDiscountValue ?? offer.wholesaleDiscountValue ?? offer.discountValue;
+  }
+  return discounts?.discountValue ?? offer.discountValue;
 }
 
 // ¿Este campo es "de la campaña"? Sí si está vacío (nadie lo cargó) o si su valor actual es el que
@@ -126,9 +139,13 @@ const shouldBeApplied = (offer, now = new Date()) => offerState(offer, now) === 
 // confirmar es exactamente lo que va a pasar.
 //
 // product debe venir con `variants` (solo las activas). prevItem es el OfferItem previo (o null).
-function planProduct(offer, product, prevItem) {
+// discounts: descuentos propios de este producto (ver discountFor). Por defecto los del OfferItem;
+// el preview pasa los que el admin está cargando y todavía no guardó.
+function planProduct(offer, product, prevItem, discounts = prevItem) {
   const wantsRetail    = offer.appliesTo === "MINORISTA" || offer.appliesTo === "AMBOS";
   const wantsWholesale = offer.appliesTo === "MAYORISTA" || offer.appliesTo === "AMBOS";
+  const retailValue    = discountFor(offer, discounts, "retail");
+  const wholesaleValue = discountFor(offer, discounts, "wholesale");
 
   const prevVariants = new Map(
     (Array.isArray(prevItem?.appliedVariants) ? prevItem.appliedVariants : []).map((v) => [v.variantId, v])
@@ -163,7 +180,7 @@ function planProduct(offer, product, prevItem) {
         skips.add("Ya tiene oferta minorista cargada a mano");
         retailBlockedByManual = true;
       } else {
-        const p = calcOfferPrice(product.price, offer);
+        const p = calcOfferPrice(product.price, offer, retailValue);
         if (p == null) skips.add("El descuento no da un precio minorista válido");
         else plan.salePrice = p;
       }
@@ -176,7 +193,7 @@ function planProduct(offer, product, prevItem) {
         skips.add("Ya tiene oferta mayorista cargada a mano");
         wholesaleBlockedByManual = true;
       } else {
-        const p = calcOfferPrice(product.wholesalePrice, offer);
+        const p = calcOfferPrice(product.wholesalePrice, offer, wholesaleValue);
         if (p == null) skips.add("El descuento no da un precio mayorista válido");
         else plan.wholesaleSalePrice = p;
       }
@@ -199,7 +216,7 @@ function planProduct(offer, product, prevItem) {
         skips.add("Alguna variante ya tiene oferta minorista cargada a mano");
       } else {
         const base = variant.price != null ? variant.price : product.price;
-        const p = calcOfferPrice(base, offer);
+        const p = calcOfferPrice(base, offer, retailValue);
         // Antes: if (p != null) entry.salePrice = p;   ← el else quedaba mudo
         // Una variante que no puede tomar el descuento (típico: descuento de monto fijo mayor que el
         // precio de esa variante) se salteaba en silencio: el producto quedaba con descuento, esa
@@ -215,7 +232,7 @@ function planProduct(offer, product, prevItem) {
       } else if (!isWritable(variant.wholesaleSalePrice, prev?.wholesaleSalePrice)) {
         skips.add("Alguna variante ya tiene oferta mayorista cargada a mano");
       } else {
-        const p = calcOfferPrice(base, offer);
+        const p = calcOfferPrice(base, offer, wholesaleValue);
         // Mismo motivo que en el bloque minorista de arriba: no quedarse callado.
         if (p != null) entry.wholesaleSalePrice = p;
         else skips.add("Alguna variante no puede tomar el descuento mayorista (le daría un precio de $0 o menos)");
@@ -524,9 +541,11 @@ async function rescaleAppliedPrices(factor, { retail = true, wholesale = true } 
 
 // Qué le va a pasar a cada producto si se guarda la campaña con estos parámetros. Usa el MISMO
 // planificador que applyOffer, así el preview no puede mentir.
-// offerLike: { discountType, discountValue, appliesTo }. offerId opcional: si se está editando una
-// campaña ya aplicada, sus propias escrituras previas no cuentan como "oferta manual".
-async function previewOffer(offerLike, productIds, offerId = null) {
+// offerLike: { discountType, discountValue, wholesaleDiscountValue, appliesTo }. offerId opcional:
+// si se está editando una campaña ya aplicada, sus propias escrituras previas no cuentan como
+// "oferta manual". productDiscounts: { [productId]: { discountValue, wholesaleDiscountValue } } —
+// los descuentos propios que el admin está cargando (todavía sin guardar).
+async function previewOffer(offerLike, productIds, offerId = null, productDiscounts = {}) {
   if (!Array.isArray(productIds) || productIds.length === 0) return [];
 
   const products = await prisma.product.findMany({
@@ -540,7 +559,8 @@ async function previewOffer(offerLike, productIds, offerId = null) {
 
   return products.map((product) => {
     const prev = prevItems.find((i) => i.productId === product.id) || null;
-    const plan = planProduct(offerLike, product, prev);
+    // Antes: planProduct(offerLike, product, prev) — un solo descuento para todos.
+    const plan = planProduct(offerLike, product, prev, productDiscounts[product.id] || null);
     return {
       productId: product.id,
       name: product.name,
@@ -573,5 +593,6 @@ module.exports = {
   offerState,
   shouldBeApplied,
   calcOfferPrice,
+  discountFor,
   planProduct,
 };

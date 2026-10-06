@@ -42,6 +42,13 @@ function validateOfferPayload(body, { partial = false } = {}) {
     const type = discountType || "PERCENTAGE";
     if (type === "PERCENTAGE" && v >= 100) return "Un descuento por porcentaje debe ser menor a 100";
   }
+  // Descuento mayorista propio (opcional): mismas reglas que el general.
+  const wv = parseOptionalDiscount(body.wholesaleDiscountValue);
+  if (Number.isNaN(wv)) return "El descuento para mayoristas tiene que ser un número";
+  if (wv != null) {
+    const err = discountError(wv, discountType || "PERCENTAGE", "El descuento para mayoristas");
+    if (err) return err;
+  }
   if (!partial || appliesTo !== undefined) {
     if (appliesTo && !["MINORISTA", "MAYORISTA", "AMBOS"].includes(appliesTo)) {
       return "appliesTo debe ser MINORISTA, MAYORISTA o AMBOS";
@@ -62,6 +69,42 @@ function validateOfferPayload(body, { partial = false } = {}) {
     }
   }
   return null;
+}
+
+// Descuento opcional: vacío o null → null ("usar el de la campaña"); número → número; otra cosa → NaN.
+function parseOptionalDiscount(v) {
+  if (v === undefined || v === null || v === "") return null;
+  const n = parseFloat(v);
+  return isNaN(n) ? NaN : n;
+}
+// Mismas reglas que el descuento general: mayor a 0, y menor a 100 si es porcentaje.
+function discountError(v, type, label) {
+  if (!(v > 0)) return `${label} tiene que ser mayor a 0`;
+  if (type === "PERCENTAGE" && v >= 100) return `${label} tiene que ser menor a 100%`;
+  return null;
+}
+
+// Descuentos propios de cada producto en la campaña (ej. la campaña da 10% y este producto 15%).
+// raw: { [productId]: { discountValue, wholesaleDiscountValue } } — vacío/null = el de la campaña.
+// Devuelve { map } con solo los productos de la campaña, o { error }.
+function parseProductDiscounts(raw, productIds, discountType) {
+  const map = {};
+  if (!raw || typeof raw !== "object") return { map };
+  for (const pid of productIds) {
+    const entry = raw[pid] || raw[String(pid)];
+    if (!entry) continue;
+    const retail = parseOptionalDiscount(entry.discountValue);
+    const wholesale = parseOptionalDiscount(entry.wholesaleDiscountValue);
+    if (Number.isNaN(retail) || Number.isNaN(wholesale)) return { error: "Un descuento por producto no es un número" };
+    for (const [v, label] of [[retail, "El descuento de un producto"], [wholesale, "El descuento mayorista de un producto"]]) {
+      if (v != null) {
+        const err = discountError(v, discountType, label);
+        if (err) return { error: err };
+      }
+    }
+    if (retail != null || wholesale != null) map[pid] = { discountValue: retail, wholesaleDiscountValue: wholesale };
+  }
+  return { map };
 }
 
 // Normaliza y deduplica la lista de productos que manda el frontend.
@@ -152,19 +195,25 @@ async function createOffer(req, res) {
     if (productIds.length === 0) {
       return res.status(400).json({ error: "Elegí al menos un producto para la campaña" });
     }
+    const discountType = req.body.discountType || "PERCENTAGE";
+    const discounts = parseProductDiscounts(req.body.productDiscounts, productIds, discountType);
+    if (discounts.error) return res.status(400).json({ error: discounts.error });
 
     const offer = await prisma.offer.create({
       data: {
         name:          String(req.body.name).trim(),
         description:   req.body.description?.trim() || null,
-        discountType:  req.body.discountType || "PERCENTAGE",
+        discountType,
         discountValue: parseFloat(req.body.discountValue),
+        // null = el mismo descuento para mayoristas (ver Offer.wholesaleDiscountValue)
+        wholesaleDiscountValue: parseOptionalDiscount(req.body.wholesaleDiscountValue),
         appliesTo:     req.body.appliesTo || "AMBOS",
         startsAt:      new Date(req.body.startsAt),
         endsAt:        new Date(req.body.endsAt),
         showInHome:    req.body.showInHome !== false,
         active:        req.body.active !== false,
-        items: { create: productIds.map((productId) => ({ productId })) },
+        // Antes: productIds.map((productId) => ({ productId })) — ahora con su descuento propio, si tiene
+        items: { create: productIds.map((productId) => ({ productId, ...(discounts.map[productId] || {}) })) },
       },
     });
 
@@ -198,6 +247,8 @@ async function updateOffer(req, res) {
       const merged = {
         discountType:  req.body.discountType  ?? existing.discountType,
         discountValue: req.body.discountValue ?? existing.discountValue,
+        // Con la clave en el body (aunque venga null, para sacarlo) manda el body; si no, el que tenía.
+        wholesaleDiscountValue: "wholesaleDiscountValue" in req.body ? req.body.wholesaleDiscountValue : existing.wholesaleDiscountValue,
         appliesTo:     req.body.appliesTo     ?? existing.appliesTo,
         startsAt:      req.body.startsAt      ?? existing.startsAt,
         endsAt:        req.body.endsAt        ?? existing.endsAt,
@@ -211,6 +262,14 @@ async function updateOffer(req, res) {
         return { error: "La campaña tiene que tener al menos un producto" };
       }
 
+      // Descuentos por producto: solo si el body los trae (pausar/reanudar no los manda).
+      let discounts = null;
+      if (req.body.productDiscounts !== undefined) {
+        const ids = productIds || (await prisma.offerItem.findMany({ where: { offerId: id }, select: { productId: true } })).map((i) => i.productId);
+        discounts = parseProductDiscounts(req.body.productDiscounts, ids, merged.discountType);
+        if (discounts.error) return { error: discounts.error };
+      }
+
       // Revertir ANTES de tocar nada: devuelve su precio a los productos que salen de la campaña y
       // limpia lo escrito con los parámetros viejos. Después syncOffer() vuelve a aplicar lo que
       // corresponda con los nuevos.
@@ -220,6 +279,7 @@ async function updateOffer(req, res) {
         name:          String(merged.name).trim(),
         discountType:  merged.discountType,
         discountValue: parseFloat(merged.discountValue),
+        wholesaleDiscountValue: parseOptionalDiscount(merged.wholesaleDiscountValue),
         appliesTo:     merged.appliesTo,
         startsAt:      new Date(merged.startsAt),
         endsAt:        new Date(merged.endsAt),
@@ -241,6 +301,21 @@ async function updateOffer(req, res) {
       }
 
       const offer = await prisma.offer.update({ where: { id }, data });
+
+      // Guardar el descuento propio de cada producto (null = el de la campaña), solo donde cambió.
+      // Va antes de syncOffer para que los precios se apliquen ya con estos valores.
+      if (discounts) {
+        const items = await prisma.offerItem.findMany({ where: { offerId: id } });
+        const ops = items
+          .map((it) => {
+            const want = discounts.map[it.productId] || { discountValue: null, wholesaleDiscountValue: null };
+            const same = (it.discountValue ?? null) === want.discountValue && (it.wholesaleDiscountValue ?? null) === want.wholesaleDiscountValue;
+            return same ? null : prisma.offerItem.update({ where: { id: it.id }, data: want });
+          })
+          .filter(Boolean);
+        if (ops.length) await prisma.$transaction(ops);
+      }
+
       const sync = await syncOffer(id);
       return { offer, sync };
     });
@@ -310,11 +385,15 @@ async function previewOfferPrices(req, res) {
     const offerLike = {
       discountType:  req.body.discountType || "PERCENTAGE",
       discountValue: parseFloat(req.body.discountValue),
+      wholesaleDiscountValue: parseOptionalDiscount(req.body.wholesaleDiscountValue),
       appliesTo:     req.body.appliesTo || "AMBOS",
     };
     const offerId = req.body.offerId ? parseInt(req.body.offerId) : null;
+    const discounts = parseProductDiscounts(req.body.productDiscounts, productIds, offerLike.discountType);
+    if (discounts.error) return res.status(400).json({ error: discounts.error });
 
-    res.json(await previewOffer(offerLike, productIds, offerId));
+    // Antes: previewOffer(offerLike, productIds, offerId) — sin descuento mayorista ni por producto
+    res.json(await previewOffer(offerLike, productIds, offerId, discounts.map));
   } catch (err) {
     console.error("previewOfferPrices error:", err);
     res.status(500).json({ error: "Error al calcular la vista previa" });

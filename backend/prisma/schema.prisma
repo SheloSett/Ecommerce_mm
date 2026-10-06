@@ -484,6 +484,9 @@ model Offer {
   description   String?            // Subtítulo opcional de la sección
   discountType  DiscountType       @default(PERCENTAGE) // PERCENTAGE: % sobre el precio / FIXED: monto a restar
   discountValue Float              // 20 (%) o 5000 (monto fijo)
+  // Descuento para MAYORISTAS cuando la campaña es para los dos públicos y se quiere otro valor (ej.
+  // 10% minoristas, 15% mayoristas). null = el mismo discountValue. Mismo discountType.
+  wholesaleDiscountValue Float?
   // A qué público aplica el descuento: MINORISTA escribe salePrice, MAYORISTA escribe
   // wholesaleSalePrice, AMBOS escribe los dos.
   appliesTo     CustomerVisibility @default(AMBOS)
@@ -510,6 +513,10 @@ model OfferItem {
   offer     Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
   productId Int
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // Descuento propio de ESTE producto en la campaña (ej. la campaña da 10% y este producto 15%).
+  // Uno por público; null = el de la campaña. Mismo discountType que la campaña.
+  discountValue          Float?
+  wholesaleDiscountValue Float?
   // Precios que escribió la campaña. null = no lo tocó (había oferta manual, no aplicaba a ese
   // público, o el producto no tiene precio mayorista cargado).
   appliedSalePrice          Float?

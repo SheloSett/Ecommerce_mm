@@ -15,6 +15,8 @@ const EMPTY_FORM = {
   description: "",
   discountType: "PERCENTAGE",
   discountValue: "",
+  // Descuento para mayoristas si es distinto (solo con "Minorista y mayorista"). Vacío = el mismo.
+  wholesaleDiscountValue: "",
   appliesTo: "AMBOS",
   startsAt: "",
   endsAt: "",
@@ -38,6 +40,10 @@ const APPLIES_LABEL = {
   MINORISTA:  "Solo minorista",
   MAYORISTA:  "Solo mayorista",
 };
+
+// "15% OFF" o "- $ 5.000", según el tipo de descuento de la campaña.
+const discountLabel = (type, value) =>
+  type === "PERCENTAGE" ? `${value}% OFF` : `- ${formatPrice(value)}`;
 
 const formatDateTime = (d) =>
   !d ? "—" : new Date(d).toLocaleString("es-AR", {
@@ -80,6 +86,10 @@ export default function AdminOffers() {
   const [pickerProducts, setPickerProducts] = useState([]);
   const [pickerLoading, setPickerLoading]   = useState(false);
 
+  // Descuento propio de cada producto en la campaña: { [productId]: { retail: "", wholesale: "" } }.
+  // Vacío = el de la campaña (ej. la campaña da 10% y este producto 15%).
+  const [productDiscounts, setProductDiscounts] = useState({});
+
   // Vista previa de precios (la calcula el backend con el mismo planificador que la aplicación real)
   const [preview, setPreview] = useState([]);
 
@@ -91,6 +101,26 @@ export default function AdminOffers() {
     () => Object.fromEntries(preview.map((p) => [p.productId, p])),
     [preview]
   );
+
+  // Lo que se manda al backend: { [productId]: { discountValue, wholesaleDiscountValue } }. Solo los
+  // públicos a los que aplica la campaña: con "Solo mayorista" el descuento propio va como mayorista.
+  const productDiscountsPayload = useMemo(() => {
+    const num = (v) => (v === "" || v == null || isNaN(parseFloat(v)) ? null : parseFloat(v));
+    const out = {};
+    for (const id of selectedIds) {
+      const d = productDiscounts[id];
+      if (!d) continue;
+      const retail = form.appliesTo !== "MAYORISTA" ? num(d.retail) : null;
+      const wholesale = form.appliesTo !== "MINORISTA" ? num(d.wholesale) : null;
+      if (retail != null || wholesale != null) out[id] = { discountValue: retail, wholesaleDiscountValue: wholesale };
+    }
+    return out;
+  }, [productDiscounts, selectedIds, form.appliesTo]);
+  // Descuento mayorista de la campaña: solo cuenta con "Minorista y mayorista".
+  const wholesaleDiscountPayload =
+    form.appliesTo === "AMBOS" && form.wholesaleDiscountValue !== "" ? parseFloat(form.wholesaleDiscountValue) : null;
+  const setProductDiscount = (id, side, value) =>
+    setProductDiscounts((prev) => ({ ...prev, [id]: { retail: "", wholesale: "", ...prev[id], [side]: value } }));
 
   useEffect(() => { loadOffers(); }, []);
 
@@ -157,8 +187,10 @@ export default function AdminOffers() {
         const res = await offersApi.preview({
           discountType: form.discountType,
           discountValue: value,
+          wholesaleDiscountValue: wholesaleDiscountPayload,
           appliesTo: form.appliesTo,
           productIds: selectedIds,
+          productDiscounts: productDiscountsPayload,
           offerId: editing || undefined,
         });
         setPreview(res.data);
@@ -169,13 +201,14 @@ export default function AdminOffers() {
     return () => clearTimeout(t);
     // selectedIds se compara por contenido a través de su join — evita recalcular por identidad de array
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showModal, form.discountType, form.discountValue, form.appliesTo, selectedIds.join(","), editing]);
+  }, [showModal, form.discountType, form.discountValue, wholesaleDiscountPayload, form.appliesTo, selectedIds.join(","), JSON.stringify(productDiscountsPayload), editing]);
 
   // ── Alta / edición ──────────────────────────────────────────────────────────
   function openCreate() {
     setEditing(null);
     setForm({ ...EMPTY_FORM, ...defaultRange() });
     setSelected([]);
+    setProductDiscounts({});
     setPreview([]);
     setPickerSearch("");
     setPickerCategory("");
@@ -192,6 +225,7 @@ export default function AdminOffers() {
         description: full.description || "",
         discountType: full.discountType,
         discountValue: String(full.discountValue),
+        wholesaleDiscountValue: full.wholesaleDiscountValue != null ? String(full.wholesaleDiscountValue) : "",
         appliesTo: full.appliesTo,
         startsAt: toLocalInput(full.startsAt),
         endsAt: toLocalInput(full.endsAt),
@@ -199,6 +233,10 @@ export default function AdminOffers() {
         active: full.active,
       });
       setSelected(full.items.map((i) => i.product));
+      setProductDiscounts(Object.fromEntries(full.items.map((i) => [i.productId, {
+        retail:    i.discountValue != null ? String(i.discountValue) : "",
+        wholesale: i.wholesaleDiscountValue != null ? String(i.wholesaleDiscountValue) : "",
+      }])));
       setPreview([]);
       setPickerSearch("");
       setPickerCategory("");
@@ -247,6 +285,7 @@ export default function AdminOffers() {
         description: form.description.trim() || null,
         discountType: form.discountType,
         discountValue: parseFloat(form.discountValue),
+        wholesaleDiscountValue: wholesaleDiscountPayload,
         appliesTo: form.appliesTo,
         // datetime-local se interpreta en hora local y new Date().toISOString() lo pasa a UTC.
         startsAt: new Date(form.startsAt).toISOString(),
@@ -254,6 +293,7 @@ export default function AdminOffers() {
         showInHome: form.showInHome,
         active: form.active,
         productIds: selectedIds,
+        productDiscounts: productDiscountsPayload,
       };
 
       const res = editing
@@ -387,9 +427,13 @@ export default function AdminOffers() {
                         )}
                       </td>
                       <td className="px-4 py-3 font-semibold text-green-700 whitespace-nowrap">
-                        {offer.discountType === "PERCENTAGE"
-                          ? `${offer.discountValue}% OFF`
-                          : `- ${formatPrice(offer.discountValue)}`}
+                        {/* Con descuento mayorista propio: los dos */}
+                        {offer.appliesTo === "AMBOS" && offer.wholesaleDiscountValue != null ? (
+                          <>
+                            <span className="block">{discountLabel(offer.discountType, offer.discountValue)} min.</span>
+                            <span className="block text-blue-700">{discountLabel(offer.discountType, offer.wholesaleDiscountValue)} may.</span>
+                          </>
+                        ) : discountLabel(offer.discountType, offer.discountValue)}
                       </td>
                       <td className="px-4 py-3 text-slate-600 hidden md:table-cell text-xs">
                         {APPLIES_LABEL[offer.appliesTo]}
@@ -520,6 +564,8 @@ export default function AdminOffers() {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
+                    {/* Con los dos públicos, este es el de minoristas (y el de mayoristas si se deja vacío el otro) */}
+                    {form.appliesTo === "AMBOS" ? "Minoristas: " : ""}
                     {form.discountType === "PERCENTAGE" ? "Porcentaje a descontar *" : "Monto a descontar (ARS) *"}
                   </label>
                   <input
@@ -534,6 +580,25 @@ export default function AdminOffers() {
                     required
                   />
                 </div>
+
+                {/* Descuento distinto para mayoristas: solo con "Minorista y mayorista". Vacío = el mismo. */}
+                {form.appliesTo === "AMBOS" && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Mayoristas: {form.discountType === "PERCENTAGE" ? "porcentaje a descontar" : "monto a descontar (ARS)"}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step={form.discountType === "PERCENTAGE" ? "1" : "0.01"}
+                      max={form.discountType === "PERCENTAGE" ? "99" : undefined}
+                      value={form.wholesaleDiscountValue}
+                      onChange={(e) => setForm({ ...form, wholesaleDiscountValue: e.target.value })}
+                      placeholder={form.discountValue ? `Igual que minoristas (${form.discountValue})` : "Igual que minoristas"}
+                      className="input"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Aplica a *</label>
@@ -763,6 +828,28 @@ export default function AdminOffers() {
                                     ⚠ {pv.skippedReason}
                                   </span>
                                 )}
+                                {/* Descuento propio de este producto (vacío = el de la campaña) */}
+                                <span className="flex items-center gap-3 mt-1 flex-wrap">
+                                  {[
+                                    { side: "retail",    show: form.appliesTo !== "MAYORISTA", label: form.appliesTo === "AMBOS" ? "Min." : "Desc.", def: form.discountValue },
+                                    { side: "wholesale", show: form.appliesTo !== "MINORISTA", label: form.appliesTo === "AMBOS" ? "May." : "Desc.",
+                                      def: form.appliesTo === "AMBOS" && form.wholesaleDiscountValue !== "" ? form.wholesaleDiscountValue : form.discountValue },
+                                  ].filter((o) => o.show).map((o) => (
+                                    <label key={o.side} className="flex items-center gap-1 text-[11px] text-slate-500" title="Descuento propio de este producto. Vacío = el de la campaña.">
+                                      {o.label}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step={form.discountType === "PERCENTAGE" ? "1" : "0.01"}
+                                        value={productDiscounts[p.id]?.[o.side] ?? ""}
+                                        onChange={(e) => setProductDiscount(p.id, o.side, e.target.value)}
+                                        placeholder={o.def || "—"}
+                                        className={`w-16 border rounded px-1 py-0.5 text-xs ${productDiscounts[p.id]?.[o.side] ? "border-blue-400 text-blue-800 font-semibold" : "border-slate-200"}`}
+                                      />
+                                      {form.discountType === "PERCENTAGE" ? "%" : "$"}
+                                    </label>
+                                  ))}
+                                </span>
                               </span>
                               <button
                                 type="button"
@@ -827,6 +914,13 @@ export default function AdminOffers() {
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-slate-700 truncate">{item.product.name}</p>
+                    {(item.discountValue != null || item.wholesaleDiscountValue != null) && (
+                      <p className="text-[11px] text-blue-700 font-semibold">
+                        Descuento propio:
+                        {item.discountValue != null && ` ${discountLabel(detail.discountType, item.discountValue)}${detail.appliesTo === "AMBOS" ? " min." : ""}`}
+                        {item.wholesaleDiscountValue != null && ` ${discountLabel(detail.discountType, item.wholesaleDiscountValue)}${detail.appliesTo === "AMBOS" ? " may." : ""}`}
+                      </p>
+                    )}
                     <p className="text-xs">
                       {item.appliedSalePrice != null ? (
                         <>
