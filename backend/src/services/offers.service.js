@@ -107,6 +107,18 @@ function discountFor(offer, discounts, side) {
   return discounts?.discountValue ?? offer.discountValue;
 }
 
+// Descuento que anuncia la tarjeta de la campaña en el Home para un público ("retail" | "wholesale"):
+// { value, upTo } — el mayor descuento entre sus productos, y upTo = true si no todos tienen el mismo
+// ("Hasta 20% OFF"). null si la campaña no aplica a ese público.
+// items: los OfferItem con su descuento propio ({ discountValue, wholesaleDiscountValue }).
+function cardBadge(offer, items, side) {
+  const applies = side === "retail" ? offer.appliesTo !== "MAYORISTA" : offer.appliesTo !== "MINORISTA";
+  if (!applies) return null;
+  const values = items?.length ? items.map((it) => discountFor(offer, it, side)) : [discountFor(offer, null, side)];
+  const max = Math.max(...values);
+  return { value: max, upTo: Math.min(...values) < max };
+}
+
 // ¿Este campo es "de la campaña"? Sí si está vacío (nadie lo cargó) o si su valor actual es el que
 // la campaña escribió en una pasada anterior. Cualquier otro valor es una oferta manual: se respeta.
 function isWritable(current, previouslyWritten) {
@@ -594,5 +606,6 @@ module.exports = {
   shouldBeApplied,
   calcOfferPrice,
   discountFor,
+  cardBadge,
   planProduct,
 };

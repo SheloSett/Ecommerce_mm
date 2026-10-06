@@ -4,6 +4,8 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import CategoryCard from "../components/CategoryCard";
+import CampaignCard from "../components/CampaignCard";
+import { badgeFor } from "../utils/campaignCard";
 import { getCategoryIcon } from "../utils/categoryIcon";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
@@ -95,6 +97,8 @@ export default function Home() {
   const [recentProducts, setRecentProducts] = useState([]);
   // Campañas de oferta vigentes, cada una con sus productos ya resueltos
   const [campaigns, setCampaigns] = useState([]);
+  // Campañas vigentes con tarjeta grande arriba de las categorías (showCard)
+  const [campaignCards, setCampaignCards] = useState([]);
   // IDs leídos una sola vez del localStorage (snapshot inmutable)
   const recentIds = useState(() => getRecentIds(4))[0];
   const [slides, setSlides] = useState([]);
@@ -132,6 +136,13 @@ export default function Home() {
 
     offersApi.getActive()
       .then(async (res) => {
+        // Tarjetas grandes arriba de las categorías: mismo filtro de público que las secciones, pero
+        // con su propio flag (showCard) — una campaña puede tener tarjeta sin fila de productos.
+        if (!cancelled) {
+          setCampaignCards((res.data || []).filter(
+            (o) => o.showCard && (o.appliesTo === "AMBOS" || o.appliesTo === visibleFor)
+          ));
+        }
         // Dos filtros sobre las campañas vigentes:
         //  - showInHome: el endpoint devuelve TODAS (el catálogo las usa para filtrar), así que la
         //    decisión de armar sección en la portada se toma acá.
@@ -520,6 +531,22 @@ export default function Home() {
       )}
 
       <main className="flex-1 max-w-[1280px] mx-auto px-6 py-12 w-full">
+
+        {/* Campañas vigentes: una tarjeta grande por campaña (estilo y color elegidos en Admin → Ofertas) */}
+        {campaignCards.length > 0 && (
+          <section className={`mb-10 grid gap-4 ${
+            campaignCards.length === 1 ? "grid-cols-1" : campaignCards.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
+          }`}>
+            {campaignCards.map((offer) => (
+              <CampaignCard
+                key={offer.id}
+                offer={offer}
+                badge={badgeFor(offer, customer?.type || "MINORISTA")}
+                solo={campaignCards.length === 1}
+              />
+            ))}
+          </section>
+        )}
 
         {/* Categorías */}
         {categories.length > 0 && (

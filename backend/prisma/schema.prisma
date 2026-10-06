@@ -493,6 +493,12 @@ model Offer {
   startsAt      DateTime
   endsAt        DateTime
   showInHome    Boolean            @default(true)  // Renderizar una sección propia en el Home
+  // Tarjeta grande de la campaña arriba de las categorías del Home (enlaza al catálogo filtrado por
+  // la campaña). cardStyle: los mismos estilos que las tarjetas de categoría (ver CategoryCard.jsx)
+  // o "color" = fondo de un color propio (cardColor, "#rrggbb").
+  showCard      Boolean            @default(true)
+  cardStyle     String             @default("sale")
+  cardColor     String?
   active        Boolean            @default(true)  // Interruptor manual del admin (pausar sin borrar)
   // applied: si los precios están escritos AHORA. Vive en la DB para que el estado sobreviva a un
   // reinicio del contenedor (el cron no tiene que adivinar si ya aplicó o no).

@@ -5,6 +5,8 @@ import { formatPrice } from "../../utils/formatPrice";
 // Aplanado recursivo del árbol de categorías para el filtro del picker de productos.
 import { flattenTree, indentedLabel } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
+import CampaignCard from "../../components/CampaignCard";
+import { CARD_STYLES } from "../../components/CategoryCard";
 
 // Campañas de oferta con vigencia: un conjunto de productos con descuento entre dos fechas.
 // El backend (services/offers.service.js) escribe salePrice/wholesaleSalePrice mientras la campaña
@@ -21,8 +23,25 @@ const EMPTY_FORM = {
   startsAt: "",
   endsAt: "",
   showInHome: true,
+  // Tarjeta grande arriba de las categorías del Home (ver components/CampaignCard.jsx)
+  showCard: true,
+  cardStyle: "sale",
+  cardColor: "#d81b60",
   active: true,
 };
+
+// Estilos de la tarjeta de campaña: los de las categorías (con la explicación adaptada donde hace
+// falta) más "Color propio".
+const CAMPAIGN_CARD_STYLES = [
+  ...CARD_STYLES.map((s) =>
+    s.key === "sale"  ? { ...s, hint: "Rojo con el descuento en amarillo" } :
+    s.key === "fresh" ? { ...s, hint: "Verde con un brillo que cruza" } : s
+  ),
+  { key: "color", label: "Color propio", hint: "El color que elijas; el texto sale blanco o negro según el fondo" },
+];
+// Atajos para el color propio
+const CARD_COLOR_PRESETS = ["#d81b60", "#8e24aa", "#e53935", "#ef6c00", "#f9a825", "#2e7d32", "#0288d1", "#1a237e", "#111827"];
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 // Cuántos resultados del buscador se dibujan. La búsqueda trae todas las coincidencias (el botón
 // "Agregar todos" las necesita para no mentir), pero renderizarlas todas con imagen traba el modal.
@@ -119,6 +138,20 @@ export default function AdminOffers() {
   // Descuento mayorista de la campaña: solo cuenta con "Minorista y mayorista".
   const wholesaleDiscountPayload =
     form.appliesTo === "AMBOS" && form.wholesaleDiscountValue !== "" ? parseFloat(form.wholesaleDiscountValue) : null;
+  // Descuento de la vista previa de la tarjeta: como la ve un minorista (o un mayorista si la campaña
+  // es solo mayorista). Mismo cálculo que cardBadge() en el backend: el mayor entre los productos.
+  const cardPreviewBadge = useMemo(() => {
+    const base = parseFloat(form.discountValue);
+    if (isNaN(base) || base <= 0) return null;
+    const wholesale = form.appliesTo === "MAYORISTA";
+    const field = wholesale ? "wholesaleDiscountValue" : "discountValue";
+    const values = selectedIds.length
+      ? selectedIds.map((id) => productDiscountsPayload[id]?.[field] ?? base)
+      : [base];
+    const max = Math.max(...values);
+    return { value: max, upTo: Math.min(...values) < max };
+  }, [form.discountValue, form.appliesTo, selectedIds, productDiscountsPayload]);
+
   const setProductDiscount = (id, side, value) =>
     setProductDiscounts((prev) => ({ ...prev, [id]: { retail: "", wholesale: "", ...prev[id], [side]: value } }));
 
@@ -230,6 +263,9 @@ export default function AdminOffers() {
         startsAt: toLocalInput(full.startsAt),
         endsAt: toLocalInput(full.endsAt),
         showInHome: full.showInHome,
+        showCard: full.showCard !== false,
+        cardStyle: full.cardStyle || "sale",
+        cardColor: full.cardColor || EMPTY_FORM.cardColor,
         active: full.active,
       });
       setSelected(full.items.map((i) => i.product));
@@ -277,6 +313,9 @@ export default function AdminOffers() {
       return toast.error("La fecha de fin tiene que ser posterior a la de inicio");
     }
     if (selectedIds.length === 0) return toast.error("Elegí al menos un producto");
+    if (form.showCard && form.cardStyle === "color" && !HEX_COLOR.test(form.cardColor)) {
+      return toast.error("El color de la tarjeta tiene que ser como #d81b60");
+    }
 
     setSaving(true);
     try {
@@ -291,6 +330,9 @@ export default function AdminOffers() {
         startsAt: new Date(form.startsAt).toISOString(),
         endsAt:   new Date(form.endsAt).toISOString(),
         showInHome: form.showInHome,
+        showCard: form.showCard,
+        cardStyle: form.cardStyle,
+        cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
         active: form.active,
         productIds: selectedIds,
         productDiscounts: productDiscountsPayload,
@@ -423,6 +465,11 @@ export default function AdminOffers() {
                         {offer.showInHome && (
                           <span className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded mt-1 inline-block">
                             Sección en el Home
+                          </span>
+                        )}
+                        {offer.showCard && (
+                          <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.5 rounded mt-1 ml-1 inline-block">
+                            Tarjeta en el inicio
                           </span>
                         )}
                       </td>
@@ -658,6 +705,112 @@ export default function AdminOffers() {
                     </span>
                   </span>
                 </label>
+
+                {/* Tarjeta grande arriba de las categorías: estilo (los de las categorías o un color propio)
+                    con vista previa en vivo. */}
+                <div
+                  className={`md:col-span-2 p-4 rounded-xl border-2 transition-colors ${
+                    form.showCard ? "border-green-500 bg-green-50" : "border-slate-200"
+                  }`}
+                >
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.showCard}
+                      onChange={(e) => setForm({ ...form, showCard: e.target.checked })}
+                      className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800">🎴 Tarjeta grande arriba de las categorías</span>
+                      <span className="block text-xs text-slate-500 mt-0.5">
+                        Mientras la campaña está vigente, el inicio muestra una tarjeta grande con el nombre, el descuento y cuánto falta.
+                        Al tocarla lleva al catálogo con los productos de la campaña. Si hay varias campañas, aparecen todas.
+                      </span>
+                    </span>
+                  </label>
+
+                  {form.showCard && (
+                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 mb-2">Estilo</p>
+                        <div className="flex flex-wrap gap-2">
+                          {CAMPAIGN_CARD_STYLES.map((s) => (
+                            <button
+                              key={s.key}
+                              type="button"
+                              onClick={() => setForm({ ...form, cardStyle: s.key })}
+                              className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                                form.cardStyle === s.key
+                                  ? "border-blue-600 bg-blue-600 text-white"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                              }`}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          {CAMPAIGN_CARD_STYLES.find((s) => s.key === form.cardStyle)?.hint}
+                        </p>
+
+                        {form.cardStyle === "color" && (
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={HEX_COLOR.test(form.cardColor) ? form.cardColor : "#d81b60"}
+                                onChange={(e) => setForm({ ...form, cardColor: e.target.value })}
+                                className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer bg-white p-0.5"
+                                title="Elegir color"
+                              />
+                              <input
+                                type="text"
+                                value={form.cardColor}
+                                onChange={(e) => setForm({ ...form, cardColor: e.target.value.trim() })}
+                                placeholder="#d81b60"
+                                maxLength={7}
+                                className={`input w-28 font-mono ${HEX_COLOR.test(form.cardColor) ? "" : "border-red-400"}`}
+                              />
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {CARD_COLOR_PRESETS.map((c) => (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={() => setForm({ ...form, cardColor: c })}
+                                  title={c}
+                                  className={`w-7 h-7 rounded-full border-2 transition-transform ${form.cardColor.toLowerCase() === c ? "border-slate-800 scale-110" : "border-white shadow"}`}
+                                  style={{ background: c }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 mb-2">
+                          Vista previa
+                          <span className="font-normal text-slate-400">
+                            {form.appliesTo === "MAYORISTA" ? " — como la ve un mayorista" : " — como la ve un minorista"}
+                          </span>
+                        </p>
+                        <CampaignCard
+                          preview
+                          offer={{
+                            name: form.name.trim(),
+                            description: form.description.trim(),
+                            endsAt: form.endsAt ? new Date(form.endsAt) : null,
+                            discountType: form.discountType,
+                            cardStyle: form.cardStyle,
+                            cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
+                          }}
+                          badge={cardPreviewBadge}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* ── Selector de productos ── */}

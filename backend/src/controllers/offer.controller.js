@@ -18,9 +18,16 @@ const {
   syncOffer,
   previewOffer,
   offerState,
+  cardBadge,
 } = require("../services/offers.service");
+const { resolvePriceViewer } = require("../utils/productPrivacy");
 
 const prisma = new PrismaClient();
+
+// Estilos de la tarjeta de la campaña en el Home: los mismos que las tarjetas de categoría
+// (frontend/src/components/CategoryCard.jsx → CARD_STYLES) más "color" = fondo de un color propio.
+const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "color"];
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 // ── Validación ────────────────────────────────────────────────────────────────
 
@@ -68,7 +75,22 @@ function validateOfferPayload(body, { partial = false } = {}) {
       return "La fecha de fin debe ser posterior a la de inicio";
     }
   }
+  if (body.cardStyle !== undefined && !CARD_STYLE_KEYS.includes(body.cardStyle)) {
+    return "Estilo de tarjeta inválido";
+  }
+  if (body.cardColor !== undefined && body.cardColor !== null && body.cardColor !== "" && !HEX_COLOR.test(body.cardColor)) {
+    return "El color de la tarjeta tiene que ser un color #rrggbb";
+  }
   return null;
+}
+
+// Datos de la tarjeta del Home que vinieron en el body (solo los que vinieron: pausar/reanudar no los manda).
+function cardFields(body) {
+  const data = {};
+  if (body.showCard !== undefined)  data.showCard  = body.showCard !== false;
+  if (body.cardStyle !== undefined) data.cardStyle = body.cardStyle;
+  if (body.cardColor !== undefined) data.cardColor = body.cardColor ? String(body.cardColor).toLowerCase() : null;
+  return data;
 }
 
 // Descuento opcional: vacío o null → null ("usar el de la campaña"); número → número; otra cosa → NaN.
@@ -123,20 +145,42 @@ const withState = (offer) => ({ ...offer, state: offerState(offer) });
 // showInHome viaja en la respuesta pero NO se filtra acá: ese flag decide si la campaña arma su
 // sección en el Home, no si existe. El catálogo ofrece filtrar por cualquier campaña vigente, y es
 // el Home el que descarta las que no quieren sección. Filtrarlo acá dejaba al catálogo sin poder
-// mostrar campañas que el admin no quiso publicar en la portada.
+// mostrar campañas que el admin no quiso publicar en la portada. Lo mismo con showCard (la tarjeta
+// grande arriba de las categorías).
+//
+// badges: el descuento que anuncia la tarjeta, por público. El de mayoristas viaja solo a quien
+// los ve (mayorista aprobado o admin), igual que los precios mayoristas.
 async function getActiveOffers(req, res) {
   try {
     const now = new Date();
-    const offers = await prisma.offer.findMany({
-      where: {
-        active: true,
-        startsAt: { lte: now },
-        endsAt: { gt: now },
-      },
-      select: { id: true, name: true, description: true, endsAt: true, appliesTo: true, showInHome: true },
-      orderBy: { startsAt: "desc" },
-    });
-    res.json(offers);
+    const [offers, viewer] = await Promise.all([
+      prisma.offer.findMany({
+        where: {
+          active: true,
+          startsAt: { lte: now },
+          endsAt: { gt: now },
+        },
+        // Antes: select { id, name, description, endsAt, appliesTo, showInHome }
+        select: {
+          id: true, name: true, description: true, endsAt: true, appliesTo: true, showInHome: true,
+          showCard: true, cardStyle: true, cardColor: true,
+          discountType: true, discountValue: true, wholesaleDiscountValue: true,
+          items: { select: { discountValue: true, wholesaleDiscountValue: true } },
+        },
+        orderBy: { startsAt: "desc" },
+      }),
+      resolvePriceViewer(req, prisma),
+    ]);
+    res.json(offers.map(({ items, discountValue, wholesaleDiscountValue, ...offer }) => {
+      const calc = { ...offer, discountValue, wholesaleDiscountValue };
+      return {
+        ...offer,
+        badges: {
+          retail: cardBadge(calc, items, "retail"),
+          ...(viewer.isMayorista ? { wholesale: cardBadge(calc, items, "wholesale") } : {}),
+        },
+      };
+    }));
   } catch (err) {
     console.error("getActiveOffers error:", err);
     res.status(500).json({ error: "Error al obtener las campañas activas" });
@@ -212,6 +256,7 @@ async function createOffer(req, res) {
         endsAt:        new Date(req.body.endsAt),
         showInHome:    req.body.showInHome !== false,
         active:        req.body.active !== false,
+        ...cardFields(req.body),
         // Antes: productIds.map((productId) => ({ productId })) — ahora con su descuento propio, si tiene
         items: { create: productIds.map((productId) => ({ productId, ...(discounts.map[productId] || {}) })) },
       },
@@ -253,6 +298,8 @@ async function updateOffer(req, res) {
         startsAt:      req.body.startsAt      ?? existing.startsAt,
         endsAt:        req.body.endsAt        ?? existing.endsAt,
         name:          req.body.name          ?? existing.name,
+        cardStyle:     req.body.cardStyle,
+        cardColor:     req.body.cardColor,
       };
       const error = validateOfferPayload(merged);
       if (error) return { error };
@@ -287,6 +334,7 @@ async function updateOffer(req, res) {
       if (req.body.description !== undefined) data.description = req.body.description?.trim() || null;
       if (req.body.showInHome !== undefined)  data.showInHome  = !!req.body.showInHome;
       if (req.body.active !== undefined)      data.active      = !!req.body.active;
+      Object.assign(data, cardFields(req.body));
 
       // Reemplazo de la lista de productos: se borran los que ya no están y se crean los nuevos,
       // conservando los OfferItem que siguen (no hace falta tocarlos, ya vienen revertidos).

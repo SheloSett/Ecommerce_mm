@@ -4,7 +4,7 @@
 
 const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
-const { planProduct, discountFor } = require("../src/services/offers.service");
+const { planProduct, discountFor, cardBadge } = require("../src/services/offers.service");
 
 const product = (extra = {}) => ({
   id: 1, currency: "ARS",
@@ -72,5 +72,27 @@ describe("descuento propio de un producto", () => {
     assert.equal(discountFor(offer(), null, "wholesale"), 10);
     assert.equal(discountFor(camp, { discountValue: 5 }, "retail"), 5);
     assert.equal(discountFor(camp, { discountValue: 5 }, "wholesale"), 15);
+  });
+});
+
+describe("descuento que anuncia la tarjeta del Home", () => {
+  test("todos los productos con el de la campaña: el número justo", () => {
+    const camp = offer({ wholesaleDiscountValue: 15 });
+    const items = [{ discountValue: null, wholesaleDiscountValue: null }, { discountValue: null, wholesaleDiscountValue: null }];
+    assert.deepEqual(cardBadge(camp, items, "retail"), { value: 10, upTo: false });
+    assert.deepEqual(cardBadge(camp, items, "wholesale"), { value: 15, upTo: false });
+  });
+
+  test("un producto con más descuento: Hasta ese número", () => {
+    const items = [{ discountValue: null }, { discountValue: 25 }];
+    assert.deepEqual(cardBadge(offer(), items, "retail"), { value: 25, upTo: true });
+    // el mayorista no se entera del descuento propio minorista
+    assert.deepEqual(cardBadge(offer(), items, "wholesale"), { value: 10, upTo: false });
+  });
+
+  test("campaña de un solo público: el otro no tiene tarjeta con descuento", () => {
+    assert.equal(cardBadge(offer({ appliesTo: "MAYORISTA" }), [], "retail"), null);
+    assert.equal(cardBadge(offer({ appliesTo: "MINORISTA" }), [], "wholesale"), null);
+    assert.deepEqual(cardBadge(offer({ appliesTo: "MAYORISTA" }), [], "wholesale"), { value: 10, upTo: false });
   });
 });

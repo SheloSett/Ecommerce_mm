@@ -399,8 +399,10 @@ export const couponsApi = {
 // una campaña NO se piden acá — se piden con productsApi.getAll({ offerId }), que ya resuelve
 // visibilidad, stock y precios de variante igual que el resto del catálogo.
 export const offersApi = {
-  // Público: campañas vigentes que piden sección propia en el Home
-  getActive: ()        => api.get("/offers/active"),
+  // Público: campañas vigentes (secciones y tarjetas del Home, filtro del catálogo). Con el token del
+  // cliente para que el mayorista aprobado reciba el descuento de su tarjeta (badges.wholesale).
+  // Antes: api.get("/offers/active")
+  getActive: ()        => api.get("/offers/active", { headers: storefrontAuthHeaders() }),
   // Admin: CRUD
   getAll:  ()          => api.get("/offers"),
   getById: (id)        => api.get(`/offers/${id}`),

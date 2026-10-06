@@ -26,7 +26,8 @@ export const CARD_STYLES = [
   { key: "ice",     label: "Congelado", hint: "Hielo con copos. Para precios congelados" },
 ];
 
-const ICON_BY_STYLE = {
+// Exportados para la tarjeta de campaña del Home (CampaignCard.jsx), que usa los mismos estilos.
+export const ICON_BY_STYLE = {
   fire: "local_fire_department",
   sale: "sell",
   fresh: "auto_awesome",
@@ -36,7 +37,7 @@ const ICON_BY_STYLE = {
   ice: "ac_unit",
 };
 
-function Flames({ back = false }) {
+export function Flames({ back = false }) {
   return (
     <div className={`cc-flames${back ? " cc-flames-back" : ""}`} aria-hidden="true">
       <svg viewBox="0 0 400 110" preserveAspectRatio="none">
@@ -55,7 +56,7 @@ function Flames({ back = false }) {
   );
 }
 
-function Bolts() {
+export function Bolts() {
   return (
     <div className="cc-bolts" aria-hidden="true">
       <svg viewBox="0 0 200 120" preserveAspectRatio="none">
@@ -66,7 +67,7 @@ function Bolts() {
   );
 }
 
-function Frost() {
+export function Frost() {
   return (
     <>
       <div className="cc-frost" aria-hidden="true">

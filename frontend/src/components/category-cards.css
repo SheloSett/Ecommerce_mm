@@ -184,3 +184,60 @@
 .cc-chip.cc-ice .cc-frost { height: 55%; }
 .cc-chip .cc-flake { font-size: 7px; }
 .cc-chip.cc-bolt .cc-bolts { display: none; }
+
+/* ── Tarjeta grande de campaña (CampaignCard.jsx), arriba de las categorías del Home ──
+   Reusa los estilos de arriba (fuego, oferta, ...) pero apaisada: a la izquierda el nombre, el
+   subtítulo y cuánto falta; a la derecha el descuento bien grande. */
+.cc-card.cc-campaign {
+  min-height: 160px; padding: 22px 26px; border-radius: 16px;
+  flex-direction: row; align-items: center; justify-content: space-between; gap: 16px;
+  text-align: left;
+}
+.cc-campaign-solo { min-height: 180px; }
+.cc-camp-body { position: relative; z-index: 2; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.cc-campaign .cc-icon { font-size: 30px; margin-bottom: 6px; }
+.cc-campaign .cc-name { font-size: 26px; font-weight: 800; line-height: 1.1; text-shadow: 0 2px 10px rgba(0,0,0,0.35); overflow-wrap: anywhere; }
+.cc-camp-desc { margin: 6px 0 0; font-size: 14px; line-height: 1.35; opacity: 0.88; }
+.cc-camp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.cc-campaign .cc-hint { margin-top: 0; font-size: 12px; }
+.cc-camp-cta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; opacity: 0.92; }
+.cc-camp-cta .material-symbols-outlined { font-size: 18px; transition: transform .2s; }
+.cc-campaign:hover .cc-camp-cta .material-symbols-outlined { transform: translateX(3px); }
+
+.cc-camp-badge { position: relative; z-index: 2; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; line-height: 1; text-align: center; color: #62df7d; }
+.cc-camp-upto { font-size: 13px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 2px; opacity: 0.9; }
+.cc-camp-amount { font-size: 58px; font-weight: 900; letter-spacing: -0.03em; text-shadow: 0 3px 14px rgba(0,0,0,0.35); }
+.cc-camp-amount-long { font-size: 40px; }
+.cc-camp-off { font-size: 18px; font-weight: 900; letter-spacing: 0.25em; padding-left: 0.25em; margin-top: 2px; }
+.cc-campaign:hover .cc-camp-badge { color: #fff; }
+.cc-fire .cc-camp-badge, .cc-fire:hover .cc-camp-badge { color: #ffc046; }
+.cc-sale .cc-camp-badge, .cc-sale:hover .cc-camp-badge { color: #ffd300; }
+.cc-fresh .cc-camp-badge, .cc-ice .cc-camp-badge { color: #fff; }
+.cc-premium .cc-camp-badge, .cc-premium:hover .cc-camp-badge { color: #d6b25e; }
+.cc-bolt .cc-camp-badge, .cc-bolt:hover .cc-camp-badge { color: #e0f2fe; }
+.cc-bolt .cc-camp-amount { text-shadow: 0 0 18px rgba(96,165,250,0.9); }
+.cc-neon .cc-camp-badge, .cc-neon:hover .cc-camp-badge { color: #22d3ee; }
+.cc-neon .cc-camp-amount { text-shadow: 0 0 16px rgba(34,211,238,0.8); }
+.cc-campaign.cc-neon::after { border-radius: 14px; }
+.cc-ice .cc-camp-amount { text-shadow: 0 2px 10px rgba(14,58,92,0.6); }
+
+/* Color propio: --cc-bg (el color elegido) y --cc-fg (texto oscuro o blanco según el fondo) vienen
+   del componente. Dos círculos translúcidos para que no quede un bloque plano. */
+.cc-color { background: linear-gradient(140deg, var(--cc-bg) 0%, color-mix(in srgb, var(--cc-bg) 72%, #000) 100%); color: var(--cc-fg); }
+.cc-card.cc-color:hover { background: linear-gradient(140deg, var(--cc-bg) 0%, color-mix(in srgb, var(--cc-bg) 72%, #000) 100%); filter: brightness(1.06); transform: translateY(-2px); }
+.cc-color .cc-icon, .cc-color:hover .cc-icon, .cc-color .cc-camp-badge, .cc-color:hover .cc-camp-badge { color: var(--cc-fg); }
+.cc-color .cc-name, .cc-color .cc-camp-amount { text-shadow: none; }
+.cc-color .cc-hint { background: color-mix(in srgb, var(--cc-fg) 16%, transparent); }
+.cc-color::before, .cc-color::after { content: ""; position: absolute; border-radius: 50%; pointer-events: none; background: color-mix(in srgb, var(--cc-fg) 9%, transparent); }
+.cc-color::before { width: 220px; height: 220px; right: -60px; top: -80px; }
+.cc-color::after { width: 120px; height: 120px; right: 140px; bottom: -70px; }
+
+@media (max-width: 640px) {
+  .cc-card.cc-campaign { padding: 18px; min-height: 130px; }
+  .cc-campaign .cc-name { font-size: 21px; }
+  .cc-camp-amount { font-size: 44px; }
+  .cc-camp-amount-long { font-size: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-camp-cta .material-symbols-outlined { transition: none; }
+}
