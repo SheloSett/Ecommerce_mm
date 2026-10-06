@@ -36,6 +36,9 @@ const BG_CSS   = { blue: "bg-blue-600", green: "bg-emerald-600", amber: "bg-ambe
 const TEXT_CSS = { white: "text-white", black: "text-black", yellow: "text-yellow-300", amber: "text-amber-900", slate: "text-slate-200" };
 
 const EMPTY_SLIDE = { title: "", subtitle: "", url: "", active: true };
+// Orden de los slides: por `order` y, si se repite, por antigüedad (id). Mismo criterio que el
+// carrusel del inicio (getSlides en el backend), para que el panel muestre lo mismo que la tienda.
+const bySlideOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id;
 const newBanner = () => ({
   id: Date.now().toString(),
   active: true, text: "", linkText: "", url: "",
@@ -283,7 +286,10 @@ export default function CarouselSectionContent() {
           if (mobileFile && imageFiles.length === 1) fd.append("mobileImage", mobileFile);
           fd.append("subtitle", form.subtitle); fd.append("url", form.url);
           fd.append("active", form.active ? "true" : "false");
-          fd.append("order", slides.length + i);
+          // Al final de la lista: el siguiente al número más alto. Antes: slides.length + i, que
+          // chocaba con el de un slide existente si había huecos (slides borrados) o si la lista
+          // todavía no había cargado (daba 0), y después ese slide no se podía mover.
+          fd.append("order", Math.max(-1, ...slides.map((s) => s.order ?? 0)) + 1 + i);
           await slidesApi.create(fd); created++;
         }
         toast.success(`${created} slide${created !== 1 ? "s" : ""} creado${created !== 1 ? "s" : ""}`);
@@ -311,22 +317,29 @@ export default function CarouselSectionContent() {
     } catch { toast.error("Error al actualizar"); }
   }
 
+  // Antes se intercambiaban los números de `order` de los dos slides. Si tenían el mismo número
+  // (pasaba con los slides nuevos, que se creaban con slides.length y chocaban con uno viejo), el
+  // intercambio no cambiaba nada y el slide no se movía. Ahora se arma la lista con los dos
+  // cambiados de lugar y se renumera todo 0, 1, 2…: los repetidos se arreglan en el primer
+  // movimiento. Solo se guardan los slides cuyo número cambió.
   async function handleMove(slide, direction) {
-    const sorted = [...slides].sort((a, b) => a.order - b.order);
-    const idx = sorted.findIndex((s) => s.id === slide.id);
+    const next = [...slides].sort(bySlideOrder);
+    const idx = next.findIndex((s) => s.id === slide.id);
     const targetIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= sorted.length) return;
-    const other = sorted[targetIdx];
+    if (targetIdx < 0 || targetIdx >= next.length) return;
+    [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
+    const changed = next.map((s, i) => ({ s, i })).filter(({ s, i }) => s.order !== i);
     try {
-      const fdA = new FormData(); fdA.append("order", other.order);
-      const fdB = new FormData(); fdB.append("order", slide.order);
-      await Promise.all([slidesApi.update(slide.id, fdA), slidesApi.update(other.id, fdB)]);
-      setSlides((prev) => prev.map((s) => {
-        if (s.id === slide.id) return { ...s, order: other.order };
-        if (s.id === other.id) return { ...s, order: slide.order };
-        return s;
+      await Promise.all(changed.map(({ s, i }) => {
+        const fd = new FormData();
+        fd.append("order", i);
+        return slidesApi.update(s.id, fd);
       }));
-    } catch { toast.error("Error al reordenar"); }
+      setSlides(next.map((s, i) => ({ ...s, order: i })));
+    } catch {
+      toast.error("Error al reordenar");
+      loadSlides(); // volver a lo que quedó guardado
+    }
   }
 
   // ── Banners: funciones ───────────────────────────────────────────────────────
@@ -346,7 +359,8 @@ export default function CarouselSectionContent() {
     finally { setSavingBanners(false); }
   }
 
-  const sorted = [...slides].sort((a, b) => a.order - b.order);
+  // Antes: .sort((a, b) => a.order - b.order) — con números repetidos el orden quedaba al azar.
+  const sorted = [...slides].sort(bySlideOrder);
 
   return (
     <div className="space-y-5">

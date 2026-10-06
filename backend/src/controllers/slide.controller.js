@@ -55,7 +55,9 @@ async function getSlides(req, res) {
     const onlyActive = req.query.all !== "true"; // ?all=true para el admin
     const slides = await prisma.slide.findMany({
       where: onlyActive ? { active: true } : {},
-      orderBy: { order: "asc" },
+      // Antes: orderBy: { order: "asc" } — con números de orden repetidos el carrusel salía en
+      // cualquier orden. Si empatan, el más viejo primero (mismo criterio que el panel).
+      orderBy: [{ order: "asc" }, { id: "asc" }],
     });
     res.json(slides);
   } catch (err) {
@@ -78,6 +80,14 @@ async function createSlide(req, res) {
     const mobileFile = fileOf(req, "mobileImage");
     const mobile = mobileFile ? await uploadMobile(mobileFile) : {};
 
+    // Sin order (o inválido): al final, después del más alto. Antes caía en 0 y chocaba con el
+    // primero de la lista; con números repetidos los slides no se podían reordenar.
+    let position = parseInt(order);
+    if (isNaN(position)) {
+      const last = await prisma.slide.aggregate({ _max: { order: true } });
+      position = (last._max.order ?? -1) + 1;
+    }
+
     const slide = await prisma.slide.create({
       data: {
         image: uploaded.secure_url,
@@ -85,7 +95,7 @@ async function createSlide(req, res) {
         title: title || null,
         subtitle: subtitle || null,
         url: url || null,
-        order: order !== undefined ? parseInt(order) : 0,
+        order: position, // Antes: order !== undefined ? parseInt(order) : 0
         active: active !== "false" && active !== false,
       },
     });
