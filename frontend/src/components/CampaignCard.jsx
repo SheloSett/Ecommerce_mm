@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CARD_STYLES, ICON_BY_STYLE, Flames, Bolts, Frost } from "./CategoryCard";
-import { badgeParts, endsLabel, textColorFor } from "../utils/campaignCard";
+import { badgeParts, endsLabel, countdownParts, textColorFor } from "../utils/campaignCard";
 import "./category-cards.css";
 
 // ─── Tarjeta grande de una campaña vigente, arriba de las categorías del Home ──────────────────
@@ -11,12 +12,54 @@ import "./category-cards.css";
 // badge: { value, upTo } del público que mira (ver badgeFor en utils/campaignCard.js).
 // preview: en el formulario del admin se dibuja como <div> (sin link) para la vista previa.
 
+// Hora actual que se actualiza cada segundo (solo mientras `enabled`), para la cuenta regresiva.
+function useNow(enabled) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!enabled) return;
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, [enabled]);
+  return now;
+}
+
+const pad = (n) => String(n).padStart(2, "0");
+
+// Cuenta regresiva: casilleros de días / horas / minutos / segundos. Con menos de 3 días se pone
+// roja y titila (ver .cc-countdown-urgent en category-cards.css).
+function Countdown({ parts }) {
+  const units = [
+    ...(parts.days > 0 ? [[parts.days, parts.days === 1 ? "día" : "días"]] : []),
+    [pad(parts.hours), "h"],
+    [pad(parts.minutes), "min"],
+    [pad(parts.seconds), "seg"],
+  ];
+  // Urgente: etiqueta corta para que la pastilla roja entre en un renglón también en el celular.
+  const label = !parts.urgent ? "Termina en" : parts.days === 0 ? "¡Último día!" : "¡Últimos días!";
+  return (
+    <div className={`cc-countdown${parts.urgent ? " cc-countdown-urgent" : ""}`} role="timer">
+      <span className="cc-countdown-label">{label}</span>
+      <span className="cc-countdown-units">
+        {units.map(([v, l]) => (
+          <span key={l} className="cc-cd-unit">
+            <span className="cc-cd-num">{v}</span>
+            <span className="cc-cd-lbl">{l}</span>
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 export default function CampaignCard({ offer, badge, preview = false, solo = false }) {
   const style = offer.cardStyle === "color" || CARD_STYLES.some((s) => s.key === offer.cardStyle)
     ? offer.cardStyle
     : "sale";
   const parts = badgeParts(badge, offer.discountType);
-  const ends = endsLabel(offer.endsAt);
+  const withCountdown = offer.showCountdown !== false;
+  const now = useNow(withCountdown);
+  const countdown = withCountdown ? countdownParts(offer.endsAt, now) : null;
+  const ends = endsLabel(offer.endsAt, now);
   const icon = ICON_BY_STYLE[style] || "sell";
 
   // Color propio: el fondo y el color del texto (oscuro si el fondo es claro) van como variables CSS.
@@ -42,7 +85,8 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
         <p className="cc-name">{offer.name || "Nombre de la campaña"}</p>
         {offer.description && <p className="cc-camp-desc">{offer.description}</p>}
         <div className="cc-camp-meta">
-          {ends && <span className="cc-hint">{ends}</span>}
+          {/* Antes: siempre el chip "Quedan N días"; ahora la cuenta regresiva, si la campaña la tiene */}
+          {countdown ? <Countdown parts={countdown} /> : ends && <span className="cc-hint">{ends}</span>}
           <span className="cc-camp-cta">
             Ver ofertas
             <span className="material-symbols-outlined">chevron_right</span>

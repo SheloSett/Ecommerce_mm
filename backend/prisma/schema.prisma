@@ -499,6 +499,9 @@ model Offer {
   showCard      Boolean            @default(true)
   cardStyle     String             @default("sale")
   cardColor     String?
+  // Cuenta regresiva en vivo en la tarjeta (en rojo cuando faltan menos de 3 días). Sin ella, la
+  // tarjeta muestra "Quedan N días" / "Hasta el dd/m".
+  showCountdown Boolean            @default(true)
   active        Boolean            @default(true)  // Interruptor manual del admin (pausar sin borrar)
   // applied: si los precios están escritos AHORA. Vive en la DB para que el estado sobreviva a un
   // reinicio del contenedor (el cron no tiene que adivinar si ya aplicó o no).

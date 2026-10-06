@@ -27,6 +27,8 @@ const EMPTY_FORM = {
   showCard: true,
   cardStyle: "sale",
   cardColor: "#d81b60",
+  // Cuenta regresiva en vivo en la tarjeta (roja cuando faltan menos de 3 días)
+  showCountdown: true,
   active: true,
 };
 
@@ -266,6 +268,7 @@ export default function AdminOffers() {
         showCard: full.showCard !== false,
         cardStyle: full.cardStyle || "sale",
         cardColor: full.cardColor || EMPTY_FORM.cardColor,
+        showCountdown: full.showCountdown !== false,
         active: full.active,
       });
       setSelected(full.items.map((i) => i.product));
@@ -333,6 +336,7 @@ export default function AdminOffers() {
         showCard: form.showCard,
         cardStyle: form.cardStyle,
         cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
+        showCountdown: form.showCountdown,
         active: form.active,
         productIds: selectedIds,
         productDiscounts: productDiscountsPayload,
@@ -786,6 +790,22 @@ export default function AdminOffers() {
                             </div>
                           </div>
                         )}
+
+                        <label className="mt-4 flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={form.showCountdown}
+                            onChange={(e) => setForm({ ...form, showCountdown: e.target.checked })}
+                            className="w-4 h-4 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                          />
+                          <span>
+                            <span className="block text-sm font-medium text-slate-700">⏱️ Mostrar cuenta regresiva</span>
+                            <span className="block text-xs text-slate-500 mt-0.5">
+                              Días, horas, minutos y segundos hasta que termina. Cuando faltan menos de 3 días se pone roja y titila.
+                              Sin tilde, muestra solo "Quedan N días".
+                            </span>
+                          </span>
+                        </label>
                       </div>
 
                       <div>
@@ -804,6 +824,7 @@ export default function AdminOffers() {
                             discountType: form.discountType,
                             cardStyle: form.cardStyle,
                             cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
+                            showCountdown: form.showCountdown,
                           }}
                           badge={cardPreviewBadge}
                         />

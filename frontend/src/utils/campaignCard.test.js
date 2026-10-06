@@ -2,7 +2,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { badgeParts, badgeFor, endsLabel, textColorFor } from "./campaignCard.js";
+import { badgeParts, badgeFor, endsLabel, countdownParts, textColorFor } from "./campaignCard.js";
 
 describe("descuento de la tarjeta", () => {
   test("porcentaje y monto fijo", () => {
@@ -37,6 +37,23 @@ describe("cuánto falta", () => {
   test("ya terminó o sin fecha → nada", () => {
     assert.equal(endsLabel(new Date(2026, 9, 5), now), null);
     assert.equal(endsLabel(null, now), null);
+  });
+});
+
+describe("cuenta regresiva", () => {
+  const now = new Date(2026, 9, 6, 10, 0, 0);
+  test("días, horas, minutos y segundos", () => {
+    const end = new Date(2026, 9, 18, 0, 0, 0); // 11 días 14 h
+    assert.deepEqual(countdownParts(end, now), { days: 11, hours: 14, minutes: 0, seconds: 0, urgent: false });
+    assert.deepEqual(countdownParts(new Date(2026, 9, 6, 11, 2, 3), now), { days: 0, hours: 1, minutes: 2, seconds: 3, urgent: true });
+  });
+  test("se pone urgente con menos de 3 días", () => {
+    assert.equal(countdownParts(new Date(2026, 9, 9, 10, 0, 1), now).urgent, false); // 3 días y 1 seg
+    assert.equal(countdownParts(new Date(2026, 9, 9, 9, 59, 59), now).urgent, true);
+  });
+  test("terminada o sin fecha → nada", () => {
+    assert.equal(countdownParts(new Date(2026, 9, 6, 10, 0, 0), now), null);
+    assert.equal(countdownParts(null, now), null);
   });
 });
 

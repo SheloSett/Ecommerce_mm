@@ -88,6 +88,7 @@ function validateOfferPayload(body, { partial = false } = {}) {
 function cardFields(body) {
   const data = {};
   if (body.showCard !== undefined)  data.showCard  = body.showCard !== false;
+  if (body.showCountdown !== undefined) data.showCountdown = body.showCountdown !== false;
   if (body.cardStyle !== undefined) data.cardStyle = body.cardStyle;
   if (body.cardColor !== undefined) data.cardColor = body.cardColor ? String(body.cardColor).toLowerCase() : null;
   return data;
@@ -163,7 +164,7 @@ async function getActiveOffers(req, res) {
         // Antes: select { id, name, description, endsAt, appliesTo, showInHome }
         select: {
           id: true, name: true, description: true, endsAt: true, appliesTo: true, showInHome: true,
-          showCard: true, cardStyle: true, cardColor: true,
+          showCard: true, cardStyle: true, cardColor: true, showCountdown: true,
           discountType: true, discountValue: true, wholesaleDiscountValue: true,
           items: { select: { discountValue: true, wholesaleDiscountValue: true } },
         },

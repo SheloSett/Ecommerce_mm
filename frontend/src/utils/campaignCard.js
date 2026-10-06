@@ -36,6 +36,25 @@ export function endsLabel(endsAt, now = new Date()) {
   return `Hasta el ${end.getDate()}/${end.getMonth() + 1}`;
 }
 
+// Con menos de esto la cuenta regresiva se pone roja y titila (pedido: "cuando queden menos de 3 días").
+export const COUNTDOWN_URGENT_MS = 3 * 86400000;
+
+// Cuenta regresiva hasta el fin de la campaña: { days, hours, minutes, seconds, urgent }.
+// null si ya terminó o no hay fecha.
+export function countdownParts(endsAt, now = new Date()) {
+  if (!endsAt) return null;
+  const ms = new Date(endsAt) - now;
+  if (isNaN(ms) || ms <= 0) return null;
+  const s = Math.floor(ms / 1000);
+  return {
+    days:    Math.floor(s / 86400),
+    hours:   Math.floor((s % 86400) / 3600),
+    minutes: Math.floor((s % 3600) / 60),
+    seconds: s % 60,
+    urgent:  ms < COUNTDOWN_URGENT_MS,
+  };
+}
+
 // Color del texto sobre un fondo "#rrggbb": oscuro si el fondo es claro, blanco si no.
 export function textColorFor(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
