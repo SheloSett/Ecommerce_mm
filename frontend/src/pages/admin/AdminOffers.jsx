@@ -545,6 +545,22 @@ export default function AdminOffers() {
                   />
                 </div>
 
+                {/* Orden: a quién aplica → cuánto (minoristas y mayoristas en la misma línea) → fechas →
+                    sección en el Home. Antes "Aplica a" quedaba debajo de los descuentos y el campo de
+                    mayoristas y el checkbox del Home sueltos en la grilla. */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Aplica a *</label>
+                  <select
+                    value={form.appliesTo}
+                    onChange={(e) => setForm({ ...form, appliesTo: e.target.value })}
+                    className="input"
+                  >
+                    <option value="AMBOS">Minorista y mayorista</option>
+                    <option value="MINORISTA">Solo minorista</option>
+                    <option value="MAYORISTA">Solo mayorista</option>
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de descuento *</label>
                   <select
@@ -562,11 +578,12 @@ export default function AdminOffers() {
                   )}
                 </div>
 
-                <div>
+                {/* Descuento: con los dos públicos, uno para cada uno en la misma línea (el de mayoristas
+                    vacío = el mismo que minoristas). Con un solo público, un campo a todo lo ancho. */}
+                <div className={form.appliesTo === "AMBOS" ? "" : "md:col-span-2"}>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    {/* Con los dos públicos, este es el de minoristas (y el de mayoristas si se deja vacío el otro) */}
-                    {form.appliesTo === "AMBOS" ? "Minoristas: " : ""}
-                    {form.discountType === "PERCENTAGE" ? "Porcentaje a descontar *" : "Monto a descontar (ARS) *"}
+                    {form.appliesTo === "MAYORISTA" ? "Descuento para mayoristas" : form.appliesTo === "MINORISTA" ? "Descuento para minoristas" : "Descuento minoristas"}
+                    {form.discountType === "PERCENTAGE" ? " (%)" : " ($)"} *
                   </label>
                   <input
                     type="number"
@@ -581,11 +598,10 @@ export default function AdminOffers() {
                   />
                 </div>
 
-                {/* Descuento distinto para mayoristas: solo con "Minorista y mayorista". Vacío = el mismo. */}
                 {form.appliesTo === "AMBOS" && (
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Mayoristas: {form.discountType === "PERCENTAGE" ? "porcentaje a descontar" : "monto a descontar (ARS)"}
+                      Descuento mayoristas{form.discountType === "PERCENTAGE" ? " (%)" : " ($)"}
                     </label>
                     <input
                       type="number"
@@ -599,31 +615,6 @@ export default function AdminOffers() {
                     />
                   </div>
                 )}
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Aplica a *</label>
-                  <select
-                    value={form.appliesTo}
-                    onChange={(e) => setForm({ ...form, appliesTo: e.target.value })}
-                    className="input"
-                  >
-                    <option value="AMBOS">Minorista y mayorista</option>
-                    <option value="MINORISTA">Solo minorista</option>
-                    <option value="MAYORISTA">Solo mayorista</option>
-                  </select>
-                </div>
-
-                <div className="flex items-end">
-                  <label className="flex items-center gap-2 cursor-pointer pb-2">
-                    <input
-                      type="checkbox"
-                      checked={form.showInHome}
-                      onChange={(e) => setForm({ ...form, showInHome: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300"
-                    />
-                    <span className="text-sm text-slate-700">Mostrar como sección en el Home</span>
-                  </label>
-                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Desde *</label>
@@ -646,6 +637,27 @@ export default function AdminOffers() {
                     required
                   />
                 </div>
+
+                {/* Sección en el Home: recuadro a todo lo ancho (antes un checkbox suelto en media columna) */}
+                <label
+                  className={`md:col-span-2 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
+                    form.showInHome ? "border-green-500 bg-green-50" : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.showInHome}
+                    onChange={(e) => setForm({ ...form, showInHome: e.target.checked })}
+                    className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">🏠 Mostrar como sección en el Home</span>
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      La campaña tiene su propia fila de productos en la página de inicio, con el nombre y el subtítulo de arriba.
+                      Si lo destildás, el descuento se aplica igual y la campaña se puede filtrar en el catálogo.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               {/* ── Selector de productos ── */}
