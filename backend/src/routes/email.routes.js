@@ -1,0 +1,34 @@
+const express = require("express");
+const {
+  getAudience,
+  searchCustomers,
+  previewEmail,
+  sendTestEmail,
+  createCustomBroadcast,
+  announceOfferNow,
+  listBroadcasts,
+  getBroadcast,
+  cancelBroadcastNow,
+  getEmailSettings,
+  updateEmailSettings,
+} = require("../controllers/email.controller");
+const { authMiddleware, adminMiddleware, requirePermission } = require("../middleware/auth.middleware");
+
+// Admin → Emails. Todo exige el permiso "emails" (el SUPERADMIN siempre lo tiene): mandar un email
+// a todos los clientes no es algo que cualquier usuario del panel tenga que poder hacer.
+const router = express.Router();
+router.use(authMiddleware, adminMiddleware, requirePermission("emails"));
+
+router.get("/audience", getAudience);
+router.get("/customers", searchCustomers);
+router.post("/preview", previewEmail);
+router.post("/test", sendTestEmail);
+router.get("/settings", getEmailSettings);
+router.put("/settings", updateEmailSettings);
+router.get("/broadcasts", listBroadcasts);
+router.post("/broadcasts", createCustomBroadcast);
+router.get("/broadcasts/:id", getBroadcast);
+router.post("/broadcasts/:id/cancel", cancelBroadcastNow);
+router.post("/offers/:id/announce", announceOfferNow);
+
+module.exports = router;

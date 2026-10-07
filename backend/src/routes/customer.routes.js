@@ -3,6 +3,7 @@ const rateLimit = require("express-rate-limit");
 const router = express.Router();
 const { PrismaClient } = require("@prisma/client");
 const { buildUnsubscribeToken } = require("../services/cron.service");
+const { verifyMarketingUnsubscribeToken } = require("../services/broadcast.service");
 const prisma = new PrismaClient();
 const {
   register,
@@ -67,6 +68,27 @@ router.get("/unsubscribe/restock", async (req, res) => {
     res.status(500).json({ error: "Error interno" });
   }
 });
+
+// Baja de los emails promocionales (avisos de campañas, emails del admin, recomendaciones).
+// GET: la página /desuscribirse del front, a la que lleva el link del pie del email.
+// POST: "un clic" del header List-Unsubscribe (Gmail muestra "Anular suscripción" y hace un POST acá,
+// sin pasar por el front — RFC 8058).
+async function unsubscribeMarketing(req, res) {
+  try {
+    const customerId = parseInt(req.query.id);
+    if (isNaN(customerId) || !verifyMarketingUnsubscribeToken(customerId, req.query.token)) {
+      return res.status(400).json({ error: "El link no es válido" });
+    }
+    const updated = await prisma.customer.updateMany({ where: { id: customerId }, data: { unsubscribeMarketing: true } });
+    if (updated.count === 0) return res.status(404).json({ error: "La cuenta ya no existe" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error en unsubscribe marketing:", err);
+    res.status(500).json({ error: "Error interno" });
+  }
+}
+router.get("/unsubscribe/marketing", unsubscribeMarketing);
+router.post("/unsubscribe/marketing", unsubscribeMarketing);
 
 // Rutas self-service: el propio cliente autenticado gestiona su perfil
 // IMPORTANTE: deben ir ANTES de /:id para que "/me" no sea interpretado como un id

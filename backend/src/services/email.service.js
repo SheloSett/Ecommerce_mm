@@ -6,8 +6,9 @@ const https = require("https");
 const http  = require("http");
 const sharp = require("sharp");
 
-// Crea el transporte solo si las variables de entorno de SMTP están configuradas
-function createTransporter() {
+// Crea el transporte solo si las variables de entorno de SMTP están configuradas.
+// extra: opciones adicionales de nodemailer (ver createBulkTransporter).
+function createTransporter(extra = {}) {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_USER || !SMTP_PASS) return null;
 
@@ -23,7 +24,16 @@ function createTransporter() {
     connectionTimeout: 10000,
     greetingTimeout:   10000,
     socketTimeout:     10000,
+    ...extra,
   });
+}
+
+// Transporte para los emails masivos (services/broadcast.service.js): UNA conexión reutilizada para
+// toda la tanda. Con el transporte común cada email abre y autentica una conexión nueva, y Gmail
+// corta con "too many login attempts" si eso pasa decenas de veces por minuto.
+// null si el SMTP no está configurado. Quien lo usa tiene que llamar a .close() al terminar.
+function createBulkTransporter() {
+  return createTransporter({ pool: true, maxConnections: 1, maxMessages: 100 });
 }
 
 // ─── Destinatarios de las notificaciones al admin ────────────────────────────
@@ -1674,7 +1684,9 @@ async function sendMayoristaRestockEmail(customer, unsubscribeUrl) {
 // EMAIL DE RECOMENDACIONES SEMANALES PARA MINORISTAS
 // Se envía cada lunes con 4 productos relacionados a la última compra.
 // ---------------------------------------------------------------------------
-async function sendMinoristaRecommendationEmail(customer, products) {
+// unsubscribeUrl: link para darse de baja de los emails promocionales (ver broadcast.service.js).
+// Antes este email no tenía forma de darse de baja.
+async function sendMinoristaRecommendationEmail(customer, products, unsubscribeUrl = "") {
   try {
     const transporter = createTransporter();
     if (!transporter) return;
@@ -1790,6 +1802,7 @@ async function sendMinoristaRecommendationEmail(customer, products) {
         <tr><td style="background:#0f172a;padding:24px 40px;text-align:center;border-top:1px solid #334155">
           <p style="color:#64748b;font-size:12px;line-height:1.6;margin:0 0 4px">¿Tenés alguna pregunta? Respondé este email y te ayudamos.</p>
           <p style="color:#475569;font-size:11px;margin:8px 0 0">&#169; ${new Date().getFullYear()} ${storeName} &#8212; Email automático, no respondas a este mensaje.</p>
+          ${unsubscribeUrl ? `<p style="color:#475569;font-size:11px;margin:6px 0 0"><a href="${unsubscribeUrl}" style="color:#64748b;text-decoration:underline">No quiero recibir más ofertas ni novedades</a></p>` : ""}
         </td></tr>
       </table>
     </td></tr>
@@ -1802,6 +1815,7 @@ async function sendMinoristaRecommendationEmail(customer, products) {
       to: customer.email,
       subject: `Productos que te pueden interesar — ${storeName}`,
       html,
+      ...(unsubscribeUrl ? { headers: { "List-Unsubscribe": `<${unsubscribeUrl}>` } } : {}),
     });
     console.log(`[EMAIL] Recomendaciones enviadas a ${customer.email}`);
   } catch (err) {
@@ -1829,4 +1843,5 @@ module.exports = {
   sendPasswordResetEmail,
   sendMayoristaRestockEmail,
   sendMinoristaRecommendationEmail,
+  createBulkTransporter,
 };

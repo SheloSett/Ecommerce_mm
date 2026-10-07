@@ -288,6 +288,7 @@ async function getMe(req, res) {
       documentType:       customer.documentType,
       type:               customer.type,
       unsubscribeRestock: customer.unsubscribeRestock,
+      unsubscribeMarketing: customer.unsubscribeMarketing,
     });
   } catch (err) {
     console.error("GetMe error:", err);
@@ -299,7 +300,7 @@ async function getMe(req, res) {
 async function updateMe(req, res) {
   try {
     const { id } = req.user;
-    const { name, phone, cuit, documentType, unsubscribeRestock } = req.body;
+    const { name, phone, cuit, documentType, unsubscribeRestock, unsubscribeMarketing } = req.body;
 
     if (name !== undefined && !name.trim()) {
       return res.status(400).json({ error: "El nombre no puede estar vacío" });
@@ -315,6 +316,8 @@ async function updateMe(req, res) {
         ...(cuit               !== undefined && { cuit: cuit.trim() || null }),
         ...(documentType       !== undefined && validDocTypes.includes(documentType) && { documentType }),
         ...(unsubscribeRestock !== undefined && { unsubscribeRestock: Boolean(unsubscribeRestock) }),
+        // Ofertas y novedades por email (avisos de campañas, emails del admin, recomendaciones)
+        ...(unsubscribeMarketing !== undefined && { unsubscribeMarketing: Boolean(unsubscribeMarketing) }),
       },
     });
 
@@ -327,6 +330,7 @@ async function updateMe(req, res) {
       documentType:       updated.documentType,
       type:               updated.type,
       unsubscribeRestock: updated.unsubscribeRestock,
+      unsubscribeMarketing: updated.unsubscribeMarketing,
     });
   } catch (err) {
     console.error("UpdateMe error:", err);

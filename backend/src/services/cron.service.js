@@ -3,21 +3,13 @@ const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } = require("./email.service");
 const { syncOffers } = require("./offers.service");
+const { runEmailJobs, unsubscribeUrls } = require("./broadcast.service");
 
 const prisma = new PrismaClient();
 
-// Filtro Prisma para "productos disponibles": activos y con stock real.
-// Mismo patrón que se usa en getProducts() del controller — un producto está disponible si:
-// - stockUnlimited: true, o
-// - no tiene variantes activas y stock > 0, o
-// - tiene al menos una variante activa con stock disponible
-const AVAILABLE_STOCK_FILTER = {
-  OR: [
-    { stockUnlimited: true },
-    { AND: [{ variants: { none: { active: true } } }, { stock: { gt: 0 } }] },
-    { variants: { some: { active: true, OR: [{ stockUnlimited: true }, { stock: { gt: 0 } }] } } },
-  ],
-};
+// Filtro Prisma para "productos disponibles" (antes definido acá; ahora compartido con los avisos
+// de campañas por email).
+const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 
 // Días de espera entre emails de restock según cuántos ya se enviaron desde el último pedido
 const RESTOCK_INTERVALS = { 0: 20, 1: 5, 2: 7 }; // count >= 3 → 14 días
@@ -145,7 +137,8 @@ async function runMinoristaRecommendations() {
     const minIntervalMs = (frequencyDays - 0.5) * 24 * 60 * 60 * 1000; // margen de medio día
 
     const customers = await prisma.customer.findMany({
-      where: { type: "MINORISTA", status: "APPROVED" },
+      // unsubscribeMarketing: los que se dieron de baja de las promociones (antes no había forma)
+      where: { type: "MINORISTA", status: "APPROVED", unsubscribeMarketing: false },
       include: {
         orders: {
           where: { status: "APPROVED" },
@@ -229,7 +222,7 @@ async function runMinoristaRecommendations() {
 
       if (products.length === 0) continue;
 
-      await sendMinoristaRecommendationEmail(customer, products).catch((e) =>
+      await sendMinoristaRecommendationEmail(customer, products, unsubscribeUrls(customer.id).page).catch((e) =>
         console.error(`[CRON] Error enviando recomendaciones a customer ${customer.id}:`, e.message)
       );
 
@@ -259,11 +252,15 @@ function startCronJobs() {
   // re-aplica las activas (idempotente — solo escribe si hay diferencia real), lo que hace entrar a
   // las variantes creadas o los precios base editados mientras la campaña corría.
   cron.schedule("* * * * *", syncOffers);
+
+  // Emails masivos (Admin → Emails): avisos de campañas que empezaron + una tanda de la cola,
+  // respetando el tope diario. Ver services/broadcast.service.js.
+  cron.schedule("* * * * *", runEmailJobs);
   // Una pasada al arrancar: si el contenedor estuvo caído justo cuando una campaña tenía que
   // empezar o terminar, se corrige de entrada en vez de esperar al próximo minuto.
   syncOffers();
 
-  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta)");
+  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta + emails masivos)");
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +369,7 @@ async function forceRecommendationEmailForEmail(targetEmail) {
 
   if (products.length === 0) throw new Error("No hay productos para recomendar");
 
-  await sendMinoristaRecommendationEmail(customer, products);
+  await sendMinoristaRecommendationEmail(customer, products, unsubscribeUrls(customer.id).page);
   return { sentTo: customer.email, productsCount: products.length };
 }
 

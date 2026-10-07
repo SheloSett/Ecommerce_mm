@@ -39,6 +39,16 @@ export default function EditProfile() {
   const [unsubscribeRestock, setUnsubscribeRestock] = useState(customer.unsubscribeRestock ?? false);
   const [savingRestock, setSavingRestock]           = useState(false);
 
+  // ─── Ofertas y novedades por email (todos los clientes) ─────────────────────
+  // Se lee de /customers/me: el cliente guardado en el navegador al iniciar sesión no trae este dato.
+  const [unsubscribeMarketing, setUnsubscribeMarketing] = useState(null); // null = cargando
+  const [savingMarketing, setSavingMarketing]           = useState(false);
+  useEffect(() => {
+    customersApi.getMe()
+      .then((r) => setUnsubscribeMarketing(!!r.data.unsubscribeMarketing))
+      .catch(() => setUnsubscribeMarketing(false));
+  }, []);
+
   // ─── Estado solicitud cambio de email ────────────────────────────────────────
   const [emailSection, setEmailSection]     = useState(false);
   const [newEmail, setNewEmail]             = useState("");
@@ -108,6 +118,20 @@ export default function EditProfile() {
       toast.error("Error al actualizar la preferencia");
     } finally {
       setSavingRestock(false);
+    }
+  };
+
+  const handleToggleMarketing = async () => {
+    const newValue = !unsubscribeMarketing;
+    setSavingMarketing(true);
+    try {
+      await customersApi.updateMe({ unsubscribeMarketing: newValue });
+      setUnsubscribeMarketing(newValue);
+      toast.success(newValue ? "Ya no vas a recibir ofertas por email" : "Listo, te avisamos de las ofertas por email");
+    } catch {
+      toast.error("Error al actualizar la preferencia");
+    } finally {
+      setSavingMarketing(false);
     }
   };
 
@@ -393,6 +417,32 @@ export default function EditProfile() {
                 </div>
               </section>
             </div>
+
+            {/* ── Ofertas y novedades por email (todos) ── */}
+            {unsubscribeMarketing !== null && (
+              <section className={`${cardCls} flex justify-between items-center gap-4`}>
+                <div className="space-y-1">
+                  <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Ofertas y novedades por email</h2>
+                  <p className="text-xs text-slate-400">
+                    {unsubscribeMarketing
+                      ? "No estás recibiendo ofertas ni novedades por email. Los emails de tus pedidos te siguen llegando."
+                      : "Te avisamos por email de las campañas de ofertas y las novedades de la tienda."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleMarketing}
+                  disabled={savingMarketing}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50 ${
+                    !unsubscribeMarketing ? "bg-[#00873a]" : "bg-[#bdcaba]"
+                  }`}
+                >
+                  <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transform transition-transform duration-200 ${
+                    !unsubscribeMarketing ? "translate-x-5" : "translate-x-0.5"
+                  }`} />
+                </button>
+              </section>
+            )}
 
             {/* ── Recordatorios de restock (solo MAYORISTA) ── */}
             {customer.type === "MAYORISTA" && (

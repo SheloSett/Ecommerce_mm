@@ -16,6 +16,7 @@ const ALL_PERMISSIONS = [
   { key: "carrusel",       label: "Carrusel" },
   { key: "configuracion",  label: "Configuración" },
   { key: "devoluciones",   label: "Devoluciones" },
+  { key: "emails",         label: "Emails a clientes" },
   { key: "flyer",          label: "Generador de Flyers" },
   { key: "finanzas",       label: "Ver finanzas (dashboard)" },
 ];

@@ -478,6 +478,23 @@ export const emailTestApi = {
   sendRecommendation: (email) => api.post("/admin-test/email-recommendation", { email }),
 };
 
+// ─── Emails a clientes (Admin → Emails) ──────────────────────────────────────
+// Los envíos no salen de golpe: quedan en una cola que el servidor manda de a poco respetando el
+// tope diario (ver backend/src/services/broadcast.service.js).
+export const emailsApi = {
+  audience:   (audience) => api.get("/emails/audience", { params: { audience } }), // { count, unsubscribed }
+  customers:  (search)   => api.get("/emails/customers", { params: { search } }),
+  preview:    (data)     => api.post("/emails/preview", data),       // { subject, html }
+  sendTest:   (data)     => api.post("/emails/test", data),          // al email del admin logueado
+  send:       (data)     => api.post("/emails/broadcasts", data),
+  history:    ()         => api.get("/emails/broadcasts"),
+  detail:     (id)       => api.get(`/emails/broadcasts/${id}`),
+  cancel:     (id)       => api.post(`/emails/broadcasts/${id}/cancel`),
+  announceOffer: (offerId, force = false) => api.post(`/emails/offers/${offerId}/announce`, { force }),
+  getSettings:    ()     => api.get("/emails/settings"),
+  updateSettings: (data) => api.put("/emails/settings", data),
+};
+
 // ─── Wishlist / Favoritos ─────────────────────────────────────────────────────
 // ─── Correo Argentino / MiCorreo ─────────────────────────────────────────────
 export const shippingApi = {

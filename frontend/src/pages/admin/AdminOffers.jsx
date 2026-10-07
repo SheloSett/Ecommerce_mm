@@ -29,6 +29,9 @@ const EMPTY_FORM = {
   cardColor: "#d81b60",
   // Cuenta regresiva en vivo en la tarjeta (roja cuando faltan menos de 3 días)
   showCountdown: true,
+  // Avisar por email a los clientes cuando la campaña empieza (una sola vez; ver Admin → Emails).
+  // Tildado por defecto en las campañas NUEVAS: al editar se respeta lo que tenía.
+  emailAnnounce: true,
   active: true,
 };
 
@@ -269,6 +272,8 @@ export default function AdminOffers() {
         cardStyle: full.cardStyle || "sale",
         cardColor: full.cardColor || EMPTY_FORM.cardColor,
         showCountdown: full.showCountdown !== false,
+        emailAnnounce: !!full.emailAnnounce,
+        announcedAt: full.announcedAt || null,
         active: full.active,
       });
       setSelected(full.items.map((i) => i.product));
@@ -337,6 +342,7 @@ export default function AdminOffers() {
         cardStyle: form.cardStyle,
         cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
         showCountdown: form.showCountdown,
+        emailAnnounce: form.emailAnnounce,
         active: form.active,
         productIds: selectedIds,
         productDiscounts: productDiscountsPayload,
@@ -474,6 +480,15 @@ export default function AdminOffers() {
                         {offer.showCard && (
                           <span className="text-[10px] text-pink-700 bg-pink-50 px-1.5 py-0.5 rounded mt-1 ml-1 inline-block">
                             Tarjeta en el inicio
+                          </span>
+                        )}
+                        {offer.announcedAt ? (
+                          <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded mt-1 ml-1 inline-block">
+                            📧 Avisada por email
+                          </span>
+                        ) : offer.emailAnnounce && (
+                          <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded mt-1 ml-1 inline-block">
+                            📧 Se avisa al empezar
                           </span>
                         )}
                       </td>
@@ -706,6 +721,30 @@ export default function AdminOffers() {
                     <span className="block text-xs text-slate-500 mt-0.5">
                       La campaña tiene su propia fila de productos en la página de inicio, con el nombre y el subtítulo de arriba.
                       Si lo destildás, el descuento se aplica igual y la campaña se puede filtrar en el catálogo.
+                    </span>
+                  </span>
+                </label>
+
+                {/* Aviso por email: recuadro a todo lo ancho, igual que el de la sección del Home */}
+                <label
+                  className={`md:col-span-2 flex items-start gap-3 p-4 rounded-xl border-2 transition-colors ${
+                    form.announcedAt ? "border-slate-200 bg-slate-50 cursor-default" :
+                    form.emailAnnounce ? "border-green-500 bg-green-50 cursor-pointer" : "border-slate-200 hover:border-slate-300 cursor-pointer"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.emailAnnounce}
+                    disabled={!!form.announcedAt}
+                    onChange={(e) => setForm({ ...form, emailAnnounce: e.target.checked })}
+                    className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">📧 Avisar por email a los clientes cuando empiece</span>
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      {form.announcedAt
+                        ? `Ya se avisó el ${formatDateTime(form.announcedAt)}. Para mandarlo de nuevo: Emails → Avisos de campañas.`
+                        : "Cuando arranca la campaña, les llega un email con el descuento y los productos (a minoristas, mayoristas o los dos, según a quién aplica). Se manda una sola vez y de a poco; lo seguís en Emails → Historial."}
                     </span>
                   </span>
                 </label>

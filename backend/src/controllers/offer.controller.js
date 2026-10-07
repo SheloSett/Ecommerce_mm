@@ -84,11 +84,14 @@ function validateOfferPayload(body, { partial = false } = {}) {
   return null;
 }
 
-// Datos de la tarjeta del Home que vinieron en el body (solo los que vinieron: pausar/reanudar no los manda).
+// Datos de la tarjeta del Home y del aviso por email que vinieron en el body (solo los que vinieron:
+// pausar/reanudar no los manda).
 function cardFields(body) {
   const data = {};
   if (body.showCard !== undefined)  data.showCard  = body.showCard !== false;
   if (body.showCountdown !== undefined) data.showCountdown = body.showCountdown !== false;
+  // Aviso por email cuando la campaña empieza (lo manda el cron una vez; ver broadcast.service.js)
+  if (body.emailAnnounce !== undefined) data.emailAnnounce = body.emailAnnounce === true;
   if (body.cardStyle !== undefined) data.cardStyle = body.cardStyle;
   if (body.cardColor !== undefined) data.cardColor = body.cardColor ? String(body.cardColor).toLowerCase() : null;
   return data;

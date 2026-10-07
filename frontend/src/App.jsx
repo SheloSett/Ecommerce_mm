@@ -19,6 +19,7 @@ import CustomerLogin from "./pages/CustomerLogin";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import UnsubscribeRestock from "./pages/UnsubscribeRestock";
+import UnsubscribeMarketing from "./pages/UnsubscribeMarketing";
 import EditProfile from "./pages/EditProfile";
 import OrderHistory from "./pages/OrderHistory";
 import OrderDetail from "./pages/OrderDetail";
@@ -54,6 +55,7 @@ import AdminSuppliers from "./pages/admin/AdminSuppliers";
 // import AdminAnnouncementBanner from "./pages/admin/AdminAnnouncementBanner";
 import AdminSettings from "./pages/admin/AdminSettings";
 import AdminReturns from "./pages/admin/AdminReturns";
+import AdminEmails from "./pages/admin/AdminEmails";
 // AdminUsers: movido a UsersSectionContent embebido en AdminSettings — página standalone descartada
 // import AdminUsers from "./pages/admin/AdminUsers";
 import AdminOrderDetail from "./pages/admin/AdminOrderDetail";
@@ -121,6 +123,8 @@ export default function App() {
           <Route path="/olvide-mi-contrasena" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/unsubscribe/restock" element={<UnsubscribeRestock />} />
+          {/* Baja de las promociones por email (link del pie de los avisos y emails masivos) */}
+          <Route path="/desuscribirse" element={<UnsubscribeMarketing />} />
           <Route path="/perfil" element={<PublicRoute><EditProfile /></PublicRoute>} />
           <Route path="/pedidos" element={<PublicRoute><OrderHistory /></PublicRoute>} />
           <Route path="/pedidos/:id" element={<PublicRoute><OrderDetail /></PublicRoute>} />
@@ -316,6 +320,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="devoluciones"><AdminReturns /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/emails"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="emails"><AdminEmails /></RequirePermission>
               </ProtectedRoute>
             }
           />

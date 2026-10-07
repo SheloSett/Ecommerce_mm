@@ -363,6 +363,9 @@ model Customer {
   restockEmailCount       Int          @default(0) // Emails de restock enviados desde el último pedido
   unsubscribeRestock      Boolean      @default(false) // Opt-out de emails de restock
   lastRecommendationEmail DateTime?    // Último email de recomendación semanal enviado (minoristas)
+  // Opt-out de los emails promocionales: avisos de campañas, emails masivos del admin y
+  // recomendaciones. Se da de baja con el link del pie de esos emails o desde su perfil.
+  unsubscribeMarketing    Boolean      @default(false)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
@@ -502,6 +505,11 @@ model Offer {
   // Cuenta regresiva en vivo en la tarjeta (en rojo cuando faltan menos de 3 días). Sin ella, la
   // tarjeta muestra "Quedan N días" / "Hasta el dd/m".
   showCountdown Boolean            @default(true)
+  // Aviso por email a los clientes cuando la campaña empieza (lo dispara el cron una sola vez;
+  // announcedAt queda con la fecha del aviso). También se puede avisar a mano desde Admin → Emails.
+  emailAnnounce Boolean            @default(false)
+  announcedAt   DateTime?
+  broadcasts    EmailBroadcast[]
   active        Boolean            @default(true)  // Interruptor manual del admin (pausar sin borrar)
   // applied: si los precios están escritos AHORA. Vive en la DB para que el estado sobreviva a un
   // reinicio del contenedor (el cron no tiene que adivinar si ya aplicó o no).
@@ -814,4 +822,50 @@ model StoreEvent {
   @@index([productId, createdAt])
   @@index([sessionId])
   @@map("store_events")
+}
+
+// ─── Emails masivos ──────────────────────────────────────────────────────────
+// Un envío del admin (email escrito a mano, o el aviso de una campaña) a muchos clientes. No se
+// manda todo de golpe: cada destinatario queda en EmailRecipient como PENDING y el cron los va
+// mandando de a poco, respetando el tope diario (Gmail corta y marca como spam si se pasa). Así un
+// reinicio del servidor a mitad de un envío no pierde ni duplica nada. Ver services/broadcast.service.js.
+model EmailBroadcast {
+  id          Int              @id @default(autoincrement())
+  kind        String           // CUSTOM = escrito por el admin | OFFER = aviso de una campaña
+  subject     String
+  title       String?
+  body        String?          // texto del admin (CUSTOM)
+  buttonText  String?
+  buttonUrl   String?
+  offerId     Int?
+  offer       Offer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  audience    String           // ALL | MINORISTA | MAYORISTA | SELECTED
+  status      String           @default("SENDING") // SENDING | DONE | CANCELLED
+  total       Int              @default(0)
+  sentCount   Int              @default(0)
+  failedCount Int              @default(0)
+  lastError   String?          // último motivo de pausa (límite de Gmail, SMTP caído) — se reintenta solo
+  createdBy   String?          // email del admin que lo mandó (null = automático)
+  createdAt   DateTime         @default(now())
+  finishedAt  DateTime?
+  recipients  EmailRecipient[]
+
+  @@map("email_broadcasts")
+}
+
+model EmailRecipient {
+  id          Int            @id @default(autoincrement())
+  broadcastId Int
+  broadcast   EmailBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  customerId  Int?           // sin FK: borrar un cliente no tiene que romper el historial
+  email       String
+  name        String
+  type        String         // MINORISTA | MAYORISTA (mayorista APROBADO) — define precios y descuento
+  status      String         @default("PENDING") // PENDING | SENT | FAILED | CANCELLED
+  error       String?
+  sentAt      DateTime?
+
+  @@index([status, broadcastId])
+  @@index([sentAt])
+  @@map("email_recipients")
 }

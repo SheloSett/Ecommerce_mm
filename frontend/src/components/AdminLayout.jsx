@@ -64,7 +64,7 @@ export default function AdminLayout({ children, title }) {
         { label: "Lista de Clientes",      tab: "",          badge: badges.clientes },
         { label: "Solicitudes Mayorista",  tab: "mayorista", badge: badges.solicitudesMayorista },
         { label: "Carritos Activos",       tab: "carts" },
-        { label: "Cambios de Email",       tab: "emails" },
+        // "Cambios de Email" se movió a Emails (abajo de Arrepentimiento)
       ],
     },
     {
@@ -116,6 +116,19 @@ export default function AdminLayout({ children, title }) {
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
+    {
+      path: "/admin/emails",
+      label: "Emails",
+      icon: "📧",
+      permission: "emails",
+      subItems: [
+        { label: "✉️ Enviar email",       tab: "" },
+        { label: "Avisos de campañas",   tab: "campanas" },
+        { label: "Historial",            tab: "historial" },
+        { label: "Cambios de email",     tab: "cambios" },
+        { label: "Automáticos",          tab: "automaticos" },
+      ],
+    },
 
     // Usuarios movido a Configuración → sección "Usuarios"
   ];

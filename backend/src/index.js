@@ -31,6 +31,7 @@ const aiRoutes         = require("./routes/ai.routes");
 const seoRoutes        = require("./routes/seo.routes");
 const analyticsRoutes  = require("./routes/analytics.routes");
 const eventsRoutes     = require("./routes/events.routes");
+const emailRoutes      = require("./routes/email.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -166,6 +167,7 @@ app.use("/api/suppliers",  supplierRoutes);
 app.use("/api/ai",         aiRoutes);
 app.use("/api/analytics",  analyticsRoutes);
 app.use("/api/events",     eventsRoutes);
+app.use("/api/emails",     emailRoutes);
 app.use("/api",            seoRoutes);
 
 // Health check
