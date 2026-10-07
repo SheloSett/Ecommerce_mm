@@ -52,7 +52,7 @@ function EmailPreview({ subject, html, loading, error }) {
       ) : (
         <div className="relative">
           {loading && <div className="absolute top-2 right-3 text-xs text-slate-400">Actualizando…</div>}
-          <iframe title="Vista previa del email" srcDoc={html || ""} sandbox="" className="w-full h-[640px] bg-[#0f172a]" />
+          <iframe title="Vista previa del email" srcDoc={html || ""} sandbox="" className="w-full h-[640px] bg-slate-100" />
         </div>
       )}
     </div>

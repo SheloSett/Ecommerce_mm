@@ -105,6 +105,7 @@ async function sendTestEmail(req, res) {
       to,
       subject: `[PRUEBA] ${subject}`,
       html,
+      headers: { "Content-Language": "es" },
     });
     res.json({ sentTo: to });
   } catch (err) {

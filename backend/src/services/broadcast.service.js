@@ -318,9 +318,14 @@ async function processEmailQueue({ transporter: injected } = {}) {
             to: r.email,
             subject,
             html,
-            headers: r.customerId
-              ? { "List-Unsubscribe": `<${unsubscribeUrls(r.customerId).oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
-              : {},
+            // Content-Language: Gmail ofrecía "Traducir al español" (los nombres de productos y el
+            // "OFF" lo confundían). Antes: solo los headers de baja.
+            headers: {
+              "Content-Language": "es",
+              ...(r.customerId
+                ? { "List-Unsubscribe": `<${unsubscribeUrls(r.customerId).oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+                : {}),
+            },
           });
           await prisma.$transaction([
             prisma.emailRecipient.update({ where: { id: r.id }, data: { status: "SENT", sentAt: new Date(), error: null } }),
