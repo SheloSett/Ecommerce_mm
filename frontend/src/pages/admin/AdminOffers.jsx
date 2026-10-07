@@ -90,6 +90,12 @@ const defaultRange = () => {
   return { startsAt: toLocalInput(now), endsAt: toLocalInput(end) };
 };
 
+// ¿Guardar este formulario dispara el aviso por email ya mismo? Sí si se tildó (y antes no estaba),
+// la campaña ya empezó, no está pausada y todavía no se avisó.
+const announceSendsNow = (form) =>
+  form.emailAnnounce && !form.emailAnnounceSaved && !form.announcedAt && form.active !== false &&
+  !!form.startsAt && new Date(form.startsAt) <= new Date();
+
 export default function AdminOffers() {
   const [offers, setOffers]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -273,6 +279,7 @@ export default function AdminOffers() {
         cardColor: full.cardColor || EMPTY_FORM.cardColor,
         showCountdown: full.showCountdown !== false,
         emailAnnounce: !!full.emailAnnounce,
+        emailAnnounceSaved: !!full.emailAnnounce,
         announcedAt: full.announcedAt || null,
         active: full.active,
       });
@@ -324,6 +331,11 @@ export default function AdminOffers() {
     if (form.showCard && form.cardStyle === "color" && !HEX_COLOR.test(form.cardColor)) {
       return toast.error("El color de la tarjeta tiene que ser como #d81b60");
     }
+    // Con la campaña ya empezada, tildar el aviso lo manda en el próximo minuto. Antes salía sin
+    // preguntar (el 7/10 el aviso del Día de la Madre les llegó a 174 clientes sin confirmación).
+    if (announceSendsNow(form) && !confirm(
+      "La campaña ya empezó: el aviso por email les llega a los clientes apenas guardes (en el próximo minuto).\n\n¿Mandarlo?"
+    )) return;
 
     setSaving(true);
     try {
@@ -369,6 +381,9 @@ export default function AdminOffers() {
 
   // ── Acciones de fila ────────────────────────────────────────────────────────
   async function handleToggleActive(offer) {
+    if (!offer.active && offer.emailAnnounce && !offer.announcedAt && new Date(offer.startsAt) <= new Date() && !confirm(
+      "Esta campaña tiene el aviso por email pendiente: al reanudarla, les llega a los clientes en el próximo minuto.\n\n¿Reanudar y mandar el aviso?"
+    )) return;
     try {
       await offersApi.update(offer.id, { active: !offer.active });
       toast.success(offer.active ? "Campaña pausada — precios restaurados" : "Campaña reanudada");
@@ -746,6 +761,11 @@ export default function AdminOffers() {
                         ? `Ya se avisó el ${formatDateTime(form.announcedAt)}. Para mandarlo de nuevo: Emails → Avisos de campañas.`
                         : "Cuando arranca la campaña, les llega un email con el descuento y los productos (a minoristas, mayoristas o los dos, según a quién aplica). Se manda una sola vez y de a poco; lo seguís en Emails → Historial."}
                     </span>
+                    {!form.announcedAt && form.startsAt && new Date(form.startsAt) <= new Date() && (
+                      <span className="block text-xs font-semibold text-amber-700 mt-1">
+                        ⚠️ La campaña ya empezó: si lo dejás tildado, el aviso sale apenas guardes.
+                      </span>
+                    )}
                   </span>
                 </label>
 

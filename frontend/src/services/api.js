@@ -489,6 +489,8 @@ export const emailsApi = {
   send:       (data)     => api.post("/emails/broadcasts", data),
   history:    ()         => api.get("/emails/broadcasts"),
   detail:     (id)       => api.get(`/emails/broadcasts/${id}`),
+  // A quién le salió y a qué hora: { total, items } (máx. 300), con buscador y filtro por estado
+  recipients: (id, params) => api.get(`/emails/broadcasts/${id}/recipients`, { params }),
   cancel:     (id)       => api.post(`/emails/broadcasts/${id}/cancel`),
   announceOffer: (offerId, force = false) => api.post(`/emails/offers/${offerId}/announce`, { force }),
   getSettings:    ()     => api.get("/emails/settings"),

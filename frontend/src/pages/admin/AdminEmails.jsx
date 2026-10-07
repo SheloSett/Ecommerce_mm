@@ -437,16 +437,21 @@ function CampaignsTab() {
                 </p>
               </div>
 
-              <label className={`flex items-center gap-2 text-sm cursor-pointer ${o.announcedAt ? "opacity-50" : ""}`} title={o.announcedAt ? "Ya se avisó" : undefined}>
-                <input
-                  type="checkbox"
-                  checked={!!o.emailAnnounce}
-                  disabled={busy === o.id || !!o.announcedAt}
-                  onChange={() => toggleAuto(o)}
-                  className="w-4 h-4 rounded border-slate-300"
-                />
-                <span className="text-slate-700">Avisar sola al empezar</span>
-              </label>
+              {/* El aviso automático solo tiene sentido ANTES de que empiece. Antes el tilde aparecía
+                  también en las campañas en curso, y tildarlo ahí mandaba el aviso en el próximo
+                  minuto sin pedir confirmación. Una campaña en curso se avisa con "Avisar ahora". */}
+              {o.state === "PROGRAMADA" && !o.announcedAt && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!o.emailAnnounce}
+                    disabled={busy === o.id}
+                    onChange={() => toggleAuto(o)}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                  <span className="text-slate-700">Avisar sola al empezar</span>
+                </label>
+              )}
 
               <div className="flex gap-2">
                 <button
@@ -503,12 +508,106 @@ const STATUS_LABEL = {
   CANCELLED: { label: "Cancelado", cls: "bg-slate-100 text-slate-500" },
 };
 
+// Destinatarios de un envío: a quién le salió y a qué hora, con buscador y filtro por estado.
+// Reemplaza a la ventana que mostraba solo los fallidos.
+const RECIPIENT_STATUS = {
+  SENT:      { label: "Enviado",   cls: "bg-emerald-100 text-emerald-700" },
+  FAILED:    { label: "Falló",     cls: "bg-red-100 text-red-700" },
+  PENDING:   { label: "En cola",   cls: "bg-blue-100 text-blue-700" },
+  CANCELLED: { label: "Cancelado", cls: "bg-slate-100 text-slate-500" },
+};
+const fmtTime = (d) =>
+  d ? new Date(d).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+
+function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState(initialStatus);
+  const [data, setData] = useState(null); // { total, items }
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      emailsApi.recipients(broadcast.id, { search: search.trim() || undefined, status: status || undefined })
+        .then((r) => setData(r.data))
+        .catch(() => setData({ total: 0, items: [], error: true }));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [broadcast.id, search, status]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-800">Destinatarios</h3>
+            <p className="text-xs text-slate-500">
+              {broadcast.kind === "OFFER" ? `Aviso: ${broadcast.offer?.name || broadcast.subject}` : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
+        </div>
+        <p className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3 leading-relaxed">
+          <strong>Enviado</strong> quiere decir que el servidor de email lo aceptó, a esa hora. Si un cliente no lo ve en la bandeja de entrada,
+          casi siempre está en <strong>Spam</strong> o en la pestaña <strong>Promociones</strong> de Gmail.
+          <strong> Falló</strong> suele ser un email que no existe o está mal escrito.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por nombre o email…"
+            className="input flex-1 min-w-[200px]"
+            autoFocus
+          />
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="input w-40">
+            <option value="">Todos</option>
+            <option value="SENT">Enviados</option>
+            <option value="FAILED">Fallaron</option>
+            <option value="PENDING">En cola</option>
+            <option value="CANCELLED">Cancelados</option>
+          </select>
+        </div>
+        <div className="flex-1 overflow-y-auto -mx-2">
+          {data == null ? (
+            <p className="text-center text-sm text-slate-400 py-8">Cargando…</p>
+          ) : data.items.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-8">{data.error ? "No se pudo cargar la lista" : "Ningún destinatario con ese filtro"}</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {data.items.map((r) => {
+                const st = RECIPIENT_STATUS[r.status] || RECIPIENT_STATUS.PENDING;
+                return (
+                  <li key={r.id} className="px-2 py-2 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{r.name || "—"}</p>
+                      <p className="text-xs text-slate-500 truncate">{r.email}</p>
+                      {r.error && <p className="text-xs text-red-600 break-words mt-0.5">{r.error}</p>}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.cls}`}>{st.label}</span>
+                      {r.sentAt && <p className="text-[11px] text-slate-400 mt-1">{fmtTime(r.sentAt)}</p>}
+                      <p className="text-[10px] text-slate-400">{r.type === "MAYORISTA" ? "Mayorista" : "Minorista"}</p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        {data && data.total > data.items.length && (
+          <p className="text-xs text-slate-400">Mostrando {data.items.length} de {data.total}: usá el buscador para encontrar a alguien.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HistoryTab() {
   const [items, setItems] = useState([]);
   const [settings, setSettings] = useState(null);
   const [limitInput, setLimitInput] = useState("");
   const [loading, setLoading] = useState(true);
-  const [detail, setDetail] = useState(null);
+  const [recipientsOf, setRecipientsOf] = useState(null); // { broadcast, status }
 
   const load = (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -549,15 +648,6 @@ function HistoryTab() {
       load(true);
     } catch (e) {
       toast.error(e.response?.data?.error || "No se pudo cancelar");
-    }
-  }
-
-  async function openDetail(b) {
-    try {
-      const r = await emailsApi.detail(b.id);
-      setDetail(r.data);
-    } catch {
-      toast.error("No se pudo abrir el detalle");
     }
   }
 
@@ -636,8 +726,9 @@ function HistoryTab() {
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${st.cls}`}>{st.label}</span>
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button onClick={() => setRecipientsOf({ broadcast: b, status: "" })} className="text-xs text-blue-600 hover:underline mr-3">Destinatarios</button>
                       {b.failedCount > 0 && (
-                        <button onClick={() => openDetail(b)} className="text-xs text-blue-600 hover:underline mr-3">Ver fallidos</button>
+                        <button onClick={() => setRecipientsOf({ broadcast: b, status: "FAILED" })} className="text-xs text-red-600 hover:underline mr-3">Ver fallidos</button>
                       )}
                       {b.status === "SENDING" && (
                         <button onClick={() => cancel(b)} className="text-xs text-red-600 hover:underline">Cancelar</button>
@@ -651,24 +742,8 @@ function HistoryTab() {
         </div>
       )}
 
-      {detail && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDetail(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-800">No les llegó a estos clientes</h3>
-              <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
-            </div>
-            <p className="text-xs text-slate-500">Casi siempre es porque el email no existe o está mal escrito.</p>
-            <ul className="divide-y divide-slate-100">
-              {detail.failed.map((r) => (
-                <li key={r.id} className="py-2">
-                  <p className="text-sm font-medium text-slate-800">{r.name} <span className="text-slate-500 font-normal">— {r.email}</span></p>
-                  {r.error && <p className="text-xs text-red-600 break-words">{r.error}</p>}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+      {recipientsOf && (
+        <RecipientsModal broadcast={recipientsOf.broadcast} initialStatus={recipientsOf.status} onClose={() => setRecipientsOf(null)} />
       )}
     </div>
   );

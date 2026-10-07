@@ -8,6 +8,7 @@ const {
   announceOfferNow,
   listBroadcasts,
   getBroadcast,
+  listRecipients,
   cancelBroadcastNow,
   getEmailSettings,
   updateEmailSettings,
@@ -28,6 +29,7 @@ router.put("/settings", updateEmailSettings);
 router.get("/broadcasts", listBroadcasts);
 router.post("/broadcasts", createCustomBroadcast);
 router.get("/broadcasts/:id", getBroadcast);
+router.get("/broadcasts/:id/recipients", listRecipients);
 router.post("/broadcasts/:id/cancel", cancelBroadcastNow);
 router.post("/offers/:id/announce", announceOfferNow);
 

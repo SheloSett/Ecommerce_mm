@@ -186,6 +186,34 @@ async function getBroadcast(req, res) {
   }
 }
 
+// ── GET /api/emails/broadcasts/:id/recipients?search=&status= ──────────────────
+// A quién le salió cada email y a qué hora, con buscador: para poder comprobar si un cliente puntual
+// (o una cuenta propia) estaba en el envío.
+async function listRecipients(req, res) {
+  try {
+    const broadcastId = parseInt(req.params.id);
+    const search = String(req.query.search || "").trim();
+    const status = ["PENDING", "SENT", "FAILED", "CANCELLED"].includes(req.query.status) ? req.query.status : undefined;
+    const where = {
+      broadcastId,
+      ...(status ? { status } : {}),
+      ...(search ? { OR: [{ email: { contains: search, mode: "insensitive" } }, { name: { contains: search, mode: "insensitive" } }] } : {}),
+    };
+    const [total, items] = await Promise.all([
+      prisma.emailRecipient.count({ where }),
+      prisma.emailRecipient.findMany({
+        where,
+        select: { id: true, email: true, name: true, type: true, status: true, error: true, sentAt: true },
+        orderBy: [{ sentAt: "asc" }, { id: "asc" }],
+        take: 300,
+      }),
+    ]);
+    res.json({ total, items });
+  } catch (err) {
+    handleError(res, err, "Error al cargar los destinatarios");
+  }
+}
+
 // ── POST /api/emails/broadcasts/:id/cancel ─────────────────────────────────────
 async function cancelBroadcastNow(req, res) {
   try {
@@ -230,6 +258,7 @@ module.exports = {
   announceOfferNow,
   listBroadcasts,
   getBroadcast,
+  listRecipients,
   cancelBroadcastNow,
   getEmailSettings,
   updateEmailSettings,
