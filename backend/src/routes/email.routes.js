@@ -6,6 +6,7 @@ const {
   sendTestEmail,
   createCustomBroadcast,
   announceOfferNow,
+  sendOfferToSelected,
   listBroadcasts,
   getBroadcast,
   listRecipients,
@@ -32,5 +33,6 @@ router.get("/broadcasts/:id", getBroadcast);
 router.get("/broadcasts/:id/recipients", listRecipients);
 router.post("/broadcasts/:id/cancel", cancelBroadcastNow);
 router.post("/offers/:id/announce", announceOfferNow);
+router.post("/offers/:id/send", sendOfferToSelected); // a clientes elegidos
 
 module.exports = router;

@@ -17,7 +17,7 @@ const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { offerState } = require("./offers.service");
 const { createBulkTransporter } = require("./email.service");
-const { buildCustomEmail, buildOfferEmail } = require("./broadcast.templates");
+const { buildCustomEmail, buildPlainEmail, buildOfferEmail } = require("./broadcast.templates");
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 
 const prisma = new PrismaClient();
@@ -121,10 +121,11 @@ function validateCustomPayload(body) {
   };
 }
 
-async function createBroadcast({ kind, audience, customerIds = [], offerId = null, createdBy = null, content }) {
+// recipients: opcional, ya resueltos (el aviso a clientes elegidos los filtra antes por público).
+async function createBroadcast({ kind, audience, customerIds = [], offerId = null, createdBy = null, content, recipients: given = null }) {
   if (!AUDIENCES.includes(audience)) throw new BroadcastError(400, "Destinatarios inválidos");
-  if (audience === "SELECTED" && customerIds.length === 0) throw new BroadcastError(400, "Elegí al menos un cliente");
-  const recipients = await resolveRecipients(audience, customerIds);
+  if (audience === "SELECTED" && customerIds.length === 0 && !given) throw new BroadcastError(400, "Elegí al menos un cliente");
+  const recipients = given || (await resolveRecipients(audience, customerIds));
   if (recipients.length === 0) throw new BroadcastError(400, "No hay ningún cliente para mandarle este email");
 
   return prisma.$transaction(async (tx) => {
@@ -167,6 +168,37 @@ async function announceOffer(offerId, { createdBy = null, force = false } = {}) 
     await prisma.offer.update({ where: { id: offerId }, data: { announcedAt: offer.announcedAt } });
     throw err;
   }
+}
+
+// Destinatarios a los que una campaña les sirve: una "solo mayorista" no tiene descuento que mostrarle
+// a un minorista (el email saldría sin descuento ni productos), y al revés. Puro, para testearlo.
+function recipientsForOffer(recipients, appliesTo) {
+  if (appliesTo === "MAYORISTA") return recipients.filter((r) => r.type === "MAYORISTA");
+  if (appliesTo === "MINORISTA") return recipients.filter((r) => r.type === "MINORISTA");
+  return recipients;
+}
+
+// Aviso de una campaña a clientes elegidos uno por uno (pedido del cliente: "¿no puedo elegir a una
+// persona en específico?"). No marca la campaña como avisada: el aviso general sigue disponible.
+// Devuelve { broadcast, skipped } — skipped = elegidos a los que la campaña no aplica.
+async function sendOfferTo(offerId, customerIds, { createdBy = null } = {}) {
+  const offer = await prisma.offer.findUnique({ where: { id: offerId } });
+  if (!offer) throw new BroadcastError(404, "Campaña no encontrada");
+  if (offerState(offer) !== "ACTIVA") throw new BroadcastError(400, "Solo se puede mandar una campaña activa (vigente y sin pausar)");
+  if (!customerIds.length) throw new BroadcastError(400, "Elegí al menos un cliente");
+
+  const chosen = await resolveRecipients("SELECTED", customerIds);
+  const recipients = recipientsForOffer(chosen, offer.appliesTo);
+  if (recipients.length === 0) {
+    throw new BroadcastError(400, offer.appliesTo === "MAYORISTA"
+      ? "La campaña es solo para mayoristas aprobados y ninguno de los elegidos lo es"
+      : "La campaña es solo para minoristas y los elegidos son mayoristas");
+  }
+  const broadcast = await createBroadcast({
+    kind: "OFFER", audience: "SELECTED", offerId, createdBy, recipients,
+    content: { subject: offer.name },
+  });
+  return { broadcast, skipped: chosen.length - recipients.length };
 }
 
 // Cron: las campañas con "Avisar por email" que ya empezaron y todavía no se avisaron. Se espera a
@@ -227,8 +259,20 @@ const emailCtx = (unsubscribeUrl) => ({
 
 // { subject, html } de un envío para un destinatario. cache: Map compartido en la tanda para no
 // consultar la campaña una vez por email.
+// Tipos de envío: OFFER (aviso de campaña), CUSTOM (escrito por el admin, con diseño) y PLAIN
+// (escrito por el admin, formato simple como un email personal: más chances de llegar a Principal).
+const CUSTOM_KINDS = ["CUSTOM", "PLAIN"];
+
+// ¿Es un mensaje directo? El email escrito en formato simple a clientes elegidos uno por uno no es
+// publicidad masiva: va sin link de baja ni header List-Unsubscribe, que Gmail usa para detectar
+// newsletters y mandarlas a Promociones.
+const isDirectMessage = (broadcast) => broadcast.kind === "PLAIN" && broadcast.audience === "SELECTED";
+
 async function renderFor(broadcast, recipient, cache = new Map(), { preview = false } = {}) {
-  const ctx = emailCtx(recipient.customerId ? unsubscribeUrls(recipient.customerId).page : `${frontendUrl()}/desuscribirse`);
+  const unsubscribeUrl = isDirectMessage(broadcast)
+    ? ""
+    : recipient.customerId ? unsubscribeUrls(recipient.customerId).page : `${frontendUrl()}/desuscribirse`;
+  const ctx = emailCtx(unsubscribeUrl);
   if (broadcast.kind === "OFFER") {
     const side = recipient.type === "MAYORISTA" ? "wholesale" : "retail";
     const key = `${broadcast.offerId}:${side}:${preview}`;
@@ -241,6 +285,7 @@ async function renderFor(broadcast, recipient, cache = new Map(), { preview = fa
     }
     return buildOfferEmail(data.offer, data.products, side, recipient, ctx);
   }
+  if (broadcast.kind === "PLAIN") return buildPlainEmail(broadcast, recipient, ctx);
   return buildCustomEmail(broadcast, recipient, ctx);
 }
 
@@ -312,17 +357,20 @@ async function processEmailQueue({ transporter: injected } = {}) {
         if (fresh?.status !== "PENDING") continue;
         try {
           if (!transporter) throw Object.assign(new Error("SMTP no configurado"), { code: "NO_SMTP" });
-          const { subject, html } = await renderFor(b, r, cache);
+          const { subject, html, text } = await renderFor(b, r, cache);
           await transporter.sendMail({
             from: `"${storeName()}" <${process.env.SMTP_USER}>`,
             to: r.email,
             subject,
             html,
+            text,
             // Content-Language: Gmail ofrecía "Traducir al español" (los nombres de productos y el
             // "OFF" lo confundían). Antes: solo los headers de baja.
             headers: {
               "Content-Language": "es",
-              ...(r.customerId
+              // List-Unsubscribe solo en los envíos a un público: en los dirigidos a clientes elegidos
+              // es un mensaje a pocas personas, y ese header hace que Gmail lo trate como newsletter.
+              ...(r.customerId && b.audience !== "SELECTED"
                 ? { "List-Unsubscribe": `<${unsubscribeUrls(r.customerId).oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
                 : {}),
             },
@@ -398,6 +446,7 @@ async function runEmailJobs() {
 module.exports = {
   BroadcastError,
   AUDIENCES,
+  CUSTOM_KINDS,
   PER_TICK,
   DEFAULT_DAILY_LIMIT,
   effectiveType,
@@ -410,6 +459,8 @@ module.exports = {
   validateCustomPayload,
   createBroadcast,
   announceOffer,
+  recipientsForOffer,
+  sendOfferTo,
   announceStartedOffers,
   offerEmailData,
   renderFor,

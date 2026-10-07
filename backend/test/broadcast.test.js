@@ -8,6 +8,8 @@ const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   pickRecipients,
+  recipientsForOffer,
+  renderFor,
   isRetryableSendError,
   validateCustomPayload,
   marketingUnsubscribeToken,
@@ -46,6 +48,39 @@ describe("a quién le llega", () => {
   });
   test("el email se guarda en minúscula", () => {
     assert.equal(pickRecipients([c(9, { email: " Ana@Mail.COM " })], "ALL")[0].email, "ana@mail.com");
+  });
+});
+
+describe("aviso de una campaña a clientes elegidos", () => {
+  const elegidos = pickRecipients(customers.slice(0, 3), "SELECTED"); // minorista, mayorista, mayorista pendiente
+  test("campaña para todos: les llega a todos los elegidos", () => {
+    assert.deepEqual(ids(recipientsForOffer(elegidos, "AMBOS")), [1, 2, 3]);
+  });
+  test("solo mayoristas: solo al mayorista aprobado", () => {
+    assert.deepEqual(ids(recipientsForOffer(elegidos, "MAYORISTA")), [2]);
+  });
+  test("solo minoristas: el mayorista pendiente cuenta como minorista", () => {
+    assert.deepEqual(ids(recipientsForOffer(elegidos, "MINORISTA")), [1, 3]);
+  });
+});
+
+describe("formato simple (para que llegue a Principal)", () => {
+  const draft = { subject: "Hola {nombre}", title: "", body: "Tu pedido está listo", buttonText: null, buttonUrl: null };
+  test("a clientes elegidos es un mensaje directo: sin link de baja", async () => {
+    const r = await renderFor({ kind: "PLAIN", audience: "SELECTED", ...draft }, { customerId: 5, name: "Ana", type: "MINORISTA" });
+    assert.equal(r.subject, "Hola Ana");
+    assert.ok(!r.html.includes("desuscribirse"));
+    assert.ok(r.text.includes("Tu pedido está listo"));
+  });
+  test("a todos lleva el link de baja", async () => {
+    const r = await renderFor({ kind: "PLAIN", audience: "ALL", ...draft }, { customerId: 5, name: "Ana", type: "MINORISTA" });
+    assert.ok(r.html.includes("desuscribirse?id=5"));
+    assert.ok(r.text.includes("desuscribirse?id=5"));
+  });
+  test("el email con diseño también va en texto plano", async () => {
+    const r = await renderFor({ kind: "CUSTOM", audience: "ALL", ...draft }, { customerId: 5, name: "Ana", type: "MINORISTA" });
+    assert.ok(r.text.includes("Tu pedido está listo") && r.text.includes("desuscribirse?id=5"));
+    assert.ok(!r.text.includes("<"));
   });
 });
 

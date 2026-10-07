@@ -493,6 +493,8 @@ export const emailsApi = {
   recipients: (id, params) => api.get(`/emails/broadcasts/${id}/recipients`, { params }),
   cancel:     (id)       => api.post(`/emails/broadcasts/${id}/cancel`),
   announceOffer: (offerId, force = false) => api.post(`/emails/offers/${offerId}/announce`, { force }),
+  // El aviso de una campaña solo a clientes elegidos (no la marca como avisada)
+  sendOffer:  (offerId, customerIds) => api.post(`/emails/offers/${offerId}/send`, { customerIds }),
   getSettings:    ()     => api.get("/emails/settings"),
   updateSettings: (data) => api.put("/emails/settings", data),
 };

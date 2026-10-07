@@ -9,11 +9,13 @@ const {
   validateCustomPayload,
   createBroadcast,
   announceOffer,
+  sendOfferTo,
   renderFor,
   getDailyLimit,
   setDailyLimit,
   sentLast24h,
   cancelBroadcast,
+  processEmailQueue,
   PER_TICK,
 } = require("../services/broadcast.service");
 const { createBulkTransporter } = require("../services/email.service");
@@ -25,6 +27,17 @@ function handleError(res, err, fallback) {
   console.error(fallback, err);
   return res.status(500).json({ error: fallback });
 }
+
+// Quién mandó el envío, para el historial: el NOMBRE del usuario del panel ("Susy"). Antes era su
+// email, y en el historial parecía la casilla desde la que salía el email (sale de SMTP_USER).
+const senderLabel = (req) => req.user?.name || req.user?.email || null;
+
+// Arranca la cola apenas se crea un envío, sin esperar el tic del cron (que es una vez por minuto):
+// un email a un cliente sale en segundos. Los que pasan de PER_TICK siguen con el cron.
+const kickQueue = () => setImmediate(() => processEmailQueue().catch((e) => console.error("[EMAIL] cola:", e.message)));
+
+// Formato del email escrito por el admin: "PLAIN" (simple) o "CUSTOM" (con diseño, el de siempre).
+const customKind = (kind) => (kind === "PLAIN" ? "PLAIN" : "CUSTOM");
 
 const parseIds = (ids) => (Array.isArray(ids) ? [...new Set(ids.map((x) => parseInt(x)).filter((x) => x > 0))] : []);
 
@@ -38,7 +51,8 @@ function draftFromBody(body) {
   }
   const { data, error } = validateCustomPayload(body);
   if (error) return { error };
-  return { broadcast: { kind: "CUSTOM", ...data }, type: "MINORISTA" };
+  // kind PLAIN = formato simple (como un email personal); audience: para saber si es un mensaje directo
+  return { broadcast: { kind: customKind(body.kind), audience: body.audience || "ALL", ...data }, type: "MINORISTA" };
 }
 
 // ── GET /api/emails/audience?audience=ALL ─────────────────────────────────────
@@ -99,12 +113,13 @@ async function sendTestEmail(req, res) {
     if (!transporter) return res.status(503).json({ error: "El servidor de email (SMTP) no está configurado" });
 
     const recipient = { customerId: null, name: req.user?.name || "", type: draft.type };
-    const { subject, html } = await renderFor(draft.broadcast, recipient, new Map(), { preview: true });
+    const { subject, html, text } = await renderFor(draft.broadcast, recipient, new Map(), { preview: true });
     await transporter.sendMail({
       from: `"${process.env.STORE_NAME || "IGWT Store"}" <${process.env.SMTP_USER}>`,
       to,
       subject: `[PRUEBA] ${subject}`,
       html,
+      text,
       headers: { "Content-Language": "es" },
     });
     res.json({ sentTo: to });
@@ -121,12 +136,13 @@ async function createCustomBroadcast(req, res) {
     const { data, error } = validateCustomPayload(req.body);
     if (error) return res.status(400).json({ error });
     const broadcast = await createBroadcast({
-      kind: "CUSTOM",
+      kind: customKind(req.body.kind),
       audience: req.body.audience,
       customerIds: parseIds(req.body.customerIds),
-      createdBy: req.user?.email || null,
+      createdBy: senderLabel(req),
       content: data,
     });
+    kickQueue();
     res.status(201).json(broadcast);
   } catch (err) {
     handleError(res, err, "Error al crear el envío");
@@ -137,12 +153,26 @@ async function createCustomBroadcast(req, res) {
 async function announceOfferNow(req, res) {
   try {
     const broadcast = await announceOffer(parseInt(req.params.id), {
-      createdBy: req.user?.email || null,
+      createdBy: senderLabel(req),
       force: req.body?.force === true,
     });
+    kickQueue();
     res.status(201).json(broadcast);
   } catch (err) {
     handleError(res, err, "Error al avisar la campaña");
+  }
+}
+
+// ── POST /api/emails/offers/:id/send — aviso de una campaña a clientes elegidos ─
+async function sendOfferToSelected(req, res) {
+  try {
+    const { broadcast, skipped } = await sendOfferTo(parseInt(req.params.id), parseIds(req.body?.customerIds), {
+      createdBy: senderLabel(req),
+    });
+    kickQueue();
+    res.status(201).json({ ...broadcast, skipped });
+  } catch (err) {
+    handleError(res, err, "Error al mandar la campaña");
   }
 }
 
@@ -257,6 +287,7 @@ module.exports = {
   sendTestEmail,
   createCustomBroadcast,
   announceOfferNow,
+  sendOfferToSelected,
   listBroadcasts,
   getBroadcast,
   listRecipients,

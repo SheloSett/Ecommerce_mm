@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import AdminLayout from "../../components/AdminLayout";
@@ -59,15 +59,96 @@ function EmailPreview({ subject, html, loading, error }) {
   );
 }
 
+// El tipo con el que le llega el email: mayorista solo si está aprobado (igual que el servidor).
+const effectiveType = (c) => (c.type === "MAYORISTA" && c.status === "APPROVED" ? "MAYORISTA" : "MINORISTA");
+
+// Buscador de clientes con los elegidos como chips. Lo usan "Enviar email" y el aviso de una
+// campaña a clientes elegidos. allowedType ("MAYORISTA" | "MINORISTA" | null): los clientes a los
+// que no les corresponde (ej. un minorista en una campaña solo mayorista) aparecen sin poder elegirse.
+function CustomerPicker({ selected, onChange, allowedType = null, hint, unsubscribedNote }) {
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState([]);
+
+  // Con espera, para no consultar en cada tecla
+  useEffect(() => {
+    if (search.trim().length < 2) { setResults([]); return; }
+    const t = setTimeout(() => {
+      emailsApi.customers(search.trim()).then((r) => setResults(r.data)).catch(() => setResults([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar cliente por nombre o email…"
+          className="input w-full"
+          autoComplete="off"
+        />
+        {results.length > 0 && (
+          <div className="absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
+            {results.map((c) => {
+              const already = selected.some((s) => s.id === c.id);
+              const notApplicable = allowedType && effectiveType(c) !== allowedType;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  disabled={already || notApplicable}
+                  onClick={() => { onChange([...selected, c]); setSearch(""); setResults([]); }}
+                  className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0 flex items-center justify-between gap-2 disabled:opacity-40"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-slate-800 truncate">{c.name}</span>
+                    <span className="block text-xs text-slate-500 truncate">{c.email}</span>
+                  </span>
+                  <span className="flex items-center gap-1 flex-shrink-0">
+                    {notApplicable && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">No aplica</span>}
+                    {c.unsubscribeMarketing && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Sin promos</span>}
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${c.type === "MAYORISTA" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                      {c.type}{c.type === "MAYORISTA" && c.status !== "APPROVED" ? " (sin aprobar)" : ""}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((c) => (
+            <span key={c.id} className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium pl-2.5 pr-1 py-1 rounded-full">
+              {c.name}
+              <button type="button" onClick={() => onChange(selected.filter((x) => x.id !== c.id))} className="w-4 h-4 rounded-full hover:bg-blue-200 leading-none" title="Quitar">×</button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        hint && <p className="text-xs text-slate-400">{hint}</p>
+      )}
+      {unsubscribedNote && selected.some((c) => c.unsubscribeMarketing) && (
+        <p className="text-xs text-amber-700">{unsubscribedNote}</p>
+      )}
+    </div>
+  );
+}
+
 // ── Pestaña "Enviar email" ────────────────────────────────────────────────────
 function ComposeTab() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [audience, setAudience] = useState("ALL");
+  // Formato: PLAIN = simple, como un email personal (más chances de llegar a Principal en Gmail);
+  // CUSTOM = con diseño. null = automático: simple para clientes elegidos, con diseño para el resto.
+  const [format, setFormat] = useState(null);
+  const kind = format ?? (audience === "SELECTED" ? "PLAIN" : "CUSTOM");
   const [stats, setStats] = useState(null);           // { count, unsubscribed }
-  const [selected, setSelected] = useState([]);       // clientes elegidos
-  const [search, setSearch] = useState("");
-  const [results, setResults] = useState([]);
+  const [selected, setSelected] = useState([]);       // clientes elegidos (buscador: CustomerPicker)
   const [form, setForm] = useState({
     subject: "", title: "", body: "",
     buttonText: "Ver el catálogo", buttonUrl: `${window.location.origin}/catalogo`,
@@ -77,7 +158,6 @@ function ComposeTab() {
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [settings, setSettings] = useState(null);
-  const searchTimer = useRef(null);
 
   useEffect(() => {
     emailsApi.getSettings().then((r) => setSettings(r.data)).catch(() => {});
@@ -89,20 +169,11 @@ function ComposeTab() {
     emailsApi.audience(audience).then((r) => setStats(r.data)).catch(() => setStats(null));
   }, [audience]);
 
-  // Buscador de clientes (con espera, para no consultar en cada tecla)
-  useEffect(() => {
-    clearTimeout(searchTimer.current);
-    if (search.trim().length < 2) { setResults([]); return; }
-    searchTimer.current = setTimeout(() => {
-      emailsApi.customers(search.trim()).then((r) => setResults(r.data)).catch(() => setResults([]));
-    }, 300);
-    return () => clearTimeout(searchTimer.current);
-  }, [search]);
-
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const withButton = form.buttonText.trim() !== "";
   const payload = {
-    kind: "CUSTOM",
+    kind,
+    audience,
     subject: form.subject, title: form.title, body: form.body,
     buttonText: withButton ? form.buttonText : "", buttonUrl: withButton ? form.buttonUrl : "",
     previewName: selected[0]?.name || "Juan",
@@ -122,7 +193,7 @@ function ComposeTab() {
     }, 600);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.subject, form.title, form.body, form.buttonText, form.buttonUrl, selected[0]?.id]);
+  }, [form.subject, form.title, form.body, form.buttonText, form.buttonUrl, selected[0]?.id, kind, audience]);
 
   const recipientsCount = audience === "SELECTED" ? selected.length : stats?.count ?? 0;
 
@@ -196,59 +267,42 @@ function ComposeTab() {
               )}
             </p>
           ) : (
-            <div className="mt-3 space-y-2">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar cliente por nombre o email…"
-                  className="input w-full"
-                  autoComplete="off"
-                />
-                {results.length > 0 && (
-                  <div className="absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto">
-                    {results.map((c) => {
-                      const already = selected.some((s) => s.id === c.id);
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          disabled={already}
-                          onClick={() => { setSelected((prev) => [...prev, c]); setSearch(""); setResults([]); }}
-                          className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-b-0 flex items-center justify-between gap-2 disabled:opacity-40"
-                        >
-                          <span className="min-w-0">
-                            <span className="block text-sm font-medium text-slate-800 truncate">{c.name}</span>
-                            <span className="block text-xs text-slate-500 truncate">{c.email}</span>
-                          </span>
-                          <span className="flex items-center gap-1 flex-shrink-0">
-                            {c.unsubscribeMarketing && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Sin promos</span>}
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${c.type === "MAYORISTA" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>{c.type}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              {selected.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {selected.map((c) => (
-                    <span key={c.id} className="inline-flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs font-medium pl-2.5 pr-1 py-1 rounded-full">
-                      {c.name}
-                      <button type="button" onClick={() => setSelected((prev) => prev.filter((x) => x.id !== c.id))} className="w-4 h-4 rounded-full hover:bg-blue-200 leading-none" title="Quitar">×</button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400">Buscá y agregá los clientes a los que les querés escribir.</p>
-              )}
-              {selected.some((c) => c.unsubscribeMarketing) && (
-                <p className="text-xs text-amber-700">Algunos elegidos se dieron de baja de las promociones: como es un mensaje directo les llega igual, usalo solo para cosas de su cuenta o su pedido.</p>
-              )}
+            <div className="mt-3">
+              <CustomerPicker
+                selected={selected}
+                onChange={setSelected}
+                hint="Buscá y agregá los clientes a los que les querés escribir."
+                unsubscribedNote="Algunos elegidos se dieron de baja de las promociones: como es un mensaje directo les llega igual, usalo solo para cosas de su cuenta o su pedido."
+              />
             </div>
           )}
+        </div>
+
+        {/* Formato */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-2">Formato</label>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { key: "PLAIN", label: "✉️ Simple, como un email personal" },
+              { key: "CUSTOM", label: "🎨 Con diseño" },
+            ].map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => setFormat(o.key)}
+                className={`px-3.5 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                  kind === o.key ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+            {kind === "PLAIN"
+              ? "Solo el texto, sin logo ni colores. Es el que más chances tiene de llegar a la bandeja Principal de Gmail (con muchos destinatarios igual puede caer en Promociones)."
+              : "Con el logo, título grande y botón. Se ve más lindo, pero Gmail casi siempre lo pone en Promociones."}
+          </p>
         </div>
 
         <div>
@@ -275,7 +329,7 @@ function ComposeTab() {
         <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
           <div className="sm:col-span-2">
             <label className="block text-sm font-semibold text-slate-700 mb-1">
-              Botón <span className="text-slate-400 font-normal">— opcional</span>
+              {kind === "PLAIN" ? "Link al final" : "Botón"} <span className="text-slate-400 font-normal">— opcional</span>
             </label>
             <input type="text" value={form.buttonText} onChange={set("buttonText")} className="input w-full" placeholder="Sin botón" />
           </div>
@@ -355,6 +409,10 @@ function CampaignsTab() {
   const [busy, setBusy] = useState(null);           // id de la campaña en proceso
   const [previewOf, setPreviewOf] = useState(null); // { offer, side }
   const [preview, setPreview] = useState({ subject: "", html: "", loading: false, error: "" });
+  // "Mandar a clientes elegidos": el aviso solo a algunos (no marca la campaña como avisada)
+  const [sendTo, setSendTo] = useState(null);       // campaña
+  const [chosen, setChosen] = useState([]);
+  const [sendingTo, setSendingTo] = useState(false);
   const navigate = useNavigate();
 
   const load = () => {
@@ -405,12 +463,27 @@ function CampaignsTab() {
     }
   }
 
+  async function sendToChosen() {
+    setSendingTo(true);
+    try {
+      const r = await emailsApi.sendOffer(sendTo.id, chosen.map((c) => c.id));
+      toast.success(`Aviso en camino para ${r.data.total} cliente(s)${r.data.skipped ? ` (${r.data.skipped} no aplicaban)` : ""}`);
+      setSendTo(null);
+      navigate("/admin/emails?tab=historial");
+    } catch (e) {
+      toast.error(e.response?.data?.error || "No se pudo mandar la campaña");
+    } finally {
+      setSendingTo(false);
+    }
+  }
+
   if (loading) return <div className="text-center py-16 text-slate-400">Cargando…</div>;
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500 max-w-3xl">
-        Cada campaña puede avisarse por email <strong>sola, cuando empieza</strong> (una única vez), o a mano con "Avisar ahora".
+        Cada campaña puede avisarse por email <strong>sola, cuando empieza</strong> (una única vez), a mano con "Avisar ahora",
+        o solo a algunos clientes con "Mandar a…".
         El aviso le llega a quien aplica la campaña, con su descuento y los productos con su precio. Los que se dieron de baja de las promociones no lo reciben.
       </p>
 
@@ -461,6 +534,14 @@ function CampaignsTab() {
                   👁 Ver cómo llega
                 </button>
                 <button
+                  onClick={() => { setSendTo(o); setChosen([]); }}
+                  disabled={o.state !== "ACTIVA"}
+                  title={o.state !== "ACTIVA" ? "Se puede mandar cuando la campaña está activa" : "Mandar el aviso solo a los clientes que elijas"}
+                  className="px-3 py-2 rounded-lg border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+                >
+                  👤 Mandar a…
+                </button>
+                <button
                   onClick={() => announce(o)}
                   disabled={o.state !== "ACTIVA" || busy === o.id}
                   title={o.state !== "ACTIVA" ? "Se puede avisar cuando la campaña está activa" : undefined}
@@ -471,6 +552,46 @@ function CampaignsTab() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {sendTo && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSendTo(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-800">Mandar "{sendTo.name}" a clientes elegidos</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Les llega el mismo aviso, con su descuento y sus precios. No cuenta como el aviso general: después lo podés seguir mandando a todos.
+                </p>
+              </div>
+              <button onClick={() => setSendTo(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
+            </div>
+            {sendTo.appliesTo !== "AMBOS" && (
+              <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">
+                {sendTo.appliesTo === "MAYORISTA"
+                  ? "Esta campaña es solo para mayoristas aprobados: a los minoristas no se les puede mandar."
+                  : "Esta campaña es solo para minoristas: a los mayoristas no se les puede mandar."}
+              </p>
+            )}
+            <CustomerPicker
+              selected={chosen}
+              onChange={setChosen}
+              allowedType={sendTo.appliesTo === "AMBOS" ? null : sendTo.appliesTo}
+              hint="Buscá y agregá a quién se lo querés mandar."
+              unsubscribedNote="Algunos elegidos se dieron de baja de las promociones: les llega igual porque los elegiste vos."
+            />
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setSendTo(null)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50">Cancelar</button>
+              <button
+                onClick={sendToChosen}
+                disabled={sendingTo || chosen.length === 0}
+                className="px-5 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-40"
+              >
+                {sendingTo ? "Enviando…" : `Mandar a ${chosen.length} cliente${chosen.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -706,9 +827,9 @@ function HistoryTab() {
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDateTime(b.createdAt)}</td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">
-                        {b.kind === "OFFER" ? `🏷 Aviso: ${b.offer?.name || b.subject}` : b.subject}
+                        {b.kind === "OFFER" ? `🏷 Aviso: ${b.offer?.name || b.subject}` : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
                       </p>
-                      <p className="text-xs text-slate-400">{b.createdBy || "Automático"}</p>
+                      <p className="text-xs text-slate-400">{b.createdBy ? `Mandado por ${b.createdBy}` : "Automático (al empezar la campaña)"}</p>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{AUDIENCE_LABEL[b.audience] || b.audience}</td>
                     <td className="px-4 py-3">
