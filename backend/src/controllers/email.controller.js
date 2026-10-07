@@ -15,6 +15,8 @@ const {
   setDailyLimit,
   getOfferFormat,
   setOfferFormat,
+  OFFER_FORMATS,
+  OFFER_KIND_BY_FORMAT,
   sentLast24h,
   cancelBroadcast,
   processEmailQueue,
@@ -49,9 +51,9 @@ function draftFromBody(body) {
   if (body.kind === "OFFER") {
     const offerId = parseInt(body.offerId);
     if (!offerId) return { error: "Falta la campaña" };
-    // format: el que se está mirando en la vista previa ("PLAIN" simple | "DESIGN" con diseño)
+    // format: el que se está mirando en la vista previa ("LIGHT" | "PLAIN" | "DESIGN")
     return {
-      broadcast: { kind: body.format === "DESIGN" ? "OFFER" : "OFFER_PLAIN", offerId },
+      broadcast: { kind: OFFER_KIND_BY_FORMAT[body.format] || OFFER_KIND_BY_FORMAT.LIGHT, offerId },
       type: body.side === "wholesale" ? "MAYORISTA" : "MINORISTA",
     };
   }
@@ -288,7 +290,7 @@ async function updateEmailSettings(req, res) {
       out.dailyLimit = n;
     }
     if (req.body?.offerFormat !== undefined) {
-      if (!["PLAIN", "DESIGN"].includes(req.body.offerFormat)) return res.status(400).json({ error: "Formato inválido" });
+      if (!OFFER_FORMATS.includes(req.body.offerFormat)) return res.status(400).json({ error: "Formato inválido" });
       await setOfferFormat(req.body.offerFormat);
       out.offerFormat = req.body.offerFormat;
     }

@@ -395,6 +395,23 @@ function ComposeTab() {
   );
 }
 
+// Formatos del aviso de campaña. Lo que decide si Gmail lo pone en Promociones (donde el celular no
+// avisa) no es tener HTML sino las señales de publicidad: fotos de productos, precios, banners, "OFF".
+const OFFER_FORMATS = [
+  {
+    key: "LIGHT", short: "Liviano", label: "✨ Liviano (recomendado)",
+    hint: "Prolijo y con el color de la campaña, pero sin fotos ni precios y con un solo botón: armado como el email de restock a mayoristas, que llega a la bandeja Principal. Es el punto medio entre lindo y que el celular avise. No es seguro: Gmail decide por cada cliente.",
+  },
+  {
+    key: "PLAIN", short: "Solo texto", label: "✉️ Solo texto",
+    hint: "Un mensaje corto, como escrito a mano: el nombre de la campaña, el descuento, hasta cuándo y el link. Es el que más chances tiene de llegar a Principal, pero no tiene nada de diseño.",
+  },
+  {
+    key: "DESIGN", short: "Con fotos y precios", label: "🎨 Con fotos y precios",
+    hint: "Con el color de la campaña, fotos y precios de los productos. Es el más vistoso, pero Gmail casi siempre lo pone en Promociones, donde el celular no avisa.",
+  },
+];
+
 // ── Pestaña "Avisos de campañas" ──────────────────────────────────────────────
 const STATE_STYLES = {
   ACTIVA:     "bg-green-100 text-green-700",
@@ -413,17 +430,17 @@ function CampaignsTab() {
   const [sendTo, setSendTo] = useState(null);       // campaña
   const [chosen, setChosen] = useState([]);
   const [sendingTo, setSendingTo] = useState(false);
-  // Formato de los avisos: PLAIN = simple, como un mensaje personal (por defecto) | DESIGN = con diseño
-  const [offerFormat, setOfferFormat] = useState("PLAIN");
+  // Formato de los avisos: LIGHT = liviano (por defecto) | PLAIN = solo texto | DESIGN = con fotos y precios
+  const [offerFormat, setOfferFormat] = useState("LIGHT");
   useEffect(() => {
-    emailsApi.getSettings().then((r) => setOfferFormat(r.data.offerFormat || "PLAIN")).catch(() => {});
+    emailsApi.getSettings().then((r) => setOfferFormat(r.data.offerFormat || "LIGHT")).catch(() => {});
   }, []);
   async function changeFormat(format) {
     const prev = offerFormat;
     setOfferFormat(format);
     try {
       await emailsApi.updateSettings({ offerFormat: format });
-      toast.success(format === "PLAIN" ? "Los avisos salen como un email personal" : "Los avisos salen con diseño");
+      toast.success(`Los avisos salen en formato "${OFFER_FORMATS.find((f) => f.key === format)?.short}"`);
     } catch (e) {
       setOfferFormat(prev);
       toast.error(e.response?.data?.error || "No se pudo guardar");
@@ -507,10 +524,7 @@ function CampaignsTab() {
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
         <p className="text-sm font-semibold text-slate-700 mb-2">Cómo salen los avisos</p>
         <div className="flex flex-wrap gap-2">
-          {[
-            { key: "PLAIN", label: "✉️ Simple, como un email personal" },
-            { key: "DESIGN", label: "🎨 Con diseño (fotos y precios)" },
-          ].map((f) => (
+          {OFFER_FORMATS.map((f) => (
             <button
               key={f.key}
               type="button"
@@ -524,9 +538,7 @@ function CampaignsTab() {
           ))}
         </div>
         <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-          {offerFormat === "PLAIN"
-            ? "Un mensaje corto, como escrito a mano: el nombre de la campaña, el descuento, hasta cuándo y el link. Es el que más chances tiene de llegar a la bandeja Principal de Gmail, donde el celular avisa. No es seguro: Gmail decide por cada cliente."
-            : "Con el color de la campaña, fotos y precios de los productos. Se ve mejor, pero Gmail casi siempre lo pone en Promociones, donde el celular no avisa."}
+          {OFFER_FORMATS.find((f) => f.key === offerFormat)?.hint}
         </p>
       </div>
 

@@ -15,7 +15,7 @@ const {
   marketingUnsubscribeToken,
   verifyMarketingUnsubscribeToken,
 } = require("../src/services/broadcast.service");
-const { formatBodyHtml, personalize, buildOfferEmail, buildPlainOfferEmail, buildCustomEmail } = require("../src/services/broadcast.templates");
+const { formatBodyHtml, personalize, buildOfferEmail, buildPlainOfferEmail, buildLightOfferEmail, buildCustomEmail } = require("../src/services/broadcast.templates");
 
 const c = (id, extra = {}) => ({ id, name: `Cliente ${id}`, email: `c${id}@mail.com`, type: "MINORISTA", status: "APPROVED", unsubscribeMarketing: false, ...extra });
 const customers = [
@@ -170,6 +170,14 @@ describe("plantillas", () => {
     assert.ok(html.includes("tocá acá"));
     // el mayorista ve el suyo
     assert.ok(buildPlainOfferEmail(offer, "wholesale", { name: "Ana" }, ctx).text.includes("15% de descuento"));
+  });
+  test("aviso liviano: con diseño pero sin imágenes, precios ni OFF, con un botón al catálogo", () => {
+    const { subject, html, text } = buildLightOfferEmail(offer, "retail", { name: "Ana López" }, ctx);
+    assert.equal(subject, "Ana, arrancó Día de la Madre en IGWT Store");
+    assert.ok(!/<img/i.test(html) && !/OFF|\$\s?\d/.test(html.replace(/<[^>]+>/g, "")));
+    assert.equal((html.match(/catalogo\?offerId=7/g) || []).length, 1);
+    assert.ok(html.includes("10% de descuento") && html.includes("tocá acá"));
+    assert.ok(text.includes("10% de descuento") && text.includes("https://tienda/catalogo?offerId=7"));
   });
   test("aviso a un mayorista: su descuento y su precio mayorista", () => {
     const { subject, html } = buildOfferEmail(offer, [product], "wholesale", { name: "Ana" }, ctx);

@@ -310,6 +310,68 @@ function offerHero(offer, parts, ends, catalogUrl) {
         </td></tr>`;
 }
 
+// Aviso de campaña en formato liviano: con diseño, pero armado como el email de restock a mayoristas
+// (email.service.js), que según el cliente le llega a la bandeja Principal: un encabezado, texto
+// personal y UN botón, sin ninguna imagen (el logo va en texto), sin fotos ni precios de productos y
+// sin "OFF". Es el punto medio entre "lindo" y "que no caiga en Promociones" (pedido del 7/10/2026).
+function buildLightOfferEmail(offer, side, recipient, ctx) {
+  const parts = offerHighlightParts(offer, offer.items || [], side);
+  const name = firstName(recipient?.name);
+  const ends = endsText(offer.endsAt);
+  const catalogUrl = `${ctx.frontendUrl}/catalogo?offerId=${offer.id}`;
+  const color = heroColor(offer);
+  const discount = parts ? `${parts.prefix ? "Hasta " : ""}${parts.amount} de descuento` : "Descuentos";
+  const p = (html, extra = "") => `<p style="margin:0 0 16px;font-family:${FONT};font-size:16px;line-height:1.6;color:${TEXT};${extra}">${html}</p>`;
+  const html = `<!DOCTYPE html>
+<html lang="es" style="background:#f1f5f9">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Language" content="es">
+<meta name="color-scheme" content="light">
+<title>${escapeHtml(ctx.storeName)}</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f1f5f9" style="background:#f1f5f9">
+    <tr><td align="center" style="padding:24px 10px">
+      <table width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:560px;background:#ffffff;border-radius:14px;border-top:5px solid ${color}">
+        <tr><td style="padding:24px 28px 6px">
+          <span style="font-family:${FONT};font-size:28px;font-weight:900;letter-spacing:-0.5px;color:#334155">igwt</span><span style="font-family:${FONT};font-size:18px;font-weight:700;color:#2e8b2e">.store</span>
+        </td></tr>
+        <tr><td style="padding:16px 28px 8px">
+          ${p(escapeHtml(name ? `Hola ${name},` : "Hola,"))}
+          ${p(`Arrancó <strong style="color:${INK}">${escapeHtml(offer.name)}</strong> en ${escapeHtml(ctx.storeName)}.`)}
+          <p style="margin:4px 0 6px;font-family:${FONT};font-size:26px;line-height:1.2;font-weight:800;color:${color}">${escapeHtml(discount)}</p>
+          ${p(`en productos seleccionados${ends ? `, hasta el <strong style="color:${INK}">${escapeHtml(ends)}</strong>` : ""}.`)}
+          ${offer.description ? p(escapeHtml(offer.description)) : ""}
+          <div style="margin:8px 0 22px">${button("Ver las ofertas", catalogUrl, { bg: color, color: textOn(color) })}</div>
+          ${p("Cualquier consulta, respondé este email o escribinos por WhatsApp.")}
+          ${p(`Saludos,<br><strong style="color:${INK}">${escapeHtml(ctx.storeName)}</strong>`, "margin-bottom:24px")}
+        </td></tr>
+        ${ctx.unsubscribeUrl ? `<tr><td style="padding:14px 28px 20px;border-top:1px solid #e2e8f0;font-family:${FONT};font-size:12px;line-height:1.5;color:#94a3b8">
+          Si no querés recibir más ofertas de ${escapeHtml(ctx.storeName)}, <a href="${escapeHtml(ctx.unsubscribeUrl)}" style="color:#94a3b8;text-decoration:underline">tocá acá</a>.
+        </td></tr>` : ""}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  const text = [
+    name ? `Hola ${name},` : "Hola,",
+    `Arrancó ${offer.name} en ${ctx.storeName}: ${discount.toLowerCase()} en productos seleccionados${ends ? `, hasta el ${ends}` : ""}.`,
+    offer.description || null,
+    `Ver las ofertas: ${catalogUrl}`,
+    "Cualquier consulta, respondé este email o escribinos por WhatsApp.",
+    `Saludos,\n${ctx.storeName}`,
+    ctx.unsubscribeUrl ? `Si no querés recibir más ofertas: ${ctx.unsubscribeUrl}` : null,
+  ].filter(Boolean).join("\n\n");
+  return {
+    subject: `${name ? `${name}, a` : "A"}rrancó ${offer.name} en ${ctx.storeName}`,
+    html,
+    text,
+  };
+}
+
 // Aviso de campaña en formato simple, como un mensaje personal: sin fotos, precios, botones ni
 // "OFF". Es lo que más se acerca a llegar a Principal en Gmail (pedido del cliente, 7/10/2026: en
 // Promociones el celular no avisa). No lo garantiza: Gmail lo decide por cada destinatario.
@@ -399,6 +461,7 @@ module.exports = {
   buildPlainEmail,
   buildOfferEmail,
   buildPlainOfferEmail,
+  buildLightOfferEmail,
   offerHighlight,
   endsText,
 };

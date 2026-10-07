@@ -17,7 +17,7 @@ const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { offerState } = require("./offers.service");
 const { createBulkTransporter } = require("./email.service");
-const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail } = require("./broadcast.templates");
+const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail, buildLightOfferEmail } = require("./broadcast.templates");
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 
 const prisma = new PrismaClient();
@@ -140,22 +140,27 @@ async function createBroadcast({ kind, audience, customerIds = [], offerId = nul
 }
 
 // Formato de los avisos de campaña (Admin → Emails → Avisos de campañas), en SiteConfig
-// "emailOfferFormat": PLAIN = simple, como un mensaje personal (por defecto: más chances de llegar a
-// Principal en Gmail, donde el celular avisa) | DESIGN = con encabezado de color, fotos y precios.
+// "emailOfferFormat":
+//   LIGHT  = liviano (por defecto): lindo pero sin imágenes ni precios, como el email de restock, que
+//            al cliente le llega a Principal
+//   PLAIN  = simple, solo texto, como un mensaje escrito a mano
+//   DESIGN = con encabezado de color, fotos y precios (casi siempre cae en Promociones)
+const OFFER_FORMATS = ["LIGHT", "PLAIN", "DESIGN"];
 async function getOfferFormat() {
   const row = await prisma.siteConfig.findUnique({ where: { key: "emailOfferFormat" } });
-  return row?.value === "DESIGN" ? "DESIGN" : "PLAIN";
+  return OFFER_FORMATS.includes(row?.value) ? row.value : "LIGHT";
 }
 async function setOfferFormat(format) {
-  const value = format === "DESIGN" ? "DESIGN" : "PLAIN";
+  const value = OFFER_FORMATS.includes(format) ? format : "LIGHT";
   await prisma.siteConfig.upsert({ where: { key: "emailOfferFormat" }, update: { value }, create: { key: "emailOfferFormat", value } });
 }
-// kind del envío: OFFER (con diseño) u OFFER_PLAIN (simple)
-const offerKind = async () => ((await getOfferFormat()) === "DESIGN" ? "OFFER" : "OFFER_PLAIN");
-const isOfferKind = (kind) => kind === "OFFER" || kind === "OFFER_PLAIN";
+// kind del envío según el formato: OFFER (con diseño), OFFER_LIGHT (liviano) u OFFER_PLAIN (simple)
+const OFFER_KIND_BY_FORMAT = { DESIGN: "OFFER", LIGHT: "OFFER_LIGHT", PLAIN: "OFFER_PLAIN" };
+const offerKind = async () => OFFER_KIND_BY_FORMAT[await getOfferFormat()];
+const isOfferKind = (kind) => kind === "OFFER" || kind === "OFFER_LIGHT" || kind === "OFFER_PLAIN";
 // Formatos simples: van sin el header List-Unsubscribe (Gmail lo usa para detectar newsletters y
 // mandarlas a Promociones). El link de baja sigue en el texto del email, como pide la ley.
-const isPlainKind = (kind) => kind === "PLAIN" || kind === "OFFER_PLAIN";
+const isPlainKind = (kind) => kind === "PLAIN" || kind === "OFFER_PLAIN" || kind === "OFFER_LIGHT";
 
 // Público del aviso según a quién aplica la campaña.
 const offerAudience = (offer) => (offer.appliesTo === "AMBOS" ? "ALL" : offer.appliesTo);
@@ -302,6 +307,7 @@ async function renderFor(broadcast, recipient, cache = new Map(), { preview = fa
       throw err;
     }
     if (broadcast.kind === "OFFER_PLAIN") return buildPlainOfferEmail(data.offer, side, recipient, ctx);
+    if (broadcast.kind === "OFFER_LIGHT") return buildLightOfferEmail(data.offer, side, recipient, ctx);
     return buildOfferEmail(data.offer, data.products, side, recipient, ctx);
   }
   if (broadcast.kind === "PLAIN") return buildPlainEmail(broadcast, recipient, ctx);
@@ -490,6 +496,8 @@ module.exports = {
   getOfferFormat,
   setOfferFormat,
   isOfferKind,
+  OFFER_FORMATS,
+  OFFER_KIND_BY_FORMAT,
   sentLast24h,
   processEmailQueue,
   cancelBroadcast,
