@@ -413,6 +413,22 @@ function CampaignsTab() {
   const [sendTo, setSendTo] = useState(null);       // campaña
   const [chosen, setChosen] = useState([]);
   const [sendingTo, setSendingTo] = useState(false);
+  // Formato de los avisos: PLAIN = simple, como un mensaje personal (por defecto) | DESIGN = con diseño
+  const [offerFormat, setOfferFormat] = useState("PLAIN");
+  useEffect(() => {
+    emailsApi.getSettings().then((r) => setOfferFormat(r.data.offerFormat || "PLAIN")).catch(() => {});
+  }, []);
+  async function changeFormat(format) {
+    const prev = offerFormat;
+    setOfferFormat(format);
+    try {
+      await emailsApi.updateSettings({ offerFormat: format });
+      toast.success(format === "PLAIN" ? "Los avisos salen como un email personal" : "Los avisos salen con diseño");
+    } catch (e) {
+      setOfferFormat(prev);
+      toast.error(e.response?.data?.error || "No se pudo guardar");
+    }
+  }
   const navigate = useNavigate();
 
   const load = () => {
@@ -427,10 +443,10 @@ function CampaignsTab() {
   useEffect(() => {
     if (!previewOf) return;
     setPreview((p) => ({ ...p, loading: true }));
-    emailsApi.preview({ kind: "OFFER", offerId: previewOf.offer.id, side: previewOf.side })
+    emailsApi.preview({ kind: "OFFER", offerId: previewOf.offer.id, side: previewOf.side, format: offerFormat })
       .then((r) => setPreview({ ...r.data, loading: false, error: "" }))
       .catch((e) => setPreview({ subject: "", html: "", loading: false, error: e.response?.data?.error || "No se pudo armar la vista previa" }));
-  }, [previewOf]);
+  }, [previewOf, offerFormat]);
 
   async function toggleAuto(offer) {
     setBusy(offer.id);
@@ -484,8 +500,35 @@ function CampaignsTab() {
       <p className="text-sm text-slate-500 max-w-3xl">
         Cada campaña puede avisarse por email <strong>sola, cuando empieza</strong> (una única vez), a mano con "Avisar ahora",
         o solo a algunos clientes con "Mandar a…".
-        El aviso le llega a quien aplica la campaña, con su descuento y los productos con su precio. Los que se dieron de baja de las promociones no lo reciben.
+        El aviso le llega a quien aplica la campaña, con su descuento. Los que se dieron de baja de las promociones no lo reciben.
       </p>
+
+      {/* Formato de los avisos */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <p className="text-sm font-semibold text-slate-700 mb-2">Cómo salen los avisos</p>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: "PLAIN", label: "✉️ Simple, como un email personal" },
+            { key: "DESIGN", label: "🎨 Con diseño (fotos y precios)" },
+          ].map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => offerFormat !== f.key && changeFormat(f.key)}
+              className={`px-3.5 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                offerFormat === f.key ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+          {offerFormat === "PLAIN"
+            ? "Un mensaje corto, como escrito a mano: el nombre de la campaña, el descuento, hasta cuándo y el link. Es el que más chances tiene de llegar a la bandeja Principal de Gmail, donde el celular avisa. No es seguro: Gmail decide por cada cliente."
+            : "Con el color de la campaña, fotos y precios de los productos. Se ve mejor, pero Gmail casi siempre lo pone en Promociones, donde el celular no avisa."}
+        </p>
+      </div>
 
       {offers.length === 0 ? (
         <div className="text-center py-16 text-slate-400 bg-white rounded-2xl border border-slate-200">
@@ -661,7 +704,7 @@ function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
           <div>
             <h3 className="font-bold text-slate-800">Destinatarios</h3>
             <p className="text-xs text-slate-500">
-              {broadcast.kind === "OFFER" ? `Aviso: ${broadcast.offer?.name || broadcast.subject}` : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
+              {broadcast.kind?.startsWith("OFFER") ? `Aviso: ${broadcast.offer?.name || broadcast.subject}` : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
@@ -827,7 +870,7 @@ function HistoryTab() {
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDateTime(b.createdAt)}</td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">
-                        {b.kind === "OFFER" ? `🏷 Aviso: ${b.offer?.name || b.subject}` : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
+                        {b.kind?.startsWith("OFFER") ? `🏷 Aviso: ${b.offer?.name || b.subject}` : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
                       </p>
                       <p className="text-xs text-slate-400">{b.createdBy ? `Mandado por ${b.createdBy}` : "Automático (al empezar la campaña)"}</p>
                     </td>

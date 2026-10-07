@@ -13,6 +13,8 @@ const {
   renderFor,
   getDailyLimit,
   setDailyLimit,
+  getOfferFormat,
+  setOfferFormat,
   sentLast24h,
   cancelBroadcast,
   processEmailQueue,
@@ -47,7 +49,11 @@ function draftFromBody(body) {
   if (body.kind === "OFFER") {
     const offerId = parseInt(body.offerId);
     if (!offerId) return { error: "Falta la campaña" };
-    return { broadcast: { kind: "OFFER", offerId }, type: body.side === "wholesale" ? "MAYORISTA" : "MINORISTA" };
+    // format: el que se está mirando en la vista previa ("PLAIN" simple | "DESIGN" con diseño)
+    return {
+      broadcast: { kind: body.format === "DESIGN" ? "OFFER" : "OFFER_PLAIN", offerId },
+      type: body.side === "wholesale" ? "MAYORISTA" : "MINORISTA",
+    };
   }
   const { data, error } = validateCustomPayload(body);
   if (error) return { error };
@@ -258,23 +264,35 @@ async function cancelBroadcastNow(req, res) {
 // ── GET / PUT /api/emails/settings — tope diario ───────────────────────────────
 async function getEmailSettings(req, res) {
   try {
-    const [dailyLimit, sent24h, pending] = await Promise.all([
+    const [dailyLimit, sent24h, pending, offerFormat] = await Promise.all([
       getDailyLimit(),
       sentLast24h(),
       prisma.emailRecipient.count({ where: { status: "PENDING", broadcast: { status: "SENDING" } } }),
+      getOfferFormat(),
     ]);
-    res.json({ dailyLimit, sentLast24h: sent24h, pending, perMinute: PER_TICK, smtpConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS) });
+    res.json({ dailyLimit, sentLast24h: sent24h, pending, offerFormat, perMinute: PER_TICK, smtpConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS) });
   } catch (err) {
     handleError(res, err, "Error al cargar la configuración de emails");
   }
 }
 
+// Acepta cualquiera de los dos por separado: el tope diario (Historial) y el formato de los avisos de
+// campaña (Avisos de campañas).
 async function updateEmailSettings(req, res) {
   try {
-    const n = parseInt(req.body?.dailyLimit);
-    if (!(n >= 10 && n <= 5000)) return res.status(400).json({ error: "El tope diario tiene que estar entre 10 y 5000" });
-    await setDailyLimit(n);
-    res.json({ dailyLimit: n });
+    const out = {};
+    if (req.body?.dailyLimit !== undefined) {
+      const n = parseInt(req.body.dailyLimit);
+      if (!(n >= 10 && n <= 5000)) return res.status(400).json({ error: "El tope diario tiene que estar entre 10 y 5000" });
+      await setDailyLimit(n);
+      out.dailyLimit = n;
+    }
+    if (req.body?.offerFormat !== undefined) {
+      if (!["PLAIN", "DESIGN"].includes(req.body.offerFormat)) return res.status(400).json({ error: "Formato inválido" });
+      await setOfferFormat(req.body.offerFormat);
+      out.offerFormat = req.body.offerFormat;
+    }
+    res.json(out);
   } catch (err) {
     handleError(res, err, "Error al guardar la configuración de emails");
   }

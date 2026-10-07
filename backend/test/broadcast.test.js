@@ -15,7 +15,7 @@ const {
   marketingUnsubscribeToken,
   verifyMarketingUnsubscribeToken,
 } = require("../src/services/broadcast.service");
-const { formatBodyHtml, personalize, buildOfferEmail, buildCustomEmail } = require("../src/services/broadcast.templates");
+const { formatBodyHtml, personalize, buildOfferEmail, buildPlainOfferEmail, buildCustomEmail } = require("../src/services/broadcast.templates");
 
 const c = (id, extra = {}) => ({ id, name: `Cliente ${id}`, email: `c${id}@mail.com`, type: "MINORISTA", status: "APPROVED", unsubscribeMarketing: false, ...extra });
 const customers = [
@@ -160,6 +160,16 @@ describe("plantillas", () => {
     assert.ok(/900,00/.test(html));
     assert.ok(!/680,00/.test(html) && !/800,00/.test(html));
     assert.ok(html.includes("https://tienda/catalogo?offerId=7"));
+  });
+  test("aviso simple: como un mensaje personal, sin precios ni OFF, con el link y el link de baja", () => {
+    const { subject, html, text } = buildPlainOfferEmail(offer, "retail", { name: "Ana López" }, ctx);
+    assert.equal(subject, "Ana, arrancó Día de la Madre en IGWT Store");
+    assert.ok(text.includes("10% de descuento en productos seleccionados"));
+    assert.ok(text.includes("https://tienda/catalogo?offerId=7"));
+    assert.ok(!/OFF|\$\s?\d/.test(text) && !/<img/.test(html));
+    assert.ok(html.includes("tocá acá"));
+    // el mayorista ve el suyo
+    assert.ok(buildPlainOfferEmail(offer, "wholesale", { name: "Ana" }, ctx).text.includes("15% de descuento"));
   });
   test("aviso a un mayorista: su descuento y su precio mayorista", () => {
     const { subject, html } = buildOfferEmail(offer, [product], "wholesale", { name: "Ana" }, ctx);

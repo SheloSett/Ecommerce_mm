@@ -200,9 +200,9 @@ function buildPlainEmail(broadcast, recipient, ctx) {
     ? `<p style="margin:0 0 14px"><a href="${escapeHtml(broadcast.buttonUrl)}">${escapeHtml(broadcast.buttonText)}</a></p>`
     : "";
   const html = `<!DOCTYPE html>
-<html lang="es">
+<html lang="es" style="background:#ffffff">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Language" content="es"></head>
-<body style="margin:0;padding:12px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222">
+<body style="margin:0;padding:12px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222">
 <div style="max-width:600px">
 ${title ? `<p style="margin:0 0 14px"><strong>${escapeHtml(title)}</strong></p>` : ""}
 ${paragraphs}
@@ -310,6 +310,44 @@ function offerHero(offer, parts, ends, catalogUrl) {
         </td></tr>`;
 }
 
+// Aviso de campaña en formato simple, como un mensaje personal: sin fotos, precios, botones ni
+// "OFF". Es lo que más se acerca a llegar a Principal en Gmail (pedido del cliente, 7/10/2026: en
+// Promociones el celular no avisa). No lo garantiza: Gmail lo decide por cada destinatario.
+function buildPlainOfferEmail(offer, side, recipient, ctx) {
+  const parts = offerHighlightParts(offer, offer.items || [], side);
+  const name = firstName(recipient?.name);
+  const ends = endsText(offer.endsAt);
+  const catalogUrl = `${ctx.frontendUrl}/catalogo?offerId=${offer.id}`;
+  const discount = parts ? `${parts.prefix ? "hasta " : ""}${parts.amount} de descuento` : "descuentos";
+  const lines = [
+    name ? `Hola ${name},` : "Hola,",
+    `Te cuento que arrancó ${offer.name} en ${ctx.storeName}: ${discount} en productos seleccionados${ends ? `, hasta el ${ends}` : ""}.`,
+    offer.description || null,
+    `Los ves acá: ${catalogUrl}`,
+    "Cualquier consulta, respondé este email.",
+  ].filter(Boolean);
+  const paragraphs = lines
+    .map((l) => `<p style="margin:0 0 14px">${escapeHtml(l).replace(/(https?:\/\/[^\s<]+)/g, (url) => `<a href="${url}">${url}</a>`)}</p>`)
+    .join("");
+  const html = `<!DOCTYPE html>
+<html lang="es" style="background:#ffffff">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Language" content="es"></head>
+<body style="margin:0;padding:12px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222">
+<div style="max-width:600px">
+${paragraphs}
+<p style="margin:22px 0 0;color:#555555">${escapeHtml(ctx.storeName)}</p>
+${ctx.unsubscribeUrl ? `<p style="margin:18px 0 0;font-size:12px;color:#888888">Si no querés recibir más emails de ${escapeHtml(ctx.storeName)}, <a href="${escapeHtml(ctx.unsubscribeUrl)}" style="color:#888888">tocá acá</a>.</p>` : ""}
+</div>
+</body>
+</html>`;
+  return {
+    subject: `${name ? `${name}, a` : "A"}rrancó ${offer.name} en ${ctx.storeName}`,
+    html,
+    text: [...lines, ctx.storeName, ctx.unsubscribeUrl ? `Si no querés recibir más emails: ${ctx.unsubscribeUrl}` : null]
+      .filter(Boolean).join("\n\n"),
+  };
+}
+
 // offer: con items ({ discountValue, wholesaleDiscountValue }); products: ya filtrados para este
 // público (visibles, con stock y con el descuento aplicado); side: "retail" | "wholesale".
 function buildOfferEmail(offer, products, side, recipient, ctx) {
@@ -360,6 +398,7 @@ module.exports = {
   buildCustomEmail,
   buildPlainEmail,
   buildOfferEmail,
+  buildPlainOfferEmail,
   offerHighlight,
   endsText,
 };

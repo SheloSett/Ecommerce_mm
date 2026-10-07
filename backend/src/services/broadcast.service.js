@@ -17,7 +17,7 @@ const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { offerState } = require("./offers.service");
 const { createBulkTransporter } = require("./email.service");
-const { buildCustomEmail, buildPlainEmail, buildOfferEmail } = require("./broadcast.templates");
+const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail } = require("./broadcast.templates");
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 
 const prisma = new PrismaClient();
@@ -139,6 +139,24 @@ async function createBroadcast({ kind, audience, customerIds = [], offerId = nul
   });
 }
 
+// Formato de los avisos de campaña (Admin → Emails → Avisos de campañas), en SiteConfig
+// "emailOfferFormat": PLAIN = simple, como un mensaje personal (por defecto: más chances de llegar a
+// Principal en Gmail, donde el celular avisa) | DESIGN = con encabezado de color, fotos y precios.
+async function getOfferFormat() {
+  const row = await prisma.siteConfig.findUnique({ where: { key: "emailOfferFormat" } });
+  return row?.value === "DESIGN" ? "DESIGN" : "PLAIN";
+}
+async function setOfferFormat(format) {
+  const value = format === "DESIGN" ? "DESIGN" : "PLAIN";
+  await prisma.siteConfig.upsert({ where: { key: "emailOfferFormat" }, update: { value }, create: { key: "emailOfferFormat", value } });
+}
+// kind del envío: OFFER (con diseño) u OFFER_PLAIN (simple)
+const offerKind = async () => ((await getOfferFormat()) === "DESIGN" ? "OFFER" : "OFFER_PLAIN");
+const isOfferKind = (kind) => kind === "OFFER" || kind === "OFFER_PLAIN";
+// Formatos simples: van sin el header List-Unsubscribe (Gmail lo usa para detectar newsletters y
+// mandarlas a Promociones). El link de baja sigue en el texto del email, como pide la ley.
+const isPlainKind = (kind) => kind === "PLAIN" || kind === "OFFER_PLAIN";
+
 // Público del aviso según a quién aplica la campaña.
 const offerAudience = (offer) => (offer.appliesTo === "AMBOS" ? "ALL" : offer.appliesTo);
 
@@ -160,7 +178,7 @@ async function announceOffer(offerId, { createdBy = null, force = false } = {}) 
 
   try {
     return await createBroadcast({
-      kind: "OFFER", audience: offerAudience(offer), offerId, createdBy,
+      kind: await offerKind(), audience: offerAudience(offer), offerId, createdBy,
       content: { subject: offer.name },
     });
   } catch (err) {
@@ -195,7 +213,7 @@ async function sendOfferTo(offerId, customerIds, { createdBy = null } = {}) {
       : "La campaña es solo para minoristas y los elegidos son mayoristas");
   }
   const broadcast = await createBroadcast({
-    kind: "OFFER", audience: "SELECTED", offerId, createdBy, recipients,
+    kind: await offerKind(), audience: "SELECTED", offerId, createdBy, recipients,
     content: { subject: offer.name },
   });
   return { broadcast, skipped: chosen.length - recipients.length };
@@ -273,7 +291,7 @@ async function renderFor(broadcast, recipient, cache = new Map(), { preview = fa
     ? ""
     : recipient.customerId ? unsubscribeUrls(recipient.customerId).page : `${frontendUrl()}/desuscribirse`;
   const ctx = emailCtx(unsubscribeUrl);
-  if (broadcast.kind === "OFFER") {
+  if (isOfferKind(broadcast.kind)) {
     const side = recipient.type === "MAYORISTA" ? "wholesale" : "retail";
     const key = `${broadcast.offerId}:${side}:${preview}`;
     if (!cache.has(key)) cache.set(key, await offerEmailData(broadcast.offerId, side, { allowInactive: preview }));
@@ -283,6 +301,7 @@ async function renderFor(broadcast, recipient, cache = new Map(), { preview = fa
       err.code = "OFFER_GONE";
       throw err;
     }
+    if (broadcast.kind === "OFFER_PLAIN") return buildPlainOfferEmail(data.offer, side, recipient, ctx);
     return buildOfferEmail(data.offer, data.products, side, recipient, ctx);
   }
   if (broadcast.kind === "PLAIN") return buildPlainEmail(broadcast, recipient, ctx);
@@ -368,9 +387,10 @@ async function processEmailQueue({ transporter: injected } = {}) {
             // "OFF" lo confundían). Antes: solo los headers de baja.
             headers: {
               "Content-Language": "es",
-              // List-Unsubscribe solo en los envíos a un público: en los dirigidos a clientes elegidos
-              // es un mensaje a pocas personas, y ese header hace que Gmail lo trate como newsletter.
-              ...(r.customerId && b.audience !== "SELECTED"
+              // List-Unsubscribe solo en los envíos a un público con diseño: en los dirigidos a clientes
+              // elegidos y en los de formato simple no va, porque ese header hace que Gmail lo trate
+              // como newsletter (Promociones). El link de baja sigue en el texto del email.
+              ...(r.customerId && b.audience !== "SELECTED" && !isPlainKind(b.kind)
                 ? { "List-Unsubscribe": `<${unsubscribeUrls(r.customerId).oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
                 : {}),
             },
@@ -467,6 +487,9 @@ module.exports = {
   isRetryableSendError,
   getDailyLimit,
   setDailyLimit,
+  getOfferFormat,
+  setOfferFormat,
+  isOfferKind,
   sentLast24h,
   processEmailQueue,
   cancelBroadcast,
