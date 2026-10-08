@@ -1,18 +1,57 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# COMPOSE DE PRODUCCIÓN (VPS) — SOLO LA APP (backend + frontend)
+# COMPOSE DE PRODUCCIÓN (VPS) — APP + BASE DE DATOS
 # ──────────────────────────────────────────────────────────────────────────────
-# El Postgres NO está acá a propósito: sigue corriendo bare-metal en el VPS
-# (localhost:5432), con todos tus datos, INTACTO. Este compose solo conteneriza
-# el backend (reemplaza a PM2) y el frontend (nginx interno servido detrás del
-# nginx del VPS que tiene el SSL).
+# MIGRADO (08/10/2026) del VPS viejo 177.7.59.16 al VPS nuevo 82.25.74.242.
+#
+# Comentado: el encabezado anterior describía el VPS viejo, donde Postgres corría bare-metal.
+# En el VPS nuevo no hay Postgres en el host (cada proyecto trae el suyo en Docker), así que
+# la base pasó a ser el servicio `db` de este mismo compose:
+# # El Postgres NO está acá a propósito: sigue corriendo bare-metal en el VPS
+# # (localhost:5432), con todos tus datos, INTACTO. Este compose solo conteneriza
+# # el backend (reemplaza a PM2) y el frontend (nginx interno servido detrás del
+# # nginx del VPS que tiene el SSL).
+#
+# En el VPS nuevo:
+#  · db       → Postgres 16 en el contenedor `igwtstore_db`, datos en el volumen `igwtstore_data`.
+#               La contraseña sale de deploy/.env (DB_PASSWORD, no versionado).
+#  · backend  → contenedor `igwtstore_backend`, habla con la base por la red interna del compose.
+#  · frontend → contenedor `igwtstore_frontend` (nginx interno con la SPA).
+#  · SSL y dominio los maneja el Caddy compartido del VPS (contenedor `proxy`, red `edge`),
+#    con la config de deploy/igwtstore.caddy copiada en /srv/proxy/sites/.
 #
 # Uso (desde ~/Ecommerce_mm):
 #   docker compose -f deploy/docker-compose.vps.yml up -d --build
 #   docker compose -f deploy/docker-compose.vps.yml logs -f
-#   docker compose -f deploy/docker-compose.vps.yml down
+#   docker compose -f deploy/docker-compose.vps.yml down   # NO usar `down -v`: -v borra la base
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Nombre de proyecto fijo: sin esto Compose usa el nombre de la carpeta ("deploy"), demasiado
+# genérico en un VPS que comparten varios proyectos.
+name: igwtstore
+
 services:
+  db:
+    image: postgres:16
+    container_name: igwtstore_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ecommerce_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD en deploy/.env}
+      POSTGRES_DB: ecommerce_db
+      # Mismo locale que la base del VPS viejo (C.UTF-8): así los ORDER BY por texto dan
+      # exactamente el mismo orden que antes de la migración.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    volumes:
+      - igwtstore_data:/var/lib/postgresql/data
+    # Solo en localhost del VPS (para inspeccionar desde el host si hace falta). Nunca a internet.
+    ports:
+      - "127.0.0.1:5436:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce_user -d ecommerce_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ../backend
@@ -21,21 +60,33 @@ services:
     container_name: igwtstore_backend
     restart: unless-stopped
 
-    # network_mode host: el contenedor comparte la red del VPS. Así llega al Postgres
-    # bare-metal por localhost:5432 EXACTAMENTE como lo hacía PM2 — sin tocar pg_hba.conf
-    # ni la base, y sin cambiar la DATABASE_URL. También publica el 4000 directo en el host,
-    # que es lo que ya proxyea tu nginx (/api → localhost:4000).
-    network_mode: host
+    # Comentado (migración 08/10/2026): network_mode host servía para llegar al Postgres
+    # bare-metal del VPS viejo por localhost:5432. En el VPS nuevo la base es el servicio `db`
+    # de este compose, y el Caddy compartido llega al backend por la red `edge`, así que el
+    # contenedor ya no necesita compartir la red del host.
+    # network_mode: host
+    networks:
+      - default   # para hablar con igwtstore_db
+      - edge      # para que el Caddy compartido (contenedor `proxy`) llegue a igwtstore_backend:4000
+    # Solo en localhost del VPS, para probar con curl desde el host. Internet entra por Caddy.
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
 
-    # Toma las variables del mismo backend/.env que ya usás en el VPS (DATABASE_URL a
-    # localhost:5432, JWT_SECRET, MP_ACCESS_TOKEN, SMTP_*, CLOUDINARY_*, FRONTEND_URL, etc.).
+    # Toma las variables del mismo backend/.env de siempre (JWT_SECRET, MP_ACCESS_TOKEN, SMTP_*,
+    # CLOUDINARY_*, FRONTEND_URL, etc.). En el VPS nuevo su DATABASE_URL apunta a igwtstore_db:5432.
     env_file:
       - ../backend/.env
     environment:
       PORT: 4000
       # De dónde toma el backend el index.html para las fichas de producto con Open Graph
       # (/api/og/producto/:slug): el nginx interno del contenedor del frontend.
-      FRONTEND_INTERNAL_URL: http://127.0.0.1:8090
+      # Comentado (migración 08/10/2026): sin network_mode host, 127.0.0.1 es el propio
+      # contenedor del backend; al frontend se llega por su nombre en la red del compose.
+      # FRONTEND_INTERNAL_URL: http://127.0.0.1:8090
+      FRONTEND_INTERNAL_URL: http://igwtstore_frontend:80
 
     # Las imágenes subidas viven FUERA del contenedor para sobrevivir a los redeploys.
     # Es la misma carpeta que ya usás; no se pierde nada.
@@ -65,5 +116,21 @@ services:
     # El nginx del VPS (que termina el SSL) hace de proxy a este puerto. No se expone
     # al exterior directamente: nadie entra por el 8090 desde internet.
     # (Se usa 8090 y no 8080 porque en el VPS el 8080 ya estaba ocupado por otro servicio.)
+    # En el VPS nuevo el Caddy compartido llega por la red `edge` (igwtstore_frontend:80);
+    # el 8090 en localhost queda solo para probar con curl desde el host.
     ports:
       - "127.0.0.1:8090:80"
+    networks:
+      - default   # para que el backend lea el index.html (Open Graph)
+      - edge      # para que el Caddy compartido llegue a igwtstore_frontend:80
+
+volumes:
+  # Nombre fijo para que se vea claro en `docker volume ls`. Acá viven TODOS los datos de la
+  # tienda: no borrarlo nunca (ni con `docker compose down -v` ni con `docker volume prune`).
+  igwtstore_data:
+    name: igwtstore_data
+
+networks:
+  # Red compartida del VPS nuevo donde vive el Caddy (`proxy`). La crea el compose de /srv/proxy.
+  edge:
+    external: true

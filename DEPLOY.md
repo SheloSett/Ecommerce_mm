@@ -1,6 +1,48 @@
 # Deploy en VPS Hostinger — guía paso a paso
 
+> ## 🔴 LEER ANTES QUE NADA — desde el 08/10/2026 la tienda corre en el VPS NUEVO
+>
+> Se migró del VPS viejo `177.7.59.16` (dado de baja) al VPS nuevo **`82.25.74.242`**
+> (`ssh shelo@82.25.74.242`), que comparte con otros proyectos (shiraf, manhattan, cartelera…).
+> Todo lo que está más abajo sobre nginx, Postgres bare-metal, certbot y `psql -h localhost`
+> describe el VPS VIEJO y queda como registro. En el nuevo:
+>
+> | | Cómo corre en el VPS nuevo |
+> |---|---|
+> | Postgres 16 | contenedor `igwtstore_db` (servicio `db` del compose), datos en el volumen `igwtstore_data`. Contraseña en `deploy/.env` (no versionado) |
+> | Backend | contenedor `igwtstore_backend`, red del compose + red `edge`. `127.0.0.1:4000` solo para curl desde el host |
+> | Frontend | contenedor `igwtstore_frontend`, red del compose + red `edge`. `127.0.0.1:8090` solo para curl |
+> | Dominio + SSL | **Caddy compartido** (contenedor `proxy`, `/srv/proxy`). Config: `deploy/igwtstore.caddy` copiada a `/srv/proxy/sites/`. Ya NO hay nginx ni certbot para la tienda |
+> | Cloudflare | `igwtstore.com.ar` y `www` con **proxy activado (nube naranja)**, A → `82.25.74.242` |
+> | Backups | `backend/scripts/backup-db.sh` (cron 3:00 UTC) → `docker exec igwtstore_db pg_dump` + `backend/uploads`, a `~/backups` y a B2 |
+> | Backups del VPS viejo | copiados a `~/igwtstore-vps-viejo/` (backups diarios, dumps sueltos, configs nginx, reserva completa del home) |
+>
+> Comandos que cambiaron (todo desde `~/Ecommerce_mm`):
+> ```bash
+> # Paso 0 del deploy (¿el schema quedó atrás?) — Prisma corre DENTRO del contenedor:
+> docker exec igwtstore_backend npx prisma migrate diff \
+>   --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script
+>
+> # psql (reemplaza a `psql -U ecommerce_user -d ecommerce_db -h localhost`):
+> docker exec -it igwtstore_db psql -U ecommerce_user -d ecommerce_db
+>
+> # Aplicar un SQL de migración, todo o nada:
+> docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db \
+>   --single-transaction -v ON_ERROR_STOP=1 < /tmp/migracion.sql
+>
+> # Restaurar un backup:
+> gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db
+> ```
+> `git pull` + `docker compose -f deploy/docker-compose.vps.yml up -d --build` sigue igual.
+> **Nunca `docker compose down -v`**: el `-v` borra el volumen con la base.
+>
+> Certificado: Caddy lo renueva solo por HTTP-01 pasando por Cloudflare (emitido el 08/10/2026,
+> vence a los 90 días). Si algún día Cloudflare tira error 525/526, mirar
+> `docker logs proxy 2>&1 | grep igwtstore` en el VPS nuevo.
+
 > ## ⚠️ LEER PRIMERO — el runtime cambió a Docker
+>
+> _(Esta sección describe el VPS VIEJO 177.7.59.16, antes de la migración del 08/10/2026.)_
 >
 > Las secciones 1 a 12 de abajo describen el **setup original con PM2**, que YA NO es el que corre
 > en el VPS. Se dejan como registro de cómo se armó el server (Postgres, nginx, SSL y backups

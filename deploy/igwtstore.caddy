@@ -1,0 +1,79 @@
+# /srv/proxy/sites/igwtstore.caddy — IGWT Store en el Caddy compartido del VPS 82.25.74.242.
+# Migrada desde el VPS viejo (177.7.59.16) el 08/10/2026: reemplaza al server block de nginx
+# /etc/nginx/sites-available/igwtstore (+ /etc/nginx/snippets/igwtstore-og.conf) de aquel VPS,
+# con el mismo ruteo:
+#   /producto/*   → backend en /api/og/producto/... (HTML con Open Graph para la vista previa de WhatsApp)
+#   /api/*        → backend (igwtstore_backend:4000)
+#   todo lo demás → frontend (igwtstore_frontend:80, nginx interno con la SPA)
+#
+# Instalar / actualizar:
+#   sudo cp ~/Ecommerce_mm/deploy/igwtstore.caddy /srv/proxy/sites/igwtstore.caddy
+#   docker exec proxy caddy validate --config /etc/caddy/Caddyfile
+#   docker exec proxy caddy reload   --config /etc/caddy/Caddyfile
+#
+# Nombres:
+#  · igwtstore.82-25-74-242.sslip.io → para probar sin depender del DNS (certificado real al instante).
+#    También es adonde reenvía el VPS viejo mientras el DNS propaga (ver "IP real del cliente").
+#  · igwtstore.com.ar / www → el dominio real (DNS en Cloudflare, nube GRIS). Van con on_demand:
+#    Caddy no pide el certificado hasta la primera visita que llegue por ese nombre, o sea recién
+#    cuando el DNS apunte acá. Así quedan declarados desde antes del corte sin que Caddy se ponga
+#    a reintentar contra el VPS viejo. El www sirve el mismo sitio, igual que en el VPS viejo.
+#
+# IP real del cliente: el backend usa `trust proxy 1`, o sea toma la IP del X-Forwarded-For que
+# pone el proxy inmediato (este Caddy). Para el tráfico normal es la IP de la conexión
+# ({remote_host}). Pero lo que llega reenviado desde el VPS viejo trae como IP de conexión la del
+# VPS viejo: sin tratamiento especial, todos esos clientes compartirían una sola IP y se comerían
+# juntos los límites de intentos de login. Por eso, SOLO para conexiones desde 177.7.59.16, se usa
+# el X-Real-IP que manda el reenvío (la IP real que vio el nginx viejo).
+
+(igwtstore) {
+	encode gzip
+	# Igual que client_max_body_size del nginx viejo (fotos de productos).
+	request_body {
+		max_size 120MB
+	}
+
+	handle /producto/* {
+		rewrite * /api/og{uri}
+		reverse_proxy igwtstore_backend:4000 {
+			header_up X-Real-IP {args[0]}
+			header_up X-Forwarded-For {args[0]}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy igwtstore_backend:4000 {
+			header_up X-Real-IP {args[0]}
+			header_up X-Forwarded-For {args[0]}
+			# Equivale a proxy_buffering off del nginx viejo (SSE de notificaciones).
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy igwtstore_frontend:80 {
+			header_up X-Real-IP {args[0]}
+			header_up X-Forwarded-For {args[0]}
+		}
+	}
+}
+
+igwtstore.82-25-74-242.sslip.io {
+	# Nombre técnico: que Google no lo indexe como copia del sitio.
+	header X-Robots-Tag "noindex, nofollow"
+
+	@vps_viejo remote_ip 177.7.59.16
+	handle @vps_viejo {
+		import igwtstore {http.request.header.X-Real-IP}
+	}
+	handle {
+		import igwtstore {remote_host}
+	}
+}
+
+igwtstore.com.ar, www.igwtstore.com.ar {
+	tls {
+		on_demand
+	}
+	import igwtstore {remote_host}
+}
