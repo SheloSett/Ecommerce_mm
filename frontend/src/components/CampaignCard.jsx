@@ -51,6 +51,27 @@ function Countdown({ parts }) {
   );
 }
 
+// ─── Chip de campaña: versión miniatura para el filtro "Ofertas y Stock" del catálogo ───────────
+// Igual que CategoryChip (CategoryCard.jsx) pero con las reglas de la tarjeta de campaña de abajo:
+// estilo desconocido → "sale", y "color" pinta el fondo con el color propio (cardColor). Así cada
+// campaña se ve en el filtro con el mismo estilo que se le configuró en Admin → Ofertas.
+export function CampaignChip({ offer, className = "" }) {
+  const style = offer.cardStyle === "color" || CARD_STYLES.some((s) => s.key === offer.cardStyle)
+    ? offer.cardStyle
+    : "sale";
+  const colorVars = style === "color"
+    ? { "--cc-bg": offer.cardColor || "#c2185b", "--cc-fg": textColorFor(offer.cardColor || "#c2185b") }
+    : undefined;
+  return (
+    <span className={`cc-chip cc-${style} ${className}`} style={colorVars}>
+      {style === "fire" && <Flames />}
+      {style === "ice" && <Frost />}
+      <span className="material-symbols-outlined cc-icon">{ICON_BY_STYLE[style] || "sell"}</span>
+      <span className="cc-name">{offer.name}</span>
+    </span>
+  );
+}
+
 export default function CampaignCard({ offer, badge, preview = false, solo = false }) {
   const style = offer.cardStyle === "color" || CARD_STYLES.some((s) => s.key === offer.cardStyle)
     ? offer.cardStyle

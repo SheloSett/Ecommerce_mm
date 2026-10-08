@@ -1,5 +1,6 @@
 import { trackSearch } from "../services/tracking";
 import { CategoryChip } from "../components/CategoryCard";
+import { CampaignChip } from "../components/CampaignCard";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
@@ -43,13 +44,17 @@ function FilterSection({ title, defaultOpen = true, children, activeCount = 0 })
 }
 
 // ─── Ítem de categoría con checkbox ──────────────────────────────────────────
-function CategoryItem({ label, count, checked, onClick, indent = false, cat = null }) {
+// customChip: chip ya armado por quien llama (las campañas de "Ofertas y Stock" pasan su
+// CampaignChip); tiene prioridad sobre el chip de categoría.
+function CategoryItem({ label, count, checked, onClick, indent = false, cat = null, chip: customChip = null }) {
   // Si la categoría tiene un estilo de tarjeta (fuego, oferta...), se muestra como chip en
   // miniatura con el mismo aspecto que en el inicio; si no, texto plano como siempre.
   // OJO: un elemento React es "truthy" aunque el componente devuelva null, así que se decide acá
   // (por el estilo) y no con `chip || label`. Antes las categorías normales quedaban sin nombre.
   const hasStyle = !!cat && !!cat.cardStyle && cat.cardStyle !== "normal";
-  const chip = hasStyle ? <CategoryChip cat={cat} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} /> : null;
+  // Antes: const chip = hasStyle ? <CategoryChip ... /> : null;
+  // Comentado para aceptar también un chip armado desde afuera (customChip, el de las campañas).
+  const chip = customChip || (hasStyle ? <CategoryChip cat={cat} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} /> : null);
   return (
     <button
       onClick={onClick}
@@ -366,25 +371,36 @@ export default function Catalog() {
       )}
 
       {/* Filtros especiales — Ofertas y Stock */}
-      <FilterSection title="Ofertas y Stock" defaultOpen={currentOnSale || currentLowStock || !!currentOfferId}>
+      {/* Antes: defaultOpen={currentOnSale || currentLowStock || !!currentOfferId}
+          Comentado a pedido del cliente: la sección arrancaba cerrada salvo que hubiera un filtro de
+          oferta activo, y las campañas quedaban escondidas. Ahora arranca siempre abierta. */}
+      <FilterSection title="Ofertas y Stock" defaultOpen={true}>
         <div className="space-y-1">
           {/* Campañas vigentes: una por campaña, arriba de los filtros fijos. Son excluyentes entre
               sí (elegir una deselecciona la anterior) — pedir productos de dos campañas a la vez no
               tiene sentido comercial y complicaría el filtro sin necesidad. */}
-          {activeOffers.map((offer) => (
-            <AttrItem
-              key={offer.id}
-              value={`🎉 ${offer.name}`}
-              checked={currentOfferId === String(offer.id)}
-              onToggle={() => {
-                const newParams = new URLSearchParams(searchParams);
-                if (currentOfferId === String(offer.id)) newParams.delete("offerId");
-                else newParams.set("offerId", String(offer.id));
-                newParams.delete("page");
-                setSearchParams(newParams);
-              }}
-            />
-          ))}
+          {/* Antes cada campaña era texto plano: <AttrItem value={`🎉 ${offer.name}`} ... />
+              Comentado a pedido del cliente: ahora se dibuja como chip con el estilo que se le
+              configuró en Admin → Ofertas (color propio, fuego, oferta...), igual que la tarjeta del
+              inicio y que las categorías con estilo. */}
+          {activeOffers.map((offer) => {
+            const checked = currentOfferId === String(offer.id);
+            return (
+              <CategoryItem
+                key={offer.id}
+                label={offer.name}
+                checked={checked}
+                chip={<CampaignChip offer={offer} className={checked ? "ring-2 ring-[#006b2c] ring-offset-1" : ""} />}
+                onClick={() => {
+                  const newParams = new URLSearchParams(searchParams);
+                  if (checked) newParams.delete("offerId");
+                  else newParams.set("offerId", String(offer.id));
+                  newParams.delete("page");
+                  setSearchParams(newParams);
+                }}
+              />
+            );
+          })}
           <AttrItem
             value="🏷️ En descuento"
             checked={currentOnSale}

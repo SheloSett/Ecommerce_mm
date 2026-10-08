@@ -184,6 +184,11 @@
 .cc-chip.cc-ice .cc-frost { height: 55%; }
 .cc-chip .cc-flake { font-size: 7px; }
 .cc-chip.cc-bolt .cc-bolts { display: none; }
+/* Chips de campaña (CampaignChip en CampaignCard.jsx). "normal" solo existe como chip para campañas
+   (las categorías normales van como texto plano): el azul oscuro de la tarjeta normal. "color" sin
+   los círculos decorativos de la tarjeta grande, que en un chip quedan como manchas. */
+.cc-chip.cc-normal { background: rgba(11, 28, 48, 0.9); }
+.cc-chip.cc-color::before, .cc-chip.cc-color::after { display: none; }
 
 /* ── Tarjeta grande de campaña (CampaignCard.jsx), arriba de las categorías del Home ──
    Reusa los estilos de arriba (fuego, oferta, ...) pero apaisada: a la izquierda el nombre, el
