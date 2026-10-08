@@ -13,8 +13,11 @@
 #
 # Nombres:
 #  · igwtstore.82-25-74-242.sslip.io → para probar sin depender del DNS (certificado real al instante).
-#    También es adonde reenvía el VPS viejo mientras el DNS propaga (ver "IP real del cliente").
-#  · igwtstore.com.ar / www → el dominio real (DNS en Cloudflare, nube GRIS). Van con on_demand:
+#    Durante la migración también fue adonde reenviaba el VPS viejo (ver "IP real del cliente";
+#    ese tratamiento especial quedó comentado después del corte).
+#  · igwtstore.com.ar / www → el dominio real (DNS en Cloudflare con proxy, nube NARANJA; antes este
+#    comentario decía "nube GRIS" por error). Los certificados se validan por HTTP-01 a través de
+#    Cloudflare. Van con on_demand:
 #    Caddy no pide el certificado hasta la primera visita que llegue por ese nombre, o sea recién
 #    cuando el DNS apunte acá. Así quedan declarados desde antes del corte sin que Caddy se ponga
 #    a reintentar contra el VPS viejo. El www sirve el mismo sitio, igual que en el VPS viejo.
@@ -62,13 +65,17 @@ igwtstore.82-25-74-242.sslip.io {
 	# Nombre técnico: que Google no lo indexe como copia del sitio.
 	header X-Robots-Tag "noindex, nofollow"
 
-	@vps_viejo remote_ip 177.7.59.16
-	handle @vps_viejo {
-		import igwtstore {http.request.header.X-Real-IP}
-	}
-	handle {
-		import igwtstore {remote_host}
-	}
+	# Comentado (08/10/2026, después del corte): el reenvío desde el VPS viejo ya no existe y esa IP
+	# vuelve a Hostinger, que se la puede dar a otro cliente. Si se dejaba, ese desconocido podría
+	# mandar cualquier X-Real-IP y esquivar los límites de intentos de login.
+	# @vps_viejo remote_ip 177.7.59.16
+	# handle @vps_viejo {
+	# 	import igwtstore {http.request.header.X-Real-IP}
+	# }
+	# handle {
+	# 	import igwtstore {remote_host}
+	# }
+	import igwtstore {remote_host}
 }
 
 igwtstore.com.ar, www.igwtstore.com.ar {
