@@ -6,6 +6,8 @@ const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
+// Meta (Facebook / Instagram): datos del navegador al comprar + aviso de compra a la API de conversiones
+const { browserDataFromRequest, sendPurchaseEvent } = require("../services/meta.service");
 
 // Dado un array de tiers y una cantidad, devuelve el precio del tier correspondiente.
 // Los tiers son [{ minQty, price }] ordenados por minQty asc.
@@ -299,7 +301,11 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, sessionId } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, sessionId, metaBrowser } = req.body;
+    // Meta: cookies del Pixel (_fbp/_fbc) + IP + navegador del cliente al momento de comprar. Se
+    // guardan en el pedido para que el Purchase que manda el servidor al aprobarse el pago se pueda
+    // atribuir al anuncio. null si el Pixel no está activo o no vino nada. Ver services/meta.service.js.
+    const metaBrowserData = browserDataFromRequest(req, metaBrowser);
     // sessionId: id anónimo del navegador (el mismo que registra vistas y búsquedas en store_events).
     // Solo se guarda si tiene la forma esperada; sirve para medir conversión vista → compra en Analíticas.
     const trackingSessionId = typeof sessionId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(sessionId) ? sessionId : null;
@@ -599,6 +605,7 @@ async function createOrder(req, res) {
         ...(totales.hasUsd ? { ivaAmountUsd: totales.ivaAmountUsd } : {}),
         customerNote: customerNote?.trim() || null,
         sessionId: trackingSessionId,
+        ...(metaBrowserData ? { metaBrowser: metaBrowserData } : {}),
         // shippingMethod: "RETIRO" (retiro en el local) o "ENVIO" (acordar envío).
         // Solo se aceptan los dos valores válidos; cualquier otro valor usa el default "RETIRO".
         shippingMethod: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO",
@@ -909,6 +916,9 @@ async function updateOrderStatus(req, res) {
       // Si el admin aprueba a mano (ej. un pago de MercadoPago cuyo aviso no llegó), lo comprado
       // también sale del carrito del cliente. Ver utils/cartCleanup.js.
       await removeOrderedItemsFromCart(prisma, existing.id);
+      // Meta: aviso de compra a la API de conversiones (si está configurada). No bloquea la respuesta
+      // y nunca tira; el servicio decide si corresponde (pedido web, tipo de cliente).
+      sendPurchaseEvent(existing.id).catch(() => {});
     }
 
     // Al aprobar un pedido de un cliente MAYORISTA, resetear su contador de restock

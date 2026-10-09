@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
+// Meta (Facebook / Instagram): aviso de compra a la API de conversiones al aprobarse el pago
+const { sendPurchaseEvent } = require("../services/meta.service");
 
 const prisma = new PrismaClient();
 
@@ -376,6 +378,10 @@ async function handleWebhook(req, res) {
         // quedaba cargado. Ver utils/cartCleanup.js.
         await removeOrderedItemsFromCart(prisma, order.id);
 
+        // Meta: Purchase a la API de conversiones (si está configurada). El navegador manda el mismo
+        // evento con el mismo event_id al volver de MercadoPago; Meta lo cuenta una sola vez.
+        sendPurchaseEvent(order.id).catch(() => {});
+
         // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
         // y enviar confirmación al cliente. No bloqueamos la respuesta del webhook si fallan.
         try {
@@ -413,6 +419,10 @@ async function getOrderPaymentStatus(req, res) {
         mpPaymentId: true,
         customerName: true,
         total: true,
+        // Lo que necesita el Pixel de Meta para el evento Purchase en el navegador (PaymentResult).
+        totalUsd: true,
+        customerType: true,
+        items: { select: { productId: true, variantId: true, quantity: true, price: true, currency: true } },
       },
     });
 
@@ -506,6 +516,8 @@ async function getOrderPaymentStatus(req, res) {
               }
               // Lo comprado sale del carrito del cliente (ídem webhook, ver utils/cartCleanup.js)
               await removeOrderedItemsFromCart(prisma, orderIdInt);
+              // Meta: Purchase a la API de conversiones (ídem webhook)
+              sendPurchaseEvent(orderIdInt).catch(() => {});
             }
             // Refrescar el objeto que devolvemos al frontend
             order.status      = newStatus;

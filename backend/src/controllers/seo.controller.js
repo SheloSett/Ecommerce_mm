@@ -57,56 +57,136 @@ async function getSitemap(req, res) {
   }
 }
 
+// ─── Feed del catálogo ───────────────────────────────────────────────────────
 // GET /api/feed.xml — feed de productos formato Google Merchant (RSS 2.0 + namespace g:).
-// Compatible con Google Shopping/Merchant Center y con Meta Commerce Manager (acepta el mismo formato).
+// Lo lee Meta Commerce Manager (catálogo para Instagram Shopping y anuncios dinámicos) y también
+// sirve para Google Merchant Center: los dos aceptan este mismo formato.
+//
+// Qué sale: productos activos que ve el público minorista (visibility AMBOS/MINORISTA), con foto y
+// con precio minorista, en SU moneda (un producto en USD sale "25.00 USD", no mal etiquetado como
+// pesos). Los que se venden solo a mayoristas no salen: su `price` es el mayorista y el feed es público.
+//
+// Variantes: un producto con variantes sale como UN ítem por variante (id "<producto>-<variante>",
+// todas agrupadas por g:item_group_id = id del producto), cada una con su precio, su stock y su foto.
+// Antes salía un solo ítem con el precio base y el stock del producto, y en un producto con
+// variantes el stock vive en las variantes (el del producto queda en 0), así que todo el catálogo
+// con variantes figuraba "sin stock". Los ids son los mismos que manda el Pixel del navegador
+// (frontend services/metaPixel.js) y la API de conversiones (services/meta.service.js): así Meta
+// sabe qué producto del catálogo vio o compró cada persona.
+const FEED_CACHE_MS = 5 * 60 * 1000;
+let feedCache = { xml: null, at: 0 };
+
+function feedPriceLine(tag, amount, currency) {
+  return `      <g:${tag}>${Number(amount).toFixed(2)} ${currency}</g:${tag}>`;
+}
+
+function variantTitle(product, variant) {
+  const combo = Array.isArray(variant.combination) ? variant.combination : [];
+  const values = combo.map((c) => c?.value).filter(Boolean).join(" / ");
+  return values ? `${product.name} - ${values}` : product.name;
+}
+
+// Un producto (con `variants` y `categories` incluidos) → lista de ítems del feed, ya como objetos.
+// Función pura, testeable: no toca la base ni arma XML.
+function feedItemsForProduct(p) {
+  const currency = p.currency || "ARS";
+  const link = `${SITE_URL}/producto/${p.slug || p.id}`;
+  const description = (stripHtml(p.description) || p.name).slice(0, 5000);
+  const cat = Array.isArray(p.categories) && p.categories.length ? p.categories[0] : null;
+  const productType = cat ? (cat.parent?.name ? `${cat.parent.name} > ${cat.name}` : cat.name) : null;
+  const base = { link, description, currency, brand: "IGWT Store", productType, condition: "new" };
+
+  const variants = Array.isArray(p.variants) ? p.variants : [];
+  if (variants.length === 0) {
+    if (!(p.price > 0)) return [];
+    return [{
+      ...base,
+      id: String(p.id),
+      itemGroupId: null,
+      title: p.name,
+      price: p.price,
+      salePrice: p.salePrice != null && p.salePrice < p.price ? p.salePrice : null,
+      inStock: !!(p.stockUnlimited || p.stock > 0),
+      image: p.images[0],
+      extraImages: p.images.slice(1, 11),
+      mpn: p.sku || null,
+    }];
+  }
+
+  return variants.flatMap((v) => {
+    // Precio base: el de la variante si lo define, si no el del producto. La oferta es propia de la
+    // variante (no se hereda la del producto). Mismo criterio que utils/pricing.js.
+    const price = v.price != null ? v.price : p.price;
+    if (!(price > 0)) return [];
+    const vImages = Array.isArray(v.images) && v.images.length ? v.images : (v.image ? [v.image] : []);
+    const images = vImages.length ? vImages : p.images;
+    return [{
+      ...base,
+      id: `${p.id}-${v.id}`,
+      itemGroupId: String(p.id),
+      title: variantTitle(p, v).slice(0, 150),
+      price,
+      salePrice: v.salePrice != null && v.salePrice < price ? v.salePrice : null,
+      inStock: !!(v.stockUnlimited || v.stock > 0),
+      image: images[0],
+      extraImages: images.slice(1, 11),
+      mpn: v.sku || p.sku || null,
+    }];
+  });
+}
+
+function feedItemXml(it) {
+  return [
+    "    <item>",
+    `      <g:id>${escapeXml(it.id)}</g:id>`,
+    it.itemGroupId ? `      <g:item_group_id>${escapeXml(it.itemGroupId)}</g:item_group_id>` : "",
+    `      <title>${escapeXml(it.title)}</title>`,
+    `      <description>${escapeXml(it.description)}</description>`,
+    `      <link>${escapeXml(it.link)}</link>`,
+    `      <g:image_link>${escapeXml(it.image)}</g:image_link>`,
+    ...it.extraImages.map((img) => `      <g:additional_image_link>${escapeXml(img)}</g:additional_image_link>`),
+    `      <g:availability>${it.inStock ? "in stock" : "out of stock"}</g:availability>`,
+    feedPriceLine("price", it.price, it.currency),
+    it.salePrice != null ? feedPriceLine("sale_price", it.salePrice, it.currency) : "",
+    `      <g:condition>${it.condition}</g:condition>`,
+    `      <g:brand>${escapeXml(it.brand)}</g:brand>`,
+    it.productType ? `      <g:product_type>${escapeXml(it.productType)}</g:product_type>` : "",
+    `      <g:identifier_exists>no</g:identifier_exists>`,
+    it.mpn ? `      <g:mpn>${escapeXml(it.mpn)}</g:mpn>` : "",
+    "    </item>",
+  ].filter(Boolean).join("\n");
+}
+
+async function buildProductFeedXml() {
+  const products = await prisma.product.findMany({
+    where: {
+      active: true,
+      visibility: { in: ["AMBOS", "MINORISTA"] },
+      images: { isEmpty: false },
+    },
+    orderBy: { id: "asc" },
+    include: {
+      categories: { select: { name: true, parent: { select: { name: true } } } },
+      // Solo las variantes que ve el público minorista (las "solo mayoristas" tienen precio mayorista).
+      variants: { where: { active: true, visibility: { in: ["AMBOS", "MINORISTA"] } }, orderBy: { id: "asc" } },
+    },
+  });
+
+  const items = products.flatMap(feedItemsForProduct).map(feedItemXml);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">\n  <channel>\n    <title>IGWT Store — Catálogo</title>\n    <link>${SITE_URL}</link>\n    <description>Feed de productos de IGWT Store</description>\n${items.join("\n")}\n  </channel>\n</rss>\n`;
+}
+
 async function getProductFeed(req, res) {
   try {
-    const products = await prisma.product.findMany({
-      where: {
-        active: true,
-        visibility: { in: ["AMBOS", "MINORISTA"] },
-        images: { isEmpty: false },
-      },
-      orderBy: { id: "asc" },
-    });
-
-    const items = products.map((p) => {
-      const link = `${SITE_URL}/producto/${p.slug || p.id}`;
-      const inStock = p.stockUnlimited || p.stock > 0;
-      const price = p.price.toFixed(2);
-      const salePrice = p.salePrice && p.salePrice < p.price ? p.salePrice.toFixed(2) : null;
-      const description = stripHtml(p.description) || p.name;
-
-      const extraImages = p.images
-        .slice(1, 11)
-        .map((img) => `      <g:additional_image_link>${escapeXml(img)}</g:additional_image_link>`)
-        .join("\n");
-
-      return [
-        "    <item>",
-        `      <g:id>${p.id}</g:id>`,
-        `      <title>${escapeXml(p.name)}</title>`,
-        `      <description>${escapeXml(description.slice(0, 5000))}</description>`,
-        `      <link>${escapeXml(link)}</link>`,
-        `      <g:image_link>${escapeXml(p.images[0])}</g:image_link>`,
-        extraImages,
-        `      <g:availability>${inStock ? "in stock" : "out of stock"}</g:availability>`,
-        `      <g:price>${price} ARS</g:price>`,
-        salePrice ? `      <g:sale_price>${salePrice} ARS</g:sale_price>` : "",
-        `      <g:condition>new</g:condition>`,
-        `      <g:brand>IGWT Store</g:brand>`,
-        `      <g:identifier_exists>no</g:identifier_exists>`,
-        p.sku ? `      <g:mpn>${escapeXml(p.sku)}</g:mpn>` : "",
-        "    </item>",
-      ]
-        .filter(Boolean)
-        .join("\n");
-    });
-
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">\n  <channel>\n    <title>IGWT Store — Catálogo</title>\n    <link>${SITE_URL}</link>\n    <description>Feed de productos de IGWT Store</description>\n${items.join("\n")}\n  </channel>\n</rss>\n`;
-
+    // Caché de 5 minutos: la ruta es pública, está exenta del rate limiter (index.js) y arma el
+    // catálogo entero con sus variantes en cada llamada. Meta lo lee como mucho una vez por hora;
+    // con la caché nadie puede usarla para cargar el servidor pidiéndola en bucle.
+    if (!feedCache.xml || Date.now() - feedCache.at > FEED_CACHE_MS) {
+      feedCache = { xml: await buildProductFeedXml(), at: Date.now() };
+    }
     res.set("Content-Type", "application/xml");
-    res.send(xml);
+    res.set("Cache-Control", "public, max-age=300");
+    res.send(feedCache.xml);
   } catch (err) {
     console.error("getProductFeed error:", err);
     res.status(500).json({ error: "Error al generar el feed de productos" });
@@ -228,4 +308,9 @@ async function getProductOgPage(req, res) {
   res.send(html);
 }
 
-module.exports = { getSitemap, getProductFeed, getProductOgPage };
+module.exports = {
+  getSitemap,
+  getProductFeed,
+  getProductOgPage,
+  _internals: { feedItemsForProduct, feedItemXml, variantTitle },
+};

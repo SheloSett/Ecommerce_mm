@@ -6,6 +6,7 @@ import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, couponsApi, shippingApi, getImageUrl } from "../services/api";
 import { getSessionId } from "../services/tracking";
+import { pixelInitiateCheckout, getMetaCookies } from "../services/metaPixel";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
@@ -82,6 +83,14 @@ export default function Checkout() {
       navigate("/carrito");
     }
   }, [hasOutOfStock, items.length, navigate]);
+
+  // Meta Pixel: "empezó a pagar". Una vez por entrada al checkout, cuando el carrito ya cargó.
+  const [checkoutTracked, setCheckoutTracked] = useState(false);
+  useEffect(() => {
+    if (checkoutTracked || items.length === 0) return;
+    pixelInitiateCheckout(items);
+    setCheckoutTracked(true);
+  }, [items, checkoutTracked]);
 
   const [loading, setLoading] = useState(false);
   // Estado de éxito: null = en progreso, objeto = orden creada exitosamente (para no-MP)
@@ -290,6 +299,9 @@ export default function Checkout() {
       const orderRes = await ordersApi.create({
         // Analíticas: vincula el pedido con la sesión anónima que vio los productos
         sessionId:     getSessionId(),
+        // Meta: cookies del Pixel (_fbp/_fbc) para atribuir la compra al anuncio cuando el pago se
+        // apruebe (el aviso a Meta lo manda el servidor). null si el Pixel no está activo.
+        metaBrowser:   getMetaCookies(),
         customerName:  form.customerName,
         customerEmail: form.customerEmail,
         customerPhone: form.customerPhone,

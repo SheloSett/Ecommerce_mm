@@ -468,6 +468,8 @@ export const variantsApi = {
 export const settingsApi = {
   get:    ()     => api.get("/settings"),           // público
   update: (data) => api.put("/settings", data),     // admin
+  // Admin: manda un evento de prueba a Meta con el Pixel y el token guardados
+  testMeta: ()   => api.post("/settings/meta/test"),
 };
 
 // ─── Testing de campañas de email (admin) ────────────────────────────────────

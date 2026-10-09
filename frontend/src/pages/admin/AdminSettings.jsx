@@ -12,6 +12,7 @@ import AboutUsSectionContent from "../../components/admin/AboutUsSectionContent"
 import HowToBuySectionContent from "../../components/admin/HowToBuySectionContent";
 import PrivacySectionContent from "../../components/admin/PrivacySectionContent";
 import TermsSectionContent from "../../components/admin/TermsSectionContent";
+import MetaSectionContent from "../../components/admin/MetaSectionContent";
 // RichTextEditor: se usaba para el viejo enfoque RTE de edición de páginas — reemplazado por secciones estructuradas
 // import RichTextEditor from "../../components/RichTextEditor";
 import toast from "react-hot-toast";
@@ -19,6 +20,8 @@ import toast from "react-hot-toast";
 const SECTIONS = [
   { id: "mantenimiento",  label: "Modo mantenimiento",  icon: "🔧" },
   { id: "mayoristas",     label: "Reglas mayoristas",   icon: "🏭" },
+  // Meta (Facebook / Instagram): Pixel, API de conversiones y feed del catálogo
+  { id: "meta",           label: "Meta / Instagram",    icon: "📣" },
   // "Campañas de email" se movió a Admin → Emails → Automáticos (components/admin/EmailAutomationsSection.jsx)
   // { id: "emails",         label: "Campañas de email",   icon: "📧" },
   // Sección "Banner de anuncio" movida a AdminCarousel.jsx donde tiene más sentido contextualmente
@@ -498,6 +501,10 @@ export default function AdminSettings() {
                     : "Sin mínimo — los mayoristas pueden cotizar cualquier monto."}
                 </div>
               </div>
+            )}
+
+            {activeSection === "meta" && (
+              <MetaSectionContent />
             )}
 
             {activeSection === "carrusel" && (

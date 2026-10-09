@@ -17,6 +17,9 @@ const SiteConfigContext = createContext({
   howToBuyContent: null,
   privacyContent: null,
   termsContent: null,
+  // Meta Pixel (Facebook / Instagram): "" = sin Pixel. Ver components/MetaPixel.jsx.
+  metaPixelId: "",
+  metaTrackWholesale: false,
   loading: true,
   refetch: () => {},
 });
@@ -46,6 +49,9 @@ export function SiteConfigProvider({ children }) {
   const [howToBuyFaqs, setHowToBuyFaqs]       = useState(null);
   const [privacySections, setPrivacySections] = useState(null);
   const [termsSections, setTermsSections]     = useState(null);
+  // Meta Pixel — id del Pixel y si los eventos de compra incluyen a los mayoristas
+  const [metaPixelId, setMetaPixelId]             = useState("");
+  const [metaTrackWholesale, setMetaTrackWholesale] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Tema se lee de localStorage (preferencia individual de cada usuario)
@@ -123,6 +129,9 @@ export function SiteConfigProvider({ children }) {
         setHowToBuyFaqs(parseJSON(res.data.howToBuyFaqs));
         setPrivacySections(parseJSON(res.data.privacySections));
         setTermsSections(parseJSON(res.data.termsSections));
+        // Meta Pixel
+        setMetaPixelId((res.data.metaPixelId || "").trim());
+        setMetaTrackWholesale(res.data.metaTrackWholesale === "true");
         // Ya no leemos theme del backend — viene de localStorage
       })
       .catch(console.error)
@@ -207,6 +216,8 @@ export function SiteConfigProvider({ children }) {
         howToBuyFaqs,
         privacySections,
         termsSections,
+        metaPixelId,
+        metaTrackWholesale,
         loading,
         refetch: fetchConfig,
       }}

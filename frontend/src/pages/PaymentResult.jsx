@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { paymentsApi } from "../services/api";
 import { useCart } from "../context/CartContext";
+import { pixelPurchase } from "../services/metaPixel";
 
 // Página de resultado después del pago en MercadoPago
 export default function PaymentResult({ type }) {
@@ -23,7 +24,12 @@ export default function PaymentResult({ type }) {
           // Antes: if (type === "success" || res.data.status === "APPROVED") — la dirección de
           // "éxito" no garantiza que el pago esté aprobado. Igual el servidor saca lo comprado del
           // carrito cuando se aprueba (utils/cartCleanup.js); esto solo actualiza la pantalla ya.
-          if (res.data.status === "APPROVED") clearCart();
+          if (res.data.status === "APPROVED") {
+            clearCart();
+            // Meta Pixel: compra confirmada. Mismo eventID que manda el servidor ("order-<id>"),
+            // así Meta la cuenta una sola vez aunque lleguen los dos.
+            pixelPurchase(res.data);
+          }
         })
         .catch(console.error)
         .finally(() => setChecked(true));

@@ -7,6 +7,7 @@ import SiteMeta from "../components/SiteMeta";
 import { productsApi, getImageUrl } from "../services/api";
 import { saveRecent } from "../utils/recentlyViewed";
 import { trackProductView, setPresenceLabel, pingPresence } from "../services/tracking";
+import { pixelViewContent, pixelAddToCart } from "../services/metaPixel";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
@@ -168,6 +169,15 @@ export default function ProductDetail() {
         trackProductView(res.data.id);
         setPresenceLabel(`Producto · ${res.data.name}`);
         pingPresence();
+        // Meta Pixel: vio este producto (precio minorista vigente, el mismo del feed del catálogo)
+        pixelViewContent({
+          id: res.data.id,
+          name: res.data.name,
+          price: res.data.priceHidden ? 0 : (res.data.salePrice && res.data.salePrice < res.data.price ? res.data.salePrice : res.data.price),
+          currency: res.data.currency,
+          hasVariants: (res.data.attributes || []).length > 0,
+          category: res.data.categories?.[0]?.name,
+        });
         // Auto-seleccionar la primera variante DISPONIBLE (con stock) — ya ordenada según el admin.
         const variants = res.data.variants || [];
         if (variants.length > 0) {
@@ -353,6 +363,15 @@ export default function ProductDetail() {
     try {
       await addItem(product, safeQty, priceToCharge, activeVariant?.id || null, variantLabel);
       toast.success(`${safeQty}x "${product.name}"${variantLabel ? ` (${variantLabel})` : ""} agregado al carrito`);
+      // Meta Pixel: agregó al carrito (recién después de que el servidor lo confirmó)
+      pixelAddToCart({
+        productId: product.id,
+        variantId: activeVariant?.id || null,
+        name: product.name,
+        price: priceToCharge ?? effectivePrice,
+        currency: product.currency,
+        quantity: safeQty,
+      });
     } catch (err) {
       toast.error(err.response?.data?.error || "No se pudo agregar el producto al carrito");
     }

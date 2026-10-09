@@ -238,6 +238,11 @@ model Order {
   // Sesión anónima del navegador que hizo el pedido (misma que registra vistas y búsquedas en
   // store_events). Sirve para medir qué porcentaje de los que vieron un producto lo compraron.
   sessionId        String?
+  // Datos del navegador del cliente al momento de comprar, para Meta (Pixel / API de conversiones):
+  // { fbp, fbc, ip, ua }. Los manda el checkout y se usan cuando el pedido se aprueba, para que el
+  // evento Purchase que envía el servidor se atribuya al anuncio que trajo al cliente.
+  // null = sin datos (venta manual, Pixel no configurado o pedido anterior a este cambio).
+  metaBrowser      Json?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 

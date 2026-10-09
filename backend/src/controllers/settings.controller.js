@@ -43,17 +43,37 @@ const DEFAULTS = {
   howToBuyFaqs: "",
   privacySections: "",
   termsSections: "",
+  // Meta (Facebook / Instagram): Pixel + API de conversiones. Ver services/meta.service.js y
+  // frontend services/metaPixel.js. Se editan en Admin → Configuración → Meta / Instagram.
+  metaPixelId: "",
+  // SECRETO: nunca sale por GET (ver readSettings). Un valor vacío en el PUT no lo pisa; para
+  // borrarlo se manda metaCapiTokenClear: "true".
+  metaCapiToken: "",
+  metaTrackWholesale: "false",
+  metaTestEventCode: "",
 };
+
+// Claves que no se devuelven nunca al navegador (ni al admin: el panel solo sabe si están cargadas).
+const SECRET_KEYS = ["metaCapiToken"];
+
+// Config completa (defaults + lo guardado), con los secretos reemplazados por un "<clave>Set".
+async function readSettings() {
+  const rows = await prisma.siteConfig.findMany();
+  const settings = { ...DEFAULTS };
+  rows.forEach((r) => {
+    settings[r.key] = r.value;
+  });
+  for (const key of SECRET_KEYS) {
+    settings[`${key}Set`] = settings[key] ? "true" : "false";
+    settings[key] = "";
+  }
+  return settings;
+}
 
 // GET /api/settings — obtener toda la configuración (público, lo necesita el frontend)
 const getSettings = async (req, res) => {
   try {
-    const rows = await prisma.siteConfig.findMany();
-    const settings = { ...DEFAULTS };
-    rows.forEach((r) => {
-      settings[r.key] = r.value;
-    });
-    res.json(settings);
+    res.json(await readSettings());
   } catch (err) {
     console.error("Error al obtener configuración:", err);
     res.status(500).json({ error: "Error al obtener configuración" });
@@ -69,24 +89,39 @@ const updateSettings = async (req, res) => {
 
     for (const [key, value] of Object.entries(updates)) {
       if (!allowedKeys.includes(key)) continue; // ignorar keys desconocidas
+      // Los secretos nunca llegan al panel, así que al guardar el resto vuelven vacíos: vacío = no tocar.
+      if (SECRET_KEYS.includes(key) && String(value).trim() === "") continue;
       await prisma.siteConfig.upsert({
         where: { key },
         update: { value: String(value) },
         create: { key, value: String(value) },
       });
     }
+    // Borrado explícito de un secreto ("Quitar token" en el panel).
+    for (const key of SECRET_KEYS) {
+      if (updates[`${key}Clear`] === "true") {
+        await prisma.siteConfig.deleteMany({ where: { key } });
+      }
+    }
 
     // Devolver la configuración actualizada
-    const rows = await prisma.siteConfig.findMany();
-    const settings = { ...DEFAULTS };
-    rows.forEach((r) => {
-      settings[r.key] = r.value;
-    });
-    res.json(settings);
+    res.json(await readSettings());
   } catch (err) {
     console.error("Error al guardar configuración:", err);
     res.status(500).json({ error: "Error al guardar configuración" });
   }
 };
 
-module.exports = { getSettings, updateSettings };
+// POST /api/settings/meta/test — manda un evento de prueba a Meta con el Pixel y el token guardados
+// (solo admin). Si algo está mal configurado, Meta devuelve el motivo y se muestra tal cual.
+const testMetaConnection = async (req, res) => {
+  try {
+    const { testConnection } = require("../services/meta.service");
+    const result = await testConnection();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: err.message || "No se pudo conectar con Meta" });
+  }
+};
+
+module.exports = { getSettings, updateSettings, testMetaConnection };
