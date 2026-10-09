@@ -9,9 +9,10 @@
 -- No toca datos existentes. La configuración (ID del Pixel, token) se guarda en site_config desde
 -- Admin → Configuración → Meta / Instagram, sin migración.
 --
+-- En el VPS nuevo (desde el 08/10/2026, Postgres en el contenedor igwtstore_db — ver DEPLOY.md):
 --   ~/Ecommerce_mm/backend/scripts/backup-db.sh
---   psql -U ecommerce_user -d ecommerce_db -h localhost --single-transaction -v ON_ERROR_STOP=1 \
---     -f ~/Ecommerce_mm/backend/scripts/migracion-meta-pixel.sql
+--   docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db \
+--     --single-transaction -v ON_ERROR_STOP=1 < ~/Ecommerce_mm/backend/scripts/migracion-meta-pixel.sql
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "metaBrowser" JSONB;
