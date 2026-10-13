@@ -9,6 +9,8 @@ const { isVideoMime } = require("../middleware/upload.middleware");
 const { descendantIdsBySlugs } = require("../utils/categoryTree");
 // Qué precios (costo, mayoristas) puede ver quien pide. Ver utils/productPrivacy.js.
 const { resolvePriceViewer, sanitizeProductForViewer, effectiveVisibleFor } = require("../utils/productPrivacy");
+// Orden por relevancia de los resultados de búsqueda. Ver utils/searchRelevance.js.
+const { sortBySearchRelevance } = require("../utils/searchRelevance");
 
 const prisma = new PrismaClient();
 
@@ -305,6 +307,16 @@ async function getProducts(req, res) {
     // y ordenar con orderBy de Prisma, que es lo único que escala de verdad.
     const PRICE_SORT_MAX_ROWS = 2000;
     const byPrice = sortPrice === "asc" || sortPrice === "desc";
+    // RELEVANCIA (solo con búsqueda): antes el resultado de buscar "cable" salía por fecha de alta,
+    // así que los cargadores y power banks "CON CABLE" cargados la semana pasada aparecían antes
+    // que los cables. Ahora, si hay término de búsqueda y no se pidió otro orden explícito (ni por
+    // precio), se puntúa cada resultado (nombre que empieza con la palabra, categoría que coincide,
+    // mención como accesorio...) y se ordena por ese puntaje. Ver utils/searchRelevance.js.
+    // Como el orden por precio, se resuelve en memoria sobre el conjunto que matchea (una búsqueda
+    // devuelve decenas o cientos de productos, no el catálogo entero) con el mismo techo de filas.
+    // Un sortOrder=relevance SIN búsqueda cae al default (más nuevo primero).
+    const byRelevance = !!search && !byPrice && (!sortOrder || sortOrder === "relevance");
+    const sortInMemory = byPrice || byRelevance;
     let orderBy;
     if (sortOrder === "az")          orderBy = { name: "asc" };
     else if (sortOrder === "za")     orderBy = { name: "desc" };
@@ -346,7 +358,8 @@ async function getProducts(req, res) {
         // categorías en cada request — y /products está exento del rate limiter, así que
         // ?sortPrice=asc en bucle era una forma trivial de voltear el servidor desde afuera.
         // Ahora hay un techo duro: se ordena sobre los PRICE_SORT_MAX_ROWS productos más nuevos.
-        ...(byPrice ? { take: PRICE_SORT_MAX_ROWS } : { skip, take: safeLimit }),
+        // El orden por relevancia (búsqueda) usa el mismo camino: trae el conjunto y pagina en memoria.
+        ...(sortInMemory ? { take: PRICE_SORT_MAX_ROWS } : { skip, take: safeLimit }),
       }),
       prisma.product.count({ where }),
     ]);
@@ -439,11 +452,18 @@ async function getProducts(req, res) {
       cards = cards.slice(skip, skip + safeLimit);
     }
 
-    // Con orden por precio solo se ordenaron hasta PRICE_SORT_MAX_ROWS productos, así que las páginas
-    // que caen más allá de ese techo vendrían vacías. Se acota el total de páginas a las que de verdad
-    // tienen contenido, para que el paginador no ofrezca páginas en blanco. `total` se informa real:
-    // es la cantidad de productos que matchean el filtro, que es lo que muestra el encabezado.
-    const pageableTotal = byPrice ? Math.min(total, PRICE_SORT_MAX_ROWS) : total;
+    // Orden por relevancia de la búsqueda: puntaje por nombre/categoría (ver utils/searchRelevance.js);
+    // a igual puntaje se conserva "más nuevo primero", que es como vinieron de la consulta.
+    if (byRelevance) {
+      cards = sortBySearchRelevance(cards, search).slice(skip, skip + safeLimit);
+    }
+
+    // Con orden en memoria (precio o relevancia) solo se ordenaron hasta PRICE_SORT_MAX_ROWS productos,
+    // así que las páginas que caen más allá de ese techo vendrían vacías. Se acota el total de páginas
+    // a las que de verdad tienen contenido, para que el paginador no ofrezca páginas en blanco.
+    // `total` se informa real: es la cantidad de productos que matchean el filtro, que es lo que
+    // muestra el encabezado.
+    const pageableTotal = sortInMemory ? Math.min(total, PRICE_SORT_MAX_ROWS) : total;
 
     res.json({
       products: cards,

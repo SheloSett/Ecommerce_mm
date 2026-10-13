@@ -170,8 +170,17 @@ export default function Navbar() {
 
   const handleSearch = (e) => {
     e.preventDefault();
-    if (search.trim()) {
-      navigate(`/catalogo?search=${encodeURIComponent(search.trim())}`);
+    const term = search.trim();
+    if (term) {
+      // Si ya se está en el catálogo, la búsqueda nueva CONSERVA los filtros puestos (categoría,
+      // ofertas, atributos, orden). Antes navegaba a /catalogo?search=... pelado, así que cada
+      // búsqueda volvía a "Todos los productos" y había que elegir la categoría de nuevo. Desde
+      // cualquier otra página se arranca limpio, como siempre.
+      // Antes: navigate(`/catalogo?search=${encodeURIComponent(search.trim())}`);
+      const params = new URLSearchParams(location.pathname === "/catalogo" ? location.search : "");
+      params.set("search", term);
+      params.delete("page"); // resultados nuevos → página 1
+      navigate(`/catalogo?${params.toString()}`);
       setSearch("");
       setShowSuggestions(false);
       setMobileSearchOpen(false);

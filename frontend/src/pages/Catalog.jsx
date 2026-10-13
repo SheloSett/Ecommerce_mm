@@ -152,14 +152,18 @@ export default function Catalog() {
   const currentCategory  = searchParams.get("category") || "";
   // Array de slugs seleccionados (soporta multi-select). Ej. ?category=accesorios|cables
   const selectedCategorySlugs = currentCategory ? currentCategory.split("|").filter(Boolean) : [];
-  const currentSearch    = searchParams.get("search") || "";
+  // currentSearch se define más abajo, junto al orden (el default del orden depende de si hay búsqueda).
   const currentPage      = parseInt(searchParams.get("page") || "1");
   const currentOnSale    = searchParams.get("onSale") === "true";
   const currentLowStock  = searchParams.get("lowStock") === "true";
   // Campaña de oferta elegida en el filtro (?offerId=N). Es excluyente entre campañas: se filtra
   // por una sola, igual que no tiene sentido pedir "productos de la campaña A Y de la B".
   const currentOfferId   = searchParams.get("offerId") || "";
-  const currentSortOrder = searchParams.get("sortOrder") || "newest";
+  // Con búsqueda el orden por defecto es "Más relevante" (el backend puntúa cada resultado según
+  // qué tan probable es que sea lo buscado: buscando "cable" van primero los cables y no los
+  // cargadores "CON CABLE" cargados la semana pasada). Sin búsqueda, "más nuevo primero" como antes.
+  const currentSearch    = searchParams.get("search") || "";
+  const currentSortOrder = searchParams.get("sortOrder") || (currentSearch ? "relevance" : "newest");
   const currentSortPrice = searchParams.get("sortPrice") || "";
 
   // Parsear filtros de atributos desde URL: attr_Color=Negro|Rojo
@@ -270,6 +274,8 @@ export default function Catalog() {
     // Al cambiar un FILTRO se vuelve a la página 1. Pero si lo que se está cambiando ES la
     // página (paginación), NO hay que borrarla — si no, nunca se puede pasar de la página 1.
     if (key !== "page") newParams.delete("page");
+    // "Más relevante" solo tiene sentido con búsqueda: al limpiarla se vuelve al orden por defecto.
+    if (key === "search" && !value && newParams.get("sortOrder") === "relevance") newParams.delete("sortOrder");
     setSearchParams(newParams);
   };
 
@@ -302,7 +308,18 @@ export default function Catalog() {
     setSearchParams(newParams);
   };
 
-  const clearAllFilters = () => setSearchParams({});
+  // "Limpiar todos los filtros" limpia FILTROS (categorías, ofertas, stock, atributos). La búsqueda
+  // no es un filtro y se conserva — antes la borraba también, así que para sacar una categoría y
+  // seguir buscando lo mismo había que volver a escribirlo. Para borrar la búsqueda está su propia
+  // cruz ("Limpiar búsqueda"). El orden elegido tampoco es un filtro y se mantiene.
+  const clearAllFilters = () => {
+    const kept = {};
+    for (const key of ["search", "sortOrder", "sortPrice"]) {
+      const v = searchParams.get(key);
+      if (v) kept[key] = v;
+    }
+    setSearchParams(kept);
+  };
 
   // Antes recorría a mano dos niveles (la raíz y su `children`), así que el nombre de una categoría
   // de tercer nivel no se encontraba y el título del catálogo decía "Catálogo" en vez del nombre.
@@ -347,6 +364,10 @@ export default function Catalog() {
   );
 
   const hasAnyFilter = currentCategory || currentSearch || currentOnSale || currentLowStock || currentOfferId || totalAttrFilters > 0;
+  // Filtros propiamente dichos (sin contar la búsqueda): deciden si se muestra "Limpiar todos los
+  // filtros", que ya no borra la búsqueda — con solo una búsqueda activa el botón no tendría nada
+  // que limpiar.
+  const hasAnyNonSearchFilter = currentCategory || currentOnSale || currentLowStock || currentOfferId || totalAttrFilters > 0;
 
   // Campaña actualmente filtrada (para el título del listado)
   const currentOffer = activeOffers.find((o) => String(o.id) === currentOfferId) || null;
@@ -357,8 +378,8 @@ export default function Catalog() {
   // de las secciones colapsables (FilterSection) en cada actualización de filtros.
   const renderSidebar = () => (
     <div className="space-y-0">
-      {/* Limpiar todos los filtros */}
-      {hasAnyFilter && (
+      {/* Limpiar todos los filtros (no la búsqueda: para eso está "Limpiar búsqueda") */}
+      {hasAnyNonSearchFilter && (
         <div className="pb-3 mb-1 border-b border-[#bdcaba]/40">
           <button
             onClick={clearAllFilters}
@@ -518,7 +539,7 @@ export default function Catalog() {
             >
               <span className="material-symbols-outlined text-[18px]">filter_list</span>
               Filtros
-              {hasAnyFilter && (
+              {hasAnyNonSearchFilter && (
                 <span className="bg-[#00873a] text-white text-xs rounded-full px-1.5 py-0.5 font-bold">
                   {selectedCategorySlugs.length + (currentOnSale ? 1 : 0) + (currentLowStock ? 1 : 0) + totalAttrFilters}
                 </span>
@@ -603,6 +624,8 @@ export default function Catalog() {
                     onChange={(e) => setFilter("sortOrder", e.target.value)}
                     className="text-sm border border-[#bdcaba]/50 rounded-lg px-3 py-1.5 bg-white text-[#0b1c30] focus:outline-none focus:ring-2 focus:ring-[#006b2c]/30"
                   >
+                    {/* Solo con búsqueda: es el orden por defecto de los resultados */}
+                    {currentSearch && <option value="relevance">Más relevante</option>}
                     <option value="newest">Más nuevo a más viejo</option>
                     <option value="oldest">Más viejo a más nuevo</option>
                     <option value="az">Nombre: A → Z</option>
