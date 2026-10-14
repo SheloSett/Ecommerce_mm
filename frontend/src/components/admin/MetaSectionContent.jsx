@@ -137,9 +137,11 @@ export default function MetaSectionContent() {
         <div>
           <h3 className="font-bold text-slate-800 text-base">Pixel y API de conversiones</h3>
           <p className="text-sm text-slate-500 mt-1">
-            Con el ID del Pixel la tienda registra las visitas, las vistas de producto, los carritos y las
-            compras. Con el token, además, el servidor le avisa a Meta cada compra aprobada (también
-            las que se pagan por transferencia o efectivo, y las que el navegador no llegó a informar).
+            Con el ID del Pixel la tienda registra las visitas, las vistas de producto, los carritos, las
+            compras y los clics en WhatsApp (evento «Contact»: sirve para optimizar los anuncios que llevan
+            a WhatsApp). Con el token, además, el servidor le avisa a Meta cada compra aprobada (también
+            las que se pagan por transferencia o efectivo, y las que el navegador no llegó a informar) y
+            cada clic en WhatsApp, aunque un bloqueador haya frenado el Pixel.
           </p>
         </div>
 

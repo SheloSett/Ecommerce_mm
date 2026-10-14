@@ -156,6 +156,96 @@ function buildPurchasePayload(order, { eventSourceUrl, testEventCode, now = Date
   return payload;
 }
 
+// ── Contact: clic en un link de WhatsApp ─────────────────────────────────────
+// La mayoría de las ventas cierran por WhatsApp, así que la consulta es lo que más vale medir. El
+// Pixel manda "Contact" con un eventID "wa-<único>" y el navegador le pasa el MISMO id al backend
+// (POST /api/events/contact); acá se arma el mismo evento para la API de conversiones. Meta
+// deduplica por event_id + nombre, así cada clic cuenta una vez aunque llegue por los dos lados — y
+// cuenta igual si un bloqueador frenó el Pixel, porque el envío al servidor sale lo mismo.
+const CONTACT_EVENT_ID_RE = /^wa-[a-z0-9]{10,40}$/;
+function isContactEventId(id) {
+  return typeof id === "string" && CONTACT_EVENT_ID_RE.test(id);
+}
+
+// Función pura, testeable.
+//   customer : registro del cliente logueado (id, name, email, phone) tomado de la BASE, nunca del
+//              body — el navegador no manda datos personales. null si es anónimo.
+//   browser  : lo que devuelve browserDataFromRequest (cookies del Pixel + IP + navegador).
+//   path     : ruta de la tienda desde la que se hizo clic ("/producto/x?y=1"). Solo se acepta una
+//              ruta relativa de la tienda; cualquier otra cosa cae a "/".
+//   productId: si el clic vino desde la ficha de un producto, su id (mismo id que ViewContent y el feed).
+function buildContactPayload({ eventId, path, productId, hasVariants, browser, customer, testEventCode, now = Date.now() } = {}) {
+  const userData = {};
+  if (customer && typeof customer === "object") {
+    const em = hashEmail(customer.email);
+    if (em) userData.em = [em];
+    const ph = hashPhone(customer.phone);
+    if (ph) userData.ph = [ph];
+    const { fn, ln } = hashName(customer.name);
+    if (fn) userData.fn = [fn];
+    if (ln) userData.ln = [ln];
+    if (customer.id) userData.external_id = [sha256(String(customer.id))];
+  }
+  userData.country = [sha256("ar")];
+  const b = browser && typeof browser === "object" ? browser : {};
+  if (b.ip) userData.client_ip_address = b.ip;
+  if (b.ua) userData.client_user_agent = b.ua;
+  if (b.fbp) userData.fbp = b.fbp;
+  if (b.fbc) userData.fbc = b.fbc;
+
+  const customData = { contact_channel: "whatsapp" };
+  const pid = parseInt(productId);
+  if (Number.isInteger(pid) && pid > 0) {
+    customData.content_ids = [String(pid)];
+    customData.content_type = hasVariants ? "product_group" : "product";
+  }
+
+  const safePath = typeof path === "string" && /^\/(?!\/)/.test(path) ? path.slice(0, 300) : "/";
+
+  const event = {
+    event_name: "Contact",
+    event_time: Math.floor(now / 1000),
+    event_id: eventId,
+    action_source: "website",
+    event_source_url: `${SITE_URL}${safePath}`,
+    user_data: userData,
+    custom_data: customData,
+  };
+
+  const payload = { data: [event] };
+  if (testEventCode) payload.test_event_code = testEventCode;
+  return payload;
+}
+
+// Manda el Contact de un clic. customerId: del token verificado (events.controller), o null.
+// Nunca tira: devuelve { ok } o { skipped } o { error } y loguea.
+async function sendContactEvent({ eventId, path, productId, hasVariants, browser, customerId } = {}) {
+  if (!isContactEventId(eventId)) return { skipped: "eventId inválido" };
+  try {
+    const settings = await getMetaSettings();
+    if (!settings.pixelId || !settings.token) return { skipped: "sin configurar" };
+
+    let customer = null;
+    const cid = parseInt(customerId);
+    if (Number.isInteger(cid) && cid > 0) {
+      customer = await prisma.customer.findUnique({
+        where: { id: cid },
+        select: { id: true, name: true, email: true, phone: true, type: true },
+      });
+      // Misma regla que las compras: los mayoristas no se informan salvo que el admin lo pida.
+      if (customer?.type === "MAYORISTA" && !settings.trackWholesale) return { skipped: "mayorista" };
+    }
+
+    const payload = buildContactPayload({ eventId, path, productId, hasVariants, browser, customer, testEventCode: settings.testEventCode });
+    const body = await postEvents(settings.pixelId, settings.token, payload);
+    console.log(`[META CAPI] Contact ${eventId}: enviado (${body?.events_received ?? "?"} evento/s)`);
+    return { ok: true };
+  } catch (err) {
+    console.error(`[META CAPI] Contact ${eventId}: no se pudo enviar:`, err.message);
+    return { error: err.message };
+  }
+}
+
 // ── Envío ────────────────────────────────────────────────────────────────────
 async function postEvents(pixelId, token, payload) {
   const url = `${GRAPH_URL}/${GRAPH_VERSION}/${encodeURIComponent(pixelId)}/events`;
@@ -226,6 +316,8 @@ module.exports = {
   getMetaSettings,
   browserDataFromRequest,
   sendPurchaseEvent,
+  sendContactEvent,
+  isContactEventId,
   testConnection,
-  _internals: { buildPurchasePayload, hashEmail, hashPhone, hashName, contentIdFor, GRAPH_VERSION },
+  _internals: { buildPurchasePayload, buildContactPayload, isContactEventId, hashEmail, hashPhone, hashName, contentIdFor, GRAPH_VERSION },
 };

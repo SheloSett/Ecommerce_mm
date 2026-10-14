@@ -105,6 +105,83 @@ describe("API de conversiones — Purchase", () => {
   });
 });
 
+describe("API de conversiones — Contact (clic en WhatsApp)", () => {
+  const customer = { id: 7, name: " Juan Pérez ", email: "Juan@Gmail.com", phone: "11 5039-5166", type: "MINORISTA" };
+  const browser = { fbp: "fb.1.1700000000000.123456", fbc: "fb.1.1700000000000.AbC_dEf", ip: "190.1.2.3", ua: "Mozilla/5.0" };
+
+  test("desde la ficha de un producto: lleva el producto, los datos hasheados y el event_id del Pixel", () => {
+    const payload = meta.buildContactPayload({
+      eventId: "wa-m2abc123xyz789", path: "/producto/cable-usb-c?v=2", productId: "10", hasVariants: true,
+      browser, customer, now: 1_700_000_000_000,
+    });
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.test_event_code, undefined);
+    const ev = payload.data[0];
+    assert.equal(ev.event_name, "Contact");
+    assert.equal(ev.event_id, "wa-m2abc123xyz789");
+    assert.equal(ev.event_time, 1_700_000_000);
+    assert.equal(ev.action_source, "website");
+    assert.match(ev.event_source_url, /^https?:\/\/[^/]+\/producto\/cable-usb-c\?v=2$/);
+    // El cliente logueado sale de la base, hasheado; nada en claro
+    assert.deepEqual(ev.user_data.em, [sha("juan@gmail.com")]);
+    assert.deepEqual(ev.user_data.ph, [sha("541150395166")]);
+    assert.deepEqual(ev.user_data.fn, [sha("juan")]);
+    assert.deepEqual(ev.user_data.ln, [sha("pérez")]);
+    assert.deepEqual(ev.user_data.external_id, [sha("7")]);
+    assert.equal(JSON.stringify(ev).includes("Juan"), false);
+    assert.equal(JSON.stringify(ev).includes("gmail"), false);
+    assert.equal(ev.user_data.fbp, browser.fbp);
+    assert.equal(ev.user_data.fbc, browser.fbc);
+    assert.equal(ev.user_data.client_ip_address, "190.1.2.3");
+    assert.equal(ev.user_data.client_user_agent, "Mozilla/5.0");
+    // El producto, con el mismo id que ViewContent y el feed
+    assert.deepEqual(ev.custom_data.content_ids, ["10"]);
+    assert.equal(ev.custom_data.content_type, "product_group");
+    assert.equal(ev.custom_data.contact_channel, "whatsapp");
+  });
+
+  test("visitante anónimo desde el inicio: sin datos personales ni producto, con la página de origen", () => {
+    const payload = meta.buildContactPayload({
+      eventId: "wa-m2abc123xyz789", path: "/", browser: { ip: "1.1.1.1", ua: "UA" }, testEventCode: "TEST1",
+    });
+    const ev = payload.data[0];
+    assert.equal(ev.user_data.em, undefined);
+    assert.equal(ev.user_data.ph, undefined);
+    assert.equal(ev.user_data.external_id, undefined);
+    assert.equal(ev.user_data.fbp, undefined);
+    assert.equal(ev.user_data.client_ip_address, "1.1.1.1");
+    assert.equal(ev.custom_data.content_ids, undefined);
+    assert.equal(ev.custom_data.content_type, undefined);
+    assert.equal(ev.custom_data.contact_channel, "whatsapp");
+    assert.match(ev.event_source_url, /^https?:\/\/[^/]+\/$/);
+    assert.equal(payload.test_event_code, "TEST1");
+  });
+
+  test("producto sin variantes va como product; un productId inválido no agrega nada", () => {
+    const con = meta.buildContactPayload({ eventId: "wa-x", productId: 5, hasVariants: false }).data[0];
+    assert.deepEqual(con.custom_data.content_ids, ["5"]);
+    assert.equal(con.custom_data.content_type, "product");
+    const sin = meta.buildContactPayload({ eventId: "wa-x", productId: "abc" }).data[0];
+    assert.equal(sin.custom_data.content_ids, undefined);
+  });
+
+  test("una ruta que no es de la tienda no se usa como página de origen", () => {
+    for (const path of ["//evil.com/x", "https://evil.com", "evil", "", null, 42]) {
+      const ev = meta.buildContactPayload({ eventId: "wa-x", path }).data[0];
+      assert.match(ev.event_source_url, /^https?:\/\/[^/]+\/$/, String(path));
+    }
+  });
+
+  test("el event_id tiene que ser el formato que genera el Pixel", () => {
+    assert.equal(meta.isContactEventId("wa-m2abc123xyz789"), true);
+    assert.equal(meta.isContactEventId("order-123"), false);
+    assert.equal(meta.isContactEventId("wa-<script>"), false);
+    assert.equal(meta.isContactEventId("wa-abc"), false);
+    assert.equal(meta.isContactEventId(""), false);
+    assert.equal(meta.isContactEventId(null), false);
+  });
+});
+
 describe("Datos del navegador que guarda el checkout", () => {
   const req = { ip: "10.0.0.1", headers: { "user-agent": "UA/1.0" } };
 

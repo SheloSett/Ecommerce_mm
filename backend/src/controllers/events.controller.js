@@ -1,7 +1,8 @@
 // ─── Eventos de la tienda + presencia en vivo ─────────────────────────────────
 // Endpoints PÚBLICOS que llama el storefront:
-//   POST /api/events       → guarda una búsqueda o una vista de producto en store_events
-//   POST /api/events/ping  → "sigo acá": mantiene en memoria quién está mirando qué página
+//   POST /api/events         → guarda una búsqueda o una vista de producto en store_events
+//   POST /api/events/ping    → "sigo acá": mantiene en memoria quién está mirando qué página
+//   POST /api/events/contact → clic en un link de WhatsApp: se reenvía a Meta como "Contact"
 //
 // La presencia NO se guarda en la base: es un mapa en memoria del proceso (sessionId → última
 // señal). Cada visitante manda un ping al cambiar de página y cada ~25 s; si pasan más de
@@ -12,6 +13,8 @@
 // se usa; si no, el visitante es anónimo. Así nadie puede "firmar" eventos como otro cliente.
 const { PrismaClient } = require("@prisma/client");
 const jwt = require("jsonwebtoken");
+// Contact de Meta (clic en WhatsApp): el armado y el envío viven en services/meta.service.js.
+const { browserDataFromRequest, sendContactEvent, isContactEventId } = require("../services/meta.service");
 
 const prisma = new PrismaClient();
 
@@ -104,6 +107,33 @@ function ping(req, res) {
   res.json({ ok: true });
 }
 
+// POST /api/events/contact — clic en un link de WhatsApp de la tienda.
+// El Pixel ya mandó "Contact" con este eventId desde el navegador; acá se reenvía el mismo evento a
+// la API de conversiones de Meta, que lo cuenta una sola vez. Se responde enseguida y el envío va en
+// segundo plano: nunca demora ni rompe nada del lado del visitante. Si Meta no está configurado, el
+// servicio lo saltea. El cliente (si hay) sale del token verificado, nunca del body; las cookies del
+// Pixel y la IP/navegador se validan igual que en el checkout (browserDataFromRequest).
+function contact(req, res) {
+  const { eventId, path, productId, hasVariants } = req.body || {};
+  if (!isContactEventId(eventId)) return res.status(400).json({ error: "eventId inválido" });
+  let pid = null;
+  if (productId !== undefined && productId !== null && productId !== "") {
+    pid = Number(productId);
+    if (!Number.isInteger(pid) || pid <= 0) return res.status(400).json({ error: "productId inválido" });
+  }
+  const customer = customerFromReq(req);
+  const browser = browserDataFromRequest(req, req.body);
+  res.status(202).json({ ok: true });
+  sendContactEvent({
+    eventId,
+    path: cleanStr(path, 300),
+    productId: pid,
+    hasVariants: hasVariants === true,
+    browser,
+    customerId: customer?.id ?? null,
+  }).catch(() => {});
+}
+
 function sweep(now = Date.now()) {
   for (const [k, v] of presence) if (now - v.lastSeen > PRESENCE_TTL_MS) presence.delete(k);
 }
@@ -117,4 +147,4 @@ function livePresence() {
     .sort((a, b) => a.firstSeen - b.firstSeen);
 }
 
-module.exports = { track, ping, livePresence, PRESENCE_TTL_MS };
+module.exports = { track, ping, contact, livePresence, PRESENCE_TTL_MS };

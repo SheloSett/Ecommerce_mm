@@ -235,6 +235,8 @@ export default function Footer({ light = false, noMargin = false }) {
                 target="_blank" rel="noopener noreferrer"
                 className={`${w.socialLink} flex items-center gap-1 text-xs`}
                 title="WhatsApp del desarrollador"
+                // No es una consulta a la tienda: no cuenta como "Contact" para Meta (ver MetaPixel.jsx)
+                data-meta-contact="off"
               >
                 {/* WhatsApp icon del desarrollador */}
                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">

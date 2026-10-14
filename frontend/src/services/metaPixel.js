@@ -1,8 +1,8 @@
 // ─── Meta Pixel (Facebook / Instagram) ───────────────────────────────────────
 // Carga el Pixel de Meta en la tienda y manda los eventos estándar de e-commerce: PageView,
-// ViewContent (ficha de producto), AddToCart, InitiateCheckout y Purchase. Con eso Meta puede medir
-// qué anuncios terminan en compras, armar públicos (quién vio tal producto y no compró) y mostrar
-// anuncios dinámicos del catálogo.
+// ViewContent (ficha de producto), AddToCart, InitiateCheckout, Purchase y Contact (clic en un link
+// de WhatsApp). Con eso Meta puede medir qué anuncios terminan en compras o en consultas, armar
+// públicos (quién vio tal producto y no compró) y mostrar anuncios dinámicos del catálogo.
 //
 // Todo es "fire and forget": si el Pixel no está configurado, no cargó o un bloqueador lo frenó,
 // cada función no hace nada. Nunca bloquea la UI ni muestra errores al visitante.
@@ -18,9 +18,23 @@
 //    conversiones (backend meta.service): sin variante "<productId>"; con variante
 //    "<productId>-<variantId>". Un producto con variantes se ve como "product_group" (= item_group_id).
 //  - Purchase lleva eventID "order-<id>", igual que el que manda el servidor: Meta lo cuenta una vez.
+//  - Contact (clic en WhatsApp) lleva eventID "wa-<único>" y el MISMO id viaja al backend
+//    (POST /api/events/contact), que lo reenvía por la API de conversiones: Meta deduplica. El
+//    envío al servidor sale aunque un bloqueador haya frenado el Pixel, así la consulta igual se
+//    mide; pero nunca con sesión de admin ni si no hay Pixel configurado.
 
 const PIXEL_SRC = "https://connect.facebook.net/en_US/fbevents.js";
-const state = { pixelId: null, loaded: false, commerce: true, lastPageViewPath: null };
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const state = {
+  pixelId: null,
+  loaded: false,
+  configured: false,     // hay un ID de Pixel válido en la configuración
+  admin: false,          // el navegador tiene sesión de admin: no se mide nada
+  commerce: true,
+  lastPageViewPath: null,
+  currentProduct: null,  // ficha de producto abierta: { id, name, hasVariants } (para Contact)
+  lastContact: null,     // { href, at } del último clic en WhatsApp (evita el doble disparo)
+};
 
 function isAdminBrowser() {
   try { return !!localStorage.getItem("admin_token"); } catch { return false; }
@@ -50,7 +64,9 @@ function loadScript() {
 export function configureMetaPixel({ pixelId, commerceEvents = true } = {}) {
   state.commerce = commerceEvents !== false;
   const id = String(pixelId || "").trim();
-  if (!id || !/^\d{5,20}$/.test(id) || isAdminBrowser()) return;
+  state.configured = !!id && /^\d{5,20}$/.test(id);
+  state.admin = isAdminBrowser();
+  if (!state.configured || state.admin) return;
   if (state.loaded) return;
   try {
     loadScript();
@@ -93,7 +109,11 @@ export function pixelPageView(path) {
 
 // Ficha de producto
 export function pixelViewContent({ id, name, price, currency, hasVariants, category } = {}) {
-  if (!state.commerce || !id) return;
+  if (!id) return;
+  // Se recuerda qué ficha está abierta para que un clic en WhatsApp desde acá lleve el producto.
+  // MetaPixel.jsx lo limpia al salir de /producto/.
+  state.currentProduct = { id: String(id), name: name || undefined, hasVariants: !!hasVariants };
+  if (!state.commerce) return;
   fire("ViewContent", {
     content_ids: [String(id)],
     content_type: hasVariants ? "product_group" : "product",
@@ -155,6 +175,70 @@ export function pixelPurchase(order) {
     currency,
     order_id: String(order.id),
   }, { eventID: `order-${order.id}` });
+}
+
+export function clearPixelCurrentProduct() {
+  state.currentProduct = null;
+}
+
+// ¿Es un link a WhatsApp? wa.me, api.whatsapp.com, web.whatsapp.com, whatsapp.com y el esquema
+// whatsapp:// de la app. Cualquier otra cosa (incluido un href relativo de la tienda) no cuenta.
+export function isWhatsAppLink(href) {
+  const h = String(href || "").trim();
+  if (!h) return false;
+  if (/^whatsapp:/i.test(h)) return true;
+  try {
+    const host = new URL(h, window.location.href).hostname.toLowerCase();
+    return host === "wa.me" || host === "whatsapp.com" || host.endsWith(".whatsapp.com");
+  } catch {
+    return false;
+  }
+}
+
+// Clic en un link de WhatsApp → "Contact". Va por el Pixel (si cargó) y por el servidor (API de
+// conversiones) con el mismo eventID, así Meta lo cuenta una sola vez. Si el clic viene desde la
+// ficha de un producto, lleva el producto en content_ids (mismo id que ViewContent y el feed).
+// No manda datos personales: el servidor suma lo que corresponda, hasheado, si el cliente está
+// logueado. Sigue las mismas reglas que el resto: nada con sesión de admin, nada sin Pixel
+// configurado, y para mayoristas solo si el admin pidió incluirlos.
+export function pixelContact({ href } = {}) {
+  if (!state.configured || state.admin || !state.commerce) return;
+  // Doble clic o dos handlers sobre el mismo link en menos de 1,5 s: una sola consulta.
+  const now = Date.now();
+  if (state.lastContact && state.lastContact.href === href && now - state.lastContact.at < 1500) return;
+  state.lastContact = { href, at: now };
+
+  // "wa-" + tiempo en base 36 + 12 caracteres al azar: único por clic y con un formato fijo que el
+  // backend valida (isContactEventId). Mismo valor para el Pixel y para el servidor.
+  let rnd = "";
+  while (rnd.length < 12) rnd += Math.random().toString(36).slice(2);
+  const eventId = `wa-${now.toString(36)}${rnd.slice(0, 12)}`;
+  const product = state.currentProduct;
+  const data = { contact_channel: "whatsapp" };
+  if (product) {
+    data.content_ids = [product.id];
+    data.content_type = product.hasVariants ? "product_group" : "product";
+    if (product.name) data.content_name = product.name;
+  }
+  fire("Contact", data, { eventID: eventId });
+
+  // Servidor: mismo event_id. keepalive para que llegue aunque la pestaña cambie de página.
+  try {
+    const headers = { "Content-Type": "application/json" };
+    try {
+      const token = localStorage.getItem("customer_token");
+      if (token) headers.Authorization = `Bearer ${token}`;
+    } catch { /* sin token */ }
+    const body = {
+      eventId,
+      path: window.location.pathname + window.location.search,
+      productId: product ? product.id : undefined,
+      hasVariants: product ? product.hasVariants : undefined,
+      ...(getMetaCookies() || {}),
+    };
+    fetch(`${API_URL}/api/events/contact`, { method: "POST", headers, body: JSON.stringify(body), keepalive: true })
+      .catch(() => {});
+  } catch { /* nada */ }
 }
 
 // Cookies que deja el Pixel: _fbp (este navegador) y _fbc (el click en un anuncio). El checkout
