@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals } from "../../utils/orderTotals";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
+import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
 import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
 
 const STATUS_CONFIG = {
@@ -79,6 +80,9 @@ export default function AdminOrders() {
   // descGeneral: descuento sobre toda la cotización, por orden { [orderId]: { type, value } }
   const [descGeneral, setDescGeneral]   = useState({});
   const [savingDesc, setSavingDesc]     = useState(null);
+  // Lo último que se mandó del descuento general, por orden: si el backend lo guardó ajustado (un %
+  // arriba de 100 queda en 100), no se vuelve a mandar en cada vuelta del guardado automático.
+  const descGeneralEnviado = useRef({});
   const [savingItem, setSavingItem]     = useState(null);
   // dirtyOrders: set de orderId que tuvieron cambios sin publicar al cliente
   const [dirtyOrders, setDirtyOrders] = useState(new Set());
@@ -750,31 +754,50 @@ export default function AdminOrders() {
     return d > 0 ? Math.round((parseFloat(lista) || 0) * (1 - d / 100) * 100) / 100 : (parseFloat(lista) || 0);
   };
 
-  const handleSaveQty = async (orderId, itemId, item) => {
-    const qty = parseInt(editingQty[itemId]);
-    if (!qty || qty < 1) { toast.error("La cantidad debe ser al menos 1"); return; }
+  // La línea tiene algo editado que todavía no se guardó
+  const tieneCambios = (itemId) =>
+    editingQty[itemId] !== undefined || editingPrice[itemId] !== undefined || editingDesc[itemId] !== undefined;
+
+  // Lo que se guardaría de una línea editada, o { error } si un valor no vale (cantidad vacía o
+  // menor a 1, precio vacío o en 0): esa línea no se guarda hasta que se corrija.
+  const lineaEditada = (item) => {
+    // Antes: parseInt(editingQty[itemId]) a secas; ahora, si la cantidad no se tocó, la que tiene.
+    const qty = editingQty[item.id] !== undefined ? parseInt(editingQty[item.id]) : item.quantity;
+    if (!qty || qty < 1) return { error: "La cantidad debe ser al menos 1" };
     // El input de precio es el de LISTA; el descuento de la línea se aplica encima.
     const listaOriginal = listaDeItem(item);
-    const lista = editingPrice[itemId] !== undefined ? parseFloat(editingPrice[itemId]) : listaOriginal;
-    if (isNaN(lista) || lista <= 0) {
-      toast.error("El precio debe ser mayor a 0");
-      return;
-    }
-    const desc  = editingDesc[itemId] !== undefined ? editingDesc[itemId] : descDeItem(item);
-    const final = precioFinalLinea(lista, desc);
+    const lista = editingPrice[item.id] !== undefined ? parseFloat(editingPrice[item.id]) : listaOriginal;
+    if (isNaN(lista) || lista <= 0) return { error: "El precio debe ser mayor a 0" };
+    const desc = editingDesc[item.id] !== undefined ? editingDesc[item.id] : descDeItem(item);
+    return { qty, lista, listaOriginal, final: precioFinalLinea(lista, desc) };
+  };
+
+  // Antes se llamaba desde el botón "OK" de la línea; ahora desde el guardado automático (más
+  // abajo) y al publicar/aprobar si quedó algo sin guardar. Devuelve false si no se guardó.
+  const handleSaveQty = async (orderId, itemId, item) => {
+    const linea = lineaEditada(item);
+    if (linea.error) { toast.error(linea.error); return false; }
+    const { qty, lista, listaOriginal, final } = linea;
     const priceVal  = final;
     const listPrice = final < lista ? lista : null;
     // Solo se ofrece actualizar el precio del catálogo si cambió el de LISTA (no si solo se puso un
     // descuento: ese descuento es de esta venta, el producto no cambia de precio).
     const cambioLaLista = Math.abs(lista - listaOriginal) > 0.009;
+    // Lo que se manda. Si mientras se guarda se sigue escribiendo, eso queda editado y se guarda en
+    // la vuelta siguiente (por eso abajo solo se suelta lo que no cambió).
+    const enviado = { qty: editingQty[itemId], price: editingPrice[itemId], desc: editingDesc[itemId] };
+    const soltar = (valor) => (prev) => {
+      if (prev[itemId] === undefined || prev[itemId] !== valor) return prev;
+      const n = { ...prev }; delete n[itemId]; return n;
+    };
 
     setSavingItem(itemId);
     try {
       const res = await ordersApi.updateItem(orderId, itemId, qty, priceVal, listPrice);
       setOrders((prev) => prev.map((o) => o.id === orderId ? res.data : o));
-      setEditingQty((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
-      setEditingPrice((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
-      setEditingDesc((prev) => { const n = { ...prev }; delete n[itemId]; return n; });
+      setEditingQty(soltar(enviado.qty));
+      setEditingPrice(soltar(enviado.price));
+      setEditingDesc(soltar(enviado.desc));
       // Marcar la orden como "tiene cambios sin publicar"
       setDirtyOrders((prev) => new Set(prev).add(orderId));
 
@@ -791,32 +814,88 @@ export default function AdminOrders() {
           });
         }
       }
+      return true;
     } catch {
-      toast.error("Error al actualizar");
+      // La línea vuelve a lo guardado: si quedara editada, el guardado automático reintentaría sin fin.
+      toast.error("Error al actualizar — la línea volvió a lo guardado");
+      const quitar = (prev) => { const n = { ...prev }; delete n[itemId]; return n; };
+      setEditingQty(quitar);
+      setEditingPrice(quitar);
+      setEditingDesc(quitar);
+      return false;
     } finally {
       setSavingItem(null);
     }
   };
 
-  // Aplica (o saca) el descuento sobre toda la cotización
+  // Guardado automático de las líneas de cotización: ya no hay botón "OK". Al dejar de tocar la
+  // cantidad, el precio o el descuento por un momento, la línea se guarda sola. De a una línea por
+  // vez (savingItem): lo que se escribió mientras tanto va en la vuelta siguiente. Una línea con un
+  // valor que no vale espera, con el aviso en la misma línea. Tampoco arranca mientras se guarda el
+  // descuento general (savingDesc), que también recalcula los totales.
+  useEffect(() => {
+    if (savingItem !== null || savingDesc !== null) return;
+    if (!Object.keys(editingQty).length && !Object.keys(editingPrice).length && !Object.keys(editingDesc).length) return;
+    const t = setTimeout(() => {
+      for (const order of orders) {
+        const item = (order.items || []).find((i) => tieneCambios(i.id) && !lineaEditada(i).error);
+        if (item) { handleSaveQty(order.id, item.id, item); return; }
+      }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [editingQty, editingPrice, editingDesc, savingItem, savingDesc, orders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lo que se guardaría del descuento general de una cotización, o null si no hay nada nuevo: no se
+  // tocó, ya se mandó, o es igual a lo guardado (ej: se cambió el tipo sin poner valor).
+  // Vacío o 0 = sin descuento.
+  const descGeneralPendiente = (order) => {
+    const d = descGeneral[order.id];
+    if (!d || d === descGeneralEnviado.current[order.id]) return null;
+    const valor   = parseFloat(d.value);
+    const conDesc = d.value !== "" && valor > 0;
+    const nuevo = {
+      manualDiscountType:  conDesc ? d.type : null,
+      manualDiscountValue: conDesc ? valor : null,
+    };
+    const igual = (order.manualDiscountType || null) === nuevo.manualDiscountType
+      && Number(order.manualDiscountValue || 0) === (nuevo.manualDiscountValue || 0);
+    return igual ? null : nuevo;
+  };
+
+  // Aplica (o saca) el descuento sobre toda la cotización. Antes lo llamaba el botón "Aplicar";
+  // ahora el guardado automático (más abajo) y la publicación/aprobación. Devuelve false si falló.
   const handleDescGeneral = async (orderId) => {
-    const d = descGeneral[orderId] || { type: "PERCENTAGE", value: "" };
-    const valor = parseFloat(d.value);
+    const order = orders.find((o) => o.id === orderId);
+    const nuevo = order && descGeneralPendiente(order);
+    if (!nuevo) return true;
+    descGeneralEnviado.current[orderId] = descGeneral[orderId];
     setSavingDesc(orderId);
     try {
-      const res = await ordersApi.updateFields(orderId, {
-        manualDiscountType:  d.value !== "" && valor > 0 ? d.type : null,
-        manualDiscountValue: d.value !== "" && valor > 0 ? valor : null,
-      });
+      const res = await ordersApi.updateFields(orderId, nuevo);
       setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, ...res.data } : o)));
       setDirtyOrders((prev) => new Set(prev).add(orderId));
-      toast.success(d.value && valor > 0 ? "Descuento aplicado" : "Descuento quitado");
+      // Antes: toast.success("Descuento aplicado" / "Descuento quitado"). Guardándose solo saldría uno
+      // por cada pausa al escribir; el desglose de abajo ya muestra lo aplicado.
+      return true;
     } catch (err) {
+      // El campo vuelve a lo guardado, así queda a la vista que no se aplicó.
       toast.error(err.response?.data?.error || "No se pudo aplicar el descuento");
+      setDescGeneral((prev) => { const n = { ...prev }; delete n[orderId]; return n; });
+      return false;
     } finally {
       setSavingDesc(null);
     }
   };
+
+  // Mismo guardado automático para el descuento general (antes tenía su botón "Aplicar"). Espera a
+  // que no se esté guardando ninguna línea: los dos recalculan los totales de la orden.
+  useEffect(() => {
+    if (savingDesc !== null || savingItem !== null) return;
+    const order = orders.find((o) => descGeneralPendiente(o));
+    if (!order) return;
+    const t = setTimeout(() => handleDescGeneral(order.id), 800);
+    return () => clearTimeout(t);
+  }, [descGeneral, savingDesc, savingItem, orders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Actualizar el precio global del producto en la BD
   // priceUpdateTarget determina qué campo(s) actualizar: "minorista" | "mayorista" | "ambos"
@@ -974,6 +1053,13 @@ export default function AdminOrders() {
     const { orderId, action } = noteModal;
     setPublishing(orderId);
     try {
+      // Si quedó una línea o el descuento general sin guardar (el guardado automático espera un
+      // momento), se guarda antes, para no publicar ni aprobar con el precio o el descuento viejo.
+      const pendientes = (orders.find((o) => o.id === orderId)?.items || []).filter((i) => tieneCambios(i.id));
+      for (const item of pendientes) {
+        if (!(await handleSaveQty(orderId, item.id, item))) return;
+      }
+      if (!(await handleDescGeneral(orderId))) return;
       if (action === "publish") {
         // Antes: await ordersApi.publishCotizacion(orderId, noteText); — siempre notificaba.
         // Ahora respeta el botón elegido ("Publicar y notificar" vs "Publicar sin notificar").
@@ -1059,11 +1145,16 @@ export default function AdminOrders() {
   `;
 
   // Abre una ventana de impresión con uno o más bloques <div class="page">.
-  const openOrdersPrint = (title, pagesHtml) => {
+  // soloCotizaciones: la casilla "Módulo / estante" usa la preferencia de las cotizaciones (de
+  // entrada sin tildar) en lugar de la de las órdenes (ver printLocation.js).
+  const openOrdersPrint = (title, pagesHtml, soloCotizaciones = false) => {
     const html = `<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8" /><title>${title}</title><style>${ORDER_PRINT_STYLES}${photoSizeCss(40)}</style></head>
+<html lang="es"><head><meta charset="UTF-8" /><title>${title}</title><style>${ORDER_PRINT_STYLES}${photoSizeCss(40)}${locationCss()}</style></head>
 <body>
 <div class="print-btn" style="position:fixed;top:12px;right:12px;z-index:9999;display:flex;align-items:center;gap:8px">
+  ${soloCotizaciones
+    ? locationControlsHtml(LOCATION_KEYS.cotizaciones, false)
+    : locationControlsHtml(LOCATION_KEYS.orders, true)}
   ${photoSizeControlsHtml(PHOTO_SIZE_KEYS.orders, 40)}
   <button onclick="window.print()" style="background:#1e40af;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimir</button>
 </div>
@@ -1081,8 +1172,10 @@ ${pagesHtml}
   // withPrices = false: sin precio por unidad, sin total por línea y sin totales; la cantidad pasa
   // a la columna de la derecha (se elige en PrintPricesModal).
   const buildOrderPageHTML = (order, withPrices = true) => {
-    // Una cotización se le manda al cliente (impresa o en PDF), así que se imprime distinto: sin la
-    // ubicación en el depósito y con la nota mostrada como "Nota del vendedor" en lugar de interna.
+    // Una cotización se le manda al cliente (impresa o en PDF), así que se imprime distinto: con la
+    // nota mostrada como "Nota del vendedor" en lugar de interna. La ubicación en el depósito ya no
+    // se saca acá: se elige en la hoja con la casilla "Módulo / estante" (de entrada sin tildar en
+    // las cotizaciones).
     const esCotizacion = order.paymentMethod === "COTIZACION";
     const status  = STATUS_CONFIG[order.status]  || { label: order.status };
     const payment = PAYMENT_LABEL[order.paymentMethod] || { label: order.paymentMethod, icon: "" };
@@ -1108,10 +1201,12 @@ ${pagesHtml}
         : `<div class="ph" style="background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
       // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
       // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
-      const mod   = esCotizacion ? null : (item.variant?.module ?? item.product?.module);
-      const shelf = esCotizacion ? null : (item.variant?.shelf  ?? item.product?.shelf);
+      // class="loc": se muestra u oculta con la casilla "Módulo / estante" de la hoja (ver printLocation.js).
+      // Antes: const mod = esCotizacion ? null : (...); — en las cotizaciones no salía nunca.
+      const mod   = item.variant?.module ?? item.product?.module;
+      const shelf = item.variant?.shelf  ?? item.product?.shelf;
       const locHtml = (mod || shelf)
-        ? `<div style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
+        ? `<div class="loc" style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
         : "";
       return `
       <tr>
@@ -1201,11 +1296,12 @@ ${pagesHtml}
   // Abre la hoja de una o más órdenes con los precios o sin ellos.
   const printOrders = (list, withPrices) => {
     const pages = list.map((o) => buildOrderPageHTML(o, withPrices)).join("\n");
+    const soloCotizaciones = list.every((o) => o.paymentMethod === "COTIZACION");
     if (list.length === 1) {
       const titulo = list[0].paymentMethod === "COTIZACION" ? "Cotización" : "Orden";
-      openOrdersPrint(`${titulo} #${list[0].id} — IGWT Store`, pages);
+      openOrdersPrint(`${titulo} #${list[0].id} — IGWT Store`, pages, soloCotizaciones);
     } else {
-      openOrdersPrint(`${list.length} órdenes — IGWT Store`, pages);
+      openOrdersPrint(`${list.length} órdenes — IGWT Store`, pages, soloCotizaciones);
     }
   };
 
@@ -1552,26 +1648,14 @@ ${pagesHtml}
                               );
                             })()}
 
-                            {/* Guardar / Cancelar edición */}
-                            {(editingQty[item.id] !== undefined || editingPrice[item.id] !== undefined || editingDesc[item.id] !== undefined) && (
-                              <>
-                                <button
-                                  onClick={() => handleSaveQty(order.id, item.id, item)}
-                                  disabled={isSaving}
-                                  className="px-2.5 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-60 font-semibold"
-                                >
-                                  {isSaving ? "..." : "OK"}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setEditingQty((p) => { const n = { ...p }; delete n[item.id]; return n; });
-                                    setEditingPrice((p) => { const n = { ...p }; delete n[item.id]; return n; });
-                                    setEditingDesc((p) => { const n = { ...p }; delete n[item.id]; return n; });
-                                  }}
-                                  className="text-slate-400 hover:text-slate-600 text-xs"
-                                >✕</button>
-                              </>
-                            )}
+                            {/* Estado del guardado. Antes acá aparecían los botones "OK" (guardar) y
+                                "✕" (descartar) al tocar algo; ahora la línea se guarda sola (ver el
+                                guardado automático junto a handleSaveQty). */}
+                            {isSaving ? (
+                              <span className="text-xs text-slate-400">guardando...</span>
+                            ) : tieneCambios(item.id) && lineaEditada(item).error ? (
+                              <span className="text-xs font-semibold text-amber-700">⚠ Sin guardar: {lineaEditada(item).error.toLowerCase()}</span>
+                            ) : null}
                           </div>
 
                           {/* Panel de asignación de variantes para cotizaciones mayoristas */}
@@ -1781,14 +1865,10 @@ ${pagesHtml}
                                 placeholder={d.type === "PERCENTAGE" ? "0 %" : "$ 0"}
                                 className="w-28 px-3 py-2 border-2 border-emerald-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
                               />
-                              <button
-                                type="button"
-                                onClick={() => handleDescGeneral(order.id)}
-                                disabled={savingDesc === order.id}
-                                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40 transition-colors"
-                              >
-                                {savingDesc === order.id ? "Aplicando..." : "Aplicar"}
-                              </button>
+                              {/* Antes acá iba el botón "Aplicar"; ahora se guarda solo al dejar de escribir. */}
+                              {savingDesc === order.id && (
+                                <span className="text-xs text-slate-400">guardando...</span>
+                              )}
                             </div>
 
                             {/* Desglose: antes era un solo número que juntaba el descuento de cada
@@ -1831,8 +1911,8 @@ ${pagesHtml}
                               );
                             })()}
                             <p className="text-xs text-slate-400 mt-1.5">
-                              Se aplica sobre el subtotal, además del descuento de cada producto. Dejalo vacío para sacarlo.
-                              Vale solo para esta cotización.
+                              Se aplica sobre el subtotal, además del descuento de cada producto, y se guarda solo al
+                              dejar de escribir. Dejalo vacío para sacarlo. Vale solo para esta cotización.
                             </p>
                           </div>
                         );
