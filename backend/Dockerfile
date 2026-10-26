@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Instalamos OpenSSL porque Prisma lo necesita para ejecutar su motor de base de datos.
 # La imagen node:20-alpine es muy minimal y no lo incluye por defecto.
