@@ -5,7 +5,7 @@ import { formatPrice } from "../../utils/formatPrice";
 // Aplanado recursivo del árbol de categorías para el filtro del picker de productos.
 import { flattenTree, indentedLabel } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
-import CampaignCard from "../../components/CampaignCard";
+import CampaignCard, { EVENT_STYLES } from "../../components/CampaignCard";
 import { CARD_STYLES } from "../../components/CategoryCard";
 
 // Campañas de oferta con vigencia: un conjunto de productos con descuento entre dos fechas.
@@ -36,12 +36,13 @@ const EMPTY_FORM = {
 };
 
 // Estilos de la tarjeta de campaña: los de las categorías (con la explicación adaptada donde hace
-// falta) más "Color propio".
+// falta), los de fecha especial (Black Friday, Cyber Monday) y "Color propio".
 const CAMPAIGN_CARD_STYLES = [
   ...CARD_STYLES.map((s) =>
     s.key === "sale"  ? { ...s, hint: "Rojo con el descuento en amarillo" } :
     s.key === "fresh" ? { ...s, hint: "Verde con un brillo que cruza" } : s
   ),
+  ...EVENT_STYLES,
   { key: "color", label: "Color propio", hint: "El color que elijas; el texto sale blanco o negro según el fondo" },
 ];
 // Atajos para el color propio
@@ -367,6 +368,8 @@ export default function AdminOffers() {
       const sync = res.data?.sync;
       if (sync?.state === "ACTIVA") {
         toast.success(`Campaña activa: ${sync.applied} producto(s) con descuento aplicado`);
+      } else if (!form.active) {
+        toast.success("Campaña guardada pausada — cuando quieras largarla, tocá ▶ en la lista");
       } else {
         toast.success(editing ? "Campaña actualizada" : "Campaña creada");
       }
@@ -719,6 +722,31 @@ export default function AdminOffers() {
                   />
                 </div>
 
+                {/* Activa: antes no estaba en el formulario (solo el ⏸/▶ de la lista) y toda campaña
+                    nueva arrancaba sola al llegar la fecha. Destildada queda armada y en pausa. */}
+                <label
+                  className={`md:col-span-2 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
+                    form.active ? "border-green-500 bg-green-50" : "border-amber-400 bg-amber-50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={form.active}
+                    onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                    className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">
+                      {form.active ? "✅ Campaña activa" : "⏸ Campaña pausada"}
+                    </span>
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      {form.active
+                        ? "Se aplica sola entre las fechas de arriba. Destildala para dejarla lista sin que arranque."
+                        : "Queda guardada y lista, pero no baja precios, no aparece en la tienda ni manda el aviso por email, aunque lleguen las fechas. Para largarla, tocá ▶ en la lista o volvé a tildar esto."}
+                    </span>
+                  </span>
+                </label>
+
                 {/* Sección en el Home: recuadro a todo lo ancho (antes un checkbox suelto en media columna) */}
                 <label
                   className={`md:col-span-2 flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-colors ${
@@ -761,7 +789,12 @@ export default function AdminOffers() {
                         ? `Ya se avisó el ${formatDateTime(form.announcedAt)}. Para mandarlo de nuevo: Emails → Avisos de campañas.`
                         : "Cuando arranca la campaña, les llega un email con el descuento y los productos (a minoristas, mayoristas o los dos, según a quién aplica). Se manda una sola vez y de a poco; lo seguís en Emails → Historial."}
                     </span>
-                    {!form.announcedAt && form.startsAt && new Date(form.startsAt) <= new Date() && (
+                    {/* Antes: sin mirar `active` — con la campaña pausada el aviso no sale al guardar */}
+                    {!form.announcedAt && form.emailAnnounce && !form.active ? (
+                      <span className="block text-xs font-semibold text-amber-700 mt-1">
+                        La campaña queda pausada: el aviso sale cuando la actives (si ya empezó, en el minuto siguiente).
+                      </span>
+                    ) : !form.announcedAt && form.active && form.startsAt && new Date(form.startsAt) <= new Date() && (
                       <span className="block text-xs font-semibold text-amber-700 mt-1">
                         ⚠️ La campaña ya empezó: si lo dejás tildado, el aviso sale apenas guardes.
                       </span>

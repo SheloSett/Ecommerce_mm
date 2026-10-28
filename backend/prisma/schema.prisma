@@ -502,8 +502,9 @@ model Offer {
   endsAt        DateTime
   showInHome    Boolean            @default(true)  // Renderizar una sección propia en el Home
   // Tarjeta grande de la campaña arriba de las categorías del Home (enlaza al catálogo filtrado por
-  // la campaña). cardStyle: los mismos estilos que las tarjetas de categoría (ver CategoryCard.jsx)
-  // o "color" = fondo de un color propio (cardColor, "#rrggbb").
+  // la campaña). cardStyle: los mismos estilos que las tarjetas de categoría (ver CategoryCard.jsx),
+  // "blackfriday" / "cybermonday" (solo campañas, ver CampaignCard.jsx) o "color" = fondo de un
+  // color propio (cardColor, "#rrggbb").
   showCard      Boolean            @default(true)
   cardStyle     String             @default("sale")
   cardColor     String?

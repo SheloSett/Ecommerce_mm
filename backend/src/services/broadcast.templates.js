@@ -279,6 +279,7 @@ function endsText(endsAt) {
 const STYLE_COLORS = {
   normal: "#0b1c30", fire: "#c2410c", sale: "#b3111e", fresh: "#00873a",
   premium: "#15161a", bolt: "#1d4ed8", neon: "#6d28d9", ice: "#0e6ba8",
+  blackfriday: "#000000", cybermonday: "#2a0b5c",
 };
 function heroColor(offer) {
   if (offer.cardStyle === "color" && /^#[0-9a-f]{6}$/i.test(offer.cardColor || "")) return offer.cardColor;

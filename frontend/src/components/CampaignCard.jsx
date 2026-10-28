@@ -5,12 +5,44 @@ import { badgeParts, endsLabel, countdownParts, textColorFor } from "../utils/ca
 import "./category-cards.css";
 
 // ─── Tarjeta grande de una campaña vigente, arriba de las categorías del Home ──────────────────
-// Usa los mismos estilos que las tarjetas de categoría (fuego, oferta, etc.) más "color": un fondo
-// del color que elija el admin (cardColor). Se configura en Admin → Ofertas, en cada campaña.
+// Usa los mismos estilos que las tarjetas de categoría (fuego, oferta, etc.), los de fecha especial
+// (Black Friday, Cyber Monday; ver EVENT_STYLES) y "color": un fondo del color que elija el admin
+// (cardColor). Se configura en Admin → Ofertas, en cada campaña.
 // Enlaza al catálogo filtrado por la campaña.
 //
 // badge: { value, upTo } del público que mira (ver badgeFor en utils/campaignCard.js).
 // preview: en el formulario del admin se dibuja como <div> (sin link) para la vista previa.
+
+// Estilos de fecha especial: solo para campañas (las categorías no los tienen). Llevan una cinta
+// con el nombre del evento que corre arriba de la tarjeta (ver Tape).
+export const EVENT_STYLES = [
+  { key: "blackfriday", label: "Black Friday", hint: "Negro con una cinta amarilla que corre y un brillo dorado que cruza", tape: "BLACK FRIDAY", sep: "★", icon: "shopping_bag" },
+  { key: "cybermonday", label: "Cyber Monday", hint: "Violeta oscuro con grilla de neón, cinta cian y rosa y el título con glitch", tape: "CYBER MONDAY", sep: "✦", icon: "computer" },
+];
+
+// Estilo a dibujar: los de las categorías, los de fecha especial o "color"; cualquier otro → "sale".
+function campaignStyle(offer) {
+  const s = offer.cardStyle;
+  return s === "color" || CARD_STYLES.some((x) => x.key === s) || EVENT_STYLES.some((x) => x.key === s) ? s : "sale";
+}
+const iconFor = (style) => ICON_BY_STYLE[style] || EVENT_STYLES.find((s) => s.key === style)?.icon || "sell";
+
+// Cinta de los estilos de fecha especial: el nombre del evento repetido, corriendo. Van dos tiras
+// iguales una atrás de la otra: al correr la mitad del ancho, la segunda queda donde arrancó la
+// primera y el salto no se nota (ver cc-marquee en category-cards.css).
+function Tape({ text, sep }) {
+  return (
+    <div className="cc-tape" aria-hidden="true">
+      <div className="cc-tape-track">
+        {[0, 1].map((k) => (
+          <span key={k} className="cc-tape-run">
+            {Array.from({ length: 10 }, (_, i) => <span key={i}>{text}<b>{sep}</b></span>)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // Hora actual que se actualiza cada segundo (solo mientras `enabled`), para la cuenta regresiva.
 function useNow(enabled) {
@@ -56,9 +88,7 @@ function Countdown({ parts }) {
 // estilo desconocido → "sale", y "color" pinta el fondo con el color propio (cardColor). Así cada
 // campaña se ve en el filtro con el mismo estilo que se le configuró en Admin → Ofertas.
 export function CampaignChip({ offer, className = "" }) {
-  const style = offer.cardStyle === "color" || CARD_STYLES.some((s) => s.key === offer.cardStyle)
-    ? offer.cardStyle
-    : "sale";
+  const style = campaignStyle(offer);
   const colorVars = style === "color"
     ? { "--cc-bg": offer.cardColor || "#c2185b", "--cc-fg": textColorFor(offer.cardColor || "#c2185b") }
     : undefined;
@@ -66,22 +96,21 @@ export function CampaignChip({ offer, className = "" }) {
     <span className={`cc-chip cc-${style} ${className}`} style={colorVars}>
       {style === "fire" && <Flames />}
       {style === "ice" && <Frost />}
-      <span className="material-symbols-outlined cc-icon">{ICON_BY_STYLE[style] || "sell"}</span>
+      <span className="material-symbols-outlined cc-icon">{iconFor(style)}</span>
       <span className="cc-name">{offer.name}</span>
     </span>
   );
 }
 
 export default function CampaignCard({ offer, badge, preview = false, solo = false }) {
-  const style = offer.cardStyle === "color" || CARD_STYLES.some((s) => s.key === offer.cardStyle)
-    ? offer.cardStyle
-    : "sale";
+  const style = campaignStyle(offer);
+  const event = EVENT_STYLES.find((s) => s.key === style);
   const parts = badgeParts(badge, offer.discountType);
   const withCountdown = offer.showCountdown !== false;
   const now = useNow(withCountdown);
   const countdown = withCountdown ? countdownParts(offer.endsAt, now) : null;
   const ends = endsLabel(offer.endsAt, now);
-  const icon = ICON_BY_STYLE[style] || "sell";
+  const icon = iconFor(style);
 
   // Color propio: el fondo y el color del texto (oscuro si el fondo es claro) van como variables CSS.
   const colorVars = style === "color"
@@ -100,6 +129,8 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
       )}
       {style === "bolt" && <Bolts />}
       {style === "ice" && <Frost />}
+      {style === "cybermonday" && <div className="cc-cyber-grid" aria-hidden="true" />}
+      {event && <Tape text={event.tape} sep={event.sep} />}
 
       <div className="cc-camp-body">
         <span className="material-symbols-outlined cc-icon">{icon}</span>

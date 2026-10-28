@@ -25,8 +25,9 @@ const { resolvePriceViewer } = require("../utils/productPrivacy");
 const prisma = new PrismaClient();
 
 // Estilos de la tarjeta de la campaña en el Home: los mismos que las tarjetas de categoría
-// (frontend/src/components/CategoryCard.jsx → CARD_STYLES) más "color" = fondo de un color propio.
-const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "color"];
+// (frontend/src/components/CategoryCard.jsx → CARD_STYLES), los de fecha especial que son solo de
+// campañas (CampaignCard.jsx → EVENT_STYLES) y "color" = fondo de un color propio.
+const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "blackfriday", "cybermonday", "color"];
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 // ── Validación ────────────────────────────────────────────────────────────────
