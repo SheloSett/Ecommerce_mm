@@ -10,9 +10,16 @@
 // así que da igual cómo esté guardado. Se usa junto con findFirst (findUnique no
 // admite filtros, solo el valor exacto de la columna única).
 
+// OJO: Prisma arma ese ILIKE con el texto tal cual, y en ILIKE "%" es "cualquier cosa" y "_" es
+// "cualquier carácter". Sin escaparlos, el email "%" coincidía con el primer cliente de la tabla
+// (login, registro, "olvidé mi contraseña") y "juan_p@x.com" con "juanXp@x.com". Todo valor que
+// vaya a un equals + mode "insensitive" tiene que pasar por escapeLike.
+const escapeLike = (value) => String(value).replace(/[\\%_]/g, (c) => `\\${c}`);
+
 // Cláusula where reutilizable: { email: { equals: "x@y.com", mode: "insensitive" } }
 function whereEmail(email) {
-  return { email: { equals: String(email || "").trim(), mode: "insensitive" } };
+  // Antes: return { email: { equals: String(email || "").trim(), mode: "insensitive" } };
+  return { email: { equals: escapeLike(String(email || "").trim()), mode: "insensitive" } };
 }
 
 // Busca un cliente por email ignorando mayúsculas. `extra` permite sumar condiciones
@@ -26,4 +33,4 @@ function findUserByEmail(prisma, email, extra = {}) {
   return prisma.user.findFirst({ where: { ...whereEmail(email), ...extra } });
 }
 
-module.exports = { whereEmail, findCustomerByEmail, findUserByEmail };
+module.exports = { whereEmail, findCustomerByEmail, findUserByEmail, escapeLike };

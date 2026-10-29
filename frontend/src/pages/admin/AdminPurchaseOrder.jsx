@@ -6,6 +6,8 @@ import { ordersApi, getImageUrl } from "../../services/api";
 import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
+// Datos del pedido en la hoja: escapados (la variante y el nombre del cliente vienen del checkout)
+import { escapeHtml as esc } from "../../utils/escapeHtml";
 
 const formatDate = (d) =>
   new Date(d).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -155,19 +157,19 @@ export default function AdminPurchaseOrder() {
         // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
         // Antes: width:48px;height:48px fijos, y la celda de la foto de 56px.
         const imgHtml = photo
-          ? `<img src="${getImageUrl(photo)}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0" />`
+          ? `<img src="${esc(getImageUrl(photo))}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0" />`
           : `<div class="ph" style="background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:18px">📦</div>`;
         const cost = itemCost(item);
         const cur  = itemCostCurrency(item);
         const lineTotal = cost * item.quantity;
         const variantHtml = item.variantLabel
-          ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${item.variantLabel.split(" | ").join(" · ")}</div>`
+          ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${esc(item.variantLabel.split(" | ").join(" · "))}</div>`
           : "";
         return `
         <tr>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle;width:calc(var(--ph) + 16px)">${imgHtml}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
-            <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
+            <div style="font-weight:600;font-size:12px;color:#1e293b">${esc(item.product?.name || "Producto")}</div>
             ${variantHtml}
           </td>
           <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:center;vertical-align:middle;white-space:nowrap">
@@ -185,7 +187,7 @@ export default function AdminPurchaseOrder() {
       const subtotal = g.items.reduce((acc, i) => addMoney(acc, i), emptyMoney());
       const subtotalHtml = withCosts
         ? `<div style="text-align:right;padding:5px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 6px 6px;font-size:11px">
-          Subtotal ${g.name}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
+          Subtotal ${esc(g.name)}: <strong style="font-size:13px;color:#1e293b">${moneyHtml(subtotal)}</strong>
         </div>`
         : "";
       // Con recorrido: número de parada delante del nombre y metros desde la parada anterior.
@@ -193,8 +195,8 @@ export default function AdminPurchaseOrder() {
       return `
       <section style="margin-bottom:12px;break-inside:avoid">
         <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">${stopPrefix(route, g.key)}🏭 ${g.name}</span>
-          ${contact ? `<span style="font-size:11px;font-weight:600">${contact}</span>` : ""}
+          <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">${stopPrefix(route, g.key)}🏭 ${esc(g.name)}</span>
+          ${contact ? `<span style="font-size:11px;font-weight:600">${esc(contact)}</span>` : ""}
         </div>
         <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-top:none">
           <tbody>${rows}</tbody>
@@ -255,7 +257,7 @@ export default function AdminPurchaseOrder() {
     <div><div class="logo-name">⚡ IGWT Store</div></div>
     <div>
       <div class="doc-title">Orden de compra · Pedido #${order.id}</div>
-      <div class="meta">${formatDate(order.createdAt)}${order.customerName ? ` · ${order.customerName}` : ""}</div>
+      <div class="meta">${formatDate(order.createdAt)}${order.customerName ? ` · ${esc(order.customerName)}` : ""}</div>
     </div>
   </div>
 

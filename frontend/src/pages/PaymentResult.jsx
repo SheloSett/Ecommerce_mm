@@ -17,8 +17,9 @@ export default function PaymentResult({ type }) {
       // MP devuelve payment_id en la URL al redirigir — lo pasamos al backend para
       // que sincronice el estado de la orden con MP en caso de que el webhook no haya llegado.
       const paymentId = searchParams.get("payment_id") || searchParams.get("collection_id");
+      // k: clave del pedido que el servidor puso en la URL de vuelta; sin ella solo viene el estado.
       paymentsApi
-        .getOrderStatus(orderId, paymentId)
+        .getOrderStatus(orderId, paymentId, searchParams.get("k"))
         .then((res) => {
           setOrder(res.data);
           // Antes: if (type === "success" || res.data.status === "APPROVED") — la dirección de
@@ -27,8 +28,9 @@ export default function PaymentResult({ type }) {
           if (res.data.status === "APPROVED") {
             clearCart();
             // Meta Pixel: compra confirmada. Mismo eventID que manda el servidor ("order-<id>"),
-            // así Meta la cuenta una sola vez aunque lleguen los dos.
-            pixelPurchase(res.data);
+            // así Meta la cuenta una sola vez aunque lleguen los dos. Sin la clave del pedido la
+            // respuesta trae solo el estado: no se manda una compra de $0 (la del servidor llega igual).
+            if (res.data.total != null) pixelPurchase(res.data);
           }
         })
         .catch(console.error)
@@ -107,14 +109,19 @@ export default function PaymentResult({ type }) {
                   <span>Número de orden</span>
                   <span className="font-mono font-bold">#{order.id}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Total</span>
-                  <span className="font-bold">{formatPrice(order.total)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Cliente</span>
-                  <span>{order.customerName}</span>
-                </div>
+                {/* Total y cliente solo vienen con la clave del pedido (links de MP viejos no la traen) */}
+                {order.total != null && (
+                  <div className="flex justify-between">
+                    <span>Total</span>
+                    <span className="font-bold">{formatPrice(order.total)}</span>
+                  </div>
+                )}
+                {order.customerName && (
+                  <div className="flex justify-between">
+                    <span>Cliente</span>
+                    <span>{order.customerName}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}

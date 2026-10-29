@@ -8,7 +8,11 @@
 //  - Descuentos por cantidad (TIERS): son propios de la variante. Si hay variante, salen SIEMPRE de la
 //    variante — INDEPENDIENTE de si define su precio base (una variante que hereda la base del producto
 //    igual puede tener sus propios tramos). Nunca se heredan los del producto.
-//  - La oferta (sale) reemplaza al base si es menor. Un tier por cantidad, si aplica, gana sobre todo.
+//  - La oferta (sale) reemplaza al base si es menor. Un tier por cantidad, si aplica, se usa solo si es
+//    MÁS BARATO que eso: llevar más unidades nunca puede salir más caro por unidad.
+//    Antes: "un tier por cantidad, si aplica, gana sobre todo". Con una campaña activa (que escribe
+//    salePrice pero no toca los tramos) el tramo pisaba a la oferta: 9 unidades a $8.000 = $72.000 y
+//    10 unidades a $9.500 = $95.000, con la tarjeta anunciando 20% OFF.
 //
 // Tramo por cantidad que aplica: el de mayor minQty que no supere la cantidad pedida.
 // Vivía inline dentro de effectiveUnitPrice; se extrajo cuando effectiveCurrency necesitaba consultar
@@ -54,7 +58,8 @@ function effectiveUnitPrice({ product, variant, isMayorista, quantity }) {
   //   if (applicable) price = parseFloat(applicable.price);
   // }
   const applicable = applicableTier(tiers, quantity);
-  if (applicable) price = parseFloat(applicable.price);
+  // Antes: if (applicable) price = parseFloat(applicable.price);  — el tramo ganaba aunque fuera más caro
+  if (applicable) price = Math.min(price, parseFloat(applicable.price));
 
   return price;
 }

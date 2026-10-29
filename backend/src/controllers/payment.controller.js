@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
+const { customerIdFromToken } = require("../middleware/auth.middleware");
 // Meta (Facebook / Instagram): aviso de compra a la API de conversiones al aprobarse el pago
 const { sendPurchaseEvent } = require("../services/meta.service");
 
@@ -34,6 +35,66 @@ function mpPaymentBlockedReason(order) {
     return "Este pedido incluye artículos con precio en dólares y no se puede pagar por MercadoPago. Contactanos para coordinar el pago.";
   }
   return null;
+}
+
+const round2 = (n) => Math.round(Number(n) * 100) / 100;
+
+// Ítems de la preferencia de MP. Tienen que sumar EXACTAMENTE order.total, que ya trae el cupón, el
+// descuento del vendedor y el IVA. Antes se mandaba precio × cantidad de cada ítem: con cupón se le
+// cobraba de más al cliente y una cotización con factura se cobraba sin el IVA. Si la suma de los
+// ítems ya da el total, van los ítems (MP los muestra en su checkout); si no, una sola línea con el
+// total del pedido. Los ítems libres o de productos borrados (sin product) usan su nombre guardado.
+function mpItemsFor(order) {
+  const items = order.items.map((item) => ({
+    id:          String(item.product?.id ?? item.productId ?? `item-${item.id}`),
+    title:       item.product?.name || item.productName || "Producto",
+    quantity:    item.quantity,
+    unit_price:  item.price,
+    currency_id: "ARS",
+  }));
+  const sum = round2(items.reduce((s, i) => s + i.unit_price * i.quantity, 0));
+  if (Math.abs(sum - round2(order.total)) < 0.01) return items;
+  return [{
+    id:          `pedido-${order.id}`,
+    title:       `Pedido #${order.id} - IGWT Store`,
+    quantity:    1,
+    unit_price:  round2(order.total),
+    currency_id: "ARS",
+  }];
+}
+
+// Estados desde los que un pago aprobado de MP puede aprobar el pedido. REJECTED entra porque el
+// cliente puede reintentar con el mismo link después de un rechazo. CANCELLED no: si el admin lo
+// canceló (y devolvió el stock), un pago que llega después lo tiene que mirar él.
+const MP_PAYABLE_STATUSES = ["PENDING", "QUOTE_APPROVED", "PAYMENT_REVIEW", "REJECTED"];
+
+// ¿Este pago aprobado cubre este pedido? null si sí; si no, el motivo (para el log).
+// Antes se aprobaba con solo ver "approved" y el número de pedido: pagando el link viejo de $100 de
+// una cotización que después se agrandó a $5.000.000, o un pedido ya cancelado, quedaba Abonado y
+// se descontaba todo el stock. Margen de $1 por redondeos.
+function approvalMismatch(payment, order) {
+  if (!MP_PAYABLE_STATUSES.includes(order.status)) return `el pedido estaba ${order.status}`;
+  if (payment.currency_id !== "ARS") return `el pago es en ${payment.currency_id}`;
+  const paid = Number(payment.transaction_amount);
+  if (!Number.isFinite(paid) || Math.abs(paid - Number(order.total)) >= 1) {
+    return `se pagaron $${payment.transaction_amount} y el pedido es de $${order.total}`;
+  }
+  return null;
+}
+
+// Clave del pedido para la página de resultado de pago (PaymentResult): viaja en las back_urls de MP
+// y la página la manda al consultar el estado. Sin clave (ni sesión del dueño) el estado responde
+// solo { id, status }: antes cualquiera que probara números de pedido —son casi correlativos— veía
+// el nombre del cliente, qué compró y cuánto pagó.
+function orderAccessKey(orderId) {
+  return crypto.createHmac("sha256", process.env.JWT_SECRET).update(`order-status-${orderId}`).digest("hex").slice(0, 32);
+}
+function hasOrderAccess(req, order) {
+  const key = typeof req.query?.k === "string" ? req.query.k : "";
+  const expected = orderAccessKey(order.id);
+  if (key.length === expected.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(expected))) return true;
+  const tokenCustomerId = customerIdFromToken(req);
+  return !!tokenCustomerId && tokenCustomerId === order.customerId;
 }
 
 // Valida la firma "x-signature" que manda MercadoPago (HMAC-SHA256 sobre un manifest con el
@@ -102,6 +163,13 @@ async function createPreference(req, res) {
       return res.status(400).json({ error: "La orden ya fue procesada" });
     }
 
+    // Solo pedidos que se pagan por Mercado Pago. Antes servía cualquier pedido PENDING, incluida una
+    // cotización que el admin todavía no revisó (esas se pagan por createCotizacionPreference, una vez
+    // aprobadas).
+    if (order.paymentMethod !== "MERCADOPAGO") {
+      return res.status(400).json({ error: "Este pedido no se paga por Mercado Pago" });
+    }
+
     // Órdenes en dólares / "a convenir": no se pueden cobrar por MP (ver mpPaymentBlockedReason).
     const blockedReason = mpPaymentBlockedReason(order);
     if (blockedReason) {
@@ -110,14 +178,11 @@ async function createPreference(req, res) {
 
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
 
-    // Construir los items para la preferencia de MercadoPago
-    const mpItems = order.items.map((item) => ({
-      id: item.product.id.toString(),
-      title: item.product.name,
-      quantity: item.quantity,
-      unit_price: item.price,
-      currency_id: "ARS",
-    }));
+    // Construir los items para la preferencia de MercadoPago: suman el total del pedido (ver mpItemsFor).
+    // Antes: order.items.map((item) => ({ id: item.product.id.toString(), title: item.product.name,
+    //   quantity: item.quantity, unit_price: item.price, currency_id: "ARS" }))
+    const mpItems = mpItemsFor(order);
+    const accessKey = orderAccessKey(order.id);
 
     const backendUrl = process.env.BACKEND_URL || "http://localhost:4000";
 
@@ -134,12 +199,13 @@ async function createPreference(req, res) {
       },
       external_reference: order.id.toString(),
       statement_descriptor: "TiendaTech",
-      // back_urls y auto_return solo en producción: MP rechaza localhost
+      // back_urls y auto_return solo en producción: MP rechaza localhost.
+      // k = clave del pedido para ver su detalle en la página de resultado (ver orderAccessKey).
       ...(isPublicFrontend && {
         back_urls: {
-          success: `${frontendUrl}/pago/exitoso?orderId=${order.id}`,
-          failure: `${frontendUrl}/pago/fallido?orderId=${order.id}`,
-          pending: `${frontendUrl}/pago/pendiente?orderId=${order.id}`,
+          success: `${frontendUrl}/pago/exitoso?orderId=${order.id}&k=${accessKey}`,
+          failure: `${frontendUrl}/pago/fallido?orderId=${order.id}&k=${accessKey}`,
+          pending: `${frontendUrl}/pago/pendiente?orderId=${order.id}&k=${accessKey}`,
         },
         auto_return: "approved",
       }),
@@ -270,7 +336,7 @@ async function handleWebhook(req, res) {
     const existingOrder = await prisma.order.findUnique({
       where: { id: orderId },
       // Antes: select: { id: true, status: true }
-      select: { id: true, status: true, mpPaymentId: true },
+      select: { id: true, status: true, mpPaymentId: true, total: true },
     });
     if (!existingOrder) {
       console.log("[MP WEBHOOK] orden no encontrada:", orderId);
@@ -286,6 +352,21 @@ async function handleWebhook(req, res) {
     if (wasAlreadyApproved && newStatus !== "APPROVED" && existingOrder.mpPaymentId !== paymentId.toString()) {
       console.log(`[MP WEBHOOK] Orden #${orderId} ya aprobada (pago ${existingOrder.mpPaymentId}): se ignora el pago ${paymentId} (${payment.status})`);
       return res.sendStatus(200);
+    }
+
+    // Un pago aprobado que no cubre el pedido (otro monto, otra moneda, pedido cancelado) no lo
+    // aprueba: queda en "Revisión de pago", sin tocar stock ni mandar emails, marcado como nuevo
+    // para que el admin lo vea y decida (aprobarlo a mano o devolver la plata). Ver approvalMismatch.
+    if (newStatus === "APPROVED" && !wasAlreadyApproved) {
+      const mismatch = approvalMismatch(payment, existingOrder);
+      if (mismatch) {
+        console.warn(`[MP WEBHOOK] Orden #${orderId}: pago ${paymentId} aprobado pero no coincide (${mismatch}) → Revisión de pago`);
+        await prisma.order.update({
+          where: { id: orderId },
+          data:  { status: "PAYMENT_REVIEW", mpPaymentId: paymentId.toString(), mpStatus: payment.status, seenByAdmin: false },
+        });
+        return res.sendStatus(200);
+      }
     }
 
     // Actualizar la orden con el resultado del pago
@@ -423,6 +504,8 @@ async function getOrderPaymentStatus(req, res) {
         totalUsd: true,
         customerType: true,
         items: { select: { productId: true, variantId: true, quantity: true, price: true, currency: true } },
+        // Para decidir si quien pregunta puede ver el detalle (ver hasOrderAccess). No se devuelve.
+        customerId: true,
       },
     });
 
@@ -462,7 +545,17 @@ async function getOrderPaymentStatus(req, res) {
             pending:    "PENDING",
             in_process: "PENDING",
           };
-          const newStatus = statusMap[payment.status] || order.status;
+          // Antes: const newStatus = statusMap[payment.status] || order.status;
+          let newStatus = statusMap[payment.status] || order.status;
+          // Mismo control que el webhook: un pago aprobado que no cubre el pedido lo deja en
+          // "Revisión de pago" en vez de aprobarlo (ver approvalMismatch).
+          if (newStatus === "APPROVED" && order.status !== "APPROVED") {
+            const mismatch = approvalMismatch(payment, order);
+            if (mismatch) {
+              console.warn(`[MP SYNC] Orden #${orderIdInt}: pago ${payment.id} aprobado pero no coincide (${mismatch}) → Revisión de pago`);
+              newStatus = "PAYMENT_REVIEW";
+            }
+          }
 
           if (newStatus !== order.status) {
             console.log(`[MP SYNC] Orden #${orderIdInt}: ${order.status} → ${newStatus} (payment ${payment.id})`);
@@ -472,6 +565,8 @@ async function getOrderPaymentStatus(req, res) {
                 status:      newStatus,
                 mpPaymentId: payment.id.toString(),
                 mpStatus:    payment.status,
+                // Un pago a revisar se marca como nuevo para que el admin lo vea en el panel.
+                ...(newStatus === "PAYMENT_REVIEW" ? { seenByAdmin: false } : {}),
               },
             });
             // Si pasó a APPROVED, descontar stock una sola vez
@@ -531,7 +626,13 @@ async function getOrderPaymentStatus(req, res) {
       }
     }
 
-    res.json(order);
+    // Detalle (nombre, total, productos) solo con la clave del pedido o la sesión de su dueño; si no,
+    // solo el estado. Ver orderAccessKey. Antes: res.json(order) para cualquiera.
+    const { customerId: _owner, ...publicOrder } = order;
+    if (!hasOrderAccess(req, order)) {
+      return res.json({ id: order.id, status: order.status });
+    }
+    res.json(publicOrder);
   } catch (err) {
     console.error("getOrderPaymentStatus error:", err);
     res.status(500).json({ error: "Error al consultar el estado del pago" });
@@ -580,14 +681,12 @@ async function createCotizacionPreference(req, res) {
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     const backendUrl  = process.env.BACKEND_URL  || "http://localhost:4000";
 
-    // Usar los items reales de la orden (el admin puede haber ajustado cantidades/precios)
-    const mpItems = order.items.map((item) => ({
-      id:         item.product.id.toString(),
-      title:      item.product.name,
-      quantity:   item.quantity,
-      unit_price: item.price,
-      currency_id: "ARS",
-    }));
+    // Usar los items reales de la orden (el admin puede haber ajustado cantidades/precios), sumando
+    // el total del pedido: descuento del vendedor, cupón e IVA de la factura (ver mpItemsFor).
+    // Antes: order.items.map((item) => ({ id: item.product.id.toString(), title: item.product.name,
+    //   quantity: item.quantity, unit_price: item.price, currency_id: "ARS" }))
+    const mpItems = mpItemsFor(order);
+    const accessKey = orderAccessKey(order.id);
 
     const isPublicFrontend = !frontendUrl.includes("localhost") && !frontendUrl.includes("127.0.0.1");
     const isPublicBackend  = !backendUrl.includes("localhost")  && !backendUrl.includes("127.0.0.1");
@@ -602,9 +701,9 @@ async function createCotizacionPreference(req, res) {
       statement_descriptor: "TiendaTech",
       ...(isPublicFrontend && {
         back_urls: {
-          success: `${frontendUrl}/pago/exitoso?orderId=${order.id}`,
-          failure: `${frontendUrl}/pago/fallido?orderId=${order.id}`,
-          pending: `${frontendUrl}/pago/pendiente?orderId=${order.id}`,
+          success: `${frontendUrl}/pago/exitoso?orderId=${order.id}&k=${accessKey}`,
+          failure: `${frontendUrl}/pago/fallido?orderId=${order.id}&k=${accessKey}`,
+          pending: `${frontendUrl}/pago/pendiente?orderId=${order.id}&k=${accessKey}`,
         },
         auto_return: "approved",
       }),

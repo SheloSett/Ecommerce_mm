@@ -1,10 +1,18 @@
 const { PrismaClient } = require("@prisma/client");
 const { sendReturnRequestConfirmation, sendReturnRequestApproved, sendReturnRequestRejected } = require("../services/email.service");
+const { escapeLike } = require("../utils/email");
 
 const prisma = new PrismaClient();
 
 // ─── CLIENTE: Buscar pedidos por email (para usuarios sin cuenta) ─────────────
 // GET /api/returns/lookup?email=...
+//
+// DESACTIVADA (29/10/2026): la ruta está comentada en routes/return.routes.js. La tienda no la usa
+// (el formulario de arrepentimiento manda nombre, email y motivo sin buscar pedidos) y, siendo
+// pública, con ?email=% devolvía los pedidos de TODOS los clientes de los últimos 10 días, con
+// teléfono, dirección, IP y costos. Si se vuelve a usar: escapeLike en el email, un select con lo
+// mínimo (sin teléfono, dirección, metaBrowser, cost ni supplierId) y pedir algo que pruebe que el
+// pedido es de quien pregunta (número de pedido + email, o un código que llegue por email).
 // Devuelve las órdenes APPROVED del email indicado donde:
 //   - Si el pedido tiene fulfillmentStatus="ENTREGADO": el updatedAt debe tener menos de 10 días.
 //   - Si el pedido NO tiene fulfillmentStatus="ENTREGADO": el createdAt debe tener menos de 10 días
@@ -94,7 +102,9 @@ async function createReturnRequest(req, res) {
 async function getMyReturnRequests(req, res) {
   try {
     const requests = await prisma.returnRequest.findMany({
-      where: { customerEmail: { equals: req.user.email, mode: "insensitive" } },
+      // escapeLike: con un "_" en el email traía también las solicitudes de emails casi iguales.
+      // Antes: where: { customerEmail: { equals: req.user.email, mode: "insensitive" } },
+      where: { customerEmail: { equals: escapeLike(req.user.email), mode: "insensitive" } },
       include: {
         order: {
           select: { id: true, total: true, createdAt: true, customerName: true },

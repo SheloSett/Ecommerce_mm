@@ -191,7 +191,10 @@ export const suppliersApi = {
 
 // ─── Órdenes ──────────────────────────────────────────────────────────────────
 export const ordersApi = {
-  create: (data) => api.post("/orders", data),
+  // Con el token del CLIENTE: el servidor saca de ahí quién compra y a qué precio (ya no confía en el
+  // customerId del body). Si la sesión venció responde 401 y customerAuthApi lo manda al login.
+  // Antes: create: (data) => api.post("/orders", data),
+  create: (data) => customerAuthApi.post("/orders", data),
   // Admin: registrar una venta manual (presencial, teléfono, etc.)
   createManual: (data) => api.post("/orders/admin/manual", data),
   // Admin: foto opcional de un producto libre de la venta manual → { url }
@@ -260,8 +263,13 @@ export const ordersApi = {
 export const paymentsApi = {
   createPreference: (orderId) =>
     api.post("/payments/create-preference", { orderId }),
-  getOrderStatus: (orderId, paymentId) =>
-    api.get(`/payments/order/${orderId}/status`, { params: paymentId ? { paymentId } : {} }),
+  // k: clave del pedido que llega en la URL de vuelta de MP. Sin clave el servidor responde solo el
+  // estado (no el nombre ni los productos); con el token del cliente dueño del pedido también alcanza.
+  // Antes: api.get(`/payments/order/${orderId}/status`, { params: paymentId ? { paymentId } : {} }),
+  getOrderStatus: (orderId, paymentId, k) =>
+    customerAuthApi.get(`/payments/order/${orderId}/status`, {
+      params: { ...(paymentId ? { paymentId } : {}), ...(k ? { k } : {}) },
+    }),
   // Cliente: crear preferencia de MP para pagar una cotización aprobada
   createCotizacionPreference: (orderId) =>
     customerAuthApi.post("/payments/cotizacion-preference", { orderId }),
@@ -434,8 +442,8 @@ export const purchasesApi = {
 
 // ─── Botón de Arrepentimiento / Devoluciones ─────────────────────────────────
 export const returnsApi = {
-  // Público: buscar pedidos por email para clientes sin cuenta
-  lookupByEmail: (email) => api.get("/returns/lookup", { params: { email } }),
+  // Desactivado en el backend (no se usaba y exponía pedidos ajenos; ver return.controller.js):
+  // lookupByEmail: (email) => api.get("/returns/lookup", { params: { email } }),
   // Público: crear solicitud de arrepentimiento
   create: (data) => api.post("/returns", data),
   // Cliente autenticado: ver sus propias solicitudes

@@ -9,6 +9,8 @@ import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
+// Datos del pedido en la hoja de impresión: escapados (el cliente escribe nombre, teléfono y nota)
+import { escapeHtml as esc } from "../../utils/escapeHtml";
 
 const STATUS_CONFIG = {
   PENDING:        { label: "Pendiente",            color: "bg-yellow-500 text-white",  icon: "⏳" },
@@ -475,7 +477,7 @@ export default function AdminOrderDetail() {
       // class="ph": el tamaño se elige en la hoja (Chico / Mediano / Grande, ver printPhotoSize.js).
       // Antes: width:40px;height:40px fijos.
       const imgHtml = imgSrc
-        ? `<img src="${imgSrc}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
+        ? `<img src="${esc(imgSrc)}" alt="" class="ph" style="object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
         : `<div class="ph" style="background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
       // Ubicación en depósito (módulo/estante): se resalta para que quien separa el pedido sepa dónde buscar.
       // Si la variante tiene su propia ubicación, predomina; si no, cae a la del producto (fallback por campo).
@@ -483,16 +485,18 @@ export default function AdminOrderDetail() {
       const mod   = item.variant?.module ?? item.product?.module;
       const shelf = item.variant?.shelf  ?? item.product?.shelf;
       const locHtml = (mod || shelf)
-        ? `<div class="loc" style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${mod}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${shelf}` : ""}</div>`
+        ? `<div class="loc" style="display:inline-flex;align-items:center;gap:5px;margin-top:3px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;color:#92400e">📍 ${mod ? `Módulo ${esc(mod)}` : ""}${mod && shelf ? " · " : ""}${shelf ? `Estante ${esc(shelf)}` : ""}</div>`
         : "";
+      // Todo lo que sale del pedido va por esc(): antes el nombre, la nota y la variante se metían
+      // crudos y un <img onerror> en la nota corría al imprimir.
       return `
       <tr>
         <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
           <div style="display:flex;align-items:center;gap:10px">
             ${imgHtml}
             <div>
-              <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto"}</div>
-              ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${v}</div>`).join("") : ""}
+              <div style="font-weight:600;font-size:12px;color:#1e293b">${esc(item.product?.name || "Producto")}</div>
+              ${item.variantLabel ? item.variantLabel.split(" | ").map(v => `<div style="font-size:10px;color:#64748b;margin-top:1px">${esc(v)}</div>`).join("") : ""}
               ${locHtml}
               ${withPrices ? `<div style="font-size:11px;color:#94a3b8">${lineDiscountPct(item) != null
                 ? `<span style="text-decoration:line-through;opacity:.6">${formatPriceWithCurrency(item.listPrice, item.currency)}</span> <span style="color:#16a34a;font-weight:700">${formatPriceWithCurrency(item.price, item.currency)}</span>`
@@ -522,7 +526,7 @@ export default function AdminOrderDetail() {
 
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${order.coupon.code}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
+      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
       ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(totalUsdPrint, "USD")}</td></tr>` : ""}`;
@@ -579,22 +583,22 @@ export default function AdminOrderDetail() {
   <div class="two-col">
     <div class="card">
       <div class="card-title">Cliente</div>
-      <div class="row"><span class="row-label">Nombre</span><span class="row-value">${order.customerName}</span></div>
-      <div class="row"><span class="row-label">Tipo</span><span class="row-value">${type.label}</span></div>
-      ${order.customerEmail ? `<div class="row"><span class="row-label">Email</span><span class="row-value" style="font-weight:400;font-size:11px">${order.customerEmail}</span></div>` : ""}
-      ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${order.customerPhone}</span></div>` : ""}
+      <div class="row"><span class="row-label">Nombre</span><span class="row-value">${esc(order.customerName)}</span></div>
+      <div class="row"><span class="row-label">Tipo</span><span class="row-value">${esc(type.label)}</span></div>
+      ${order.customerEmail ? `<div class="row"><span class="row-label">Email</span><span class="row-value" style="font-weight:400;font-size:11px">${esc(order.customerEmail)}</span></div>` : ""}
+      ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${esc(order.customerPhone)}</span></div>` : ""}
     </div>
     <div class="card">
       <div class="card-title">Pedido</div>
-      <div class="row"><span class="row-label">Estado</span><span class="row-value">${status.label}</span></div>
-      <div class="row"><span class="row-label">Pago</span><span class="row-value">${payment.icon} ${payment.label}</span></div>
-      <div class="row"><span class="row-label">Canal</span><span class="row-value">${channel.icon} ${channel.label}</span></div>
+      <div class="row"><span class="row-label">Estado</span><span class="row-value">${esc(status.label)}</span></div>
+      <div class="row"><span class="row-label">Pago</span><span class="row-value">${payment.icon} ${esc(payment.label)}</span></div>
+      <div class="row"><span class="row-label">Canal</span><span class="row-value">${channel.icon} ${esc(channel.label)}</span></div>
       ${order.wantsInvoice ? `<div class="row"><span class="row-label">Factura</span><span class="row-value" style="color:#2563eb">Solicitada — IVA incluido</span></div>` : ""}
     </div>
   </div>
 
-  ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del cliente:</strong> ${order.customerNote}</div>` : ""}
-  ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>Nota interna:</strong> ${order.adminNotes}</div>` : ""}
+  ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del cliente:</strong> ${esc(order.customerNote)}</div>` : ""}
+  ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>Nota interna:</strong> ${esc(order.adminNotes)}</div>` : ""}
 
   <div class="section-title">Productos</div>
   <table><tbody>${itemCards}</tbody></table>

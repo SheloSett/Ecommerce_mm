@@ -8,6 +8,8 @@ import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
+// Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
+import { escapeHtml as esc } from "../utils/escapeHtml";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -128,14 +130,14 @@ function exportPDF(order, customer) {
   const itemRows = (order.items || []).map((item) => {
     const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
     const img = imgSrc
-      ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0"/>`
+      ? `<img src="${esc(imgSrc)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0"/>`
       : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
     return `<tr>
       <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle">
         <div style="display:flex;align-items:center;gap:10px">
           ${img}
           <div>
-            <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto eliminado"}</div>
+            <div style="font-weight:600;font-size:12px;color:#1e293b">${esc(item.product?.name || "Producto eliminado")}</div>
             <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity}</div>
           </div>
         </div>
@@ -158,9 +160,9 @@ function exportPDF(order, customer) {
   const addrHtml = addr
     ? `<div style="margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:11px;color:#1e293b">
         <div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;font-weight:800;margin-bottom:6px">Dirección de envío</div>
-        ${addr.street ? `<div>${addr.street}${addr.number ? ` ${addr.number}` : ""}${addr.floor ? ` ${addr.floor}` : ""}</div>` : ""}
-        ${addr.city ? `<div>${addr.city}${addr.province ? `, ${addr.province}` : ""}</div>` : ""}
-        ${addr.postalCode ? `<div>CP ${addr.postalCode}</div>` : ""}
+        ${addr.street ? `<div>${esc(addr.street)}${addr.number ? ` ${esc(addr.number)}` : ""}${addr.floor ? ` ${esc(addr.floor)}` : ""}</div>` : ""}
+        ${addr.city ? `<div>${esc(addr.city)}${addr.province ? `, ${esc(addr.province)}` : ""}</div>` : ""}
+        ${addr.postalCode ? `<div>CP ${esc(addr.postalCode)}</div>` : ""}
       </div>` : "";
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Pedido #${order.id}</title>
@@ -180,7 +182,7 @@ function exportPDF(order, customer) {
     </div>
   </div>
   ${addrHtml}
-  ${order.customerNote ? `<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;padding:7px 10px;margin-bottom:10px;font-size:11px">💬 <strong>Nota del pedido:</strong> ${order.customerNote}</div>` : ""}
+  ${order.customerNote ? `<div style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;padding:7px 10px;margin-bottom:10px;font-size:11px">💬 <strong>Nota del pedido:</strong> ${esc(order.customerNote)}</div>` : ""}
   <div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;font-weight:800;margin-bottom:6px">Productos</div>
   <table><tbody>${itemRows}</tbody></table>
   <table class="totals-table"><tbody>${totalRows}</tbody></table>

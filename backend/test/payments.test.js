@@ -10,6 +10,8 @@ const assert = require("node:assert/strict");
 const path = require("path");
 
 delete process.env.MP_WEBHOOK_SECRET; // sin firma: el webhook se procesa sin validarla
+// Firma la clave de los pedidos en el estado del pago (orderAccessKey en payment.controller.js)
+process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret";
 
 // ── Base simulada ────────────────────────────────────────────────────────────
 let db;
@@ -18,7 +20,7 @@ function resetDb() {
     orders: {
       10: {
         id: 10, status: "PENDING", customerId: 7, couponId: null, stockDeducted: false, mpPaymentId: null,
-        customerEmail: "rayo@example.com",
+        customerEmail: "rayo@example.com", total: 1000,
         items: [{ productId: 1, variantId: null, quantity: 1 }], // el cable de $1.000
       },
     },
@@ -114,7 +116,7 @@ describe("webhook de MercadoPago", () => {
   beforeEach(() => { resetDb(); mp.payments = {}; mp.searchResults = []; });
 
   test("pago aprobado: el pedido queda abonado y lo comprado sale del carrito", async () => {
-    mp.payments[111] = { id: 111, status: "approved", external_reference: "10" };
+    mp.payments[111] = { id: 111, status: "approved", external_reference: "10", transaction_amount: 1000, currency_id: "ARS" };
     const res = fakeRes();
     await handleWebhook(webhookReq(111), res);
     assert.equal(res.code, 200);
@@ -144,7 +146,7 @@ describe("estado del pago consultado desde la pantalla de resultado", () => {
 
   test("con un intento aprobado y otro rechazado más nuevo, manda el aprobado", async () => {
     mp.searchResults = [
-      { id: 444, status: "approved", external_reference: "10", date_created: "2026-10-01T10:00:00Z" },
+      { id: 444, status: "approved", external_reference: "10", date_created: "2026-10-01T10:00:00Z", transaction_amount: 1000, currency_id: "ARS" },
       { id: 555, status: "rejected", external_reference: "10", date_created: "2026-10-01T10:05:00Z" },
     ];
     const res = fakeRes();

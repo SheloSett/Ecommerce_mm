@@ -6,6 +6,7 @@ const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
+const { customerIdFromToken } = require("../middleware/auth.middleware");
 // Meta (Facebook / Instagram): datos del navegador al comprar + aviso de compra a la API de conversiones
 const { browserDataFromRequest, sendPurchaseEvent } = require("../services/meta.service");
 
@@ -325,28 +326,40 @@ async function createOrder(req, res) {
     const orderItems = [];
     const itemHasVariants = {}; // productId -> bool: si el producto tiene variantes activas
 
-    // Determinar si el cliente es mayorista para aplicar precios correctos.
-    // Preferimos buscar por customerId (más confiable) y solo hacemos fallback por email si no viene ID.
-    let registeredCustomer = null;
-    if (customerId) {
-      registeredCustomer = await prisma.customer.findUnique({
-        where: { id: parseInt(customerId) },
-        select: { type: true },
-      });
+    // Quién compra sale SOLO del token, que lo firma el servidor. Antes salía del customerId del body
+    // o, si no venía, del email del body: mandando el id (son correlativos) o el email de un
+    // mayorista, cualquiera compraba a precio mayorista —incluso con la cuenta rechazada— y el pedido
+    // quedaba en la cuenta de esa persona. Sin token, el pedido es de un invitado minorista.
+    // Antes:
+    // let registeredCustomer = null;
+    // if (customerId) {
+    //   registeredCustomer = await prisma.customer.findUnique({ where: { id: parseInt(customerId) }, select: { type: true } });
+    // }
+    // if (!registeredCustomer && customerEmail) {
+    //   registeredCustomer = await prisma.customer.findFirst({
+    //     where: { email: { equals: customerEmail, mode: "insensitive" } }, select: { type: true },
+    //   });
+    // }
+    // const isMayorista = registeredCustomer?.type === "MAYORISTA";
+    const tokenCustomerId = customerIdFromToken(req);
+    const registeredCustomer = tokenCustomerId
+      ? await prisma.customer.findUnique({
+          where:  { id: tokenCustomerId },
+          select: { id: true, type: true, status: true },
+        })
+      : null;
+    // El checkout manda customerId cuando hay alguien logueado. Si el token no lo respalda (sesión
+    // vencida, o un id ajeno), se corta acá en vez de crear el pedido como invitado y a otro precio:
+    // con el 401 el navegador lo manda a iniciar sesión de nuevo.
+    if (customerId && registeredCustomer?.id !== parseInt(customerId)) {
+      return res.status(401).json({ error: "Tu sesión venció. Volvé a iniciar sesión para terminar la compra." });
     }
-    if (!registeredCustomer && customerEmail) {
-      // Antes: registeredCustomer = await prisma.customer.findUnique({ where: { email: customerEmail }, select: { type: true } });
-      // Comentado: si la cuenta del mayorista estaba guardada con mayúsculas y compraba
-      // escribiendo el email en minúsculas, este fallback no lo encontraba y le cobraba
-      // precio minorista. La búsqueda insensible a mayúsculas lo resuelve.
-      registeredCustomer = await prisma.customer.findFirst({
-        where: { email: { equals: customerEmail, mode: "insensitive" } },
-        select: { type: true },
-      });
-    }
-    const isMayorista = registeredCustomer?.type === "MAYORISTA";
+    // Mismo criterio que los precios del catálogo (productPrivacy.resolvePriceViewer): mayorista APROBADO.
+    const isMayorista = registeredCustomer?.type === "MAYORISTA" && registeredCustomer?.status === "APPROVED";
 
     for (const item of items) {
+      // validateOrder ya exige un entero entre 1 y 9999; acá se asegura que viaje como número.
+      const qty = parseInt(item.quantity);
       const product = await prisma.product.findUnique({
         where: { id: parseInt(item.productId) },
       });
@@ -368,40 +381,80 @@ async function createOrder(req, res) {
       // Determinar si el producto tiene variantes activas para el control de stock
       const activeVariants = await prisma.productVariant.findMany({
         where: { productId: product.id, active: true },
-        select: { stock: true, stockUnlimited: true },
+        select: { stock: true, stockUnlimited: true, visibility: true },
       });
       const productHasVariants = activeVariants.length > 0;
       itemHasVariants[product.id] = productHasVariants;
 
-      // Validación de stock: con variantes usar la suma de stocks de variantes; sin variantes usar product.stock
-      if (productHasVariants) {
+      // Si el item tiene variante, traerla ANTES del cálculo de precio (precios/ofertas/tiers propios).
+      // Tiene que ser de ESTE producto, estar activa y poder vendérsele a este cliente. Antes se
+      // buscaba solo por id: con el productId de una notebook y el variantId de un cable, la notebook
+      // salía al precio del cable, con la etiqueta que mandara el navegador, y al aprobarse el pago
+      // el stock bajaba del cable. Mismo criterio que la venta manual (createManualOrder).
+      let selectedVariant = null;
+      let variantLabel = null;
+      if (item.variantId) {
+        selectedVariant = await prisma.productVariant.findUnique({
+          where: { id: parseInt(item.variantId) },
+          select: {
+            productId: true, active: true, visibility: true, combination: true, stock: true, stockUnlimited: true,
+            sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true,
+            priceTiers: true, wholesalePriceTiers: true, currency: true,
+          },
+        });
+        if (
+          !selectedVariant ||
+          selectedVariant.productId !== product.id ||
+          !selectedVariant.active ||
+          (selectedVariant.visibility === "MAYORISTA" && !isMayorista)
+        ) {
+          return res.status(400).json({
+            error: `La opción elegida de "${product.name}" ya no está disponible. Sacala del carrito y volvé a elegirla.`,
+          });
+        }
+        // La etiqueta se arma acá, con el mismo formato que la tienda ("Color: Negro / Talle: M").
+        // Antes: variantLabel: item.variantLabel || null — texto libre del navegador.
+        const combo = Array.isArray(selectedVariant.combination) ? selectedVariant.combination : [];
+        variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null;
+      } else if (method !== "COTIZACION") {
+        // Una compra directa de un producto con variantes tiene que elegir una. Sin variante, el
+        // pedido quedaba sobre el stock del producto padre (que con variantes es 0) y al aprobarse
+        // descuadraba el stock. La cotización sí puede ir sin variante: si el mayorista no ve las
+        // opciones, el admin se las asigna al aprobarla (ver approveCotizacion).
+        const buyerType = isMayorista ? "MAYORISTA" : "MINORISTA";
+        if (activeVariants.some((v) => v.visibility === "AMBOS" || v.visibility === buyerType)) {
+          return res.status(400).json({
+            error: `Elegí una opción de "${product.name}" (color, modelo, etc.) antes de comprar. Sacalo del carrito y volvé a agregarlo desde el producto.`,
+          });
+        }
+      }
+
+      // Validación de stock: en una compra directa con variante elegida, el de ESA variante. Antes se
+      // miraba la suma de todas las variantes, así que se podía comprar más de lo que tenía la elegida.
+      // La cotización sigue mirando la suma: al aprobarla el admin puede repartir la línea entre
+      // variantes. Sin variante, como siempre: la suma de las variantes o product.stock.
+      if (selectedVariant && method !== "COTIZACION") {
+        if (!selectedVariant.stockUnlimited && selectedVariant.stock < qty) {
+          return res.status(400).json({
+            error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${selectedVariant.stock}`,
+          });
+        }
+      } else if (productHasVariants) {
         const anyUnlimited = activeVariants.some((v) => v.stockUnlimited);
         if (!anyUnlimited) {
           const totalVariantStock = activeVariants.reduce((sum, v) => sum + v.stock, 0);
-          if (totalVariantStock < item.quantity) {
+          if (totalVariantStock < qty) {
             return res.status(400).json({
               error: `Stock insuficiente para "${product.name}". Stock total disponible: ${totalVariantStock}`,
             });
           }
         }
       } else {
-        if (!product.stockUnlimited && product.stock < item.quantity) {
+        if (!product.stockUnlimited && product.stock < qty) {
           return res.status(400).json({
             error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}`,
           });
         }
-      }
-
-      // Si el item tiene variante, traerla ANTES del cálculo de precio (precios/ofertas/tiers propios).
-      let selectedVariant = null;
-      if (item.variantId) {
-        selectedVariant = await prisma.productVariant.findUnique({
-          where: { id: parseInt(item.variantId) },
-          select: {
-            sku: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true,
-            priceTiers: true, wholesalePriceTiers: true, currency: true,
-          },
-        });
       }
 
       // Precio efectivo (variante > producto por grupo + descuentos por cantidad) calculado por el
@@ -409,7 +462,7 @@ async function createOrder(req, res) {
       // del producto → con variantes daba precios y % de descuento absurdos.
       // SEGURIDAD: el precio SIEMPRE se calcula server-side; jamás se acepta el precio del cliente.
       const finalPrice = effectiveUnitPrice({
-        product, variant: selectedVariant, isMayorista, quantity: item.quantity,
+        product, variant: selectedVariant, isMayorista, quantity: qty,
       });
 
       // COMENTADO: esta suma mezclaba pesos y dólares en una sola variable. Ya no se lee en ningún
@@ -417,7 +470,7 @@ async function createOrder(req, res) {
       // computeOrderTotals más abajo), pero se deja el renglón a la vista para que quede claro
       // dónde estaba el problema de origen.
       // total += finalPrice * item.quantity;
-      total += finalPrice * item.quantity; // (sin uso: `total` se reasigna con totales.totalArs)
+      total += finalPrice * qty; // (sin uso: `total` se reasigna con totales.totalArs)
 
       // SKU de la variante seleccionada — reusa selectedVariant (traída arriba para el precio).
       // Antes se hacía una segunda consulta solo para el SKU:
@@ -439,11 +492,11 @@ async function createOrder(req, res) {
 
       orderItems.push({
         productId:    product.id,
-        quantity:     item.quantity,
+        quantity:     qty,
         price:        finalPrice,
         currency:     itemCurrency,
-        variantId:    item.variantId ? parseInt(item.variantId) : null,
-        variantLabel: item.variantLabel || null,
+        variantId:    selectedVariant ? parseInt(item.variantId) : null,
+        variantLabel,
         variantSku,
       });
     }
@@ -500,7 +553,10 @@ async function createOrder(req, res) {
         // una compra mínima de $300. El mínimo del cupón está en pesos → se mide contra los pesos,
         // igual que ya se hace con el mínimo de compra mayorista unas líneas más arriba.
         (!coupon.minPurchase || totalArs >= coupon.minPurchase) &&
-        (!coupon.customerId || coupon.customer?.email.toLowerCase() === customerEmail.toLowerCase());
+        // Cupón personal: solo para esa cuenta, según el token. Antes se comparaba con el email que
+        // escribía el comprador, así que cualquiera usaba el cupón de otro poniendo su email.
+        // Antes: (!coupon.customerId || coupon.customer?.email.toLowerCase() === customerEmail.toLowerCase());
+        (!coupon.customerId || coupon.customerId === registeredCustomer?.id);
 
       if (isValid) {
         // Verificar usos totales
@@ -584,7 +640,8 @@ async function createOrder(req, res) {
         customerName,
         customerEmail,
         customerPhone: customerPhone || null,
-        customerId:    customerId ? parseInt(customerId) : null,
+        // La cuenta sale del token (ver registeredCustomer). Antes: customerId ? parseInt(customerId) : null
+        customerId:    registeredCustomer ? registeredCustomer.id : null,
         total,
         // totalUsd: solo se guarda si el pedido REALMENTE tiene ítems en dólares. Si no, queda null
         // y el pedido se comporta igual que siempre (100% pesos).
@@ -598,7 +655,7 @@ async function createOrder(req, res) {
         fulfillmentStatus: "PENDIENTE",
         paymentMethod: method,
         // customerType se determina a partir del tipo de cliente registrado
-        // isMayorista ya fue calculado arriba consultando la DB por el email
+        // isMayorista ya fue calculado arriba consultando la DB por el cliente del token
         customerType: isMayorista ? "MAYORISTA" : "MINORISTA",
         wantsInvoice: applyIva,
         ivaAmount,

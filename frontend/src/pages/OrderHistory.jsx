@@ -10,6 +10,8 @@ import Footer from "../components/Footer";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
+// Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
+import { escapeHtml as esc } from "../utils/escapeHtml";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -211,7 +213,7 @@ function exportOrderPDF(order, customer) {
   const itemCards = (order.items || []).map((item) => {
     const imgSrc = item.product?.images?.[0] ? getImageUrl(item.product.images[0]) : null;
     const imgHtml = imgSrc
-      ? `<img src="${imgSrc}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
+      ? `<img src="${esc(imgSrc)}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;flex-shrink:0" />`
       : `<div style="width:40px;height:40px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📦</div>`;
     return `
     <tr>
@@ -219,7 +221,7 @@ function exportOrderPDF(order, customer) {
         <div style="display:flex;align-items:center;gap:10px">
           ${imgHtml}
           <div>
-            <div style="font-weight:600;font-size:12px;color:#1e293b">${item.product?.name || "Producto eliminado"}</div>
+            <div style="font-weight:600;font-size:12px;color:#1e293b">${esc(item.product?.name || "Producto eliminado")}</div>
             <div style="font-size:11px;color:#94a3b8">${formatPriceWithCurrency(item.price, item.currency)} c/u × ${item.quantity} unid.</div>
           </div>
         </div>
@@ -281,10 +283,10 @@ function exportOrderPDF(order, customer) {
   <div class="two-col">
     <div class="card">
       <div class="card-title">Cliente</div>
-      <div class="row"><span class="row-label">Nombre</span><span class="row-value">${order.customerName}</span></div>
+      <div class="row"><span class="row-label">Nombre</span><span class="row-value">${esc(order.customerName)}</span></div>
       <div class="row"><span class="row-label">Tipo</span><span class="row-value">${tipoLabel}</span></div>
-      ${order.customerEmail ? `<div class="row"><span class="row-label">Email</span><span class="row-value" style="font-weight:400;font-size:11px">${order.customerEmail}</span></div>` : ""}
-      ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${order.customerPhone}</span></div>` : ""}
+      ${order.customerEmail ? `<div class="row"><span class="row-label">Email</span><span class="row-value" style="font-weight:400;font-size:11px">${esc(order.customerEmail)}</span></div>` : ""}
+      ${order.customerPhone ? `<div class="row"><span class="row-label">Teléfono</span><span class="row-value">${esc(order.customerPhone)}</span></div>` : ""}
     </div>
     <div class="card">
       <div class="card-title">Pedido</div>
@@ -294,7 +296,7 @@ function exportOrderPDF(order, customer) {
       ${order.wantsInvoice ? `<div class="row"><span class="row-label">Factura</span><span class="row-value" style="color:#2563eb">Solicitada — IVA 21%</span></div>` : ""}
     </div>
   </div>
-  ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del pedido:</strong> ${order.customerNote}</div>` : ""}
+  ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del pedido:</strong> ${esc(order.customerNote)}</div>` : ""}
   <div class="section-title">Productos</div>
   <table><tbody>${itemCards}</tbody></table>
   <table class="totals-table"><tbody>${totalRows}</tbody></table>

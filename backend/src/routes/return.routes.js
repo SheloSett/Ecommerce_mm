@@ -11,8 +11,9 @@ const {
 const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
 
 // Rutas públicas / semi-públicas
-// Buscar pedidos por email — público para que clientes sin cuenta puedan usar el form
-router.get("/lookup", lookupOrdersByEmail);
+// DESACTIVADA: buscar pedidos por email. Nadie la usa y con ?email=% devolvía los pedidos de todos
+// los clientes (ver la nota en lookupOrdersByEmail). Un pedido a /lookup ahora da 404.
+// router.get("/lookup", lookupOrdersByEmail);
 
 // Crear solicitud — público (el form valida email + orderId; el customerId es opcional)
 router.post("/", createReturnRequest);

@@ -350,7 +350,11 @@ export default function ProductDetail() {
     }
     if (outOfStock) return;
     const safeQty = isMayorista ? quantity : Math.min(quantity, availableStock);
-    const tierPrice = (selectedTier && safeQty >= parseInt(selectedTier.minQty))
+    // El tramo por cantidad se usa solo si es más barato que el precio actual (con la oferta o la
+    // campaña ya aplicada): mismo criterio que el servidor (backend/src/utils/pricing.js).
+    // Antes: (selectedTier && safeQty >= parseInt(selectedTier.minQty)) ? selectedTier.price : null
+    const tierPrice = (selectedTier && safeQty >= parseInt(selectedTier.minQty)
+      && (!effectivePrice || parseFloat(selectedTier.price) < effectivePrice))
       ? selectedTier.price
       : null;
     // Pasar la variante seleccionada al carrito para mostrarla en el resumen
@@ -677,8 +681,10 @@ export default function ProductDetail() {
               const baseUnitPrice = baseSalePrice != null && basePrice != null && baseSalePrice < basePrice
                 ? baseSalePrice
                 : basePrice;
-              const displayPrice = selectedTier ? selectedTier.price : baseUnitPrice;
               const hasTierDiscount = selectedTier && baseUnitPrice != null && selectedTier.price < baseUnitPrice;
+              // El tramo se muestra solo si mejora el precio actual (ver handleAddToCart y pricing.js).
+              // Antes: const displayPrice = selectedTier ? selectedTier.price : baseUnitPrice;
+              const displayPrice = selectedTier && (baseUnitPrice == null || hasTierDiscount) ? selectedTier.price : baseUnitPrice;
 
               // ── Mayorista ──
               if (isMayoristaUI && basePrice != null) {

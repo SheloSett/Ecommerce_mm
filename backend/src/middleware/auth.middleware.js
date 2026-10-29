@@ -61,4 +61,18 @@ function customerMiddleware(req, res, next) {
   next();
 }
 
-module.exports = { authMiddleware, adminMiddleware, superAdminMiddleware, requirePermission, customerMiddleware };
+// Id del cliente si el header Authorization trae un token válido de CUSTOMER; null en cualquier otro
+// caso (sin token, vencido, de admin). Para las rutas públicas que funcionan con o sin sesión, como
+// el checkout: ahí no va authMiddleware porque un invitado no tiene token.
+function customerIdFromToken(req) {
+  const authHeader = req.headers?.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  try {
+    const decoded = jwt.verify(authHeader.split(" ")[1], process.env.JWT_SECRET);
+    return decoded.role === "CUSTOMER" && decoded.id ? decoded.id : null;
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { authMiddleware, adminMiddleware, superAdminMiddleware, requirePermission, customerMiddleware, customerIdFromToken };
