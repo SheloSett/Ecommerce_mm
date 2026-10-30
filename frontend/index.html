@@ -2,8 +2,13 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <link rel="shortcut icon" href="/favicon.png" type="image/png" />
+    <!-- Antes: /favicon.png, un PNG de 7,9 MB y 2086x2048 que bajaba cada visitante nuevo (más que todo
+         el resto del sitio junto) y que Google podía no mostrar por no ser cuadrado. Ahora versiones
+         cuadradas del tamaño justo (48 px para la pestaña y Google, 192 para Android, 180 para iPhone).
+         favicon.png quedó como copia de la de 192 por si algo lo sigue pidiendo. -->
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 

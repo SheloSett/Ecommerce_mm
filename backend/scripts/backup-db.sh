@@ -13,6 +13,15 @@
 #   - rclone configurado con un remote "backblaze" apuntando a tu bucket
 #     (instalar con: curl https://rclone.org/install.sh | sudo bash)
 #     (configurar con: rclone config — elegir "Backblaze B2")
+#     Sin rclone el script ahora TERMINA CON ERROR (antes decía "OK" con el backup solo en este disco).
+#   - (recomendado) aviso si el backup no corre: crear un check gratis en https://healthchecks.io
+#     (período 1 día, gracia 2 horas) y guardar su URL de ping en ~/.backup-healthcheck-url
+#     (echo "https://hc-ping.com/..." > ~/.backup-healthcheck-url). Si una noche no llega el ping,
+#     healthchecks manda un email. Va fuera del repo porque el repo es público.
+#
+# Retención: 7 días en este disco, 30 días en B2, y el backup del día 1 de cada mes en
+# B2 "mensual/" por 12 meses (para errores que se descubren tarde).
+# Restaurar y ensayo de restauración: ver DEPLOY.md y scripts/restore-test.sh.
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -23,6 +32,7 @@ DB_USER="ecommerce_user"
 BACKUP_DIR="/home/$(whoami)/backups"
 RETENTION_DAYS_LOCAL=7    # Backups locales que se conservan
 RETENTION_DAYS_REMOTE=30  # Backups en B2 que se conservan
+RETENTION_DAYS_MONTHLY=365  # Copias mensuales en B2 (carpeta mensual/)
 B2_REMOTE="backblaze:igwtstore-backups"  # Cambiar por tu remote y bucket
 CONTAINER="igwtstore_db"  # Contenedor de la base en el VPS nuevo (deploy/docker-compose.vps.yml)
 # Imágenes subidas al servidor (las de Cloudinary no pasan por acá). Se calcula desde la
@@ -31,6 +41,14 @@ UPLOADS_DIR="$(cd "$(dirname "$0")/.." && pwd)/uploads"
 # ──────────────────────────────────────────────────────────────────────────────
 
 mkdir -p "$BACKUP_DIR"
+
+# Monitor externo (ver Requisitos): si el script termina con error, avisa al momento (/fail); si ni
+# siquiera corre (VPS caído, cron roto), el monitor avisa solo porque no le llegó el ping de la noche.
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-$(cat "$HOME/.backup-healthcheck-url" 2>/dev/null || true)}"
+ping_monitor() {
+  if [ -n "$HEALTHCHECK_URL" ]; then curl -fsS -m 10 --retry 3 -o /dev/null "${HEALTHCHECK_URL}$1" || true; fi
+}
+trap 'code=$?; if [ "$code" -ne 0 ]; then echo "[$(date)] ERROR: el backup terminó con código $code"; ping_monitor "/fail"; fi' EXIT
 
 TIMESTAMP=$(date +%Y-%m-%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.sql.gz"
@@ -75,14 +93,31 @@ if command -v rclone &> /dev/null; then
     echo "[$(date)] Uploads subidos a B2: $B2_REMOTE/$(basename "$UPLOADS_FILE")"
   fi
 
+  # Copia mensual (día 1): se guarda 12 meses, para errores que se descubren tarde (un borrado que
+  # se nota a las 5 semanas ya no estaba en ningún backup de 30 días).
+  if [ "$(date +%d)" = "01" ]; then
+    rclone copy "$BACKUP_FILE" "$B2_REMOTE/mensual/" --quiet
+    if [ -n "$UPLOADS_FILE" ]; then rclone copy "$UPLOADS_FILE" "$B2_REMOTE/mensual/" --quiet; fi
+    echo "[$(date)] Copia mensual subida a B2: $B2_REMOTE/mensual/"
+  fi
+
   # Limpiar backups viejos remotos (>RETENTION_DAYS_REMOTE días)
-  rclone delete --min-age "${RETENTION_DAYS_REMOTE}d" "$B2_REMOTE/" --quiet
+  # --max-depth 1: solo los diarios de la raíz (sin esto, rclone delete también entra a mensual/)
+  # Antes: rclone delete --min-age "${RETENTION_DAYS_REMOTE}d" "$B2_REMOTE/" --quiet
+  rclone delete --max-depth 1 --min-age "${RETENTION_DAYS_REMOTE}d" "$B2_REMOTE/" --quiet
+  rclone delete --min-age "${RETENTION_DAYS_MONTHLY}d" "$B2_REMOTE/mensual/" --quiet
+  OFFSITE_OK=1
 else
-  echo "[$(date)] rclone no instalado — backup queda solo local"
+  echo "[$(date)] ERROR: rclone no instalado — el backup quedó SOLO en este disco (si se rompe el VPS, se pierde con todo)"
+  OFFSITE_OK=0
 fi
 
 # Limpiar backups locales viejos (>RETENTION_DAYS_LOCAL días)
 find "$BACKUP_DIR" -name "${DB_NAME}_*.sql.gz" -mtime "+${RETENTION_DAYS_LOCAL}" -delete
 find "$BACKUP_DIR" -name "igwtstore_uploads_*.tar.gz" -mtime "+${RETENTION_DAYS_LOCAL}" -delete
 
+# Antes terminaba con "OK" aunque el backup no hubiera salido del VPS.
+if [ "$OFFSITE_OK" -ne 1 ]; then exit 1; fi
+
 echo "[$(date)] Backup completado OK"
+ping_monitor ""

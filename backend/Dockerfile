@@ -13,6 +13,10 @@ COPY . .
 
 RUN npx prisma generate
 
+# Tests (M9 de la auditoría): si alguno falla, el build se corta y queda andando el contenedor anterior.
+# No tocan la base ni mandan emails (todo simulado). Antes no corrían en ningún lado del deploy.
+RUN npm test
+
 RUN mkdir -p uploads
 
 EXPOSE 4000

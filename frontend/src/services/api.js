@@ -1,4 +1,5 @@
 import axios from "axios";
+import { cloudinarySized } from "../utils/imageUrl";
 
 // La URL base de la API viene de la variable de entorno de Vite
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -530,9 +531,14 @@ export const wishlistApi = {
   remove: (productId) => customerAuthApi.delete(`/wishlist/${productId}`),
 };
 
-export const getImageUrl = (path) => {
+// size (opcional): pide a Cloudinary la foto a ese tamaño (cuadrada, fondo blanco como la original,
+// formato y calidad automáticos). Antes todas las fotos se servían a 1200×1200 aunque se vieran a
+// 64-200 px: una página de catálogo bajaba 1,7-4,6 MB de fotos de golpe. Las URLs que no son de
+// Cloudinary (las viejas de /uploads) se devuelven tal cual. Usar con components/ProductImage.jsx, que
+// vuelve sola a la original si el tamaño pedido falla.
+export const getImageUrl = (path, size) => {
   if (!path) return null;
-  if (path.startsWith("http")) return path;
+  if (path.startsWith("http")) return cloudinarySized(path, size);
   return `${API_URL}${path}`;
 };
 

@@ -4,6 +4,8 @@ import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import { getImageUrl } from "../services/api";
 import { formatPrice } from "../utils/formatPrice";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "./ProductImage";
 
 // Drawer lateral del carrito de compras
 export default function CartDrawer({ open, onClose }) {
@@ -96,8 +98,9 @@ export default function CartDrawer({ open, onClose }) {
                   {/* Imagen */}
                   <div className="w-16 h-16 rounded-lg overflow-hidden bg-[#dce9ff] flex-shrink-0">
                     {img ? (
-                      <img
-                        src={getImageUrl(img)}
+                      <ProductImage
+                        src={img}
+                        size={128}
                         alt={item.name}
                         className="w-full h-full object-cover"
                       />

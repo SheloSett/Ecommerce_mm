@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useWishlist } from "../context/WishlistContext";
@@ -7,6 +7,9 @@ import { getImageUrl, productsApi } from "../services/api";
 import FitText from "./FitText";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "./ProductImage";
+import { withReturnTo } from "../utils/returnTo";
 
 // Convierte HTML del editor rico a texto plano para la card.
 // Usar el DOM en vez de regex para decodificar también entidades (&amp; → &, &nbsp; → espacio, etc.)
@@ -22,6 +25,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const { customer } = useCustomerAuth();
   const { toggle, isInWishlist } = useWishlist();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
   const [variantModal, setVariantModal] = useState(false);
   const [fullProduct, setFullProduct] = useState(null);   // datos completos con attributes + variants
   const [loadingProduct, setLoadingProduct] = useState(false);
@@ -279,7 +283,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
     if (outOfStock || product.priceHidden) return;
     // Si no hay usuario logueado, redirigir al login sin mostrar notificación
     if (!customer) {
-      navigate("/login");
+      navigate(withReturnTo("/login", routerLocation)); // antes: navigate("/login")
       return;
     }
     // Antes: solo los productos con variantes abrían el modal; sin variantes se agregaba directo:
@@ -347,7 +351,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
         >
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 p-4 border-b border-slate-100">
-              {img ? <img src={getImageUrl(img)} alt={product.name} className="w-16 h-16 object-cover rounded-xl flex-shrink-0 border border-slate-100" />
+              {img ? <ProductImage src={img} size={128} alt={product.name} className="w-16 h-16 object-cover rounded-xl flex-shrink-0 border border-slate-100" />
                 : <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-2xl flex-shrink-0">📦</div>}
               <div className="flex-1 min-w-0">
                 <Link to={`/producto/${product.slug || product.id}`} onClick={() => setVariantModal(false)} className="font-bold text-slate-900 text-sm leading-tight line-clamp-2 hover:text-blue-600 transition-colors">{product.name}</Link>
@@ -497,7 +501,7 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           style={{ backgroundColor: "#ffffff" }}
         >
           {img ? (
-            <img src={getImageUrl(img)} alt={product.name} className="w-full h-full object-contain p-2" />
+            <ProductImage src={img} size={320} alt={product.name} className="w-full h-full object-contain p-2" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-5xl text-slate-200">📦</div>
           )}
@@ -627,8 +631,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
           {/* Header con imagen y nombre */}
           <div className="flex items-center gap-3 p-4 border-b border-slate-100">
             {product.images?.[0] ? (
-              <img
-                src={getImageUrl(product.images[0])}
+              <ProductImage
+                src={product.images[0]}
+                size={128}
                 alt={product.name}
                 className="w-16 h-16 object-cover rounded-xl flex-shrink-0 border border-slate-100"
               />
@@ -803,8 +808,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
         {img ? (
           <>
             {/* Sin fondo borroso — bg-white del contenedor cubre el espacio vacío */}
-            <img
-              src={getImageUrl(img)}
+            <ProductImage
+              src={img}
+              size={400}
               alt={product.name}
               // group-hover:scale-105 removido — la animación pasa al card (hover:-translate-y-1) por pedido del usuario
               className="relative w-full h-full object-contain"

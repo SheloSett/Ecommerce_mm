@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, productsApi, getImageUrl } from "../services/api";
@@ -10,6 +10,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+import { withReturnTo } from "../utils/returnTo";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -67,6 +68,7 @@ export default function QuotationHistory() {
   const { customer, loadingCustomer } = useCustomerAuth();
   const { markAllRead, fetchNotifications } = useNotifications();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   const [quotes, setQuotes]         = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -191,7 +193,7 @@ export default function QuotationHistory() {
 
   useEffect(() => {
     if (loadingCustomer) return;
-    if (!customer) { navigate("/login"); return; }
+    if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
     // Antes: if (customer.type !== "MAYORISTA") { navigate("/"); return; }
     // Comentado: las cotizaciones eran solo de mayoristas, pero ahora el vendedor le puede armar una
     // a cualquier cliente desde el panel. El backend ya devuelve solo las del cliente logueado.
@@ -661,8 +663,11 @@ export default function QuotationHistory() {
                               <p className="text-sm font-medium text-[#0b1c30] truncate">
                                 {item.name}
                               </p>
-                              {/* Variante elegida por el cliente — no mostrar si la asignó el admin */}
-                              {item.variantLabel && !item.variantByAdmin && (
+                              {/* Variante elegida por el cliente — no mostrar si la asignó el admin, salvo
+                                  que el producto haya quedado en varias líneas (surtido repartido entre
+                                  variantes al aprobar): sin la variante se verían dos "Funda × 10" iguales.
+                                  Antes: item.variantLabel && !item.variantByAdmin */}
+                              {item.variantLabel && (!item.variantByAdmin || items.filter((i) => i.productId === item.productId).length > 1) && (
                                 <div className="flex flex-wrap gap-1 mt-0.5">
                                   {item.variantLabel.split(" / ").map((v, vi) => (
                                     <span key={vi} className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#dbe1ff] text-[#00174b]">

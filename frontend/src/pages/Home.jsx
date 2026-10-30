@@ -103,6 +103,11 @@ export default function Home() {
   const recentIds = useState(() => getRecentIds(4))[0];
   const [slides, setSlides] = useState([]);
   const [currentSlide, setCurrentSlide] = useState(0);
+  // Banners que ya se pueden bajar: el que se ve y el siguiente (para que la transición no muestre un
+  // hueco). Antes los <img> de TODOS los banners se montaban con su foto de entrada (solo cambiaba la
+  // opacidad), así que el celular bajaba todos los banners antes de mostrar el primero. Una vez
+  // cargado, un banner queda en el set: volver a él no lo vuelve a pedir.
+  const [loadedSlides, setLoadedSlides] = useState(() => new Set([0, 1]));
   const timerRef = useRef(null);
   const [featuredOffset, setFeaturedOffset] = useState(0);
   const [saleOffset, setSaleOffset] = useState(0);
@@ -265,6 +270,13 @@ export default function Home() {
     return () => ro.disconnect();
   }, [currentSlide, slides]);
 
+  // Habilitar la foto del banner actual y la del siguiente (ver loadedSlides)
+  useEffect(() => {
+    if (!slides.length) return;
+    const next = (currentSlide + 1) % slides.length;
+    setLoadedSlides((prev) => (prev.has(currentSlide) && prev.has(next) ? prev : new Set([...prev, currentSlide, next])));
+  }, [currentSlide, slides.length]);
+
   // Deslizar con el dedo para cambiar de slide (en el teléfono no hay flechas)
   const heroTouch = useRef(null);
   const heroSwiped = useRef(false);
@@ -359,10 +371,12 @@ export default function Home() {
             >
               {/* Fondo desenfocado: rellena el espacio sin importar la proporción de la imagen.
                   <picture>: en el teléfono usa la versión de celular si el slide la tiene. */}
+              {/* Las fotos solo se piden si el banner está en loadedSlides (el actual o el siguiente):
+                  sin src el navegador no baja nada. Antes: src={getImageUrl(slide.image)} siempre. */}
               <picture>
-                {slide.mobileImage && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
                 <img
-                  src={getImageUrl(slide.image)}
+                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
                   alt=""
                   aria-hidden="true"
                   className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
@@ -371,9 +385,9 @@ export default function Home() {
               {/* Imagen principal. En el teléfono "contain": nunca se corta (si la proporción no coincide,
                   el fondo desenfocado rellena). En md+ "cover" como siempre. */}
               <picture>
-                {slide.mobileImage && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
                 <img
-                  src={getImageUrl(slide.image)}
+                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
                   alt={slide.title || ""}
                   className="absolute inset-0 w-full h-full object-contain md:object-cover z-10"
                 />

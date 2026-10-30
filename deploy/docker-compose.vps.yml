@@ -74,6 +74,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Salud del backend: /api/health ahora consulta la base (antes respondía "ok" sin mirar nada).
+    # `docker ps` muestra (healthy) o (unhealthy). wget viene en la imagen alpine.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
     # Toma las variables del mismo backend/.env de siempre (JWT_SECRET, MP_ACCESS_TOKEN, SMTP_*,
     # CLOUDINARY_*, FRONTEND_URL, etc.). En el VPS nuevo su DATABASE_URL apunta a igwtstore_db:5432.

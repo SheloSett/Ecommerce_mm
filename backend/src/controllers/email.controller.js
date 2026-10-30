@@ -1,7 +1,6 @@
 // Admin → Emails: escribir y mandar emails a los clientes, avisar campañas, ver el historial y el
 // tope diario. La lógica (destinatarios, cola, plantillas) vive en services/broadcast.service.js.
 
-const { PrismaClient } = require("@prisma/client");
 const {
   BroadcastError,
   AUDIENCES,
@@ -24,7 +23,7 @@ const {
 } = require("../services/broadcast.service");
 const { createBulkTransporter } = require("../services/email.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 function handleError(res, err, fallback) {
   if (err instanceof BroadcastError) return res.status(err.status).json({ error: err.message });

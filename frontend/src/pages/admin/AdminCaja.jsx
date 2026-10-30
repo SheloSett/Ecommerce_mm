@@ -3,23 +3,29 @@ import AdminLayout from "../../components/AdminLayout";
 import { gastosApi, productsApi } from "../../services/api";
 import toast from "react-hot-toast";
 import { formatPrice } from "../../utils/formatPrice";
+import { localDay, formatDateOnly } from "../../utils/localDate";
 
 const TABS = [
   { key: "NEGOCIO",  label: "Gastos del Negocio",  color: "blue" },
   { key: "PERSONAL", label: "Gastos Personales",    color: "purple" },
 ];
 
-const EMPTY_FORM = { amount: "", description: "", currency: "ARS", date: new Date().toISOString().slice(0, 10) };
+// Formulario vacío con la fecha de HOY en la computadora. Antes era una constante armada al cargar la
+// página con toISOString (día en UTC): después de las 21:00 ponía el día siguiente, y si el panel quedaba
+// abierto de un día para otro seguía con la fecha vieja. Ver utils/localDate.js.
+// Antes: const EMPTY_FORM = { amount: "", description: "", currency: "ARS", date: new Date().toISOString().slice(0, 10) };
+const emptyForm = () => ({ amount: "", description: "", currency: "ARS", date: localDay() });
 
-const formatDate = (d) =>
-  new Date(d).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+// La fecha de un gasto no tiene hora (00:00 UTC del día cargado): se muestra en UTC. Antes en la zona de
+// la computadora, y el gasto del 28/10 aparecía como 27/10.
+const formatDate = (d) => formatDateOnly(d);
 
 export default function AdminCaja() {
   const [tab, setTab]       = useState("NEGOCIO");
   const [gastos, setGastos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
-  const [form, setForm]       = useState(EMPTY_FORM);
+  const [form, setForm]       = useState(emptyForm);
   // Tipo de gasto: "GASTO" (normal) o "RMA" (devolución de producto)
   const [subtype, setSubtype] = useState("GASTO");
   // Productos disponibles para RMA (solo los que tienen costo cargado)
@@ -133,7 +139,7 @@ export default function AdminCaja() {
         } : {}),
       });
       toast.success(subtype === "RMA" ? "RMA registrado y stock descontado" : "Gasto registrado");
-      setForm(EMPTY_FORM);
+      setForm(emptyForm());
       setRmaProductId("");
       setRmaVariantId("");
       setRmaVariants([]);
@@ -173,7 +179,7 @@ export default function AdminCaja() {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => { setTab(t.key); setSubtype("GASTO"); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(EMPTY_FORM); }}
+              onClick={() => { setTab(t.key); setSubtype("GASTO"); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
               className={`px-5 py-2.5 text-sm font-semibold rounded-t-lg transition-colors ${
                 tab === t.key
                   ? t.color === "blue"
@@ -198,7 +204,7 @@ export default function AdminCaja() {
                 <button
                   key={s}
                   type="button"
-                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(EMPTY_FORM); }}
+                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
                   className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
                     subtype === s
                       ? s === "RMA"

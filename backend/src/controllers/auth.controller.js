@@ -1,10 +1,24 @@
-const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { loginLimiter } = require("../middleware/loginLimiter");
 const { findUserByEmail } = require("../utils/email");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+
+// Token de sesión del admin. tv = contador de sesión (ver currentSession en middleware/auth.middleware.js).
+// El rol y los permisos van igual en el token por compatibilidad, pero el backend ahora los lee de la base.
+function signAdminToken(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role, name: user.name, permissions: user.permissions, tv: user.tokenVersion ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+// Hash de relleno para emparejar el tiempo de respuesta del login: con un email que no existe se
+// compara igual contra este hash. Antes se respondía al toque y, como bcrypt tarda, midiendo el tiempo
+// se podía saber qué emails tienen cuenta. Mismo costo (10) que las contraseñas reales.
+const DUMMY_HASH = bcrypt.hashSync("relleno-para-emparejar-el-tiempo", 10);
 
 // Login: valida credenciales y devuelve JWT
 async function login(req, res) {
@@ -21,6 +35,7 @@ async function login(req, res) {
     // en la DB y, como el login ahora llega siempre en minúsculas, no matcheaban nunca.
     const user = await findUserByEmail(prisma, email);
     if (!user) {
+      await bcrypt.compare(String(password || ""), DUMMY_HASH); // mismo tiempo que con un admin real
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
@@ -29,11 +44,7 @@ async function login(req, res) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name, permissions: user.permissions },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = signAdminToken(user);
 
     // Login exitoso: resetear el contador de intentos para esta IP
     loginLimiter.resetKey(req.ip);
@@ -69,12 +80,14 @@ async function changePassword(req, res) {
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
-    await prisma.user.update({
+    // tokenVersion +1: se cortan las otras sesiones abiertas de este admin. A esta se le manda un token
+    // nuevo (el panel lo guarda) para que siga adentro. Antes: data: { password: hashed }
+    const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
-      data: { password: hashed },
+      data: { password: hashed, tokenVersion: { increment: 1 } },
     });
 
-    res.json({ message: "Contraseña actualizada correctamente" });
+    res.json({ message: "Contraseña actualizada correctamente", token: signAdminToken(updatedUser) });
   } catch (err) {
     console.error("Change password error:", err);
     res.status(500).json({ error: "Error al cambiar contraseña" });

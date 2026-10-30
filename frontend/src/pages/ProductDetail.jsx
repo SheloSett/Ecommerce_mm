@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
+import { Helmet } from "react-helmet-async";
 import { productsApi, getImageUrl } from "../services/api";
 import { saveRecent } from "../utils/recentlyViewed";
 import { trackProductView, setPresenceLabel, pingPresence } from "../services/tracking";
@@ -12,6 +13,9 @@ import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import toast from "react-hot-toast";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "../components/ProductImage";
+import { withReturnTo } from "../utils/returnTo";
 
 // Convierte cualquier URL de YouTube a URL de embed
 function getYoutubeEmbedUrl(url) {
@@ -234,6 +238,7 @@ export default function ProductDetail() {
   }, [id]);
 
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   // Moneda del producto — vale para todos sus precios, incluidos los de las variantes (la variante
   // define el número, no la unidad). Sin conversión: un producto en USD se muestra "USD X" tal cual
@@ -295,9 +300,11 @@ export default function ProductDetail() {
   const activeUnlimited = activeVariant ? activeVariant.stockUnlimited : product?.stockUnlimited;
   const availableStock  = activeUnlimited || isMayorista ? Infinity : Math.max(0, (activeStock || 0) - cartQty);
   // Sin stock si: tiene variantes pero ninguna seleccionada → no bloquear; si está seleccionada y sin stock → sí
-  const outOfStock = hasVariants
+  // soldOut (M8): el producto se despublicó solo por quedarse sin stock. Antes la ficha daba "Producto no
+  // encontrado"; ahora se ve, pero no se puede comprar (tampoco como mayorista: el pedido lo rechazaría).
+  const outOfStock = product?.soldOut || (hasVariants
     ? (allAttrsSelected && !activeUnlimited && !isMayorista && availableStock === 0)
-    : (!activeUnlimited && !isMayorista && availableStock === 0);
+    : (!activeUnlimited && !isMayorista && availableStock === 0));
 
   // Devuelve el tier que corresponde a una cantidad dada (el de mayor minQty que no la supere)
   // Mayoristas usan wholesalePriceTiers; minoristas usan priceTiers.
@@ -338,7 +345,7 @@ export default function ProductDetail() {
     // priceHidden: producto solo mayoristas visto por alguien que no lo es (ver el bloque de precio)
     if (!product || product.priceHidden) return;
     if (!customer) {
-      navigate("/login");
+      navigate(withReturnTo("/login", routerLocation));
       return;
     }
     // Si hay variantes visibles para este cliente (sea minorista o mayorista), debe seleccionarlas.
@@ -396,6 +403,8 @@ export default function ProductDetail() {
   if (!product) {
     return (
       <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
+        {/* Que Google no guarde la ficha de un producto que ya no está (M7) */}
+        <Helmet><meta name="robots" content="noindex" /></Helmet>
         <Navbar />
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           {/* Antes: emoji 😕 — reemplazado por Material Symbol para consistencia visual */}
@@ -483,7 +492,7 @@ export default function ProductDetail() {
                           </span>
                         </>
                       ) : (
-                        <img src={getImageUrl(m.url)} alt="" className="w-full h-full object-contain" />
+                        <ProductImage src={m.url} size={160} alt="" className="w-full h-full object-contain" />
                       )}
                     </button>
                   ))}
@@ -600,7 +609,7 @@ export default function ProductDetail() {
                         </span>
                       </>
                     ) : (
-                      <img src={getImageUrl(m.url)} alt="" className="w-full h-full object-contain" />
+                      <ProductImage src={m.url} size={160} alt="" className="w-full h-full object-contain" />
                     )}
                   </button>
                 ))}
@@ -928,7 +937,7 @@ export default function ProductDetail() {
             {/* Stock */}
             <div className="flex items-center gap-2">
               {/* Para variantes: el backend garantiza stock si aparece; para sin variantes: chequear product.stock */}
-              {(product.stockUnlimited || hasVariants || product.stock > 0) ? (
+              {!product.soldOut && (product.stockUnlimited || hasVariants || product.stock > 0) ? (
                 <>
                   {/* Antes: span puntito bg-green-500 — reemplazado por Material Symbol check_circle filled */}
                   {/* <span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> */}
@@ -1009,14 +1018,14 @@ export default function ProductDetail() {
                 ) : (
                   <>
                     <Link
-                      to="/login"
+                      to={withReturnTo("/login", routerLocation)}
                       className="w-full bg-[#00873a] text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-95"
                     >
                       <span className="material-symbols-outlined">login</span>
                       Iniciar sesión
                     </Link>
                     <Link
-                      to="/registro"
+                      to={withReturnTo("/registro", routerLocation)}
                       className="w-full border-2 border-[#0b1c30] text-[#0b1c30] hover:bg-[#0b1c30] hover:text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center transition-all active:scale-95"
                     >
                       Crear cuenta
@@ -1043,7 +1052,7 @@ export default function ProductDetail() {
               {/* {customer && !outOfStock && (
                 <button
                   onClick={async () => {
-                    if (!customer) { navigate("/login"); return; }
+                    if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
                     await handleAddToCart();
                     navigate("/checkout");
                   }}

@@ -18,6 +18,9 @@ export default function EmailAutomationsSection() {
   const [emailSearchResults, setEmailSearchResults]   = useState([]);
   const [searchingProducts, setSearchingProducts]     = useState(false);
   const [savingEmails, setSavingEmails]               = useState(false);
+  // Recordatorio automático de carrito abandonado (backend: services/cartReminder.service.js). Arranca apagado.
+  const [abandonedCart, setAbandonedCart]             = useState(false);
+  const [savingAbandoned, setSavingAbandoned]         = useState(false);
   const searchTimeoutRef = useRef(null);
 
   // Testing manual de campañas de email — disparar emails sin esperar el cron
@@ -35,6 +38,7 @@ export default function EmailAutomationsSection() {
         setEmailFrequency(res.data.emailMinoristaFrequencyDays || "7");
         setEmailHour(res.data.emailMinoristaHour || "9");
         setEmailProductCount(res.data.emailMinoristaProductCount || "4");
+        setAbandonedCart(res.data.emailAbandonedCart === "true");
         try {
           // Se guarda como [{id, name, images}] para poder mostrarlos sin otra llamada a la API
           const saved = JSON.parse(res.data.emailMinoristaFeaturedProducts || "[]");
@@ -122,6 +126,20 @@ export default function EmailAutomationsSection() {
     setEmailFeatured((prev) => prev.filter((p) => p.id !== id));
   };
 
+  const toggleAbandonedCart = async () => {
+    const next = !abandonedCart;
+    setSavingAbandoned(true);
+    try {
+      await settingsApi.update({ emailAbandonedCart: String(next) });
+      setAbandonedCart(next);
+      toast.success(next ? "Recordatorio de carrito activado" : "Recordatorio de carrito desactivado");
+    } catch {
+      toast.error("Error al guardar");
+    } finally {
+      setSavingAbandoned(false);
+    }
+  };
+
   const handleSaveEmails = async () => {
     const freq = parseInt(emailFrequency);
     const count = parseInt(emailProductCount);
@@ -148,6 +166,30 @@ export default function EmailAutomationsSection() {
 
   return (
     <div className="space-y-5">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-bold text-slate-800 text-base flex items-center gap-2">
+            <span>🛒</span> Carrito abandonado
+          </h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Email automático a quien dejó productos en el carrito hace más de 24 horas (y menos de 7 días), con los
+            precios de hoy y sin lo que se agotó. Uno solo por carrito, hasta 10 por hora. No les llega a los que se
+            dieron de baja de las promociones ni a los que ya hicieron un pedido.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={abandonedCart}
+          aria-label="Recordatorio de carrito abandonado"
+          onClick={toggleAbandonedCart}
+          disabled={savingAbandoned}
+          className={`relative shrink-0 w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${abandonedCart ? "bg-green-500" : "bg-slate-300"}`}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${abandonedCart ? "translate-x-5" : ""}`} />
+        </button>
+      </div>
+
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
         <div>
           <h2 className="font-bold text-slate-800 text-base flex items-center gap-2">

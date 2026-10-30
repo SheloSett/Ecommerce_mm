@@ -1,6 +1,5 @@
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 const SITE_URL = (process.env.FRONTEND_URL || "https://igwtstore.com.ar").split(",")[0].trim();
 
@@ -24,6 +23,8 @@ async function getSitemap(req, res) {
       where: { active: true, visibility: { in: ["AMBOS", "MINORISTA"] } },
       select: { id: true, slug: true, updatedAt: true },
     });
+    // Categorías visibles (M7): cada una es una página del catálogo que también puede salir en Google.
+    const categories = await prisma.category.findMany({ where: { hidden: false }, select: { slug: true } });
 
     const staticPages = [
       { loc: "/", priority: "1.0", changefreq: "daily" },
@@ -39,6 +40,9 @@ async function getSitemap(req, res) {
     const urls = [
       ...staticPages.map(
         (p) => `  <url>\n    <loc>${SITE_URL}${p.loc}</loc>\n    <changefreq>${p.changefreq}</changefreq>\n    <priority>${p.priority}</priority>\n  </url>`
+      ),
+      ...categories.map((c) =>
+        `  <url>\n    <loc>${escapeXml(`${SITE_URL}/catalogo?category=${encodeURIComponent(c.slug)}`)}</loc>\n    <changefreq>daily</changefreq>\n    <priority>0.6</priority>\n  </url>`
       ),
       ...products.map((p) => {
         const loc = `${SITE_URL}/producto/${p.slug || p.id}`;
@@ -250,16 +254,57 @@ function ogBlock({ title, description, image, url, price, currency }) {
   ].filter(Boolean).join("\n    ");
 }
 
+// ¿Tiene stock? Con variantes, el de las variantes activas (el del producto no se usa).
+const hasStock = (p) => (p.variants?.length
+  ? p.variants.some((v) => v.stockUnlimited || v.stock > 0)
+  : p.stockUnlimited || p.stock > 0);
+
+// Datos estructurados schema.org (M7 de la auditoría): con esto Google puede mostrar precio y stock en
+// el resultado de búsqueda. Sin "offers" (precio) en los productos que se venden solo a mayoristas,
+// igual que las etiquetas og. El "<" va escapado: un nombre con "</script>" no puede cortar la etiqueta.
+function productJsonLd({ product, url, description, price, inStock }) {
+  const images = (product.images || []).slice(0, 5).map(absoluteImage);
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    image: images.length ? images : [absoluteImage(null)],
+    description,
+    ...(product.sku ? { sku: product.sku } : {}),
+    url,
+    ...(price != null ? {
+      offers: {
+        "@type": "Offer",
+        url,
+        price: Number(price).toFixed(2),
+        priceCurrency: product.currency || "ARS",
+        availability: inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      },
+    } : {}),
+  };
+  return `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+}
+
 async function getProductOgPage(req, res) {
   const { slug } = req.params;
   let product = null;
+  let lookupFailed = false;
   try {
     const where = /^\d+$/.test(String(slug)) ? { id: parseInt(slug) } : { slug: String(slug) };
+    // Antes: where: { ...where, active: true }. Ahora también los agotados (M8): se despublicaron solos
+    // por falta de stock y la ficha se sigue viendo con "Sin stock" (ver getProduct). Los que ocultó el
+    // admin siguen como inexistentes.
     product = await prisma.product.findFirst({
-      where: { ...where, active: true },
-      select: { id: true, name: true, slug: true, description: true, images: true, price: true, salePrice: true, currency: true, visibility: true },
+      where,
+      select: {
+        id: true, name: true, slug: true, sku: true, description: true, images: true, price: true, salePrice: true,
+        currency: true, visibility: true, stock: true, stockUnlimited: true, active: true, hiddenByAdmin: true,
+        variants: { where: { active: true }, select: { stock: true, stockUnlimited: true } },
+      },
     });
+    if (product && !product.active && (product.hiddenByAdmin || hasStock(product))) product = null;
   } catch (err) {
+    lookupFailed = true;
     console.error("getProductOgPage (producto):", err.message);
   }
 
@@ -286,6 +331,10 @@ async function getProductOgPage(req, res) {
       ? null
       : (product.salePrice && product.salePrice < product.price ? product.salePrice : product.price);
     const block = ogBlock({ title, description: desc, image, url, price, currency: product.currency });
+    const inStock = product.active && hasStock(product);
+    // canonical: la misma ficha existe en /producto/<id> (los emails usan el id) y en /producto/<slug>;
+    // así Google no las indexa como dos páginas.
+    const seo = `<link rel="canonical" href="${escapeXml(url)}" />\n    ${productJsonLd({ product, url, description: desc, price, inStock })}`;
     // Se sacan el título, la descripción y las etiquetas og:/twitter: genéricas del index.html:
     // los bots toman la PRIMERA etiqueta de cada tipo, así que si quedaran duplicadas mostrarían
     // las de la tienda y no las del producto.
@@ -293,7 +342,13 @@ async function getProductOgPage(req, res) {
       .replace(/<title>[^<]*<\/title>/i, `<title>${escapeXml(title)}</title>`)
       .replace(/[ \t]*<meta\s+name="description"[^>]*>\s*/gi, "")
       .replace(/[ \t]*<meta\s+(?:property|name)="(?:og|twitter):[^"]*"[^>]*>\s*/gi, "")
-      .replace(/<\/head>/i, `    ${block}\n  </head>`);
+      .replace(/<\/head>/i, `    ${block}\n    ${seo}\n  </head>`);
+  } else if (!lookupFailed) {
+    // Producto que no existe o no está publicado: 404 con noindex, para que Google saque el link del
+    // índice. Antes era el index.html genérico con 200 (un "soft 404"). Una persona ve igual la tienda,
+    // que muestra "Producto no encontrado". Si falló la base no se marca nada: es algo pasajero.
+    res.status(404);
+    html = html.replace(/<\/head>/i, `    <meta name="robots" content="noindex" />\n  </head>`);
   }
 
   // Helmet le pone a TODAS las respuestas del backend una Content-Security-Policy pensada para la

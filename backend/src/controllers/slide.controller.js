@@ -1,9 +1,8 @@
-const { PrismaClient } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
 const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Transformación panorámica para banners del hero (1920x600 recomendado).
 // crop "limit": solo achica si excede el tamaño, nunca recorta ni rellena —

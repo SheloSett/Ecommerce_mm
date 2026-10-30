@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Valores por defecto si no están en la DB
 const DEFAULTS = {
@@ -25,6 +24,9 @@ const DEFAULTS = {
   emailMinoristaHour: "9",               // hora de envío en horario Argentina (0-23)
   emailMinoristaProductCount: "4",       // cantidad de productos a mostrar
   emailMinoristaFeaturedProducts: "[]",  // JSON array de IDs de productos destacados por el admin
+  // Recordatorio automático de carrito abandonado (M5, services/cartReminder.service.js). Arranca apagado:
+  // se prende en Admin → Emails → Automatizaciones.
+  emailAbandonedCart: "false",
   // Footer de contacto — editables desde admin > Configuración > Contenido > Footer
   footerEmail: "info@lsmarket.com.ar",
   footerPhone: "1150395166",

@@ -14,13 +14,12 @@
 // clientes elegidos uno por uno es un mensaje directo y les llega igual.
 
 const crypto = require("crypto");
-const { PrismaClient } = require("@prisma/client");
 const { offerState } = require("./offers.service");
 const { createBulkTransporter } = require("./email.service");
 const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail, buildLightOfferEmail } = require("./broadcast.templates");
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 const DAY_MS = 86400000;
 const PER_TICK = 20;               // emails por minuto como máximo
@@ -352,6 +351,18 @@ const sentLast24h = (now = new Date()) =>
 
 let queueRunning = false;
 
+// Por qué ya no le corresponde un email de un envío a un público, mirado AL MANDAR (null = va). Un envío
+// "a todos" puede tardar días por el tope diario: quien se dio de baja en el medio no tiene que recibirlo.
+// Antes solo se filtraba al armar el envío (pickRecipients). Los mensajes a clientes elegidos (SELECTED)
+// son directos y van igual, como al armarlos.
+function skipReasonAtSend(broadcast, customer) {
+  if (broadcast.audience === "SELECTED") return null;
+  if (!customer) return "La cuenta ya no existe";
+  if (customer.unsubscribeMarketing) return "Se dio de baja de las promociones";
+  if (customer.status === "REJECTED") return "Cuenta rechazada";
+  return null;
+}
+
 // Cron, cada minuto. transporter: inyectable para los tests.
 async function processEmailQueue({ transporter: injected } = {}) {
   if (queueRunning) return { skipped: true };
@@ -380,6 +391,14 @@ async function processEmailQueue({ transporter: injected } = {}) {
         // Si el admin canceló el envío mientras corría esta tanda, los que faltaban ya no van.
         const fresh = await prisma.emailRecipient.findUnique({ where: { id: r.id }, select: { status: true } });
         if (fresh?.status !== "PENDING") continue;
+        if (b.audience !== "SELECTED" && r.customerId) {
+          const customer = await prisma.customer.findUnique({ where: { id: r.customerId }, select: { status: true, unsubscribeMarketing: true } });
+          const skip = skipReasonAtSend(b, customer);
+          if (skip) {
+            await prisma.emailRecipient.update({ where: { id: r.id }, data: { status: "CANCELLED", error: skip } });
+            continue;
+          }
+        }
         try {
           if (!transporter) throw Object.assign(new Error("SMTP no configurado"), { code: "NO_SMTP" });
           const { subject, html, text } = await renderFor(b, r, cache);
@@ -500,6 +519,7 @@ module.exports = {
   OFFER_KIND_BY_FORMAT,
   sentLast24h,
   processEmailQueue,
+  skipReasonAtSend,
   cancelBroadcast,
   runEmailJobs,
 };

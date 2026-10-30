@@ -28,6 +28,16 @@
 # VPS viejo: sin tratamiento especial, todos esos clientes compartirían una sola IP y se comerían
 # juntos los límites de intentos de login. Por eso, SOLO para conexiones desde 177.7.59.16, se usa
 # el X-Real-IP que manda el reenvío (la IP real que vio el nginx viejo).
+#
+# Cloudflare (30/10/2026): con la nube naranja, la conexión que llega acá es la de un nodo de
+# Cloudflare, no la del cliente. Antes se pasaba {remote_host} y el backend veía la IP del nodo:
+# todos los que entraban por el mismo nodo compartían los límites de intentos (en un pico de
+# tráfico, clientes reales podían recibir "Demasiadas solicitudes") y a Meta se le informaba la
+# IP de Cloudflare como la del comprador. Ahora, SOLO para conexiones que vienen de las IPs de
+# Cloudflare, se usa el header CF-Connecting-IP (la IP real del cliente). Una conexión directa al
+# VPS que no sea de Cloudflare sigue usando {remote_host}: así nadie puede inventarse la IP
+# mandando ese header. Lista oficial: https://www.cloudflare.com/ips-v4 y /ips-v6 (cambia muy
+# de vez en cuando; si Cloudflare agrega rangos, sumarlos acá).
 
 (igwtstore) {
 	encode gzip
@@ -82,5 +92,12 @@ igwtstore.com.ar, www.igwtstore.com.ar {
 	tls {
 		on_demand
 	}
-	import igwtstore {remote_host}
+	# IP real del cliente detrás de Cloudflare (ver arriba). Antes: import igwtstore {remote_host}
+	@cloudflare remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	handle @cloudflare {
+		import igwtstore {http.request.header.CF-Connecting-IP}
+	}
+	handle {
+		import igwtstore {remote_host}
+	}
 }

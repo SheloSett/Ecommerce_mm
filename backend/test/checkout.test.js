@@ -49,6 +49,7 @@ function resetDb() {
     coupons: {
       1: { id: 1, code: "PERSONAL10", active: true, discountType: "PERCENTAGE", discountValue: 10, customerId: 7, expiresAt: null, minPurchase: null, maxUses: null, maxUsesPerCustomer: null },
       2: { id: 2, code: "TODOS10", active: true, discountType: "PERCENTAGE", discountValue: 10, customerId: null, expiresAt: null, minPurchase: null, maxUses: null, maxUsesPerCustomer: null },
+      3: { id: 3, code: "UNAVEZ", active: true, discountType: "PERCENTAGE", discountValue: 50, customerId: null, expiresAt: null, minPurchase: null, maxUses: 1, maxUsesPerCustomer: null },
     },
     couponUsages: [],
     orders: {},
@@ -85,6 +86,7 @@ class FakePrismaClient {
         .filter((v) => v.productId === where.productId && (where.active === undefined || v.active === where.active)).map(clone),
       findUnique: async ({ where }) => clone(db.variants[where.id]) || null,
       update: async ({ where, data }) => clone(applyData(db.variants[where.id], data)),
+      count: async ({ where }) => Object.values(db.variants).filter((v) => v.productId === where.productId && (where.active === undefined || v.active === where.active)).length,
     };
     this.siteConfig = { findMany: async () => [] };
     this.coupon = {
@@ -108,9 +110,16 @@ class FakePrismaClient {
       },
       findUnique: async ({ where }) => {
         const o = db.orders[where.id];
-        return o ? { ...clone(o), items: itemsWithProduct(o), coupon: null } : null;
+        return o ? { ...clone(o), items: itemsWithProduct(o), coupon: o.couponId ? clone(db.coupons[o.couponId]) || null : null } : null;
       },
       update: async ({ where, data }) => clone(applyData(db.orders[where.id], data)),
+      // claimApproval: aprueba solo si todavía no estaba aprobado (una sola operación)
+      updateMany: async ({ where, data }) => {
+        const o = db.orders[where.id];
+        if (!o || (where.status?.not && o.status === where.status.not)) return { count: 0 };
+        applyData(o, data);
+        return { count: 1 };
+      },
     };
     this.orderItem = { findMany: async ({ where }) => itemsWithProduct(db.orders[where.orderId]) };
     this.cart = { findUnique: async () => null };
@@ -135,8 +144,9 @@ function stub(modulePath, exportsObj) {
 const root = path.join(__dirname, "..");
 stub(require.resolve("@prisma/client", { paths: [root] }), { PrismaClient: FakePrismaClient, Prisma: {} });
 stub(require.resolve("mercadopago", { paths: [root] }), { MercadoPagoConfig: class {}, Preference, Payment });
-// Ningún email sale: cualquier función del servicio es un no-op.
-stub(path.join(root, "src/services/email.service.js"), new Proxy({}, { get: () => async () => {} }));
+// Ningún email sale: cualquier función del servicio solo anota que se la llamó.
+const emailsSent = [];
+stub(path.join(root, "src/services/email.service.js"), new Proxy({}, { get: (_t, name) => async () => { emailsSent.push(String(name)); } }));
 stub(path.join(root, "src/services/meta.service.js"), { browserDataFromRequest: () => null, sendPurchaseEvent: async () => ({}) });
 stub(path.join(root, "src/controllers/product.controller.js"), { syncProductVisibility: async () => {} });
 stub(path.join(root, "src/config/cloudinary.js"), { uploadBuffer: async () => ({}) });
@@ -245,11 +255,13 @@ describe("checkout: quién compra sale de la sesión, no de lo que manda el nave
     assert.equal(order.customerId, 5);
   });
 
-  test("un mayorista rechazado paga precio minorista", async () => {
+  // Antes: "un mayorista rechazado paga precio minorista" (201 a precio minorista). Desde A5 una cuenta
+  // RECHAZADA ya no tiene sesión válida (el login tampoco la deja entrar): el checkout pide volver a
+  // iniciar sesión, y en ningún caso sale a precio mayorista.
+  test("una cuenta rechazada ya no tiene sesión: no compra, y menos a precio mayorista", async () => {
     const res = await placeOrder({ customerId: 6, items: [{ productId: 1, quantity: 1 }] }, tokenOf(6));
-    assert.equal(res.code, 201);
-    assert.equal(db.orders[res.body.id].items[0].price, 2000000);
-    assert.equal(db.orders[res.body.id].customerType, "MINORISTA");
+    assert.equal(res.code, 401);
+    assert.equal(orderCount(), 0);
   });
 
   test("el cupón personal de otro cliente no se aplica escribiendo su email", async () => {
@@ -324,6 +336,51 @@ describe("aviso de pago: el monto tiene que coincidir con el pedido", () => {
     await handleWebhook(webhookReq(902), fakeRes());
     assert.equal(db.orders[id].status, "APPROVED");
     assert.equal(db.products[1].stock, 4);
+  });
+
+  test("volver de MP antes que el aviso: igual se registra el cupón y salen los emails", async () => {
+    const id = seedOrder({ couponId: 2, total: 1800000 });
+    mp.searchResults = [{ id: 906, status: "approved", external_reference: String(id), transaction_amount: 1800000, currency_id: "ARS", date_created: "2026-10-30T10:00:00Z" }];
+    emailsSent.length = 0;
+    await getOrderPaymentStatus({ params: { orderId: String(id) }, query: {}, headers: {} }, fakeRes());
+    assert.equal(db.orders[id].status, "APPROVED");
+    assert.equal(db.couponUsages.length, 1);
+    assert.ok(emailsSent.includes("sendOrderNotificationToAdmin"), "email al admin");
+    assert.ok(emailsSent.includes("sendOrderConfirmationToCustomer"), "email al cliente");
+  });
+
+  test("el aviso y la pantalla de resultado a la vez: el stock se descuenta una sola vez", async () => {
+    const id = seedOrder({});
+    const payment = { id: 907, status: "approved", external_reference: String(id), transaction_amount: 2000000, currency_id: "ARS", date_created: "2026-10-30T10:00:00Z" };
+    mp.payments[907] = payment;
+    mp.searchResults = [payment];
+    emailsSent.length = 0;
+    await Promise.all([
+      handleWebhook(webhookReq(907), fakeRes()),
+      getOrderPaymentStatus({ params: { orderId: String(id) }, query: {}, headers: {} }, fakeRes()),
+      handleWebhook(webhookReq(907), fakeRes()), // MP a veces repite el aviso
+    ]);
+    assert.equal(db.orders[id].status, "APPROVED");
+    assert.equal(db.products[1].stock, 4);
+    assert.equal(emailsSent.filter((n) => n === "sendOrderNotificationToAdmin").length, 1);
+  });
+
+  test("si ya no queda stock cuando llega el pago, queda para revisar (no se venden unidades que no hay)", async () => {
+    const id = seedOrder({ total: 12000000, items: [{ id: 5000, orderId: 0, productId: 1, variantId: null, quantity: 6, price: 2000000, currency: "ARS" }] });
+    db.orders[id].items[0].orderId = id;
+    mp.payments[908] = { id: 908, status: "approved", external_reference: String(id), transaction_amount: 12000000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(908), fakeRes());
+    assert.equal(db.orders[id].status, "PAYMENT_REVIEW");
+    assert.equal(db.products[1].stock, 5);
+  });
+
+  test("un cupón de un solo uso que ya se usó en otro pedido: el segundo pago queda para revisar", async () => {
+    db.couponUsages.push({ couponId: 3, orderId: 1, customerEmail: "otro@example.com" });
+    const id = seedOrder({ couponId: 3, total: 1000000 });
+    mp.payments[909] = { id: 909, status: "approved", external_reference: String(id), transaction_amount: 1000000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(909), fakeRes());
+    assert.equal(db.orders[id].status, "PAYMENT_REVIEW");
+    assert.equal(db.couponUsages.length, 1, "no se registra un segundo uso");
   });
 
   test("la consulta desde la pantalla de resultado aplica el mismo control", async () => {

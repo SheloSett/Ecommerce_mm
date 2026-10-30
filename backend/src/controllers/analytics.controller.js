@@ -13,10 +13,9 @@
 //     moneda que la línea.
 //   - Fechas: la tienda es de Argentina (UTC−3, sin horario de verano). Los cortes por día / semana /
 //     mes y el día de la semana / hora se calculan con ese huso, no con el del servidor.
-const { PrismaClient } = require("@prisma/client");
 const { livePresence } = require("./events.controller");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 const AR_OFFSET_MS = -3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -175,8 +174,13 @@ async function getVentas(req, res) {
     const [orders, prevOrders, gastos] = await Promise.all([
       approvedOrdersIn(from, to),
       approvedOrdersIn(prevFrom, prevTo),
+      // Los gastos son fechas SIN hora (00:00 UTC del día tipeado). Antes se filtraban y agrupaban como
+      // un momento en hora argentina, y como las 00:00 UTC son las 21:00 del día anterior en Argentina,
+      // cada gasto caía un día antes (el del 01/10 quedaba en septiembre). Ahora el rango se corre al
+      // mismo día en UTC y el agrupado usa el día tipeado.
+      // Antes: where: { date: { gte: from, lte: to }, currency: "ARS" },
       prisma.gasto.findMany({
-        where: { date: { gte: from, lte: to }, currency: "ARS" },
+        where: { date: { gte: new Date(from.getTime() + AR_OFFSET_MS), lte: new Date(to.getTime() + AR_OFFSET_MS) }, currency: "ARS" },
         select: { amount: true, type: true, date: true },
       }),
     ]);
@@ -199,7 +203,8 @@ async function getVentas(req, res) {
       b.ventasUsd += f.revenueUsd;
     }
     for (const g of gastos) {
-      const b = byKey[bucketKey(g.date, granularity)];
+      // Antes: bucketKey(g.date, granularity) — ver el comentario del findMany de gastos
+      const b = byKey[bucketKey(new Date(g.date.getTime() - AR_OFFSET_MS), granularity)];
       if (b) b.gastosArs += g.amount;
     }
     const series = keys.map((k) => {

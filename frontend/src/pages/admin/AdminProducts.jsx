@@ -16,6 +16,7 @@ import { flattenTree, indentedLabel, breadcrumbForId, idsInBranch } from "../../
 import { formatPrice as formatPriceCurrency } from "../../utils/formatPrice";
 import MultiSelectDropdown from "../../components/admin/MultiSelectDropdown";
 import * as XLSX from "xlsx";
+import { localDay } from "../../utils/localDate";
 
 // Orden del listado. Va separado en DOS grupos (precio y ventas) porque son criterios distintos y
 // mezclarlos en un solo desplegable de cinco opciones no dejaba ver de qué se estaba ordenando.
@@ -749,7 +750,7 @@ export default function AdminProducts() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Productos");
 
-    const fecha = new Date().toISOString().slice(0, 10);
+    const fecha = localDay(); // antes: new Date().toISOString().slice(0, 10) (de noche, el día siguiente)
     XLSX.writeFile(wb, `productos_${exportType.toLowerCase()}_${fecha}.xlsx`, { cellStyles: true });
 
     setShowExportModal(false);

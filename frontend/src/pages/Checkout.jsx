@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -10,6 +10,8 @@ import { pixelInitiateCheckout, getMetaCookies } from "../services/metaPixel";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "../components/ProductImage";
 
 // Provincias argentinas con sus códigos para el selector de Correo Argentino
 const PROVINCES = [
@@ -93,6 +95,10 @@ export default function Checkout() {
   }, [items, checkoutTracked]);
 
   const [loading, setLoading] = useState(false);
+  // Pedido de Mercado Pago ya creado cuya página de pago no se pudo abrir (MP caído, se cortó la red).
+  // Si el cliente vuelve a tocar "Pagar" con la misma compra, se reusa en vez de crear otro pedido.
+  // { key: la compra (ítems, datos, envío, cupón), order }
+  const pendingMpOrder = useRef(null);
   // Estado de éxito: null = en progreso, objeto = orden creada exitosamente (para no-MP)
   const [successOrder, setSuccessOrder] = useState(null);
   // SEGURIDAD: se eliminó la posibilidad de que el cliente edite precios.
@@ -295,13 +301,7 @@ export default function Checkout() {
 
     setLoading(true);
     try {
-      // Crear la orden en la BD con el método de pago correspondiente
-      const orderRes = await ordersApi.create({
-        // Analíticas: vincula el pedido con la sesión anónima que vio los productos
-        sessionId:     getSessionId(),
-        // Meta: cookies del Pixel (_fbp/_fbc) para atribuir la compra al anuncio cuando el pago se
-        // apruebe (el aviso a Meta lo manda el servidor). null si el Pixel no está activo.
-        metaBrowser:   getMetaCookies(),
+      const purchase = {
         customerName:  form.customerName,
         customerEmail: form.customerEmail,
         customerPhone: form.customerPhone,
@@ -325,9 +325,24 @@ export default function Checkout() {
         wantsInvoice: isMayorista ? wantsInvoice : false,
         ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
         ...(form.customerNote.trim() ? { customerNote: form.customerNote.trim() } : {}),
-      });
+      };
+      const purchaseKey = JSON.stringify(purchase);
 
-      const order = orderRes.data;
+      // Reintento de un pago de MP que no abrió: mismo pedido. Antes cada intento creaba otro pedido
+      // PENDING por la misma compra.
+      let order = pendingMpOrder.current?.key === purchaseKey ? pendingMpOrder.current.order : null;
+      if (!order) {
+        // Crear la orden en la BD con el método de pago correspondiente
+        const orderRes = await ordersApi.create({
+          // Analíticas: vincula el pedido con la sesión anónima que vio los productos
+          sessionId:     getSessionId(),
+          // Meta: cookies del Pixel (_fbp/_fbc) para atribuir la compra al anuncio cuando el pago se
+          // apruebe (el aviso a Meta lo manda el servidor). null si el Pixel no está activo.
+          metaBrowser:   getMetaCookies(),
+          ...purchase,
+        });
+        order = orderRes.data;
+      }
 
       // Se chequea el paymentMethod que confirmó el SERVIDOR (order.paymentMethod), no el estado
       // local: el backend puede forzar A_CONVENIR aunque localmente estuviera seleccionado MP
@@ -335,7 +350,14 @@ export default function Checkout() {
       if (order.paymentMethod === "MERCADOPAGO" && !isMayorista) {
         // ── Flujo MercadoPago: redirigir al gateway ──────────────────────────
         // IMPORTANTE: en dev usar sandboxInitPoint (test); en prod usar initPoint (real).
-        const prefRes    = await paymentsApi.createPreference(order.id);
+        pendingMpOrder.current = { key: purchaseKey, order };
+        const prefRes    = await paymentsApi.createPreference(order.id).catch((err) => {
+          // 4xx: ese pedido ya no se puede pagar (lo cancelaron, ya se procesó): el próximo intento arma
+          // uno nuevo. Si MP no respondió (red, 5xx) se reusa.
+          const status = err.response?.status;
+          if (status >= 400 && status < 500) pendingMpOrder.current = null;
+          throw err;
+        });
         const redirectUrl = import.meta.env.DEV
           ? prefRes.data.sandboxInitPoint
           : prefRes.data.initPoint;
@@ -518,8 +540,10 @@ export default function Checkout() {
   //   return `Confirmar pedido — ${formatPrice(finalTotal)} →`;
   // };
 
-  // Clases de input reutilizables para consistencia visual
-  const inputCls = "w-full bg-[#eff4ff] border border-[#bdcaba]/50 rounded-lg px-3 py-3 text-[#0b1c30] placeholder:text-[#565e74]/60 focus:outline-none focus:border-[#0051d5] transition-colors text-sm";
+  // Clases de input reutilizables para consistencia visual.
+  // text-base md:text-sm: 16 px en el celular (antes text-sm, 14 px: Safari del iPhone hacía zoom en cada
+  // campo del checkout). Los campos de contacto llevan autoComplete para que el teléfono los complete.
+  const inputCls = "w-full bg-[#eff4ff] border border-[#bdcaba]/50 rounded-lg px-3 py-3 text-[#0b1c30] placeholder:text-[#565e74]/60 focus:outline-none focus:border-[#0051d5] transition-colors text-base md:text-sm";
 
   // Clases de radio card: activa (borde verde) vs. inactiva
   const radioCardCls = (active) =>
@@ -564,6 +588,7 @@ export default function Checkout() {
                     <input
                       type="text"
                       name="customerName"
+                      autoComplete="name"
                       value={form.customerName}
                       onChange={handleChange}
                       className={inputCls}
@@ -579,6 +604,8 @@ export default function Checkout() {
                     <input
                       type="email"
                       name="customerEmail"
+                      autoComplete="email"
+                      autoCapitalize="none"
                       value={form.customerEmail}
                       onChange={handleChange}
                       className={inputCls}
@@ -599,6 +626,7 @@ export default function Checkout() {
                     <input
                       type="tel"
                       name="customerPhone"
+                      autoComplete="tel"
                       value={form.customerPhone}
                       onChange={handleChange}
                       className={inputCls}
@@ -928,6 +956,8 @@ export default function Checkout() {
                           <input
                             type="text"
                             name="postalCode"
+                            autoComplete="postal-code"
+                            inputMode="numeric"
                             value={shippingAddress.postalCode}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
@@ -1036,7 +1066,7 @@ export default function Checkout() {
                         <div key={key} className="flex gap-3">
                           <div className="w-14 h-14 rounded-lg overflow-hidden bg-white flex-shrink-0 border border-[#bdcaba]/30">
                             {img ? (
-                              <img src={getImageUrl(img)} alt={item.name} className="w-full h-full object-cover" />
+                              <ProductImage src={img} size={128} alt={item.name} className="w-full h-full object-cover" />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center text-xl">📦</div>
                             )}

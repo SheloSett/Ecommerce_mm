@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 
 // visibleFor: mismo criterio que getProducts (product.controller.js) — filtra el conteo de

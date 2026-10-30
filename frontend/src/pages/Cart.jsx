@@ -6,6 +6,8 @@ import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import { getImageUrl } from "../services/api";
 import { formatPrice } from "../utils/formatPrice";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "../components/ProductImage";
 
 export default function Cart() {
   const { items, totalPrice, removeItem, updateQuantity } = useCart();
@@ -120,8 +122,9 @@ export default function Cart() {
                       }`}
                     >
                       {img ? (
-                        <img
-                          src={getImageUrl(img)}
+                        <ProductImage
+                          src={img}
+                          size={256}
                           alt={item.name}
                           className="w-full h-full object-contain"
                         />

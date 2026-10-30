@@ -1,13 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
-const { PrismaClient } = require("@prisma/client");
-const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const { sendAbandonedCartEmail } = require("../services/email.service");
 // Precio efectivo (variante > producto por grupo + tiers), compartido con el checkout.
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Mapa de conexiones SSE activas: customerId → res
 // Permite notificar al cliente en tiempo real cuando el admin hace cambios
@@ -450,7 +449,7 @@ router.delete("/my", authMiddleware, customerMiddleware, async (req, res) => {
 // POST /api/carts/:customerId/remind - admin: enviar email de carrito abandonado
 // Body: { couponCode?, couponDescription? }
 // IMPORTANTE: va ANTES de GET "/" y de DELETE "/:customerId" para que Express no confunda rutas
-router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, res) => {
+router.post("/:customerId/remind", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), async (req, res) => {
   try {
     const customerId = parseInt(req.params.customerId);
     const { couponCode, couponDescription } = req.body;
@@ -486,7 +485,7 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, async (req, 
 // GET /api/carts - admin: obtener todos los carritos activos (con items)
 // Los precios salen recalculados al valor VIGENTE (con previousPrice si cambiaron), no al snapshot
 // guardado: si no, terminada una campaña de ofertas el panel mostraba totales que ya no eran reales.
-router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
+router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), async (req, res) => {
   try {
     const carts = await prisma.cart.findMany({
       where: {
@@ -511,7 +510,7 @@ router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
 
 // PATCH /api/carts/items/:itemId - admin: cambiar cantidad de un item individual
 // IMPORTANTE: esta ruta va ANTES de /:customerId para que Express no confunda "items" con un id
-router.patch("/items/:itemId", authMiddleware, adminMiddleware, async (req, res) => {
+router.patch("/items/:itemId", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), async (req, res) => {
   try {
     const itemId   = parseInt(req.params.itemId);
     const { quantity } = req.body;
@@ -544,7 +543,7 @@ router.patch("/items/:itemId", authMiddleware, adminMiddleware, async (req, res)
 });
 
 // DELETE /api/carts/items/:itemId - admin: eliminar un item individual del carrito
-router.delete("/items/:itemId", authMiddleware, adminMiddleware, async (req, res) => {
+router.delete("/items/:itemId", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), async (req, res) => {
   try {
     const itemId = parseInt(req.params.itemId);
 
@@ -576,7 +575,7 @@ router.delete("/items/:itemId", authMiddleware, adminMiddleware, async (req, res
 });
 
 // DELETE /api/carts/:customerId - admin: limpiar todo el carrito de un cliente
-router.delete("/:customerId", authMiddleware, adminMiddleware, async (req, res) => {
+router.delete("/:customerId", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), async (req, res) => {
   try {
     const customerId = parseInt(req.params.customerId);
     if (isNaN(customerId)) {
@@ -596,3 +595,6 @@ router.delete("/:customerId", authMiddleware, adminMiddleware, async (req, res) 
 });
 
 module.exports = router;
+// Precios vigentes y agotados del carrito: también los usa el recordatorio automático
+// (services/cartReminder.service.js), para que el email diga lo que el cliente va a pagar hoy.
+module.exports.enrichCarts = enrichCarts;

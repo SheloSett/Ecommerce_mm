@@ -1,6 +1,6 @@
 const express = require("express");
 const { getSlides, createSlide, updateSlide, deleteSlide } = require("../controllers/slide.controller");
-const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
 const { verifyImageBytes } = require("../middleware/upload.middleware");
 
@@ -16,8 +16,8 @@ const slideUpload = upload.fields([
 router.get("/", getSlides);
 
 // Admin: crear/editar/eliminar slides
-router.post("/", authMiddleware, adminMiddleware, slideUpload, verifyImageBytes, createSlide);
-router.patch("/:id", authMiddleware, adminMiddleware, slideUpload, verifyImageBytes, updateSlide);
-router.delete("/:id", authMiddleware, adminMiddleware, deleteSlide);
+router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("configuracion", "carrusel"), slideUpload, verifyImageBytes, createSlide);
+router.patch("/:id", authMiddleware, adminMiddleware, requireAnyPermission("configuracion", "carrusel"), slideUpload, verifyImageBytes, updateSlide);
+router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("configuracion", "carrusel"), deleteSlide);
 
 module.exports = router;

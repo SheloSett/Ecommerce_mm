@@ -1,18 +1,23 @@
 import { useState } from "react";
 // useNavigate: para redirigir al catálogo tras el registro (la cuenta ahora se crea al instante)
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { customersApi } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { safeReturnTo } from "../utils/returnTo";
 
-// Clase base compartida para inputs con icono a la izquierda
+// Clase base compartida para inputs con icono a la izquierda.
+// text-base md:text-sm: 16 px en el celular (antes text-sm, 14 px: Safari del iPhone hacía zoom en cada
+// campo). Los inputs llevan autoComplete para que el teléfono ofrezca nombre, email y teléfono guardados,
+// y cada label va atado a su input (htmlFor/id): tocar el texto enfoca el campo y los lectores de
+// pantalla lo leen.
 const inputCls =
-  "w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+  "w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
 
 const inputClsRight =
-  "w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
+  "w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all";
 
 // Íconos inline (heroicons style) para los campos del formulario
 function IconWrap({ children }) {
@@ -61,6 +66,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
   // updateCustomerWithToken guarda token + datos en localStorage y estado → deja al usuario logueado
   const { updateCustomerWithToken } = useCustomerAuth();
   const [showPassword, setShowPassword] = useState(false);
@@ -99,7 +105,7 @@ export default function Register() {
       if (res.data?.token && res.data?.customer) {
         updateCustomerWithToken(res.data.token, res.data.customer);
         toast.success("¡Cuenta creada! Ya estás conectado.");
-        navigate("/catalogo");
+        navigate(safeReturnTo(routerLocation.search, "/catalogo")); // antes: navigate("/catalogo")
       } else {
         // Fallback: si el backend todavía no devuelve token (versión anterior), mostrar la
         // pantalla de "solicitud enviada" como antes.
@@ -197,7 +203,7 @@ export default function Register() {
 
                   {/* Nombre completo */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                    <label htmlFor="reg-name" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                       Nombre completo
                     </label>
                     <div className="relative">
@@ -209,7 +215,9 @@ export default function Register() {
                       </IconWrap>
                       <input
                         type="text"
+                        id="reg-name"
                         name="name"
+                        autoComplete="name"
                         value={form.name}
                         onChange={handleChange}
                         placeholder="Ej: Juan Pérez"
@@ -222,7 +230,7 @@ export default function Register() {
                   {/* Email + Teléfono */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                      <label htmlFor="reg-email" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                         Email
                       </label>
                       <div className="relative">
@@ -234,7 +242,10 @@ export default function Register() {
                         </IconWrap>
                         <input
                           type="email"
+                          id="reg-email"
                           name="email"
+                          autoComplete="email"
+                          autoCapitalize="none"
                           value={form.email}
                           onChange={handleChange}
                           placeholder="email@ejemplo.com"
@@ -244,7 +255,7 @@ export default function Register() {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                      <label htmlFor="reg-phone" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                         Teléfono
                       </label>
                       <div className="relative">
@@ -256,7 +267,9 @@ export default function Register() {
                         </IconWrap>
                         <input
                           type="tel"
+                          id="reg-phone"
                           name="phone"
+                          autoComplete="tel"
                           value={form.phone}
                           onChange={handleChange}
                           placeholder="+54 11 1234-5678"
@@ -269,7 +282,7 @@ export default function Register() {
 
                   {/* Contraseña */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                    <label htmlFor="reg-password" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                       Contraseña
                     </label>
                     <div className="relative">
@@ -281,7 +294,9 @@ export default function Register() {
                       </IconWrap>
                       <input
                         type={showPassword ? "text" : "password"}
+                        id="reg-password"
                         name="password"
+                        autoComplete="new-password"
                         value={form.password}
                         onChange={handleChange}
                         placeholder="Mínimo 6 caracteres"
@@ -294,7 +309,7 @@ export default function Register() {
 
                   {/* Confirmar contraseña */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                    <label htmlFor="reg-confirm" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                       Confirmar contraseña
                     </label>
                     <div className="relative">
@@ -306,7 +321,9 @@ export default function Register() {
                       </IconWrap>
                       <input
                         type={showConfirm ? "text" : "password"}
+                        id="reg-confirm"
                         name="confirmPassword"
+                        autoComplete="new-password"
                         value={form.confirmPassword}
                         onChange={handleChange}
                         placeholder="Repetí tu contraseña"
@@ -320,7 +337,7 @@ export default function Register() {
                   {/* Tipo de documento + Número */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                      <label htmlFor="reg-doctype" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                         Tipo de documento
                       </label>
                       <div className="relative">
@@ -331,10 +348,11 @@ export default function Register() {
                           </svg>
                         </IconWrap>
                         <select
+                          id="reg-doctype"
                           name="documentType"
                           value={form.documentType}
                           onChange={handleChange}
-                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none cursor-pointer"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all appearance-none cursor-pointer"
                         >
                           <option value="DNI">DNI</option>
                           <option value="CUIT">CUIT</option>
@@ -343,16 +361,19 @@ export default function Register() {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
+                      <label htmlFor="reg-doc" className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5 px-0.5">
                         Número
                       </label>
                       <input
                         type="text"
+                        id="reg-doc"
                         name="cuit"
+                        inputMode={form.documentType === "DNI" ? "numeric" : "text"}
+                        autoComplete="off"
                         value={form.cuit}
                         onChange={handleChange}
                         placeholder={form.documentType === "DNI" ? "12345678" : "20-12345678-9"}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         required
                       />
                     </div>
@@ -364,7 +385,7 @@ export default function Register() {
                   <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex gap-3 items-start">
                     <span className="text-blue-500 text-base flex-shrink-0 mt-0.5">ℹ️</span>
                     <p className="text-xs text-slate-500 leading-relaxed">
-                      Tu cuenta será revisada por nuestro equipo antes de ser activada para asegurar los beneficios de categoría profesional.
+                      Tu cuenta queda activa al instante: apenas la creás ya podés comprar. Si sos mayorista, después pedí la cuenta mayorista desde tu perfil.
                     </p>
                   </div>
 
@@ -390,7 +411,7 @@ export default function Register() {
                 {/* Link al login */}
                 <p className="text-center text-sm text-slate-500 mt-6">
                   ¿Ya tenés cuenta?{" "}
-                  <Link to="/login" className="text-blue-600 font-semibold hover:underline">
+                  <Link to={`/login${routerLocation.search}`} className="text-blue-600 font-semibold hover:underline">
                     Iniciá sesión
                   </Link>
                 </p>

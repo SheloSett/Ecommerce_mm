@@ -11,12 +11,11 @@
 //
 // El id de cliente NO se toma del body: si el navegador manda el token del cliente, se verifica y
 // se usa; si no, el visitante es anónimo. Así nadie puede "firmar" eventos como otro cliente.
-const { PrismaClient } = require("@prisma/client");
 const jwt = require("jsonwebtoken");
 // Contact de Meta (clic en WhatsApp): el armado y el envío viven en services/meta.service.js.
 const { browserDataFromRequest, sendContactEvent, isContactEventId } = require("../services/meta.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 const PRESENCE_TTL_MS = 75 * 1000;
 const SESSION_RE = /^[A-Za-z0-9_-]{8,64}$/;

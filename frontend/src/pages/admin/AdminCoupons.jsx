@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { couponsApi, customersApi } from "../../services/api";
 import toast from "react-hot-toast";
+import { localDay, localTime } from "../../utils/localDate";
 
 const EMPTY_FORM = {
   code: "",
@@ -82,8 +83,12 @@ export default function AdminCoupons() {
       minPurchase: coupon.minPurchase?.toString() || "",
       maxUses: coupon.maxUses?.toString() || "",
       maxUsesPerCustomer: coupon.maxUsesPerCustomer?.toString() || "",
-      expiresAt:   coupon.expiresAt ? coupon.expiresAt.slice(0, 10) : "",
-      expiresTime: coupon.expiresAt ? coupon.expiresAt.slice(11, 16) || "23:59" : "23:59",
+      // Fecha y hora en la zona de la computadora, que es como se vuelven a guardar al enviar el form.
+      // Antes se cortaba el texto ISO (que está en UTC): cada vez que se editaba el cupón, el vencimiento
+      // se corría 3 horas (el que vencía a medianoche terminaba venciendo a la mañana siguiente).
+      // Antes: coupon.expiresAt.slice(0, 10) y coupon.expiresAt.slice(11, 16)
+      expiresAt:   coupon.expiresAt ? localDay(new Date(coupon.expiresAt)) : "",
+      expiresTime: coupon.expiresAt ? localTime(new Date(coupon.expiresAt)) : "23:59",
       customerId: coupon.customerId?.toString() || "",
       active: coupon.active,
     });

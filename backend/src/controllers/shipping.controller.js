@@ -1,7 +1,6 @@
-const { PrismaClient } = require("@prisma/client");
 const { getRates, importShipping, getTracking } = require("../services/micorreo.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // POST /api/shipping/rates — público: cotizar costo de envío para un CP destino
 async function shippingRates(req, res) {

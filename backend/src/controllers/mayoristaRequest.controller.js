@@ -1,7 +1,6 @@
-const { PrismaClient } = require("@prisma/client");
 const { sendMayoristaRequestEmail, sendMayoristaApprovedEmail, sendMayoristaRejectedEmail } = require("../services/email.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // POST /api/mayorista-requests - el cliente MINORISTA envía una solicitud
 async function createRequest(req, res) {

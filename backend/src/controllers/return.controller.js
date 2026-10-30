@@ -1,8 +1,7 @@
-const { PrismaClient } = require("@prisma/client");
 const { sendReturnRequestConfirmation, sendReturnRequestApproved, sendReturnRequestRejected } = require("../services/email.service");
 const { escapeLike } = require("../utils/email");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // ─── CLIENTE: Buscar pedidos por email (para usuarios sin cuenta) ─────────────
 // GET /api/returns/lookup?email=...

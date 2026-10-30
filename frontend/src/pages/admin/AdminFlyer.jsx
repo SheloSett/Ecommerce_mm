@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { productsApi, getImageUrl } from "../../services/api";
 import * as XLSX from "xlsx";
+import { localDay } from "../../utils/localDate";
 
 const formatPrice = (v) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v ?? 0);
@@ -322,7 +323,7 @@ export default function AdminFlyer() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Productos");
 
-    const fecha = new Date().toISOString().slice(0, 10);
+    const fecha = localDay(); // antes: new Date().toISOString().slice(0, 10) (de noche, el día siguiente)
     XLSX.writeFile(wb, `flyer_${priceType.toLowerCase()}_${fecha}.xlsx`, { cellStyles: true });
 
     setShowModal(false);

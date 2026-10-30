@@ -7,15 +7,15 @@ const {
   approveRequest,
   rejectRequest,
 } = require("../controllers/mayoristaRequest.controller");
-const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 
 // Rutas del cliente (requiere token de CUSTOMER)
 router.post("/",      authMiddleware, customerMiddleware, createRequest);
 router.get("/my",     authMiddleware, customerMiddleware, getMyRequest);
 
 // Rutas del admin
-router.get("/",                    authMiddleware, adminMiddleware, getAll);
-router.patch("/:id/approve",       authMiddleware, adminMiddleware, approveRequest);
-router.patch("/:id/reject",        authMiddleware, adminMiddleware, rejectRequest);
+router.get("/",                    authMiddleware, adminMiddleware, requireAnyPermission("clientes"), getAll);
+router.patch("/:id/approve",       authMiddleware, adminMiddleware, requireAnyPermission("clientes"), approveRequest);
+router.patch("/:id/reject",        authMiddleware, adminMiddleware, requireAnyPermission("clientes"), rejectRequest);
 
 module.exports = router;

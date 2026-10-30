@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { CartProvider } from "./context/CartContext";
@@ -12,55 +13,56 @@ import { BadgeProvider } from "./context/BadgeContext";
 import Home from "./pages/Home";
 import Catalog from "./pages/Catalog";
 import ProductDetail from "./pages/ProductDetail";
-import Checkout from "./pages/Checkout";
-import PaymentResult from "./pages/PaymentResult";
-import Register from "./pages/Register";
-import CustomerLogin from "./pages/CustomerLogin";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import UnsubscribeRestock from "./pages/UnsubscribeRestock";
-import UnsubscribeMarketing from "./pages/UnsubscribeMarketing";
-import EditProfile from "./pages/EditProfile";
-import OrderHistory from "./pages/OrderHistory";
-import OrderDetail from "./pages/OrderDetail";
-import QuotationHistory from "./pages/QuotationHistory";
-import PayQuotation from "./pages/PayQuotation";
-import Privacy from "./pages/Privacy";
-import Terms from "./pages/Terms";
-import AboutUs from "./pages/AboutUs";
-import HowToBuy from "./pages/HowToBuy";
-import ReturnRequest from "./pages/ReturnRequest";
-import Wishlist from "./pages/Wishlist";
-import Cart from "./pages/Cart";
+const Checkout = lazy(() => import("./pages/Checkout"));
+const PaymentResult = lazy(() => import("./pages/PaymentResult"));
+const Register = lazy(() => import("./pages/Register"));
+const CustomerLogin = lazy(() => import("./pages/CustomerLogin"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const UnsubscribeRestock = lazy(() => import("./pages/UnsubscribeRestock"));
+const UnsubscribeMarketing = lazy(() => import("./pages/UnsubscribeMarketing"));
+const EditProfile = lazy(() => import("./pages/EditProfile"));
+const OrderHistory = lazy(() => import("./pages/OrderHistory"));
+const OrderDetail = lazy(() => import("./pages/OrderDetail"));
+const QuotationHistory = lazy(() => import("./pages/QuotationHistory"));
+const PayQuotation = lazy(() => import("./pages/PayQuotation"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Terms = lazy(() => import("./pages/Terms"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const AboutUs = lazy(() => import("./pages/AboutUs"));
+const HowToBuy = lazy(() => import("./pages/HowToBuy"));
+const ReturnRequest = lazy(() => import("./pages/ReturnRequest"));
+const Wishlist = lazy(() => import("./pages/Wishlist"));
+const Cart = lazy(() => import("./pages/Cart"));
 
 // Panel de administración
-import AdminLogin from "./pages/admin/AdminLogin";
-import AdminDashboard from "./pages/admin/AdminDashboard";
-import AdminProducts from "./pages/admin/AdminProducts";
-import AdminOrders from "./pages/admin/AdminOrders";
-import AdminCategories from "./pages/admin/AdminCategories";
-import AdminCustomers from "./pages/admin/AdminCustomers";
-import AdminMetrics from "./pages/admin/AdminMetrics";
-import AdminAnalytics from "./pages/admin/AdminAnalytics";
-import AdminProductCreate from "./pages/admin/AdminProductCreate";
-import AdminCaja from "./pages/admin/AdminCaja";
-import AdminFlyer from "./pages/admin/AdminFlyer";
-import AdminCoupons from "./pages/admin/AdminCoupons";
-import AdminOffers from "./pages/admin/AdminOffers";
-import AdminPurchases from "./pages/admin/AdminPurchases";
-import AdminSuppliers from "./pages/admin/AdminSuppliers";
+const AdminLogin = lazy(() => import("./pages/admin/AdminLogin"));
+const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
+const AdminProducts = lazy(() => import("./pages/admin/AdminProducts"));
+const AdminOrders = lazy(() => import("./pages/admin/AdminOrders"));
+const AdminCategories = lazy(() => import("./pages/admin/AdminCategories"));
+const AdminCustomers = lazy(() => import("./pages/admin/AdminCustomers"));
+const AdminMetrics = lazy(() => import("./pages/admin/AdminMetrics"));
+const AdminAnalytics = lazy(() => import("./pages/admin/AdminAnalytics"));
+const AdminProductCreate = lazy(() => import("./pages/admin/AdminProductCreate"));
+const AdminCaja = lazy(() => import("./pages/admin/AdminCaja"));
+const AdminFlyer = lazy(() => import("./pages/admin/AdminFlyer"));
+const AdminCoupons = lazy(() => import("./pages/admin/AdminCoupons"));
+const AdminOffers = lazy(() => import("./pages/admin/AdminOffers"));
+const AdminPurchases = lazy(() => import("./pages/admin/AdminPurchases"));
+const AdminSuppliers = lazy(() => import("./pages/admin/AdminSuppliers"));
 // AdminCarousel: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
 // import AdminCarousel from "./pages/admin/AdminCarousel";
 // AdminAnnouncementBanner: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
 // import AdminAnnouncementBanner from "./pages/admin/AdminAnnouncementBanner";
-import AdminSettings from "./pages/admin/AdminSettings";
-import AdminReturns from "./pages/admin/AdminReturns";
-import AdminEmails from "./pages/admin/AdminEmails";
+const AdminSettings = lazy(() => import("./pages/admin/AdminSettings"));
+const AdminReturns = lazy(() => import("./pages/admin/AdminReturns"));
+const AdminEmails = lazy(() => import("./pages/admin/AdminEmails"));
 // AdminUsers: movido a UsersSectionContent embebido en AdminSettings — página standalone descartada
 // import AdminUsers from "./pages/admin/AdminUsers";
-import AdminOrderDetail from "./pages/admin/AdminOrderDetail";
-import AdminPurchaseOrder from "./pages/admin/AdminPurchaseOrder";
-import AdminPurchaseOrderBulk from "./pages/admin/AdminPurchaseOrderBulk";
+const AdminOrderDetail = lazy(() => import("./pages/admin/AdminOrderDetail"));
+const AdminPurchaseOrder = lazy(() => import("./pages/admin/AdminPurchaseOrder"));
+const AdminPurchaseOrderBulk = lazy(() => import("./pages/admin/AdminPurchaseOrderBulk"));
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
@@ -97,6 +99,15 @@ function PublicRoute({ children }) {
   );
 }
 
+// Lo que se ve mientras baja una pantalla en carga diferida: el mismo spinner que PublicRoute.
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400" />
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <HelmetProvider>
@@ -108,6 +119,8 @@ export default function App() {
       <CartProvider>
         <ScrollToTop />
         <WhatsAppButton />
+        {/* Suspense: mientras baja el archivo de una pantalla en carga diferida (ver los lazy de arriba) */}
+        <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Ruta de mantenimiento — fuera de PublicRoute para evitar redirect infinito */}
           <Route path="/mantenimiento" element={<MaintenancePage />} />
@@ -347,8 +360,10 @@ export default function App() {
           /> */}
 
           {/* Ruta no encontrada */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* Antes: <Route path="*" element={<Navigate to="/" replace />} /> — un link roto parecía el inicio */}
+          <Route path="*" element={<PublicRoute><NotFound /></PublicRoute>} />
         </Routes>
+        </Suspense>
       </CartProvider>
       </WishlistProvider>
       </NotificationProvider>

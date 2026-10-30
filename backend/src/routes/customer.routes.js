@@ -1,10 +1,9 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const router = express.Router();
-const { PrismaClient } = require("@prisma/client");
 const { buildUnsubscribeToken } = require("../services/cron.service");
 const { verifyMarketingUnsubscribeToken } = require("../services/broadcast.service");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const {
   register,
   customerLogin,
@@ -26,10 +25,11 @@ const {
   resetPassword,
   changePassword,
 } = require("../controllers/customer.controller");
-const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
 const { verifyImageBytes } = require("../middleware/upload.middleware");
 const { validateRegister, validateCustomerLogin } = require("../middleware/validate.middleware");
+const { loginByAccountLimiter, loginByIpLimiter } = require("../middleware/customerLoginLimiter");
 
 // Rate limiter estricto para registro y login de clientes
 // Mitiga creación masiva de cuentas falsas y ataques de fuerza bruta
@@ -41,12 +41,25 @@ const authLimiter = rateLimit({
   message: { error: "Demasiados intentos. Esperá 15 minutos e intentá de nuevo." },
 });
 
+// "Olvidé mi contraseña" manda un email por pedido: sin tope se podía llenar de emails de
+// recuperación la casilla de un cliente (y gastar el cupo diario de Gmail de la tienda).
+const passwordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos. Esperá 15 minutos e intentá de nuevo." },
+});
+
 // Rutas públicas
 router.post("/register", authLimiter, validateRegister, register);
-// authLimiter removido del login de clientes: los clientes no deben tener límite de intentos de login
-router.post("/login", validateCustomerLogin, customerLogin);
-router.post("/forgot-password", forgotPassword);
-router.post("/reset-password",  resetPassword);
+// authLimiter removido del login de clientes: los clientes no deben tener límite de intentos de login.
+// Ahora tiene límites que cuentan solo los intentos FALLIDOS, por cuenta y por IP (ver
+// middleware/customerLoginLimiter.js, ahí está la historia). Antes: router.post("/login", validateCustomerLogin, customerLogin);
+router.post("/login", validateCustomerLogin, loginByIpLimiter, loginByAccountLimiter, customerLogin);
+// Antes: router.post("/forgot-password", forgotPassword); y reset-password sin límite
+router.post("/forgot-password", passwordLimiter, forgotPassword);
+router.post("/reset-password",  passwordLimiter, resetPassword);
 
 // Opt-out de emails de restock (link desde el email, sin autenticación requerida)
 router.get("/unsubscribe/restock", async (req, res) => {
@@ -102,17 +115,17 @@ router.put("/me/password",              authMiddleware, customerMiddleware, chan
 
 // Rutas protegidas: solo el admin puede gestionar clientes
 // IMPORTANTE: /admin/create debe ir ANTES de /:id
-router.post("/admin/create", authMiddleware, adminMiddleware, createCustomerAdmin);
-router.get("/", authMiddleware, adminMiddleware, getAll);
+router.post("/admin/create", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), createCustomerAdmin);
+router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("clientes", "cupones", "emails", "ordenes"), getAll);
 
 // Solicitudes de cambio de email (admin)
-router.get("/email-change-requests",                     authMiddleware, adminMiddleware, getAllEmailChangeRequests);
-router.patch("/email-change-requests/:id/approve",       authMiddleware, adminMiddleware, approveEmailChangeRequest);
-router.patch("/email-change-requests/:id/reject",        authMiddleware, adminMiddleware, rejectEmailChangeRequest);
-router.patch("/:id/seen", authMiddleware, adminMiddleware, markCustomerSeen);
-router.patch("/:id/status", authMiddleware, adminMiddleware, updateStatus);
-router.patch("/:id/type", authMiddleware, adminMiddleware, updateType);
-router.put("/:id", authMiddleware, adminMiddleware, updateCustomer);
-router.delete("/:id", authMiddleware, adminMiddleware, deleteCustomer);
+router.get("/email-change-requests",                     authMiddleware, adminMiddleware, requireAnyPermission("emails", "clientes"), getAllEmailChangeRequests);
+router.patch("/email-change-requests/:id/approve",       authMiddleware, adminMiddleware, requireAnyPermission("emails", "clientes"), approveEmailChangeRequest);
+router.patch("/email-change-requests/:id/reject",        authMiddleware, adminMiddleware, requireAnyPermission("emails", "clientes"), rejectEmailChangeRequest);
+router.patch("/:id/seen", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), markCustomerSeen);
+router.patch("/:id/status", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), updateStatus);
+router.patch("/:id/type", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), updateType);
+router.put("/:id", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), updateCustomer);
+router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("clientes"), deleteCustomer);
 
 module.exports = router;

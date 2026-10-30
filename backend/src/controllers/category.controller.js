@@ -1,10 +1,10 @@
-const { PrismaClient, Prisma } = require("@prisma/client");
+const { Prisma } = require("@prisma/client");
 const { normalizeRule, ruleProductIds, describeRule } = require("../utils/categoryRules");
 // Helpers de jerarquía: el anidado ya no está topeado en dos niveles, así que armar el árbol y
 // validar que un movimiento no cierre un ciclo necesita recursión. Ver utils/categoryTree.js.
 const { buildTree, wouldCreateCycle } = require("../utils/categoryTree");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Convierte un nombre a slug (ej: "Cables USB" → "cables-usb")
 function toSlug(name) {

@@ -64,7 +64,10 @@ function MyProfileTab() {
     if (newPassword !== confirmPassword) return toast.error("Las contraseñas no coinciden");
     setSavingPwd(true);
     try {
-      await authApi.changePassword({ currentPassword, newPassword });
+      // El servidor corta las demás sesiones de este admin y devuelve un token nuevo para esta (A5);
+      // los pedidos del panel leen el token de localStorage, así que alcanza con guardarlo.
+      const res = await authApi.changePassword({ currentPassword, newPassword });
+      if (res.data?.token) localStorage.setItem("admin_token", res.data.token);
       toast.success("Contraseña actualizada");
       setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
     } catch (err) {

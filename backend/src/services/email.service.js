@@ -5,6 +5,8 @@ const fs = require("fs");
 const https = require("https");
 const http  = require("http");
 const sharp = require("sharp");
+// Datos que escribe el cliente dentro del HTML de los emails: siempre escapados (ver utils/escapeHtml.js)
+const { escapeHtml: esc } = require("../utils/escapeHtml");
 
 // Crea el transporte solo si las variables de entorno de SMTP están configuradas.
 // extra: opciones adicionales de nodemailer (ver createBulkTransporter).
@@ -515,7 +517,7 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
         <!-- Subtítulo -->
         <tr>
           <td style="padding:28px 40px 8px;">
-            <p style="margin:0;color:#334155;font-size:15px;">Hola <strong>${order.customerName}</strong>,</p>
+            <p style="margin:0;color:#334155;font-size:15px;">Hola <strong>${esc(order.customerName)}</strong>,</p>
             <p style="margin:8px 0 0;color:#64748b;font-size:14px;">${subtitle}</p>
           </td>
         </tr>
@@ -527,9 +529,9 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
               <tr>
                 <td style="padding:14px 18px;">
                   <p style="margin:0 0 4px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Datos del pedido</p>
-                  <p style="margin:0;font-size:13px;color:#334155;"><strong>Cliente:</strong> ${order.customerName}</p>
-                  <p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Email:</strong> ${order.customerEmail}</p>
-                  ${order.customerPhone ? `<p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Teléfono:</strong> ${order.customerPhone}</p>` : ""}
+                  <p style="margin:0;font-size:13px;color:#334155;"><strong>Cliente:</strong> ${esc(order.customerName)}</p>
+                  <p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Email:</strong> ${esc(order.customerEmail)}</p>
+                  ${order.customerPhone ? `<p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Teléfono:</strong> ${esc(order.customerPhone)}</p>` : ""}
                   <p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Fecha:</strong> ${new Date(order.createdAt || Date.now()).toLocaleDateString("es-AR")}</p>
                 </td>
               </tr>
@@ -781,7 +783,7 @@ async function sendOrderNotificationToAdmin(order) {
   try {
     const { html, attachments: imgAttachments } = buildOrderHtml(order, {
       title: `Nuevo pedido #${order.id}`,
-      subtitle: `Cliente: <strong>${order.customerName}</strong> (${order.customerEmail}) · Método: <strong>${methodLabel}</strong>`,
+      subtitle: `Cliente: <strong>${esc(order.customerName)}</strong> (${esc(order.customerEmail)}) · Método: <strong>${methodLabel}</strong>`,
       footer: "Ingresá al panel de administración para gestionar este pedido.",
       type: "Pedido",
     });
@@ -869,12 +871,12 @@ async function sendCotizacionToAdmin(order, opts = {}) {
   try {
     const { html, attachments: imgAttachments } = buildOrderHtml(order, opts.modificadaPorCliente ? {
       title: `Cotización #${order.id} modificada por el cliente`,
-      subtitle: `<strong>${order.customerName}</strong> (${order.customerEmail}) cambió su cotización: quedó como se detalla abajo y volvió a estado pendiente para que la revises y la apruebes de nuevo.`,
+      subtitle: `<strong>${esc(order.customerName)}</strong> (${esc(order.customerEmail)}) cambió su cotización: quedó como se detalla abajo y volvió a estado pendiente para que la revises y la apruebes de nuevo.`,
       footer: "Entrá al panel → Cotizaciones para revisar precios y stock, y aprobarla otra vez.",
       type: "Cotización",
     } : {
       title: `Nueva cotización mayorista #${order.id}`,
-      subtitle: `Cliente MAYORISTA: <strong>${order.customerName}</strong> (${order.customerEmail})${order.customerPhone ? ` · Tel: ${order.customerPhone}` : ""}`,
+      subtitle: `Cliente MAYORISTA: <strong>${esc(order.customerName)}</strong> (${esc(order.customerEmail)})${order.customerPhone ? ` · Tel: ${esc(order.customerPhone)}` : ""}`,
       footer: "Ingresá al panel de administración para contactar al cliente y gestionar la cotización.",
       type: "Cotización",
     });
@@ -954,7 +956,7 @@ async function sendACConvenirToAdmin(order) {
   try {
     const { html, attachments: imgAttachments } = buildOrderHtml(order, {
       title: `Nuevo pedido a convenir #${order.id}`,
-      subtitle: `Cliente: <strong>${order.customerName}</strong> (${order.customerEmail}) · Tiene ítems en USD — hay que coordinar el pago manualmente.`,
+      subtitle: `Cliente: <strong>${esc(order.customerName)}</strong> (${esc(order.customerEmail)}) · Tiene ítems en USD — hay que coordinar el pago manualmente.`,
       footer: "Ingresá al panel de administración para contactar al cliente y actualizar el método de pago.",
       type: "Pedido",
       showBankDetails: false,
@@ -1009,7 +1011,7 @@ async function sendReturnRequestConfirmation(toEmail, customerName, returnReques
           <td style="padding:32px 40px;">
             <h2 style="margin:0 0 8px;color:#1e293b;font-size:20px;">Solicitud de devolución recibida ✅</h2>
             <p style="margin:0 0 20px;color:#475569;font-size:15px;">
-              Hola <strong>${customerName}</strong>, recibimos tu solicitud de arrepentimiento.
+              Hola <strong>${esc(customerName)}</strong>, recibimos tu solicitud de arrepentimiento.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0"
                    style="background:#fffbeb;border-radius:10px;border-left:4px solid #f59e0b;margin-bottom:20px;">
@@ -1025,7 +1027,7 @@ async function sendReturnRequestConfirmation(toEmail, customerName, returnReques
             </table>
             <p style="margin:0 0 8px;font-size:14px;color:#475569;"><strong>Tu motivo:</strong></p>
             <p style="margin:0 0 24px;font-size:14px;color:#1e293b;background:#f8fafc;padding:12px 16px;border-radius:8px;border:1px solid #e2e8f0;">
-              ${returnRequest.reason}
+              ${esc(returnRequest.reason)}
             </p>
             <p style="margin:0;font-size:14px;color:#475569;line-height:1.6;">
               Revisaremos tu solicitud a la brevedad y te notificaremos por email con la resolución.
@@ -1085,7 +1087,7 @@ async function sendReturnRequestApproved(toEmail, customerName, returnRequest) {
           <td style="padding:32px 40px;">
             <h2 style="margin:0 0 8px;color:#15803d;font-size:20px;">✅ Solicitud de devolución aprobada</h2>
             <p style="margin:0 0 20px;color:#475569;font-size:15px;">
-              Hola <strong>${customerName}</strong>, tu solicitud de devolución para el
+              Hola <strong>${esc(customerName)}</strong>, tu solicitud de devolución para el
               <strong>Pedido #${returnRequest.orderId}</strong> fue <strong>aprobada</strong>.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0"
@@ -1094,7 +1096,7 @@ async function sendReturnRequestApproved(toEmail, customerName, returnRequest) {
                 <p style="margin:0 0 8px;font-size:11px;color:#15803d;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
                   📦 Instrucciones para enviar tu devolución
                 </p>
-                <p style="margin:0;font-size:14px;color:#166534;line-height:1.7;white-space:pre-line;">${returnRequest.adminNotes}</p>
+                <p style="margin:0;font-size:14px;color:#166534;line-height:1.7;white-space:pre-line;">${esc(returnRequest.adminNotes)}</p>
               </td></tr>
             </table>
             <table width="100%" cellpadding="0" cellspacing="0"
@@ -1162,7 +1164,7 @@ async function sendReturnRequestRejected(toEmail, customerName, returnRequest) {
           <td style="padding:32px 40px;">
             <h2 style="margin:0 0 8px;color:#dc2626;font-size:20px;">❌ Solicitud de devolución no aprobada</h2>
             <p style="margin:0 0 20px;color:#475569;font-size:15px;">
-              Hola <strong>${customerName}</strong>, lamentablemente tu solicitud de devolución para el
+              Hola <strong>${esc(customerName)}</strong>, lamentablemente tu solicitud de devolución para el
               <strong>Pedido #${returnRequest.orderId}</strong> no pudo ser aprobada.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0"
@@ -1171,7 +1173,7 @@ async function sendReturnRequestRejected(toEmail, customerName, returnRequest) {
                 <p style="margin:0 0 8px;font-size:11px;color:#b91c1c;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
                   Motivo del rechazo
                 </p>
-                <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.7;white-space:pre-line;">${returnRequest.adminNotes}</p>
+                <p style="margin:0;font-size:14px;color:#7f1d1d;line-height:1.7;white-space:pre-line;">${esc(returnRequest.adminNotes)}</p>
               </td></tr>
             </table>
             <p style="margin:0;font-size:14px;color:#475569;">
@@ -1271,7 +1273,7 @@ async function sendOrderPaymentStatusEmail(order, newStatus) {
     APPROVED: {
       subject: `✅ Pago confirmado — Pedido #${order.id}`,
       title:   "¡Pago confirmado!",
-      subtitle: `Hola ${order.customerName}, confirmamos el pago de tu pedido.`,
+      subtitle: `Hola ${esc(order.customerName)}, confirmamos el pago de tu pedido.`,
       color:   "#16a34a",
       icon:    "✅",
       message: "Tu pedido está confirmado y en breve comenzamos a prepararlo. Te avisaremos cuando esté listo.",
@@ -1279,7 +1281,7 @@ async function sendOrderPaymentStatusEmail(order, newStatus) {
     REJECTED: {
       subject: `❌ Pedido rechazado — #${order.id}`,
       title:   "Pedido rechazado",
-      subtitle: `Hola ${order.customerName}, lamentamos informarte que tu pedido fue rechazado.`,
+      subtitle: `Hola ${esc(order.customerName)}, lamentamos informarte que tu pedido fue rechazado.`,
       color:   "#dc2626",
       icon:    "❌",
       message: "Si tenés alguna consulta o creés que se trata de un error, por favor contactanos respondiendo este email.",
@@ -1287,7 +1289,7 @@ async function sendOrderPaymentStatusEmail(order, newStatus) {
     CANCELLED: {
       subject: `🚫 Pedido cancelado — #${order.id}`,
       title:   "Pedido cancelado",
-      subtitle: `Hola ${order.customerName}, tu pedido fue cancelado.`,
+      subtitle: `Hola ${esc(order.customerName)}, tu pedido fue cancelado.`,
       color:   "#64748b",
       icon:    "🚫",
       message: "Si cancelaste por error o necesitás hacer un nuevo pedido, podés volver a la tienda en cualquier momento.",
@@ -1344,7 +1346,7 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
     EN_PREPARACION: {
       subject: `🔧 Tu pedido está en preparación — #${order.id}`,
       title:   "En preparación",
-      subtitle: `Hola ${order.customerName}, tu pedido ya está siendo preparado.`,
+      subtitle: `Hola ${esc(order.customerName)}, tu pedido ya está siendo preparado.`,
       color:   "#d97706",
       icon:    "🔧",
       message: "Estamos preparando tu pedido con cuidado. Te avisaremos cuando esté " + (isRetiro ? "listo para retirar." : "en camino."),
@@ -1352,14 +1354,14 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
     ENVIADO: isRetiro ? {
       subject: `📦 Tu pedido está listo para retirar — #${order.id}`,
       title:   "¡Pedido listo!",
-      subtitle: `Hola ${order.customerName}, tu pedido está listo para retirar.`,
+      subtitle: `Hola ${esc(order.customerName)}, tu pedido está listo para retirar.`,
       color:   "#2563eb",
       icon:    "📦",
       message: "Podés pasar a retirar tu pedido por nuestro local: <strong>Av. La Plata 744 Timbre 3, CABA</strong>.<br>Coordinamos el horario por WhatsApp al <strong>+54 11 5039-5166</strong>.",
     } : {
       subject: `🚚 Tu pedido está en camino — #${order.id}`,
       title:   "¡En camino!",
-      subtitle: `Hola ${order.customerName}, tu pedido fue despachado.`,
+      subtitle: `Hola ${esc(order.customerName)}, tu pedido fue despachado.`,
       color:   "#2563eb",
       icon:    "🚚",
       message: "Tu pedido ya está en camino. Te contactaremos para coordinar la entrega.",
@@ -1367,7 +1369,7 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
     ENTREGADO: {
       subject: `✅ Pedido entregado — #${order.id}`,
       title:   "¡Pedido entregado!",
-      subtitle: `Hola ${order.customerName}, tu pedido fue entregado. ¡Gracias por tu compra!`,
+      subtitle: `Hola ${esc(order.customerName)}, tu pedido fue entregado. ¡Gracias por tu compra!`,
       color:   "#16a34a",
       icon:    "✅",
       message: "Esperamos que estés muy conforme con tu compra. Si tenés algún inconveniente con el producto, no dudes en contactarnos.",
@@ -1409,11 +1411,16 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
 
 // ─── Email de carrito abandonado ────────────────────────────────────────────
 
-async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponDescription, storeUrl } = {}) {
+// unsubscribe: { page, oneClick } (ver unsubscribeUrls en broadcast.service.js) — lo manda el recordatorio
+// automático (M5): link de baja de las promociones en el pie + header List-Unsubscribe. El botón manual
+// del panel no lo manda (es un mensaje del vendedor a ese cliente).
+// Devuelve true si se mandó (el recordatorio automático solo marca el carrito como avisado en ese caso).
+// Antes no devolvía nada.
+async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponDescription, storeUrl, unsubscribe } = {}) {
   const transporter = createTransporter();
   if (!transporter) {
     console.log(`[EMAIL OMITIDO - SMTP no configurado] Carrito abandonado para ${customer.email}`);
-    return;
+    return false;
   }
 
   const baseUrl = storeUrl || process.env.FRONTEND_URL || "http://localhost:3000";
@@ -1432,13 +1439,13 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
       imgCell = `<div style="width:48px;height:48px;background:#e2e8f0;border-radius:6px;text-align:center;line-height:48px;font-size:20px;">📦</div>`;
     }
     const variantHtml = item.variantLabel
-      ? `<p style="margin:2px 0 0;font-size:11px;color:#94a3b8;">${item.variantLabel}</p>`
+      ? `<p style="margin:2px 0 0;font-size:11px;color:#94a3b8;">${esc(item.variantLabel)}</p>`
       : "";
     return `
       <tr style="background:${bg};">
         <td style="padding:8px 12px;">${imgCell}</td>
         <td style="padding:10px 12px;">
-          <p style="margin:0;font-weight:600;color:#1e293b;font-size:13px;">${item.name}</p>
+          <p style="margin:0;font-weight:600;color:#1e293b;font-size:13px;">${esc(item.name)}</p>
           ${variantHtml}
         </td>
         <td style="padding:10px 12px;color:#475569;font-size:13px;text-align:right;">${formatMoney(item.price, item.currency)}</td>
@@ -1459,9 +1466,9 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
               🎁 Tu cupón de descuento exclusivo
             </p>
             <p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#92400e;letter-spacing:3px;font-family:monospace;">
-              ${couponCode}
+              ${esc(couponCode)}
             </p>
-            ${couponDescription ? `<p style="margin:0;font-size:13px;color:#78350f;">${couponDescription}</p>` : ""}
+            ${couponDescription ? `<p style="margin:0;font-size:13px;color:#78350f;">${esc(couponDescription)}</p>` : ""}
             <p style="margin:6px 0 0;font-size:12px;color:#b45309;">Usá este código al finalizar tu compra.</p>
           </td></tr>
         </table>
@@ -1488,7 +1495,7 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
         <!-- Saludo -->
         <tr>
           <td style="padding:28px 40px 16px;">
-            <p style="margin:0;color:#334155;font-size:15px;">Hola <strong>${customer.name}</strong>,</p>
+            <p style="margin:0;color:#334155;font-size:15px;">Hola <strong>${esc(customer.name)}</strong>,</p>
             <p style="margin:8px 0 0;color:#64748b;font-size:14px;">
               Notamos que dejaste productos en tu carrito. ¡Todavía están disponibles para vos!
             </p>
@@ -1534,6 +1541,7 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
         <tr>
           <td style="background:#f8fafc;padding:16px 40px;border-top:1px solid #e2e8f0;text-align:center;">
             <p style="margin:0;color:#94a3b8;font-size:11px;">© IGWT Store · Gracias por elegirnos</p>
+            ${unsubscribe ? `<p style="margin:6px 0 0;font-size:11px;"><a href="${esc(unsubscribe.page)}" style="color:#94a3b8;">No quiero recibir más avisos ni promociones</a></p>` : ""}
           </td>
         </tr>
 
@@ -1550,11 +1558,24 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
       subject: `¿Olvidaste algo? Tu carrito te está esperando 🛒`,
       html,
       attachments,
+      ...(unsubscribe ? { headers: { "List-Unsubscribe": `<${unsubscribe.oneClick}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } } : {}),
     });
     console.log(`[EMAIL] Recordatorio carrito enviado a ${customer.email}`);
+    return true;
   } catch (err) {
     console.error("[EMAIL ERROR] sendAbandonedCartEmail:", err.message);
+    return false;
   }
+}
+
+// ─── Aviso técnico de errores de producción ──────────────────────────────────
+// Ver services/errorAlerts.service.js. Texto plano, a ALERT_EMAIL o, si no está, a ADMIN_EMAIL; no va
+// a la lista de casillas de pedidos y cotizaciones.
+async function sendErrorAlert(subject, text) {
+  const to = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL;
+  const transporter = createTransporter();
+  if (!to || !transporter) return;
+  await transporter.sendMail({ from: `"IGWT Store" <${process.env.SMTP_USER}>`, to, subject, text });
 }
 
 // ─── Email de reset de contraseña ────────────────────────────────────────────
@@ -1581,7 +1602,7 @@ async function sendPasswordResetEmail(customer, resetUrl, opts = {}) {
         </td></tr>
         <tr><td style="padding:36px 40px">
           <h2 style="color:#f1f5f9;font-size:20px;margin:0 0 12px">${opts.cuentaNueva ? "Activ&#225; tu cuenta" : "Restablecer contrase&#241;a"}</h2>
-          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 8px">Hola <strong style="color:#e2e8f0">${customer.name}</strong>,</p>
+          <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 8px">Hola <strong style="color:#e2e8f0">${esc(customer.name)}</strong>,</p>
           <p style="color:#94a3b8;font-size:15px;line-height:1.6;margin:0 0 28px">${opts.cuentaNueva
             ? "Te creamos una cuenta en IGWT Store para que puedas ver tu cotizaci&#243;n, modificarla y pagarla cuando quieras. Eleg&#237; tu contrase&#241;a con el bot&#243;n de abajo:"
             : "Recibimos una solicitud para restablecer la contrase&#241;a de tu cuenta. Hac&#233; click en el bot&#243;n de abajo para crear una nueva:"}</p>
@@ -1642,7 +1663,7 @@ async function sendMayoristaRestockEmail(customer, unsubscribeUrl) {
         </td></tr>
         <!-- Body -->
         <tr><td style="padding:36px 40px">
-          <p style="color:#cbd5e1;font-size:16px;margin:0 0 12px">Hola <strong style="color:#f1f5f9">${customer.name}</strong>,</p>
+          <p style="color:#cbd5e1;font-size:16px;margin:0 0 12px">Hola <strong style="color:#f1f5f9">${esc(customer.name)}</strong>,</p>
           <p style="color:#cbd5e1;font-size:16px;line-height:1.6;margin:0 0 24px">
             Hace un tiempo que no hacés un pedido. ¡Tus clientes te están esperando!<br>
             Es hora de reestockearte y tener todo listo.
@@ -1726,7 +1747,7 @@ async function sendMinoristaRecommendationEmail(customer, products, unsubscribeU
             <tr><td height="140" valign="top" style="height:140px;position:relative;padding:0;line-height:0">
               <a href="${productUrl}" style="text-decoration:none;display:block">
                 ${imageUrl
-                  ? `<img src="${imageUrl}" alt="${p.name}" width="100%" height="140" style="display:block;width:100%;height:140px;object-fit:cover;background:#1e293b;border:0">`
+                  ? `<img src="${imageUrl}" alt="${esc(p.name)}" width="100%" height="140" style="display:block;width:100%;height:140px;object-fit:cover;background:#1e293b;border:0">`
                   : `<div style="height:140px;background:#1e293b;text-align:center;line-height:140px;color:#475569;font-size:32px">📦</div>`}
                 ${hasSale ? `<div style="position:absolute;top:8px;left:8px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;letter-spacing:0.3px">-${discountPct}%</div>` : ""}
               </a>
@@ -1737,7 +1758,7 @@ async function sendMinoristaRecommendationEmail(customer, products, unsubscribeU
                 <!-- Fila superior: título + precio, alineado al tope -->
                 <tr><td valign="top" style="padding:10px 11px 0">
                   <a href="${productUrl}" style="text-decoration:none">
-                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;line-height:1.3;height:34px;overflow:hidden;margin-bottom:6px">${p.name}</div>
+                    <div style="color:#f1f5f9;font-size:13px;font-weight:600;line-height:1.3;height:34px;overflow:hidden;margin-bottom:6px">${esc(p.name)}</div>
                   </a>
                   ${priceBlockHtml}
                 </td></tr>
@@ -1782,7 +1803,7 @@ async function sendMinoristaRecommendationEmail(customer, products, unsubscribeU
 
         <!-- Body -->
         <tr><td style="padding:36px 32px 16px">
-          <p style="color:#f1f5f9;font-size:18px;font-weight:600;margin:0 0 6px">¡Hola ${customer.name}! 👋</p>
+          <p style="color:#f1f5f9;font-size:18px;font-weight:600;margin:0 0 6px">¡Hola ${esc(customer.name)}! 👋</p>
           <p style="color:#cbd5e1;font-size:15px;line-height:1.6;margin:0 0 28px">
             Seleccionamos estos productos para vos basados en tu última compra. Algunos están en oferta — ¡aprovechá!
           </p>
@@ -1844,4 +1865,5 @@ module.exports = {
   sendMayoristaRestockEmail,
   sendMinoristaRecommendationEmail,
   createBulkTransporter,
+  sendErrorAlert,
 };

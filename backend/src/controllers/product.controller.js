@@ -1,4 +1,4 @@
-const { PrismaClient, Prisma } = require("@prisma/client");
+const { Prisma } = require("@prisma/client");
 const path = require("path");
 const fs = require("fs");
 const { uploadBuffer, uploadVideoBuffer, deleteByUrl } = require("../config/cloudinary");
@@ -12,7 +12,7 @@ const { resolvePriceViewer, sanitizeProductForViewer, effectiveVisibleFor } = re
 // Orden por relevancia de los resultados de búsqueda. Ver utils/searchRelevance.js.
 const { sortBySearchRelevance } = require("../utils/searchRelevance");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // stripAdminProductFields / isAdminRequest se reemplazaron por sanitizeProductForViewer /
 // resolvePriceViewer (utils/productPrivacy.js): los viejos sacaban depósito y proveedor, pero
@@ -775,17 +775,27 @@ async function getProduct(req, res) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
 
-    // Si el producto está despublicado (sin stock, oculto), solo el admin puede verlo.
+    // Agotado (M8 de la auditoría): se despublicó SOLO, por quedarse sin stock (no lo ocultó el admin a
+    // mano, ver hiddenByAdmin). Antes respondía 404 y los links de emails, WhatsApp y anuncios mostraban
+    // "Producto no encontrado"; ahora la ficha se ve con "Sin stock". Comprarlo no se puede: el carrito y
+    // el checkout siguen rechazando los productos despublicados.
+    const soldOut = !product.active && !product.hiddenByAdmin && !(product.variants.length
+      ? product.variants.some((v) => v.stockUnlimited || v.stock > 0)
+      : product.stockUnlimited || product.stock > 0);
+
+    // Si el producto está despublicado (oculto por el admin), solo el admin puede verlo.
     // El cliente que toquetea la URL e intenta entrar a /producto/X de un producto inactivo
     // recibe un 404 como si no existiera.
-    if (!product.active && !viewer.isAdmin) {
+    // Antes: if (!product.active && !viewer.isAdmin) — también los agotados
+    if (!product.active && !viewer.isAdmin && !soldOut) {
       return res.status(404).json({ error: "Producto no encontrado" });
     }
 
     // Antes: res.json(isAdminRequest(req) ? product : stripAdminProductFields(product));
     // Ocultaba depósito y proveedor, pero el costo y los precios mayoristas (del producto y de cada
     // variante) salían para cualquiera. Ahora se filtra según quién pide.
-    res.json(sanitizeProductForViewer(product, viewer));
+    const out = sanitizeProductForViewer(product, viewer);
+    res.json(soldOut ? { ...out, soldOut: true } : out);
   } catch (err) {
     console.error("getProduct error:", err);
     res.status(500).json({ error: "Error al obtener el producto" });
@@ -1112,6 +1122,7 @@ async function updateProduct(req, res) {
           return hotSeller !== undefined ? (hotSeller === "true" || hotSeller === true) : existing.hotSeller;
         })(),
         active: active !== undefined ? (active === "true" || active === true) : existing.active,
+        ...hiddenByAdminData(existing, active),
         visibility: ["AMBOS", "MAYORISTA", "MINORISTA"].includes(visibility) ? visibility : existing.visibility,
         ...(priceTiersUpdate !== undefined ? { priceTiers: priceTiersUpdate } : {}),
         ...(wholesalePriceTiersUpdate !== undefined ? { wholesalePriceTiers: wholesalePriceTiersUpdate } : {}),
@@ -1189,7 +1200,8 @@ async function quickUpdateProduct(req, res) {
         if (newStock <= 0 && !isUnlimited) {
           // Si el admin pone stock en 0 (y no es ilimitado), despublicar automáticamente
           updateData.active = false;
-        } else if (newStock > 0 && !existing.active) {
+        // (salvo que el admin lo haya ocultado a mano: antes también lo republicaba)
+        } else if (newStock > 0 && !existing.active && !existing.hiddenByAdmin) {
           // Si el admin agrega stock y el producto estaba despublicado, republicar automáticamente
           updateData.active = true;
         }
@@ -1197,6 +1209,7 @@ async function quickUpdateProduct(req, res) {
     }
     if (stockUnlimited !== undefined && !qHasActiveVariants) updateData.stockUnlimited = Boolean(stockUnlimited);
     if (active !== undefined) updateData.active = Boolean(active);
+    Object.assign(updateData, hiddenByAdminData(existing, active));
     // cost y sku faltaban — el frontend los manda en la edición rápida pero antes se ignoraban
     if (cost !== undefined && cost !== "") updateData.cost = parseFloat(cost);
     if (currency !== undefined && ["ARS", "USD"].includes(currency)) updateData.currency = currency;
@@ -1357,6 +1370,28 @@ async function bulkPriceAdjust(req, res) {
 
       return prisma.product.update({ where: { id: p.id }, data });
     });
+
+    // Variantes con precio o tramos PROPIOS (los null heredan del producto y ya quedan bien). En un
+    // producto con variantes son los que se cobran: antes el ajuste no las tocaba, la remera subía un
+    // 10% pero la XXL a $12.000 seguía a $12.000, y el desfase se acumulaba ajuste tras ajuste (B9).
+    const variants = await prisma.productVariant.findMany({
+      where:  { product: { currency: "ARS" } },
+      select: { id: true, price: true, salePrice: true, wholesalePrice: true, wholesaleSalePrice: true, priceTiers: true, wholesalePriceTiers: true },
+    });
+    for (const v of variants) {
+      const data = {};
+      if (type === "MINORISTA" || type === "AMBOS") {
+        if (v.price != null)     data.price      = round2(v.price);
+        if (v.salePrice != null) data.salePrice  = round2(v.salePrice);
+        if (Array.isArray(v.priceTiers) && v.priceTiers.length) data.priceTiers = adjustTiers(v.priceTiers);
+      }
+      if (type === "MAYORISTA" || type === "AMBOS") {
+        if (v.wholesalePrice != null)     data.wholesalePrice     = round2(v.wholesalePrice);
+        if (v.wholesaleSalePrice != null) data.wholesaleSalePrice = round2(v.wholesaleSalePrice);
+        if (Array.isArray(v.wholesalePriceTiers) && v.wholesalePriceTiers.length) data.wholesalePriceTiers = adjustTiers(v.wholesalePriceTiers);
+      }
+      if (Object.keys(data).length > 0) updates.push(prisma.productVariant.update({ where: { id: v.id }, data }));
+    }
 
     await prisma.$transaction(updates);
 
@@ -1534,9 +1569,19 @@ async function syncProductVisibility(productId, tx = prisma) {
 
   if (!hasStock && product.active) {
     await tx.product.update({ where: { id: productId }, data: { active: false } });
-  } else if (hasStock && !product.active) {
+  // Antes: } else if (hasStock && !product.active) { — republicaba también lo que el admin ocultó a mano
+  // (por ejemplo, por un precio mal cargado) en cuanto se aprobaba o cancelaba un pedido viejo.
+  } else if (hasStock && !product.active && !product.hiddenByAdmin) {
     await tx.product.update({ where: { id: productId }, data: { active: true } });
   }
+}
+
+// El admin movió el switch "Publicado" → hiddenByAdmin. Solo si CAMBIA: el formulario de edición manda el
+// switch siempre, y guardar un producto que se ocultó por falta de stock no lo marca como oculto a mano.
+function hiddenByAdminData(existing, requested) {
+  if (requested === undefined) return {};
+  const active = requested === "true" || requested === true;
+  return active === existing.active ? {} : { hiddenByAdmin: !active };
 }
 
 module.exports = {

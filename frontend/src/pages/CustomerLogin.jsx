@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { safeReturnTo } from "../utils/returnTo";
 
 export default function CustomerLogin() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -11,6 +12,7 @@ export default function CustomerLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const { customerLogin } = useCustomerAuth();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   const handleChange = (e) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -28,7 +30,8 @@ export default function CustomerLogin() {
     try {
       await customerLogin(form.email, form.password);
       toast.success("¡Bienvenido!");
-      navigate("/");
+      // Vuelve a la página desde la que vino (antes: siempre al Home). Ver utils/returnTo.js
+      navigate(safeReturnTo(routerLocation.search));
     } catch (err) {
       const msg = err.response?.data?.error || "Error al iniciar sesión";
       toast.error(msg);
@@ -84,10 +87,12 @@ export default function CustomerLogin() {
                   id="email"
                   type="email"
                   name="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
                   value={form.email}
                   onChange={handleChange}
                   placeholder="ejemplo@gmail.com"
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   required
                 />
               </div>
@@ -117,10 +122,11 @@ export default function CustomerLogin() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   name="password"
+                  autoComplete="current-password"
                   value={form.password}
                   onChange={handleChange}
                   placeholder="••••••••"
-                  className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                  className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   required
                 />
                 {/* Toggle mostrar/ocultar contraseña */}
@@ -166,7 +172,7 @@ export default function CustomerLogin() {
           <div className="mt-6 pt-5 border-t border-slate-100">
             <p className="text-sm text-slate-500 text-center mb-4">¿No tenés una cuenta?</p>
             <Link
-              to="/registro"
+              to={`/registro${routerLocation.search}`}
               className="w-full py-3 px-6 border-2 border-slate-900 text-slate-900 font-semibold text-base rounded-xl hover:bg-slate-900 hover:text-white transition-all flex items-center justify-center gap-2"
             >
               <span>Crear cuenta</span>

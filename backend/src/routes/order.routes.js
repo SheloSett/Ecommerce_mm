@@ -6,7 +6,7 @@ const {
   publishCotizacion, approveCotizacion, cancelByCustomer, confirmCotizacionPayment,
   applyCouponToOrder, createManualOrder, getBadgeCounts, markOrderSeen, uploadManualItemImage,
 } = require("../controllers/order.controller");
-const { authMiddleware, adminMiddleware, customerMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const upload = require("../middleware/upload.middleware");
 const { validateOrder } = require("../middleware/validate.middleware");
 
@@ -36,41 +36,41 @@ router.put("/my-quotes/:id/items", authMiddleware, customerMiddleware, updateMyQ
 
 // Admin: registrar una venta manual (presencial, por teléfono, etc.)
 // IMPORTANTE: va antes de /:id para que /admin/manual no sea interpretado como un ID
-router.post("/admin/manual", authMiddleware, adminMiddleware, createManualOrder);
+router.post("/admin/manual", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), createManualOrder);
 // Admin: foto opcional de un producto libre de la venta manual (se sube a Cloudinary y se guarda la URL)
-router.post("/admin/manual/upload-image", authMiddleware, adminMiddleware, upload.single("image"), upload.verifyImageBytes, uploadManualItemImage);
+router.post("/admin/manual/upload-image", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), upload.single("image"), upload.verifyImageBytes, uploadManualItemImage);
 
 // Admin: contadores de pendientes para badges del sidebar
 router.get("/badge-counts", authMiddleware, adminMiddleware, getBadgeCounts);
 
 // Admin: ver y gestionar órdenes
-router.get("/stats", authMiddleware, adminMiddleware, getStats);
+router.get("/stats", authMiddleware, adminMiddleware, requireAnyPermission("finanzas", "metricas"), getStats);
 // Estadísticas de lo vendido en dólares — cuadro aparte del dashboard, sin mezclar con los pesos
-router.get("/stats-usd", authMiddleware, adminMiddleware, getStatsUsd);
-router.get("/metrics", authMiddleware, adminMiddleware, getMetrics);
-router.get("/", authMiddleware, adminMiddleware, getOrders);
-router.get("/:id", authMiddleware, adminMiddleware, getOrder);
-router.patch("/:id/seen", authMiddleware, adminMiddleware, markOrderSeen);
-router.patch("/:id/status", authMiddleware, adminMiddleware, updateOrderStatus);
+router.get("/stats-usd", authMiddleware, adminMiddleware, requireAnyPermission("finanzas", "metricas"), getStatsUsd);
+router.get("/metrics", authMiddleware, adminMiddleware, requireAnyPermission("metricas"), getMetrics);
+router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("ordenes", "finanzas"), getOrders);
+router.get("/:id", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), getOrder);
+router.patch("/:id/seen", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), markOrderSeen);
+router.patch("/:id/status", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), updateOrderStatus);
 // Admin: actualizar método de pago y/o estado de pedido (fulfillment)
-router.patch("/:id/fields", authMiddleware, adminMiddleware, updateOrderFields);
+router.patch("/:id/fields", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), updateOrderFields);
 // Admin: editar/eliminar un item individual de una orden
-router.patch("/:orderId/items/:itemId", authMiddleware, adminMiddleware, updateOrderItem);
-router.delete("/:orderId/items/:itemId", authMiddleware, adminMiddleware, deleteOrderItem);
+router.patch("/:orderId/items/:itemId", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), updateOrderItem);
+router.delete("/:orderId/items/:itemId", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), deleteOrderItem);
 // Admin: agregar un único producto a un pedido existente
-router.post("/:id/items", authMiddleware, adminMiddleware, addItemToOrder);
+router.post("/:id/items", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), addItemToOrder);
 // Admin: modificación batch de un pedido (agrega/edita/elimina items en una sola llamada)
-router.post("/:id/modify", authMiddleware, adminMiddleware, modifyOrder);
+router.post("/:id/modify", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), modifyOrder);
 // Admin: publicar cambios al cliente (actualiza snapshot + notifica)
-router.post("/:id/publish", authMiddleware, adminMiddleware, publishCotizacion);
+router.post("/:id/publish", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), publishCotizacion);
 // Admin: aprobar cotización
-router.post("/:id/approve", authMiddleware, adminMiddleware, approveCotizacion);
+router.post("/:id/approve", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), approveCotizacion);
 // Cliente: cancelar su propia cotización con motivo
 router.post("/:id/cancel-by-customer", authMiddleware, customerMiddleware, cancelByCustomer);
 // Cliente MAYORISTA: confirmar pago manual de cotización (efectivo o transferencia)
 router.post("/:id/confirm-payment", authMiddleware, customerMiddleware, confirmCotizacionPayment);
 // Cliente MAYORISTA: aplicar cupón a una cotización aprobada antes de pagar
 router.patch("/:id/apply-coupon", authMiddleware, customerMiddleware, applyCouponToOrder);
-router.delete("/:id", authMiddleware, adminMiddleware, deleteOrder);
+router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("ordenes"), deleteOrder);
 
 module.exports = router;

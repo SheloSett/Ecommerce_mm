@@ -1,11 +1,37 @@
-const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { sendPasswordResetEmail } = require("../services/email.service");
 const { findCustomerByEmail } = require("../utils/email");
+const { resetAccountLoginLimit } = require("../middleware/customerLoginLimiter");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+
+// Hash de relleno para emparejar el tiempo de respuesta del login: con un email que no existe se
+// compara igual contra este hash. Antes se respondía al toque y, como bcrypt tarda, midiendo el tiempo
+// se podía saber qué emails tienen cuenta. Mismo costo (10) que las contraseñas reales.
+const DUMMY_HASH = bcrypt.hashSync("relleno-para-emparejar-el-tiempo", 10);
+
+// Lo que nunca viaja al navegador, ni siquiera al panel: el hash de la contraseña y el token de
+// reseteo. Antes el listado de clientes y las respuestas de editar estado/tipo/datos devolvían la
+// fila entera, con los hashes de todos los clientes a la vista (devtools, extensiones, un HAR) para
+// crackearlos offline. El panel no usa ninguno de los tres.
+function withoutSecrets(customer) {
+  if (!customer) return customer;
+  const { password, resetToken, resetTokenExpiry, ...rest } = customer;
+  return rest;
+}
+
+// Token de sesión del cliente. tv = contador de sesión de la cuenta (ver currentSession en
+// middleware/auth.middleware.js): si después se cambia la contraseña, este token deja de servir.
+// Antes el mismo jwt.sign estaba copiado en register, customerLogin y updateMe, sin "tv".
+function signCustomerToken(c) {
+  return jwt.sign(
+    { id: c.id, email: c.email, name: c.name, type: c.type, role: "CUSTOMER", tv: c.tokenVersion ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
 
 // Registro público: cualquier visitante puede solicitar alta
 async function register(req, res) {
@@ -49,11 +75,7 @@ async function register(req, res) {
 
     // Devolver un token igual que el login, para que el front deje al usuario logueado al instante
     // (sin pedirle que vuelva a ingresar sus credenciales).
-    const token = jwt.sign(
-      { id: customer.id, email: customer.email, name: customer.name, type: customer.type, role: "CUSTOMER" },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = signCustomerToken(customer);
 
     res.status(201).json({
       // Antes: "Solicitud enviada. El administrador revisará tu registro y te contactará."
@@ -89,6 +111,7 @@ async function customerLogin(req, res) {
     const customer = await findCustomerByEmail(prisma, email);
 
     if (!customer || !customer.password) {
+      await bcrypt.compare(password, DUMMY_HASH); // mismo tiempo que con una cuenta real (ver DUMMY_HASH)
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
@@ -96,6 +119,9 @@ async function customerLogin(req, res) {
     if (!valid) {
       return res.status(401).json({ error: "Credenciales inválidas" });
     }
+
+    // Contraseña correcta: los intentos fallidos de esta cuenta vuelven a cero (ver customerLoginLimiter.js)
+    resetAccountLoginLimit(req);
 
     // Solo clientes aprobados pueden ingresar
     if (customer.status === "PENDING") {
@@ -105,11 +131,7 @@ async function customerLogin(req, res) {
       return res.status(403).json({ error: "Tu solicitud de registro fue rechazada. Contactá al administrador." });
     }
 
-    const token = jwt.sign(
-      { id: customer.id, email: customer.email, name: customer.name, type: customer.type, role: "CUSTOMER" },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = signCustomerToken(customer);
 
     res.json({
       token,
@@ -148,7 +170,8 @@ async function getAll(req, res) {
       orderBy: { createdAt: "desc" },
     });
 
-    res.json(customers);
+    // Antes: res.json(customers);
+    res.json(customers.map(withoutSecrets));
   } catch (err) {
     console.error("Get customers error:", err);
     res.status(500).json({ error: "Error al obtener clientes" });
@@ -178,7 +201,7 @@ async function updateStatus(req, res) {
       },
     });
 
-    res.json(updated);
+    res.json(withoutSecrets(updated)); // antes: res.json(updated)
   } catch (err) {
     console.error("Update customer status error:", err);
     res.status(500).json({ error: "Error al actualizar estado" });
@@ -204,7 +227,7 @@ async function updateType(req, res) {
       data: { type },
     });
 
-    res.json(updated);
+    res.json(withoutSecrets(updated)); // antes: res.json(updated)
   } catch (err) {
     console.error("Update customer type error:", err);
     res.status(500).json({ error: "Error al actualizar tipo" });
@@ -259,11 +282,13 @@ async function updateCustomer(req, res) {
         ...(type             !== undefined && { type }),
         ...(status           !== undefined && { status }),
         ...(notes            !== undefined && { notes }),
-        ...(hashedPassword   !== undefined && { password: hashedPassword }),
+        // Contraseña nueva puesta por el admin: además corta las sesiones abiertas de la cuenta
+        // Antes: ...(hashedPassword !== undefined && { password: hashedPassword }),
+        ...(hashedPassword   !== undefined && { password: hashedPassword, tokenVersion: { increment: 1 } }),
       },
     });
 
-    res.json(updated);
+    res.json(withoutSecrets(updated)); // antes: res.json(updated)
   } catch (err) {
     console.error("Update customer error:", err);
     res.status(500).json({ error: "Error al actualizar cliente" });
@@ -373,11 +398,7 @@ async function changeEmail(req, res) {
     });
 
     // Emitir nuevo token con el email actualizado
-    const token = jwt.sign(
-      { id: updated.id, email: updated.email, name: updated.name, type: updated.type, role: "CUSTOMER" },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const token = signCustomerToken(updated);
 
     res.json({
       token,
@@ -670,7 +691,8 @@ async function resetPassword(req, res) {
     const hashed = await bcrypt.hash(newPassword, 10);
     await prisma.customer.update({
       where: { id: customer.id },
-      data: { password: hashed, resetToken: null, resetTokenExpiry: null },
+      // tokenVersion +1: la contraseña nueva corta las sesiones abiertas (por ejemplo, la de quien la robó)
+      data: { password: hashed, resetToken: null, resetTokenExpiry: null, tokenVersion: { increment: 1 } },
     });
 
     res.json({ ok: true });
@@ -692,12 +714,17 @@ async function changePassword(req, res) {
     if (!customer || !customer.password) return res.status(400).json({ error: "No se pudo verificar la contraseña actual" });
 
     const valid = await bcrypt.compare(currentPassword, customer.password);
-    if (!valid) return res.status(401).json({ error: "La contraseña actual es incorrecta" });
+    // 400, no 401: el navegador trata un 401 como "sesión vencida" y deslogueaba al cliente por
+    // equivocarse al escribir su contraseña actual. Antes: res.status(401)
+    if (!valid) return res.status(400).json({ error: "La contraseña actual es incorrecta" });
 
     const hashed = await bcrypt.hash(newPassword, 10);
-    await prisma.customer.update({ where: { id: customerId }, data: { password: hashed } });
+    // tokenVersion +1: se cortan las otras sesiones abiertas de la cuenta (otro navegador, alguien que
+    // la estaba usando sin permiso). A esta sesión se le da un token nuevo para que siga adentro.
+    // Antes: await prisma.customer.update({ where: { id: customerId }, data: { password: hashed } }); res.json({ ok: true });
+    const updated = await prisma.customer.update({ where: { id: customerId }, data: { password: hashed, tokenVersion: { increment: 1 } } });
 
-    res.json({ ok: true });
+    res.json({ ok: true, token: signCustomerToken(updated) });
   } catch (err) {
     console.error("changePassword error:", err);
     res.status(500).json({ error: "Error al cambiar la contraseña" });

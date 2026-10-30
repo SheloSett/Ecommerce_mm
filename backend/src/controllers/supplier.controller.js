@@ -1,7 +1,6 @@
-const { PrismaClient } = require("@prisma/client");
 const { geocodeAddress } = require("../utils/geocode");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // GET /api/suppliers - Listar proveedores (admin)
 // Incluye el conteo de productos asociados para mostrarlo en el panel.

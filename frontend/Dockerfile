@@ -9,6 +9,8 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
+# Tests (M9 de la auditoría): si alguno falla, el build se corta y queda andando la versión anterior.
+RUN npm test
 RUN npm run build
 
 # Servir con nginx

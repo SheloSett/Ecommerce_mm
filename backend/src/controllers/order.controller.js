@@ -1,12 +1,12 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const { PrismaClient } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
-const { customerIdFromToken } = require("../middleware/auth.middleware");
+const { customerFromToken } = require("../middleware/auth.middleware");
+const { isDay, arDayStart, arDayEnd } = require("../utils/arDates");
 // Meta (Facebook / Instagram): datos del navegador al comprar + aviso de compra a la API de conversiones
 const { browserDataFromRequest, sendPurchaseEvent } = require("../services/meta.service");
 
@@ -35,7 +35,7 @@ const {
   sendPasswordResetEmail,
 } = require("../services/email.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 // Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
@@ -341,13 +341,9 @@ async function createOrder(req, res) {
     //   });
     // }
     // const isMayorista = registeredCustomer?.type === "MAYORISTA";
-    const tokenCustomerId = customerIdFromToken(req);
-    const registeredCustomer = tokenCustomerId
-      ? await prisma.customer.findUnique({
-          where:  { id: tokenCustomerId },
-          select: { id: true, type: true, status: true },
-        })
-      : null;
+    // Cliente de una sesión VIGENTE (ver customerFromToken: cuenta existente, no rechazada y con el
+    // contador de sesión al día). Antes: customerIdFromToken(req) + findUnique, solo con la firma.
+    const registeredCustomer = await customerFromToken(req);
     // El checkout manda customerId cuando hay alguien logueado. Si el token no lo respalda (sesión
     // vencida, o un id ajeno), se corta acá en vez de crear el pedido como invitado y a otro precio:
     // con el 401 el navegador lo manda a iniciar sesión de nuevo.
@@ -566,8 +562,12 @@ async function createOrder(req, res) {
         const underTotalLimit = !coupon.maxUses || totalUsages < coupon.maxUses;
 
         // Verificar usos por cliente
+        // Con sesión, los usos se cuentan con el email de la CUENTA. Antes con el que escribía el
+        // comprador: cambiándolo, el mismo cliente usaba sin límite un cupón de "1 por cliente".
+        // Antes: customerEmail: customerEmail.toLowerCase()
+        const usageEmail = (registeredCustomer?.email || customerEmail).toLowerCase();
         const customerUsages = coupon.maxUsesPerCustomer
-          ? await prisma.couponUsage.count({ where: { couponId: coupon.id, customerEmail: customerEmail.toLowerCase() } })
+          ? await prisma.couponUsage.count({ where: { couponId: coupon.id, customerEmail: usageEmail } })
           : 0;
         const underCustomerLimit = !coupon.maxUsesPerCustomer || customerUsages < coupon.maxUsesPerCustomer;
 
@@ -833,6 +833,10 @@ async function updateOrderStatus(req, res) {
       // Recargar items frescos para capturar variantIds asignados en approveCotizacion
       const freshItems = await prisma.orderItem.findMany({ where: { orderId: existing.id } });
       for (const item of freshItems) {
+        // Ítem libre o de un producto borrado (productId null): no hay stock que devolver. Antes la
+        // consulta con id null tiraba error a mitad del recorrido, con el estado nuevo ya guardado:
+        // el pedido quedaba cancelado con parte del stock sin devolver.
+        if (!item.productId) continue;
         if (item.variantId) {
           // Variante asignada en confirmación → devolver stock a la variante
           const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
@@ -852,7 +856,8 @@ async function updateOrderStatus(req, res) {
         if (!product || product.stockUnlimited) continue;
         await prisma.product.update({
           where: { id: item.productId },
-          data:  { stock: product.stock + item.quantity, active: true },
+          // Se republica solo si no lo ocultó el admin a mano (B12). Antes: active: true siempre
+          data:  { stock: product.stock + item.quantity, ...(product.hiddenByAdmin ? {} : { active: true }) },
         });
       }
     }
@@ -865,6 +870,9 @@ async function updateOrderStatus(req, res) {
     // cambio, que todavía tienen su stock reservado.
     if (willDeductStock) {
       for (const item of existing.items) {
+        // Ítem libre o de un producto borrado: no hay stock que descontar (ver el recorrido de arriba).
+        // Antes la consulta con id null cortaba la aprobación a la mitad: sin stock, cupón ni email.
+        if (!item.productId) continue;
         // Si el item tiene variante, descontar stock de la variante; si no, del producto base.
         if (item.variantId) {
           const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
@@ -877,6 +885,17 @@ async function updateOrderStatus(req, res) {
           await syncProductVisibility(item.productId);
           continue;
         }
+
+        // Línea sin variante de un producto CON variantes (surtido repartido al aprobar la cotización,
+        // o variante nunca asignada): su stock vive en las variantes, no en el producto, que en estos
+        // casos tiene stock 0. Antes se descontaba de ese 0 y el "ajuste de otras órdenes" de abajo
+        // corría con 0 disponible: le sacaba el producto a los pedidos pendientes de OTROS clientes y
+        // los cancelaba con "se agotó el stock". Ahora no se toca nada, mismo criterio que la
+        // devolución de stock de arriba ("variante sin asignar — nunca se reservó stock").
+        // Desde el 30/10/2026 approveCotizacion parte el surtido en una línea por variante, así que
+        // esto queda para las cotizaciones aprobadas antes de ese cambio y las variantes nunca asignadas.
+        const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
+        if (variantCount > 0) continue;
 
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
@@ -1043,12 +1062,10 @@ async function getStats(req, res) {
     const { dateFrom, dateTo } = req.query;
     // Construir filtro de fecha si se pasan los parámetros
     const dateFilter = {};
-    if (dateFrom) dateFilter.gte = new Date(dateFrom);
-    if (dateTo) {
-      const end = new Date(dateTo);
-      end.setHours(23, 59, 59, 999);
-      dateFilter.lte = end;
-    }
+    // Días en hora argentina, igual que Analíticas (ver utils/arDates.js).
+    // Antes: new Date(dateFrom) y new Date(dateTo) con setHours(23, 59, 59, 999).
+    if (isDay(dateFrom)) dateFilter.gte = arDayStart(dateFrom);
+    if (isDay(dateTo))   dateFilter.lte = arDayEnd(dateTo);
     const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
 
     // Los pedidos que incluyen algún ítem en USD quedan FUERA de las cifras en pesos: Order.total es
@@ -1170,12 +1187,10 @@ async function getStatsUsd(req, res) {
   try {
     const { dateFrom, dateTo } = req.query;
     const dateFilter = {};
-    if (dateFrom) dateFilter.gte = new Date(dateFrom);
-    if (dateTo) {
-      const end = new Date(dateTo);
-      end.setHours(23, 59, 59, 999);
-      dateFilter.lte = end;
-    }
+    // Días en hora argentina, igual que Analíticas (ver utils/arDates.js).
+    // Antes: new Date(dateFrom) y new Date(dateTo) con setHours(23, 59, 59, 999).
+    if (isDay(dateFrom)) dateFilter.gte = arDayStart(dateFrom);
+    if (isDay(dateTo))   dateFilter.lte = arDayEnd(dateTo);
     const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
 
     const usdItems = await prisma.orderItem.findMany({
@@ -1408,7 +1423,8 @@ async function updateOrderItem(req, res) {
           await prisma.productVariant.update({ where: { id: item.variantId }, data: { stock: Math.max(0, variant.stock - qtyDiff) } });
           await syncProductVisibility(variant.productId);
         }
-      } else {
+      // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
+      } else if (item.productId) {
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (product && !product.stockUnlimited) {
           await prisma.product.update({ where: { id: item.productId }, data: { stock: Math.max(0, product.stock - qtyDiff) } });
@@ -1495,7 +1511,8 @@ async function deleteOrderItem(req, res) {
           await prisma.productVariant.update({ where: { id: item.variantId }, data: { stock: variant.stock + item.quantity } });
           await syncProductVisibility(variant.productId);
         }
-      } else {
+      // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
+      } else if (item.productId) {
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (product && !product.stockUnlimited) {
           await prisma.product.update({ where: { id: item.productId }, data: { stock: product.stock + item.quantity } });
@@ -1976,7 +1993,14 @@ async function approveCotizacion(req, res) {
         for (const a of assignments) {
           const variant = await prisma.productVariant.findUnique({ where: { id: parseInt(a.variantId) } });
           if (!variant) return res.status(400).json({ error: `Variante ${a.variantId} no encontrada` });
+          // Antes no se miraba: se podía asignar la variante de OTRO producto o una desactivada.
+          if (variant.productId !== orderItem.productId || !variant.active) {
+            return res.status(400).json({ error: `La variante ${a.variantId} no es una opción activa de "${orderItem.product?.name}"` });
+          }
           const qty = parseInt(a.quantity);
+          if (!(qty > 0)) {
+            return res.status(400).json({ error: `Cantidad inválida en la asignación de "${orderItem.product?.name}"` });
+          }
           if (!variant.stockUnlimited && variant.stock < qty) {
             const combo = Array.isArray(variant.combination)
               ? variant.combination.map((c) => c.value).join(" / ")
@@ -1998,40 +2022,53 @@ async function approveCotizacion(req, res) {
           // }
         }
 
-        // Actualizar el OrderItem con la variante asignada (o label de surtido si hay varias)
-        let newVariantId = null;
-        let newVariantLabel = null;
-        if (assignments.length === 1) {
-          newVariantId = parseInt(assignments[0].variantId);
-          const v = await prisma.productVariant.findUnique({ where: { id: newVariantId }, select: { combination: true } });
-          if (v) {
-            const combo = Array.isArray(v.combination) ? v.combination : JSON.parse(String(v.combination));
-            newVariantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
-          }
-        } else {
-          // Surtido: múltiples variantes → buscar el nombre real de cada variante y armar el label
-          const parts = [];
-          for (const a of assignments) {
-            const v = await prisma.productVariant.findUnique({
-              where: { id: parseInt(a.variantId) },
-              select: { combination: true },
-            });
-            if (v) {
-              const combo = Array.isArray(v.combination) ? v.combination : JSON.parse(String(v.combination));
-              const variantName = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
-              parts.push(`${variantName} × ${a.quantity}u`);
-            } else {
-              parts.push(`Variante ${a.variantId} × ${a.quantity}u`);
-            }
-          }
-          newVariantLabel = parts.join(" | ");
+        // Una línea por variante asignada. Antes, con más de una (surtido), la línea quedaba SIN
+        // variante y el reparto solo como texto ("Color: Negro × 10u | Color: Rojo × 10u"): al cobrarla
+        // nadie podía descontar el stock de cada variante, y el descuento del producto padre (que con
+        // variantes es 0) terminaba recortando y cancelando pedidos de otros clientes. Ahora la línea
+        // original se queda con la primera variante y por cada una de las otras se crea una línea igual
+        // (mismo precio, costo y proveedor). Si se asigna dos veces la misma variante, se suman.
+        // Antes: if (assignments.length === 1) { variantId + label } else { variantId null + label con
+        // el reparto } y un solo orderItem.update.
+        const qtyByVariant = new Map();
+        for (const a of assignments) {
+          const vid = parseInt(a.variantId);
+          qtyByVariant.set(vid, (qtyByVariant.get(vid) || 0) + parseInt(a.quantity));
         }
-        await prisma.orderItem.update({
-          where: { id: itemId },
-          // variantByAdmin: true → marca que esta variante la asignó el admin, no el cliente.
-          // Así el front no la copia al repetir pedido ni la muestra al cliente.
-          data:  { variantId: newVariantId, variantLabel: newVariantLabel, variantByAdmin: true },
-        });
+        let firstLine = true;
+        for (const [variantId, quantity] of qtyByVariant) {
+          const v = await prisma.productVariant.findUnique({ where: { id: variantId }, select: { combination: true, sku: true } });
+          const combo = !v ? [] : Array.isArray(v.combination) ? v.combination : JSON.parse(String(v.combination));
+          const variantData = {
+            variantId,
+            variantLabel: combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null,
+            variantSku:   v?.sku || null,
+            // variantByAdmin: true → marca que esta variante la asignó el admin, no el cliente.
+            // Así el front no la copia al repetir pedido ni la muestra al cliente (salvo que el
+            // producto haya quedado partido en varias líneas: ver QuotationHistory/OrderHistory).
+            variantByAdmin: true,
+          };
+          if (firstLine) {
+            await prisma.orderItem.update({ where: { id: itemId }, data: { ...variantData, quantity } });
+            firstLine = false;
+          } else {
+            await prisma.orderItem.create({
+              data: {
+                orderId,
+                productId:    orderItem.productId,
+                quantity,
+                price:        orderItem.price,
+                listPrice:    orderItem.listPrice,
+                cost:         orderItem.cost,
+                supplierId:   orderItem.supplierId,
+                currency:     orderItem.currency,
+                productName:  orderItem.productName,
+                productImage: orderItem.productImage,
+                ...variantData,
+              },
+            });
+          }
+        }
       }
     }
 
@@ -2277,8 +2314,9 @@ async function updateMyQuoteItems(req, res) {
           await tx.product.update({
             where: { id: mov.id },
             // Si al devolver stock el producto vuelve a tener unidades, se vuelve a publicar
-            // (mismo criterio que cuando se cancela una cotización).
-            data:  { stock: nuevoStock, ...(nuevoStock === 0 ? { active: false } : (mov.delta < 0 ? { active: true } : {})) },
+            // (mismo criterio que cuando se cancela una cotización), salvo que el admin lo haya ocultado
+            // a mano (B12). Antes: (mov.delta < 0 ? { active: true } : {})
+            data:  { stock: nuevoStock, ...(nuevoStock === 0 ? { active: false } : (mov.delta < 0 && !prod.hiddenByAdmin ? { active: true } : {})) },
           });
         }
       }
@@ -2473,12 +2511,10 @@ async function getMetrics(req, res) {
   try {
     const { dateFrom, dateTo } = req.query;
     const dateFilter = {};
-    if (dateFrom) dateFilter.gte = new Date(dateFrom);
-    if (dateTo) {
-      const end = new Date(dateTo);
-      end.setHours(23, 59, 59, 999);
-      dateFilter.lte = end;
-    }
+    // Días en hora argentina, igual que Analíticas (ver utils/arDates.js).
+    // Antes: new Date(dateFrom) y new Date(dateTo) con setHours(23, 59, 59, 999).
+    if (isDay(dateFrom)) dateFilter.gte = arDayStart(dateFrom);
+    if (isDay(dateTo))   dateFilter.lte = arDayEnd(dateTo);
     const orderDateWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
 
     // Traer todos los items de órdenes APPROVED con producto y cliente
@@ -3168,6 +3204,13 @@ async function modifyOrder(req, res) {
     });
     if (!order) return res.status(404).json({ error: "Orden no encontrada" });
 
+    // ajustaStock: el stock se mueve solo si hay stock descontado a nombre de esta orden (mismo criterio
+    // que updateOrderItem, deleteOrderItem y addItemToOrder). Antes "Modificar pedido" lo movía siempre:
+    // en un pedido por transferencia sin pagar, sacar un teclado sumaba una unidad que nunca había salido,
+    // y lo agregado se descontaba dos veces (ahora y al marcarlo abonado).
+    const isApproved  = order.status === "APPROVED";
+    const ajustaStock = isApproved || order.stockDeducted;
+
     // Guardar snapshot original solo en la primera modificación.
     // Formato: { items: [...], total, ivaAmount, couponDiscount } para poder mostrar el total original al cliente.
     const originalSnapshot = order.originalSnapshot
@@ -3200,18 +3243,53 @@ async function modifyOrder(req, res) {
     // Determinar items a eliminar (están en DB pero no en la lista entrante)
     const toRemove = order.items.filter((i) => !incomingMap[i.id]);
 
+    // Validar los ítems nuevos ANTES de tocar nada. Antes se validaban al final: un "Stock insuficiente"
+    // dejaba el pedido a medio modificar (las líneas sacadas ya borradas, su stock devuelto y el total
+    // sin recalcular).
+    const preparedNew = [];
+    for (const newItem of newItems) {
+      const pid = parseInt(newItem.productId);
+      const qty = parseInt(newItem.quantity);
+      const price = parseFloat(newItem.price);
+
+      if (isNaN(pid) || isNaN(qty) || qty < 1 || isNaN(price) || price < 0) {
+        return res.status(400).json({ error: "Datos de item inválidos" });
+      }
+
+      const product = await prisma.product.findUnique({ where: { id: pid } });
+      if (!product) return res.status(400).json({ error: `Producto ${pid} no encontrado` });
+
+      // Con variante: tiene que ser de este producto, y el stock que cuenta es el suyo (antes se miraba y
+      // se descontaba el del producto aunque la línea quedara con la variante).
+      let variant = null;
+      if (newItem.variantId) {
+        variant = await prisma.productVariant.findUnique({ where: { id: parseInt(newItem.variantId) } });
+        if (!variant || variant.productId !== pid) {
+          return res.status(400).json({ error: `La variante elegida no es de "${product.name}"` });
+        }
+      }
+      const stockOf = variant || product;
+      if (!stockOf.stockUnlimited && stockOf.stock < qty) {
+        return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Disponible: ${stockOf.stock}` });
+      }
+      preparedNew.push({ newItem, pid, qty, price, product, variant });
+    }
+
     // Devolver stock de los items eliminados
+    // (solo si el pedido lo había descontado: antes lo devolvía siempre)
     for (const item of toRemove) {
-      if (item.variantId) {
+      if (ajustaStock && item.variantId) {
         const v = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
         if (v && !v.stockUnlimited) {
           await prisma.productVariant.update({ where: { id: v.id }, data: { stock: v.stock + item.quantity } });
           await syncProductVisibility(item.productId);
         }
-      } else {
+      // Antes: } else { — sacar un ítem libre (productId null) del pedido daba error
+      } else if (ajustaStock && item.productId) {
         const p = await prisma.product.findUnique({ where: { id: item.productId } });
         if (p && !p.stockUnlimited) {
-          await prisma.product.update({ where: { id: p.id }, data: { stock: p.stock + item.quantity, active: true } });
+          // Republicar solo si no lo ocultó el admin a mano (B12). Antes: active: true siempre
+          await prisma.product.update({ where: { id: p.id }, data: { stock: p.stock + item.quantity, ...(p.hiddenByAdmin ? {} : { active: true }) } });
         }
       }
       await prisma.orderItem.delete({ where: { id: item.id } });
@@ -3226,7 +3304,8 @@ async function modifyOrder(req, res) {
       const newPrice = incoming.price !== undefined ? parseFloat(incoming.price) : existingItem.price;
       const qtyDiff  = newQty - existingItem.quantity; // positivo = más unidades (descontar stock); negativo = menos (devolver)
 
-      if (qtyDiff !== 0) {
+      // Antes: if (qtyDiff !== 0) — movía stock aunque el pedido no lo hubiera descontado
+      if (ajustaStock && qtyDiff !== 0) {
         if (existingItem.variantId) {
           const v = await prisma.productVariant.findUnique({ where: { id: existingItem.variantId } });
           if (v && !v.stockUnlimited) {
@@ -3282,25 +3361,16 @@ async function modifyOrder(req, res) {
       }
     }
 
-    // Agregar nuevos items y descontar stock
-    for (const newItem of newItems) {
-      const pid = parseInt(newItem.productId);
-      const qty = parseInt(newItem.quantity);
-      const price = parseFloat(newItem.price);
-
-      if (isNaN(pid) || isNaN(qty) || qty < 1 || isNaN(price) || price < 0) {
-        return res.status(400).json({ error: "Datos de item inválidos" });
-      }
-
-      const product = await prisma.product.findUnique({ where: { id: pid } });
-      if (!product) return res.status(400).json({ error: `Producto ${pid} no encontrado` });
-
-      if (!product.stockUnlimited && product.stock < qty) {
-        return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}` });
-      }
-
-      if (!product.stockUnlimited) {
-        const newStock = Math.max(0, product.stock - qty);
+    // Agregar nuevos items (validados arriba) y descontar stock si el pedido ya lo descontó
+    for (const { newItem, pid, qty, price, product, variant } of preparedNew) {
+      // El stock se vuelve a leer: sacar o cambiar líneas del mismo producto (arriba) ya lo movió.
+      if (ajustaStock && variant && !variant.stockUnlimited) {
+        const fresh = await prisma.productVariant.findUnique({ where: { id: variant.id } });
+        await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, fresh.stock - qty) } });
+        await syncProductVisibility(pid);
+      } else if (ajustaStock && !variant && !product.stockUnlimited) {
+        const fresh = await prisma.product.findUnique({ where: { id: pid } });
+        const newStock = Math.max(0, fresh.stock - qty);
         await prisma.product.update({
           where: { id: pid },
           data: { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
@@ -3312,7 +3382,7 @@ async function modifyOrder(req, res) {
       const newItemCost = (newItem.cost === "" || newItem.cost === undefined || newItem.cost === null) ? null : parseFloat(newItem.cost);
       // proveedor de la línea (vacío → null = el de la variante o el del producto)
       const newItemSupplier = parseSupplierId(newItem.supplierId) ?? null;
-      const newItemVariantId = newItem.variantId ? parseInt(newItem.variantId) : null;
+      const newItemVariantId = variant ? variant.id : null;
       if (applySupplierToProduct && newItemSupplier !== null) {
         supplierToPropagate.set(`${pid}:${newItemVariantId ?? ""}`, { productId: pid, variantId: newItemVariantId, supplierId: newItemSupplier });
       }
@@ -3330,8 +3400,8 @@ async function modifyOrder(req, res) {
           // agregar un producto en dólares desde "Modificar pedido" lo guardaba como si fuera en
           // pesos — y ahora que los totales se calculan por moneda, esa línea se sumaba a los pesos.
           currency:     effectiveCurrency({ product }),
-          variantId:    newItem.variantId ? parseInt(newItem.variantId) : null,
-          variantLabel: newItem.variantLabel || null,
+          variantId:    newItemVariantId,
+          variantLabel: variant ? (newItem.variantLabel || null) : null,
         },
       });
 
@@ -3411,8 +3481,12 @@ async function modifyOrder(req, res) {
       where: { id: orderId },
       data: {
         ...totalsData,
-        isModified:       true,
-        originalSnapshot: order.originalSnapshot ? undefined : originalSnapshot, // solo setear la primera vez
+        // "Pedido modificado" (con el total original para el cliente) solo en pedidos ya aprobados, como
+        // addItemToOrder: un pedido sin pagar todavía se está armando. Antes se marcaba siempre.
+        ...(isApproved ? {
+          isModified:       true,
+          originalSnapshot: order.originalSnapshot ? undefined : originalSnapshot, // solo setear la primera vez
+        } : {}),
       },
       // Antes: items con product { id, name, images } nada más. El detalle reemplaza el pedido con
       // esta respuesta, y sin costo/proveedor/ubicación la orden de compra y el "Ordenar por

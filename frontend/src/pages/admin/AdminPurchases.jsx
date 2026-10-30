@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { purchasesApi, productsApi, suppliersApi } from "../../services/api";
 import toast from "react-hot-toast";
+import { localDay, formatDateOnly } from "../../utils/localDate";
 
 const formatPrice = (v) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v ?? 0);
 
-const today = () => new Date().toISOString().slice(0, 10);
+// Antes: new Date().toISOString().slice(0, 10) — después de las 21:00 daba el día siguiente
+const today = () => localDay();
 
 const emptyRow = () => ({
   _id: Math.random().toString(36).slice(2),
@@ -616,7 +618,8 @@ export default function AdminPurchases() {
                         <div>
                           <p className="font-semibold text-slate-800">{purchase.supplier}</p>
                           <p className="text-xs text-slate-400">
-                            {new Date(purchase.date).toLocaleDateString("es-AR", {
+                            {/* Fecha sin hora (00:00 UTC del día cargado): en UTC, si no se veía un día antes */}
+                            {formatDateOnly(purchase.date, {
                               day: "2-digit",
                               month: "long",
                               year: "numeric",

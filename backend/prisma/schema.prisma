@@ -21,6 +21,12 @@ model User {
   permissions String[] // Keys de permisos: ["productos", "ordenes", ...]. SUPERADMIN bypasea esta lista.
   createdAt   DateTime @default(now())
 
+  // Contador de sesión (A5 de la auditoría, 30/10/2026): viaja dentro del token ("tv") y authMiddleware lo
+  // compara contra la base en cada pedido. Al cambiar o resetear la contraseña sube, y todos los tokens
+  // viejos de la cuenta dejan de servir al instante (antes duraban sus 7 días aunque se cambiara la
+  // contraseña o se borrara la cuenta).
+  tokenVersion Int @default(0)
+
   @@map("users")
 }
 
@@ -107,6 +113,9 @@ model Product {
   wishlistItems   Wishlist[]  // Registros de favoritos que incluyen este producto
   visibility      CustomerVisibility @default(AMBOS) // Quién puede ver este producto: AMBOS, MAYORISTA o MINORISTA
   active          Boolean     @default(true)
+  // true = lo despublicó el admin a mano (switch "Publicado"). La republicación automática al volver el
+  // stock (syncProductVisibility, devoluciones) solo aplica a los que se ocultaron por falta de stock.
+  hiddenByAdmin   Boolean     @default(false)
   featured        Boolean     @default(false)
   hotSeller          Boolean  @default(false) // Más vendidos — se activa manual o automático por threshold
   hotSellerThreshold Int?                    // Si se define, hotSeller se auto-activa cuando totalSold >= este valor
@@ -246,6 +255,9 @@ model Order {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
   @@map("orders")
 }
 
@@ -261,6 +273,8 @@ model Notification {
   read       Boolean          @default(false)
   createdAt  DateTime         @default(now())
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([customerId, createdAt])
   @@map("notifications")
 }
 
@@ -307,6 +321,9 @@ model OrderItem {
   // Ahora opcional + SetNull: borrar el producto deja productId en null sin romper la orden.
   product      Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([orderId])
+  @@index([productId])
   @@map("order_items")
 }
 
@@ -374,6 +391,12 @@ model Customer {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
+  // Contador de sesión (A5 de la auditoría, 30/10/2026): viaja dentro del token ("tv") y authMiddleware lo
+  // compara contra la base en cada pedido. Al cambiar o resetear la contraseña sube, y todos los tokens
+  // viejos de la cuenta dejan de servir al instante (antes duraban sus 7 días aunque se cambiara la
+  // contraseña o se borrara la cuenta).
+  tokenVersion Int @default(0)
+
   @@map("customers")
 }
 
@@ -385,6 +408,9 @@ model Cart {
   items      CartItem[]
   updatedAt  DateTime   @updatedAt
   createdAt  DateTime   @default(now())
+  // Último recordatorio automático de carrito abandonado (M5, services/cartReminder.service.js). Si es
+  // anterior a updatedAt, el carrito cambió desde el último aviso y puede llevar otro.
+  reminderSentAt DateTime?
 
   @@map("carts")
 }
@@ -403,6 +429,8 @@ model CartItem {
   variantId    Int?     // ID de la variante seleccionada (null si el producto no tiene variantes)
   variantLabel String?  // Etiqueta legible: "Rojo / 2m" (para mostrar en carrito y checkout)
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([cartId])
   @@map("cart_items")
 }
 
@@ -550,6 +578,8 @@ model OfferItem {
   skippedReason             String?
 
   @@unique([offerId, productId])
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([productId])
   @@map("offer_items")
 }
 
@@ -733,6 +763,8 @@ model ProductAttribute {
   values     ProductAttributeValue[]
   createdAt  DateTime               @default(now())
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([productId])
   @@map("product_attributes")
 }
 
@@ -805,6 +837,8 @@ model ProductVariant {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  // Índices (M12 de la auditoría, 30/10/2026): sin ellos estas consultas recorrían la tabla entera.
+  @@index([productId])
   @@map("product_variants")
 }
 

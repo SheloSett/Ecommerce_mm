@@ -1,11 +1,11 @@
 const cron = require("node-cron");
-const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } = require("./email.service");
 const { syncOffers } = require("./offers.service");
 const { runEmailJobs, unsubscribeUrls } = require("./broadcast.service");
+const { runAbandonedCartReminders } = require("./cartReminder.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Filtro Prisma para "productos disponibles" (antes definido acá; ahora compartido con los avisos
 // de campañas por email).
@@ -256,11 +256,17 @@ function startCronJobs() {
   // Emails masivos (Admin → Emails): avisos de campañas que empezaron + una tanda de la cola,
   // respetando el tope diario. Ver services/broadcast.service.js.
   cron.schedule("* * * * *", runEmailJobs);
+
+  // Recordatorio de carrito abandonado (M5): cada hora, a los 30 minutos. No hace nada mientras esté
+  // apagado en Admin → Emails → Automatizaciones. Ver services/cartReminder.service.js.
+  cron.schedule("30 * * * *", () => {
+    runAbandonedCartReminders().catch((err) => console.error("[CRON] Error en recordatorios de carrito:", err.message));
+  });
   // Una pasada al arrancar: si el contenedor estuvo caído justo cuando una campaña tenía que
   // empezar o terminar, se corrige de entrada en vez de esperar al próximo minuto.
   syncOffers();
 
-  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta + emails masivos)");
+  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta + emails masivos + carritos abandonados)");
 }
 
 // ---------------------------------------------------------------------------

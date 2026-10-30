@@ -2,7 +2,7 @@
 // Útiles para verificar que los emails automáticos se envían bien sin tener que esperar
 // los thresholds reales (20 días mayoristas, semanal minoristas).
 const express = require("express");
-const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const {
   forceRestockEmailForEmail,
   forceRecommendationEmailForEmail,
@@ -10,8 +10,8 @@ const {
 
 const router = express.Router();
 
-// Todas las rutas requieren admin autenticado
-router.use(authMiddleware, adminMiddleware);
+// Todas las rutas requieren admin autenticado, con el permiso "emails" (los botones están en Emails)
+router.use(authMiddleware, adminMiddleware, requireAnyPermission("emails"));
 
 // Lista blanca de mensajes seguros para exponer al cliente.
 // Errores de Prisma u otros sistemas se loggean al servidor pero NUNCA se envían al frontend

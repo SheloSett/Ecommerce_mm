@@ -1,13 +1,13 @@
-const { PrismaClient } = require("@prisma/client");
 const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
-const { customerIdFromToken } = require("../middleware/auth.middleware");
+const { customerFromToken } = require("../middleware/auth.middleware");
+const { reportError } = require("../services/errorAlerts.service");
 // Meta (Facebook / Instagram): aviso de compra a la API de conversiones al aprobarse el pago
 const { sendPurchaseEvent } = require("../services/meta.service");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Inicializar el cliente de MercadoPago con el access token
 const mp = new MercadoPagoConfig({
@@ -82,6 +82,51 @@ function approvalMismatch(payment, order) {
   return null;
 }
 
+// Lo que se revisa en la base antes de aprobar un pago de MP (además de approvalMismatch). Devuelve el
+// motivo para mandarlo a "Revisión de pago", o null si se puede aprobar.
+//  - Cupón (P6 de la auditoría): el uso se registra recién al aprobar, así que al crear el pedido no se
+//    ven los pedidos que todavía no se pagaron. Armando varios pedidos con un cupón de 1 uso antes de
+//    pagar el primero, se pagaban todos con descuento. Acá se cuenta lo ya aprobado.
+//  - Stock (P10): crear el pedido no reserva nada y el link de MP no vence. Con 5 unidades, dos pedidos
+//    de 5 pagados quedaban los dos aprobados y había que devolverle la plata a uno sin que nadie
+//    avisara. Acá se mira si todavía alcanza. (Dos pagos en el MISMO segundo todavía podrían pasar los
+//    dos; para eso haría falta reservar stock al crear el pedido.)
+async function approvalBlockReason(orderId) {
+  const order = await prisma.order.findUnique({
+    where:   { id: orderId },
+    include: { items: true, coupon: true },
+  });
+  if (!order) return null;
+
+  const c = order.coupon;
+  if (order.couponId && c) {
+    const others = { couponId: order.couponId, orderId: { not: orderId } };
+    if (c.maxUses && (await prisma.couponUsage.count({ where: others })) >= c.maxUses) {
+      return `el cupón ${c.code} ya se usó las ${c.maxUses} veces permitidas`;
+    }
+    if (c.maxUsesPerCustomer) {
+      const byCustomer = await prisma.couponUsage.count({ where: { ...others, customerEmail: (order.customerEmail || "").toLowerCase() } });
+      if (byCustomer >= c.maxUsesPerCustomer) return `el cliente ya usó el cupón ${c.code} las veces permitidas`;
+    }
+  }
+
+  if (!order.stockDeducted) {
+    for (const item of order.items || []) {
+      if (!item.productId) continue;
+      if (item.variantId) {
+        const v = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+        if (v && !v.stockUnlimited && v.stock < item.quantity) return `no queda stock suficiente de una variante (hay ${v.stock}, el pedido lleva ${item.quantity})`;
+        continue;
+      }
+      // Surtido viejo sin variante en un producto con variantes: su stock no se puede medir acá
+      if ((await prisma.productVariant.count({ where: { productId: item.productId, active: true } })) > 0) continue;
+      const p = await prisma.product.findUnique({ where: { id: item.productId } });
+      if (p && !p.stockUnlimited && p.stock < item.quantity) return `no queda stock suficiente de "${p.name}" (hay ${p.stock}, el pedido lleva ${item.quantity})`;
+    }
+  }
+  return null;
+}
+
 // Clave del pedido para la página de resultado de pago (PaymentResult): viaja en las back_urls de MP
 // y la página la manda al consultar el estado. Sin clave (ni sesión del dueño) el estado responde
 // solo { id, status }: antes cualquiera que probara números de pedido —son casi correlativos— veía
@@ -89,12 +134,13 @@ function approvalMismatch(payment, order) {
 function orderAccessKey(orderId) {
   return crypto.createHmac("sha256", process.env.JWT_SECRET).update(`order-status-${orderId}`).digest("hex").slice(0, 32);
 }
-function hasOrderAccess(req, order) {
+async function hasOrderAccess(req, order) {
   const key = typeof req.query?.k === "string" ? req.query.k : "";
   const expected = orderAccessKey(order.id);
   if (key.length === expected.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(expected))) return true;
-  const tokenCustomerId = customerIdFromToken(req);
-  return !!tokenCustomerId && tokenCustomerId === order.customerId;
+  // Sesión vigente del dueño (antes: customerIdFromToken, que solo miraba la firma)
+  const customer = await customerFromToken(req);
+  return !!customer && customer.id === order.customerId;
 }
 
 // Valida la firma "x-signature" que manda MercadoPago (HMAC-SHA256 sobre un manifest con el
@@ -235,6 +281,121 @@ async function createPreference(req, res) {
   }
 }
 
+// Pasa el pedido a APPROVED solo si todavía no lo estaba, en UNA operación de la base. El aviso de MP
+// (webhook) y la consulta desde la pantalla de resultado pueden llegar a la vez, y MP a veces manda
+// el mismo aviso dos veces: antes cada uno leía "pendiente" por su lado, los dos aprobaban y el
+// stock se descontaba dos o tres veces. Devuelve true solo para el que lo aprobó, que es el único
+// que después corre applyMpApproval.
+async function claimApproval(orderId, paymentId, mpStatus) {
+  const { count } = await prisma.order.updateMany({
+    where: { id: orderId, status: { not: "APPROVED" } },
+    data:  { status: "APPROVED", mpPaymentId: String(paymentId), mpStatus },
+  });
+  return count === 1;
+}
+
+// Todo lo que pasa cuando MP aprueba un pago: descontar stock, registrar el cupón, limpiar el carrito,
+// avisar a Meta y mandar los emails. Lo usan el webhook y la consulta de la pantalla de resultado,
+// siempre después de ganar claimApproval. Antes cada camino tenía su copia y la de la pantalla de
+// resultado no registraba el cupón ni mandaba los emails.
+async function applyMpApproval(orderId, paymentId) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { items: { include: { product: true } }, coupon: true },
+  });
+  if (!order) return;
+
+  // stockDeducted: la orden ya tiene el stock descontado por otro camino — una venta manual
+  // (descuenta al registrarse) o una cotización vieja, de cuando reservaban stock al crearse.
+  // Sin este chequeo se descontaba dos veces. Una cotización de ahora llega con esto en false:
+  // no reserva nada, así que su stock sale acá, al confirmarse el pago.
+  if (order.stockDeducted) {
+    console.log(`[MP] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
+  } else {
+    for (const item of order.items) {
+      // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
+      if (!item.productId) continue;
+      // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
+      // producto base. Antes este loop descontaba siempre del producto base, así que en
+      // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
+      // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
+      if (item.variantId) {
+        const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
+        if (variant && !variant.stockUnlimited) {
+          await prisma.productVariant.update({
+            where: { id: item.variantId },
+            data: { stock: Math.max(0, variant.stock - item.quantity) },
+          });
+        }
+        continue;
+      }
+
+      // Línea sin variante de un producto CON variantes (surtido de una cotización, repartido entre
+      // variantes al aprobarla): su stock vive en las variantes y el del producto es 0. Antes se
+      // descontaba igual de ese 0 y el producto se DESPUBLICABA aunque sus variantes tuvieran
+      // unidades. Mismo criterio que updateOrderStatus (order.controller.js).
+      const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
+      if (variantCount > 0) continue;
+
+      // Producto sin variante: descontar del stock base (comportamiento original).
+      // Los ilimitados no se tocan: antes se les descontaba igual y el número quedaba
+      // negativo/confuso en el admin aunque no afectara la venta.
+      const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
+      if (!baseProduct || baseProduct.stockUnlimited) continue;
+
+      const updated = await prisma.product.update({
+        where: { id: item.productId },
+        data: { stock: { decrement: item.quantity } },
+      });
+      // Si el stock quedó en 0 o menos (y no es ilimitado), despublicar el producto
+      if (!updated.stockUnlimited && updated.stock <= 0) {
+        await prisma.product.update({
+          where: { id: item.productId },
+          data: { stock: 0, active: false },
+        });
+      }
+    }
+    await prisma.order.update({ where: { id: orderId }, data: { stockDeducted: true } });
+  }
+
+  // Registrar el uso del cupón AHORA que el pago está confirmado (no al crear la orden).
+  // Antes el uso se registraba al crear la orden y un pago rechazado/abandonado igual consumía
+  // el cupón (los de un solo uso quedaban inutilizables). Idempotente: el findFirst evita
+  // duplicar el registro si MercadoPago reenvía el webhook.
+  if (order.couponId) {
+    try {
+      const already = await prisma.couponUsage.findFirst({ where: { orderId: order.id } });
+      if (!already) {
+        await prisma.couponUsage.create({
+          data: {
+            couponId:      order.couponId,
+            orderId:       order.id,
+            customerEmail: (order.customerEmail || "").toLowerCase(),
+          },
+        });
+      }
+    } catch (err) { console.error("[MP] Error registrando uso de cupón:", err.message); }
+  }
+
+  // Lo comprado sale del carrito del cliente acá, cuando el pago se aprueba, y no en el
+  // navegador: MP a veces devuelve al cliente en otro navegador (sin su sesión) y el carrito
+  // quedaba cargado. Ver utils/cartCleanup.js.
+  await removeOrderedItemsFromCart(prisma, order.id);
+
+  // Meta: Purchase a la API de conversiones (si está configurada). El navegador manda el mismo
+  // evento con el mismo event_id al volver de MercadoPago; Meta lo cuenta una sola vez.
+  sendPurchaseEvent(order.id).catch(() => {});
+
+  // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
+  // y enviar confirmación al cliente. Si fallan no se corta nada (el pago ya está registrado).
+  try {
+    await sendOrderNotificationToAdmin({ ...order, mpPaymentId: String(paymentId) });
+  } catch (err) { console.error("[MP] Error enviando email al admin:", err.message); }
+  try {
+    await sendOrderConfirmationToCustomer({ ...order, mpPaymentId: String(paymentId) });
+  } catch (err) { console.error("[MP] Error enviando email al cliente:", err.message); }
+}
+
 // POST /api/payments/webhook
 // MercadoPago notifica aquí cuando cambia el estado de un pago
 async function handleWebhook(req, res) {
@@ -323,6 +484,13 @@ async function handleWebhook(req, res) {
       cancelled: "CANCELLED",
       pending: "PENDING",
       in_process: "PENDING",
+      // Devolución, contracargo o reclamo: "Revisión de pago" para que el admin decida. Antes caían en
+      // el default PENDING y un pedido cobrado (o devuelto) quedaba figurando "Pendiente", sin ninguna
+      // pista y con la posibilidad de generarle otro link de pago. El stock NO se mueve solo: la
+      // mercadería pudo haberse entregado.
+      refunded:     "PAYMENT_REVIEW",
+      charged_back: "PAYMENT_REVIEW",
+      in_mediation: "PAYMENT_REVIEW",
     };
 
     const newStatus = statusMap[payment.status] || "PENDING";
@@ -358,9 +526,11 @@ async function handleWebhook(req, res) {
     // aprueba: queda en "Revisión de pago", sin tocar stock ni mandar emails, marcado como nuevo
     // para que el admin lo vea y decida (aprobarlo a mano o devolver la plata). Ver approvalMismatch.
     if (newStatus === "APPROVED" && !wasAlreadyApproved) {
-      const mismatch = approvalMismatch(payment, existingOrder);
+      // Antes: const mismatch = approvalMismatch(payment, existingOrder);
+      const mismatch = approvalMismatch(payment, existingOrder) || await approvalBlockReason(orderId);
       if (mismatch) {
         console.warn(`[MP WEBHOOK] Orden #${orderId}: pago ${paymentId} aprobado pero no coincide (${mismatch}) → Revisión de pago`);
+        reportError("Mercado Pago", `Pedido #${orderId}: pago aprobado que quedó en Revisión de pago`, `Motivo: ${mismatch}. Revisalo en el panel y aprobalo a mano o devolvé la plata.`);
         await prisma.order.update({
           where: { id: orderId },
           data:  { status: "PAYMENT_REVIEW", mpPaymentId: paymentId.toString(), mpStatus: payment.status, seenByAdmin: false },
@@ -369,108 +539,29 @@ async function handleWebhook(req, res) {
       }
     }
 
-    // Actualizar la orden con el resultado del pago
-    await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        status: newStatus,
-        mpPaymentId: paymentId.toString(),
-        mpStatus: payment.status,
-      },
-    });
-
-    // Si el pago fue aprobado: descontar stock + notificar al admin + email al cliente
+    // Si el pago fue aprobado: pasar a APPROVED y, solo si este aviso fue el que lo aprobó, descontar
+    // stock, registrar el cupón, mandar los emails, etc. (ver claimApproval y applyMpApproval).
     // if (newStatus === "APPROVED") {
     // ↑ Comentado: sin el chequeo de estado previo, un webhook repetido descontaba stock de nuevo.
     if (newStatus === "APPROVED" && !wasAlreadyApproved) {
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
-        include: { items: { include: { product: true } }, coupon: true },
-      });
-
-      // stockDeducted: la orden ya tiene el stock descontado por otro camino — una venta manual
-      // (descuenta al registrarse) o una cotización vieja, de cuando reservaban stock al crearse.
-      // Sin este chequeo se descontaba dos veces. Una cotización de ahora llega con esto en false:
-      // no reserva nada, así que su stock sale acá, al confirmarse el pago.
-      if (order && order.stockDeducted) {
-        console.log(`[WEBHOOK] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
-      } else if (order) {
-        for (const item of order.items) {
-          // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
-          if (!item.productId) continue;
-          // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
-          // producto base. Antes este loop descontaba siempre del producto base, así que en
-          // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
-          // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
-          if (item.variantId) {
-            const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-            if (variant && !variant.stockUnlimited) {
-              await prisma.productVariant.update({
-                where: { id: item.variantId },
-                data: { stock: Math.max(0, variant.stock - item.quantity) },
-              });
-            }
-            continue;
-          }
-
-          // Producto sin variante: descontar del stock base (comportamiento original).
-          // Los ilimitados no se tocan: antes se les descontaba igual y el número quedaba
-          // negativo/confuso en el admin aunque no afectara la venta.
-          const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
-          if (!baseProduct || baseProduct.stockUnlimited) continue;
-
-          const updated = await prisma.product.update({
-            where: { id: item.productId },
-            data: { stock: { decrement: item.quantity } },
-          });
-          // Si el stock quedó en 0 o menos (y no es ilimitado), despublicar el producto
-          if (!updated.stockUnlimited && updated.stock <= 0) {
-            await prisma.product.update({
-              where: { id: item.productId },
-              data: { stock: 0, active: false },
-            });
-          }
-        }
-        await prisma.order.update({ where: { id: orderId }, data: { stockDeducted: true } });
+      if (await claimApproval(orderId, paymentId, payment.status)) {
+        await applyMpApproval(orderId, paymentId);
       }
-
-      if (order) {
-        // Registrar el uso del cupón AHORA que el pago está confirmado (no al crear la orden).
-        // Antes el uso se registraba al crear la orden y un pago rechazado/abandonado igual consumía
-        // el cupón (los de un solo uso quedaban inutilizables). Idempotente: el findFirst evita
-        // duplicar el registro si MercadoPago reenvía el webhook.
-        if (order.couponId) {
-          try {
-            const already = await prisma.couponUsage.findFirst({ where: { orderId: order.id } });
-            if (!already) {
-              await prisma.couponUsage.create({
-                data: {
-                  couponId:      order.couponId,
-                  orderId:       order.id,
-                  customerEmail: (order.customerEmail || "").toLowerCase(),
-                },
-              });
-            }
-          } catch (err) { console.error("[WEBHOOK] Error registrando uso de cupón:", err.message); }
-        }
-
-        // Lo comprado sale del carrito del cliente acá, cuando el pago se aprueba, y no en el
-        // navegador: MP a veces devuelve al cliente en otro navegador (sin su sesión) y el carrito
-        // quedaba cargado. Ver utils/cartCleanup.js.
-        await removeOrderedItemsFromCart(prisma, order.id);
-
-        // Meta: Purchase a la API de conversiones (si está configurada). El navegador manda el mismo
-        // evento con el mismo event_id al volver de MercadoPago; Meta lo cuenta una sola vez.
-        sendPurchaseEvent(order.id).catch(() => {});
-
-        // Emails: notificar al admin con el ID de pago de MP (para buscar el comprobante en su cuenta)
-        // y enviar confirmación al cliente. No bloqueamos la respuesta del webhook si fallan.
-        try {
-          await sendOrderNotificationToAdmin({ ...order, mpPaymentId: paymentId.toString() });
-        } catch (err) { console.error("[WEBHOOK] Error enviando email al admin:", err.message); }
-        try {
-          await sendOrderConfirmationToCustomer({ ...order, mpPaymentId: paymentId.toString() });
-        } catch (err) { console.error("[WEBHOOK] Error enviando email al cliente:", err.message); }
+    } else {
+      // Actualizar la orden con el resultado del pago
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: newStatus,
+          mpPaymentId: paymentId.toString(),
+          mpStatus: payment.status,
+          // Un pedido a revisar se marca como nuevo para que el admin lo vea en el panel
+          ...(newStatus === "PAYMENT_REVIEW" ? { seenByAdmin: false } : {}),
+        },
+      });
+      if (["refunded", "charged_back", "in_mediation"].includes(payment.status)) {
+        reportError("Mercado Pago", `Pedido #${orderId}: el pago ${paymentId} quedó "${payment.status}" (devolución, contracargo o reclamo)`,
+          "El pedido pasó a Revisión de pago. El stock no se tocó: revisalo y decidí a mano.");
       }
     }
 
@@ -544,13 +635,18 @@ async function getOrderPaymentStatus(req, res) {
             cancelled:  "CANCELLED",
             pending:    "PENDING",
             in_process: "PENDING",
+            // Devolución, contracargo o reclamo: ver el statusMap del webhook
+            refunded:     "PAYMENT_REVIEW",
+            charged_back: "PAYMENT_REVIEW",
+            in_mediation: "PAYMENT_REVIEW",
           };
           // Antes: const newStatus = statusMap[payment.status] || order.status;
           let newStatus = statusMap[payment.status] || order.status;
           // Mismo control que el webhook: un pago aprobado que no cubre el pedido lo deja en
           // "Revisión de pago" en vez de aprobarlo (ver approvalMismatch).
           if (newStatus === "APPROVED" && order.status !== "APPROVED") {
-            const mismatch = approvalMismatch(payment, order);
+            // Antes: const mismatch = approvalMismatch(payment, order);
+            const mismatch = approvalMismatch(payment, order) || await approvalBlockReason(orderIdInt);
             if (mismatch) {
               console.warn(`[MP SYNC] Orden #${orderIdInt}: pago ${payment.id} aprobado pero no coincide (${mismatch}) → Revisión de pago`);
               newStatus = "PAYMENT_REVIEW";
@@ -559,60 +655,24 @@ async function getOrderPaymentStatus(req, res) {
 
           if (newStatus !== order.status) {
             console.log(`[MP SYNC] Orden #${orderIdInt}: ${order.status} → ${newStatus} (payment ${payment.id})`);
-            await prisma.order.update({
-              where: { id: orderIdInt },
-              data:  {
-                status:      newStatus,
-                mpPaymentId: payment.id.toString(),
-                mpStatus:    payment.status,
-                // Un pago a revisar se marca como nuevo para que el admin lo vea en el panel.
-                ...(newStatus === "PAYMENT_REVIEW" ? { seenByAdmin: false } : {}),
-              },
-            });
-            // Si pasó a APPROVED, descontar stock una sola vez
-            if (newStatus === "APPROVED" && order.status !== "APPROVED") {
-              const fullOrder = await prisma.order.findUnique({
-                where:   { id: orderIdInt },
-                include: { items: true },
-              });
-              // stockDeducted: ídem webhook — la orden ya descontó por otro camino (venta manual
-              // o cotización vieja). Las cotizaciones de ahora descuentan recién acá.
-              if (fullOrder && !fullOrder.stockDeducted) {
-                for (const item of fullOrder.items) {
-                  if (!item.productId) continue; // ítem libre: no hay producto que tocar
-                  // Si el ítem tiene variante, el stock vive en la VARIANTE. Este camino (el que
-                  // sincroniza el estado cuando se consulta el pago) descontaba siempre del producto
-                  // base: la variante no perdía nada y el producto perdía stock que no era suyo.
-                  // Es el mismo arreglo que ya tenía el webhook, unas líneas más arriba.
-                  if (item.variantId) {
-                    const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-                    if (variant && !variant.stockUnlimited) {
-                      await prisma.productVariant.update({
-                        where: { id: item.variantId },
-                        data:  { stock: Math.max(0, variant.stock - item.quantity) },
-                      });
-                    }
-                    continue;
-                  }
-                  const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
-                  if (!baseProduct || baseProduct.stockUnlimited) continue;
-                  const updated = await prisma.product.update({
-                    where: { id: item.productId },
-                    data:  { stock: { decrement: item.quantity } },
-                  });
-                  if (!updated.stockUnlimited && updated.stock <= 0) {
-                    await prisma.product.update({
-                      where: { id: item.productId },
-                      data:  { stock: 0, active: false },
-                    });
-                  }
-                }
-                await prisma.order.update({ where: { id: orderIdInt }, data: { stockDeducted: true } });
+            if (newStatus === "APPROVED") {
+              // Mismo camino que el webhook. Antes este lado descontaba stock pero NO registraba el
+              // cupón ni mandaba los emails: si el cliente volvía de MP antes que el aviso, el pedido
+              // quedaba aprobado sin email al admin ni al cliente y con el cupón sin contar.
+              if (await claimApproval(orderIdInt, payment.id, payment.status)) {
+                await applyMpApproval(orderIdInt, payment.id);
               }
-              // Lo comprado sale del carrito del cliente (ídem webhook, ver utils/cartCleanup.js)
-              await removeOrderedItemsFromCart(prisma, orderIdInt);
-              // Meta: Purchase a la API de conversiones (ídem webhook)
-              sendPurchaseEvent(orderIdInt).catch(() => {});
+            } else {
+              await prisma.order.update({
+                where: { id: orderIdInt },
+                data:  {
+                  status:      newStatus,
+                  mpPaymentId: payment.id.toString(),
+                  mpStatus:    payment.status,
+                  // Un pago a revisar se marca como nuevo para que el admin lo vea en el panel.
+                  ...(newStatus === "PAYMENT_REVIEW" ? { seenByAdmin: false } : {}),
+                },
+              });
             }
             // Refrescar el objeto que devolvemos al frontend
             order.status      = newStatus;
@@ -629,7 +689,7 @@ async function getOrderPaymentStatus(req, res) {
     // Detalle (nombre, total, productos) solo con la clave del pedido o la sesión de su dueño; si no,
     // solo el estado. Ver orderAccessKey. Antes: res.json(order) para cualquiera.
     const { customerId: _owner, ...publicOrder } = order;
-    if (!hasOrderAccess(req, order)) {
+    if (!(await hasOrderAccess(req, order))) {
       return res.json({ id: order.id, status: order.status });
     }
     res.json(publicOrder);

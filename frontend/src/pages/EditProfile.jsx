@@ -1,5 +1,5 @@
 import { useState, /* useRef, */ useEffect } from "react"; // useRef eliminado: ya no se usa el file input de avatar
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { customersApi, mayoristaRequestsApi /*, getImageUrl */ } from "../services/api"; // getImageUrl eliminado: ya no se muestra avatar
 import { useSiteConfig } from "../context/SiteConfigContext";
@@ -7,6 +7,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import SiteMeta from "../components/SiteMeta";
 import toast from "react-hot-toast";
+import { withReturnTo } from "../utils/returnTo";
 
 // SVG del logo de WhatsApp — reemplaza el ícono genérico de chat del template
 function WhatsAppIcon({ className = "w-5 h-5" }) {
@@ -18,13 +19,14 @@ function WhatsAppIcon({ className = "w-5 h-5" }) {
 }
 
 export default function EditProfile() {
-  const { customer, customerLogout, updateCustomerData } = useCustomerAuth();
+  const { customer, customerLogout, updateCustomerData, updateCustomerWithToken } = useCustomerAuth();
   const { footerPhone } = useSiteConfig();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   // Redirigir si no hay sesión
   if (!customer) {
-    navigate("/login");
+    navigate(withReturnTo("/login", routerLocation));
     return null;
   }
 
@@ -96,7 +98,9 @@ export default function EditProfile() {
     if (pwdForm.newPwd !== pwdForm.confirm) return toast.error("Las contraseñas no coinciden");
     setSavingPwd(true);
     try {
-      await customersApi.changePassword({ currentPassword: pwdForm.current, newPassword: pwdForm.newPwd });
+      // El servidor corta las demás sesiones de la cuenta y devuelve un token nuevo para esta (A5)
+      const res = await customersApi.changePassword({ currentPassword: pwdForm.current, newPassword: pwdForm.newPwd });
+      if (res.data?.token) updateCustomerWithToken(res.data.token, {});
       toast.success("Contraseña actualizada");
       setPwdForm({ current: "", newPwd: "", confirm: "" });
       setPwdSection(false);

@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const { addClient, removeClient } = require("../sse/notificationSSE");
 
 // GET /api/notifications/my - Devuelve notificaciones del cliente logueado

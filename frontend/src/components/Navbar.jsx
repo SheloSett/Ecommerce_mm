@@ -13,6 +13,9 @@ import useScrollLock from "../utils/useScrollLock";
 import toast from "react-hot-toast";
 import { trackSearch } from "../services/tracking";
 import { formatPrice } from "../utils/formatPrice";
+// Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
+import ProductImage from "./ProductImage";
+import { withReturnTo } from "../utils/returnTo";
 
 export default function Navbar() {
   const { totalItems } = useCart();
@@ -69,23 +72,28 @@ export default function Navbar() {
     if (term.length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
+      setSuggestionsLoading(false); // por si borró mientras había una búsqueda en curso (ver stale)
       return;
     }
+    // stale: el cliente siguió escribiendo. El clearTimeout solo frena el debounce, no un pedido que ya
+    // salió: sin esto, las sugerencias de "aur" podían llegar después de las de "auriculares" y pisarlas.
+    let stale = false;
     const timer = setTimeout(async () => {
       setSuggestionsLoading(true);
       try {
         const visibleFor = customer?.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
         const res = await productsApi.getAll({ search: term, limit: 6, visibleFor });
+        if (stale) return;
         const results = res.data.products ?? res.data ?? [];
         setSuggestions(results);
         setShowSuggestions(true);
       } catch {
-        setSuggestions([]);
+        if (!stale) setSuggestions([]);
       } finally {
-        setSuggestionsLoading(false);
+        if (!stale) setSuggestionsLoading(false);
       }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { stale = true; clearTimeout(timer); };
   }, [search, customer?.type]);
 
   // Al navegar se cierran el menú lateral y la búsqueda mobile
@@ -160,7 +168,7 @@ export default function Navbar() {
     if (customer) { setCartOpen((o) => !o); return; }
     // Sin sesión no hay carrito (la compra requiere cuenta): se lo manda a iniciar sesión
     toast("Iniciá sesión para usar el carrito", { icon: "🛒" });
-    navigate("/login");
+    navigate(withReturnTo("/login", location)); // antes: navigate("/login")
   };
   const closeMobileOverlays = () => {
     setMobileMenuOpen(false);
@@ -235,7 +243,7 @@ export default function Navbar() {
         >
           <div className="w-10 h-10 rounded-lg bg-slate-100 flex-shrink-0 overflow-hidden">
             {p.images?.[0] ? (
-              <img src={getImageUrl(p.images[0])} alt={p.name} className="w-full h-full object-cover" />
+              <ProductImage src={p.images[0]} size={128} alt={p.name} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-300 text-sm">📦</div>
             )}
@@ -443,7 +451,7 @@ export default function Navbar() {
                 </div>
               ) : (
                 <Link
-                  to="/login"
+                  to={withReturnTo("/login", location)}
                   className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all"
                   aria-label="Iniciar sesión"
                   title="Iniciar sesión"
@@ -641,7 +649,7 @@ export default function Navbar() {
             </>
           ) : (
             <>
-              <Link to="/login" onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
+              <Link to={withReturnTo("/login", location)} onClick={() => setMobileMenuOpen(false)} className={drawerItem}>
                 <span className="material-symbols-outlined text-slate-500">login</span>
                 Iniciar sesión
               </Link>
@@ -734,7 +742,7 @@ export default function Navbar() {
           {!customer && (
             <div className="mayorista-banner bg-amber-400 text-amber-900 text-xs font-medium text-center py-1.5 px-4 leading-tight">
               ⚠️ Atención cliente mayorista: para ver los precios mayoristas debés{" "}
-              <Link to="/login" className="underline font-semibold hover:text-amber-950">
+              <Link to={withReturnTo("/login", location)} className="underline font-semibold hover:text-amber-950">
                 iniciar sesión con tu cuenta
               </Link>
             </div>

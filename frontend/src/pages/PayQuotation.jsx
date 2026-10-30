@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
 // ordersApi.applyCoupon se usa para aplicar cupones a cotizaciones aprobadas
@@ -7,6 +7,7 @@ import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals } from "../utils/orderTotals";
+import { withReturnTo } from "../utils/returnTo";
 
 function formatPrice(price) {
   return formatPriceWithCurrency(price, "ARS");
@@ -56,6 +57,7 @@ export default function PayQuotation() {
   const { id } = useParams();
   const { customer, loadingCustomer } = useCustomerAuth();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   const [quote, setQuote]                 = useState(null);
   const [loading, setLoading]             = useState(true);
@@ -70,7 +72,7 @@ export default function PayQuotation() {
 
   useEffect(() => {
     if (loadingCustomer) return;
-    if (!customer) { navigate("/login"); return; }
+    if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
     // Antes: if (customer.type !== "MAYORISTA") { navigate("/"); return; }
     // Comentado: ídem QuotationHistory — cualquier cliente puede tener una cotización armada por el
     // vendedor. El backend valida que la cotización sea suya.

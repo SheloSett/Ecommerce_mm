@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useNotifications } from "../context/NotificationContext";
@@ -12,6 +12,7 @@ import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
 // Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
 import { escapeHtml as esc } from "../utils/escapeHtml";
+import { withReturnTo } from "../utils/returnTo";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -315,6 +316,7 @@ export default function OrderHistory() {
   const { customer, loadingCustomer } = useCustomerAuth();
   const { repeatOrder, loading: cartLoading } = useCart();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   const [orders, setOrders]       = useState([]);
   const [loading, setLoading]     = useState(true);
@@ -323,7 +325,7 @@ export default function OrderHistory() {
 
   useEffect(() => {
     if (loadingCustomer) return;
-    if (!customer) navigate("/login");
+    if (!customer) navigate(withReturnTo("/login", routerLocation));
   }, [customer, loadingCustomer, navigate]);
 
   useEffect(() => {
@@ -654,8 +656,10 @@ export default function OrderHistory() {
                                   Producto no disponible
                                 </span>
                               )}
-                              {/* variantLabel: visible solo si la eligió el cliente (no si la asignó el admin) */}
-                              {item.variantLabel && !item.variantByAdmin && (
+                              {/* variantLabel: visible solo si la eligió el cliente (no si la asignó el admin),
+                                  salvo que el producto haya quedado en varias líneas (surtido repartido entre
+                                  variantes al aprobar la cotización). Antes: item.variantLabel && !item.variantByAdmin */}
+                              {item.variantLabel && (!item.variantByAdmin || order.items.filter((i) => i.productId === item.productId).length > 1) && (
                                 <div className="flex flex-wrap gap-1 mt-0.5">
                                   {item.variantLabel.split(" / ").map((v, vi) => (
                                     <span key={vi} className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#dbe1ff] text-[#00174b]">

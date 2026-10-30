@@ -30,8 +30,12 @@
 > docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db \
 >   --single-transaction -v ON_ERROR_STOP=1 < /tmp/migracion.sql
 >
-> # Restaurar un backup:
-> gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db
+> # Restaurar un backup: ver "Restaurar desde backup" más abajo (a una base NUEVA, no encima de la que
+> # está en uso). Antes: gunzip -c ... | docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db
+> # → sobre una base con tablas falla a la mitad y queda restaurada a medias.
+>
+> # Ensayo de restauración (una vez por mes; no toca la base real):
+> bash ~/Ecommerce_mm/backend/scripts/restore-test.sh
 > ```
 > `git pull` + `docker compose -f deploy/docker-compose.vps.yml up -d --build` sigue igual.
 > **Nunca `docker compose down -v`**: el `-v` borra el volumen con la base.
@@ -557,9 +561,31 @@ Después de esto, `npx prisma db push` va a decir "already in sync" (la DB ya co
 Los links viejos `/producto/123` siguen funcionando: el backend acepta id numérico o slug.
 
 ### Restaurar desde backup
+A una base NUEVA al lado de la actual, y recién cuando está completa se apunta el backend a ella.
+Volcar el backup encima de la base en uso (como decía esto antes) falla a la mitad porque las
+tablas ya existen, y queda restaurada a medias. La base vieja queda intacta por si hay que volver.
 ```bash
-gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | psql -U ecommerce_user -d ecommerce_db -h localhost
+# 0. Backup de cómo está ahora, por las dudas
+~/Ecommerce_mm/backend/scripts/backup-db.sh
+
+# 1. Base nueva vacía (en el mismo contenedor)
+docker exec igwtstore_db createdb -U ecommerce_user ecommerce_restore
+
+# 2. Cargar el backup: todo o nada
+gunzip -c ~/backups/ecommerce_db_FECHA.sql.gz | docker exec -i igwtstore_db \
+  psql -U ecommerce_user -d ecommerce_restore -v ON_ERROR_STOP=1 --single-transaction -q
+
+# 3. Revisar que esté lo que se espera
+docker exec igwtstore_db psql -U ecommerce_user -d ecommerce_restore -c "SELECT count(*) FROM orders"
+
+# 4. Apuntar el backend a la base restaurada: en backend/.env, en DATABASE_URL cambiar
+#    /ecommerce_db por /ecommerce_restore, y reiniciar el backend
+docker compose -f ~/Ecommerce_mm/deploy/docker-compose.vps.yml up -d backend
 ```
+Backups en B2 (si el disco del VPS se perdió): `rclone copy backblaze:igwtstore-backups/ARCHIVO ~/backups/`
+(los del día 1 de cada mes están en `backblaze:igwtstore-backups/mensual/`, 12 meses).
+Fotos de Cloudinary: copia mensual con `backend/scripts/backup-cloudinary.sh` en `~/backups/cloudinary`
+y en `backblaze:igwtstore-backups/cloudinary`.
 
 ---
 

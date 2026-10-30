@@ -17,8 +17,7 @@
 //     de una variante NO se hereda del producto padre: si solo escribiéramos el producto, la campaña
 //     no tendría ningún efecto sobre los productos con variantes.
 
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Cantidad de updates por transacción. Una campaña grande (cientos de productos con variantes) genera
 // muchas operaciones y una sola transacción gigante se pasa del timeout default de Prisma.
@@ -515,7 +514,9 @@ async function syncOffers() {
 // restarle $5.000 = $6.000, no escalar los $5.000 viejos), así que la pasada lo recalcula sobre la
 // base nueva y lo corrige.
 //
-// Solo toca los campos del PRODUCTO porque el ajuste masivo solo escribe productos, no variantes.
+// Escala la anotación del producto y la de sus variantes (appliedVariants): el ajuste masivo escribe
+// las dos desde el 30/10/2026 (B9 de la auditoría). Antes: "Solo toca los campos del PRODUCTO porque el
+// ajuste masivo solo escribe productos, no variantes."
 async function rescaleAppliedPrices(factor, { retail = true, wholesale = true } = {}) {
   if (!(factor > 0) || factor === 1) return { rescaled: 0 };
 
@@ -529,7 +530,7 @@ async function rescaleAppliedPrices(factor, { retail = true, wholesale = true } 
     // (Un producto en USD sí puede estar en campaña: currencyBlocked solo excluye los descuentos
     // FIXED, los de porcentaje se aplican normal.)
     where: { offer: { applied: true }, product: { currency: "ARS" } },
-    select: { id: true, appliedSalePrice: true, appliedWholesaleSalePrice: true },
+    select: { id: true, appliedSalePrice: true, appliedWholesaleSalePrice: true, appliedVariants: true },
   });
 
   const ops = [];
@@ -540,6 +541,16 @@ async function rescaleAppliedPrices(factor, { retail = true, wholesale = true } 
     }
     if (wholesale && it.appliedWholesaleSalePrice != null) {
       data.appliedWholesaleSalePrice = round2(it.appliedWholesaleSalePrice * factor);
+    }
+    // Variantes: el ajuste masivo ahora también escala sus precios de oferta (antes solo escribía
+    // productos), así que su anotación se escala igual, por el mismo motivo que la del producto.
+    if (Array.isArray(it.appliedVariants) && it.appliedVariants.length > 0) {
+      const scaled = it.appliedVariants.map((v) => ({
+        ...v,
+        ...(retail && v.salePrice != null ? { salePrice: round2(v.salePrice * factor) } : {}),
+        ...(wholesale && v.wholesaleSalePrice != null ? { wholesaleSalePrice: round2(v.wholesaleSalePrice * factor) } : {}),
+      }));
+      if (JSON.stringify(scaled) !== JSON.stringify(it.appliedVariants)) data.appliedVariants = scaled;
     }
     if (Object.keys(data).length > 0) {
       ops.push(prisma.offerItem.update({ where: { id: it.id }, data }));

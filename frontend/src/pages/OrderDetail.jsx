@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, Link, useLocation } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useCart } from "../context/CartContext";
@@ -10,6 +10,7 @@ import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
 // Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
 import { escapeHtml as esc } from "../utils/escapeHtml";
+import { withReturnTo } from "../utils/returnTo";
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString("es-AR", {
@@ -200,6 +201,7 @@ export default function OrderDetail() {
   const { customer, loadingCustomer } = useCustomerAuth();
   const { repeatOrder, loading: cartLoading } = useCart();
   const navigate = useNavigate();
+  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
   const [order, setOrder]         = useState(null);
   const [loading, setLoading]     = useState(true);
@@ -208,7 +210,7 @@ export default function OrderDetail() {
 
   useEffect(() => {
     if (loadingCustomer) return;
-    if (!customer) { navigate("/login"); return; }
+    if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
     ordersApi.getMyById(id)
       .then((res) => setOrder(res.data))
       .catch(() => { toast.error("No se encontró el pedido"); navigate("/pedidos"); })

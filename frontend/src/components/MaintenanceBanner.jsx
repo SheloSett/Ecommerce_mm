@@ -32,6 +32,9 @@ export default function MaintenanceBanner() {
   const [timeLeft, setTimeLeft] = useState(() => getTimeLeft(scheduledAt));
 
   useEffect(() => {
+    setTimeLeft(getTimeLeft(scheduledAt));
+    // Sin fecha programada no hay cuenta regresiva (antes el intervalo corría igual)
+    if (!scheduledAt) return;
     // Actualizar el countdown cada segundo
     const interval = setInterval(() => {
       setTimeLeft(getTimeLeft(scheduledAt));

@@ -17,9 +17,8 @@
 // y listo. Los datos personales (email, teléfono, nombre) viajan hasheados con SHA-256, como exige
 // Meta.
 const crypto = require("crypto");
-const { PrismaClient } = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 const SITE_URL = (process.env.FRONTEND_URL || "https://igwtstore.com.ar").split(",")[0].trim();
 // Versión de la Graph API. Meta mantiene cada versión ~2 años; si una queda vieja se cambia acá o

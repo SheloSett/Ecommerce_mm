@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 // Helper reutilizado para limpiar imágenes al auto-borrar productos creados por una compra.
 const { deleteProductImages } = require("./product.controller");
 
@@ -130,6 +129,8 @@ async function applyItemTx(tx, item) {
         cost:   itemCost,
         stock:  itemQty,
         active: false,          // Inactivo hasta que el admin lo configure
+        // ...y que la republicación automática por stock no lo publique antes, con precio 0 (B12)
+        hiddenByAdmin: true,
         sku:    sku?.trim() || null,
       },
     });
@@ -153,15 +154,40 @@ async function applyItemTx(tx, item) {
   };
 }
 
+// ¿Hubo compras de este producto DESPUÉS de esta línea? (ids más altos, de otras compras: el id sigue el
+// orden en que se aplicaron). Si las hubo, esas ya promediaron el costo encima de esta, así que volver al
+// costo de antes de esta compra (prevCost) borraría ese promedio.
+async function hasLaterPurchasesTx(tx, item) {
+  const later = await tx.purchaseItem.count({
+    where: { productId: item.productId, id: { gt: item.id }, purchaseId: { not: item.purchaseId } },
+  });
+  return later > 0;
+}
+
+// Suma (o resta) unidades al producto o a la variante de una línea, sin bajar de 0.
+async function moveStockTx(tx, { productId, variantId }, delta) {
+  if (delta === 0) return;
+  if (variantId) {
+    const variant = await tx.productVariant.findUnique({ where: { id: variantId } });
+    if (variant) await tx.productVariant.update({ where: { id: variantId }, data: { stock: Math.max(0, variant.stock + delta) } });
+  } else {
+    const product = await tx.product.findUnique({ where: { id: productId } });
+    if (product) await tx.product.update({ where: { id: productId }, data: { stock: Math.max(0, product.stock + delta) } });
+  }
+}
+
 // Revierte el efecto de un PurchaseItem ya guardado: resta el stock que agregó y restaura el costo
 // previo (producto o variante). NO borra productos creados — esa decisión la toma el admin y la
 // ejecuta deleteCreatedProductsTx. Si el producto ya no existe, no hace nada.
+// El costo se restaura solo si no hubo compras posteriores del producto (B11 de la auditoría): antes se
+// restauraba siempre y se perdía el promedio de esas compras (la ganancia del dashboard se inflaba).
 async function revertItemTx(tx, item) {
   if (!item.productId) return;
 
   const product = await tx.product.findUnique({ where: { id: item.productId } });
   if (!product) return; // el producto ya no existe (borrado a mano): nada que revertir
 
+  const restoreCost = item.prevCost !== null && item.prevCost !== undefined && !(await hasLaterPurchasesTx(tx, item));
   if (item.variantId) {
     // Revertir stock de la variante
     const variant = await tx.productVariant.findUnique({ where: { id: item.variantId } });
@@ -170,19 +196,38 @@ async function revertItemTx(tx, item) {
       await tx.productVariant.update({ where: { id: item.variantId }, data: { stock: newStock } });
     }
     // Restaurar el costo del producto padre (si tenemos snapshot)
-    if (item.prevCost !== null && item.prevCost !== undefined) {
+    if (restoreCost) {
       await tx.product.update({ where: { id: item.productId }, data: { cost: item.prevCost } });
     }
   } else {
     // Restar el stock agregado y restaurar el costo previo
     const newStock = Math.max(0, product.stock - item.quantity);
     const data = { stock: newStock };
-    if (item.prevCost !== null && item.prevCost !== undefined) {
+    if (restoreCost) {
       data.cost = item.prevCost; // "el costo debería quedar como el de antes"
     }
     await tx.product.update({ where: { id: item.productId }, data });
   }
 }
+
+// A qué producto/variante va una línea, SIN tocar nada (la misma búsqueda que applyItemTx: SKU de
+// producto, SKU de variante, pista productId). null = no existe y applyItemTx va a crear uno nuevo.
+async function resolveTargetTx(tx, item) {
+  const skuTrim = item.sku?.trim();
+  if (skuTrim) {
+    const product = await tx.product.findFirst({ where: { sku: skuTrim } });
+    if (product) return { productId: product.id, variantId: null };
+    const variant = await tx.productVariant.findFirst({ where: { sku: skuTrim } });
+    if (variant) return { productId: variant.productId, variantId: variant.id };
+  }
+  const hintId = item.productId ? parseInt(item.productId) : null;
+  if (hintId) {
+    const hinted = await tx.product.findUnique({ where: { id: hintId } });
+    if (hinted) return { productId: hinted.id, variantId: null };
+  }
+  return null;
+}
+const targetKey = (productId, variantId) => `${productId}:${variantId ?? ""}`;
 
 // Borra (dentro de tx) los productos CREADOS por la compra cuya decisión del admin sea "delete".
 // Un producto con ventas (OrderItem) NO se puede borrar (FK restrictiva) → se mantiene y se reporta.
@@ -333,8 +378,8 @@ const createPurchase = async (req, res) => {
   }
 };
 
-// PUT /api/purchases/:id — editar una compra (edición completa: revierte el efecto original y
-// reaplica los nuevos items). Body: { supplier?, supplierId?, date, items: [...],
+// PUT /api/purchases/:id — editar una compra (cada línea aplica solo la diferencia con la versión
+// anterior; ver el paso 1). Body: { supplier?, supplierId?, date, items: [...],
 // productDecisions: { [productId]: "delete" | "keep" } } — decisiones para productos creados por la
 // compra original que el admin quiera auto-borrar.
 const updatePurchase = async (req, res) => {
@@ -362,32 +407,83 @@ const updatePurchase = async (req, res) => {
         throw { status: 400, error: "El proveedor es requerido" };
       }
 
-      // 1. Revertir el efecto de TODOS los items originales (restaura costo, resta stock)
+      // Antes: revertía TODAS las líneas (restando con tope en 0 y volviendo al costo de antes de la
+      // compra) y las volvía a aplicar enteras. Si parte de lo comprado ya se había vendido, el stock
+      // volvía al total comprado (stock fantasma), y el costo perdía el promedio de las compras
+      // posteriores aunque solo se corrigiera el proveedor. Ahora cada línea que sigue se compara con la
+      // vieja y se aplica solo la diferencia (B11 de la auditoría).
+
+      // 1. Emparejar cada línea nueva con la vieja del mismo producto/variante
+      const unpaired = new Map(); // targetKey → líneas viejas todavía sin pareja
+      const removed = [];         // líneas viejas que ya no están
       for (const item of original.items) {
-        await revertItemTx(tx, item);
+        if (!item.productId) { removed.push(item); continue; }
+        const key = targetKey(item.productId, item.variantId);
+        if (!unpaired.has(key)) unpaired.set(key, []);
+        unpaired.get(key).push(item);
+      }
+      const pairs = []; // [vieja, nueva, destino]
+      const added = []; // nuevas sin vieja → se aplican como en una compra nueva
+      for (const it of parsedItems) {
+        const target = await resolveTargetTx(tx, it);
+        const old = target ? unpaired.get(targetKey(target.productId, target.variantId))?.shift() : null;
+        if (old) pairs.push([old, it, target]); else added.push(it);
+      }
+      for (const rest of unpaired.values()) removed.push(...rest);
+
+      // 2. Líneas que siguen: solo la diferencia
+      for (const [old, it, target] of pairs) {
+        const sameQty  = old.quantity === it.quantity;
+        const sameCost = old.cost === it.cost;
+        if (!sameQty || !sameCost) {
+          const later = await hasLaterPurchasesTx(tx, old);
+          if (!sameCost && later) {
+            throw { status: 400, error: `No se puede cambiar el costo de "${it.productName.trim()}" en esta compra: después hubo otra compra de ese producto que ya promedió el costo. Corregilo desde el producto.` };
+          }
+          await moveStockTx(tx, target, it.quantity - old.quantity);
+          if (!later) {
+            // Costo promedio como si la compra se hubiera cargado bien desde el principio: con el stock y
+            // el costo de ANTES de la compra (snapshot), no con el stock de hoy.
+            const base     = (old.variantId ? old.prevVariantStock : old.prevStock) || 0;
+            const prevCost = old.prevCost || 0;
+            const total    = base + it.quantity;
+            const cost     = total > 0 ? roundCost((prevCost * base + it.cost * it.quantity) / total) : it.cost;
+            await tx.product.update({ where: { id: target.productId }, data: { cost } });
+          }
+          // Con compras posteriores y el mismo costo: cambia el stock y el costo promedio queda como está.
+        }
+        // El snapshot (prevCost/prevStock) no cambia: sigue siendo el de antes de esta compra.
+        await tx.purchaseItem.update({
+          where: { id: old.id },
+          data:  { sku: it.sku?.trim() || null, productName: it.productName.trim(), cost: it.cost, quantity: it.quantity },
+        });
       }
 
-      // 2. Productos creados por la compra original → aplicar decisión del admin (borrar/mantener)
-      const createdItems = original.items.filter((it) => it.createdProduct && it.productId);
+      // 3. Líneas que se sacaron: se revierten, y los productos que había creado la compra → decisión del
+      //    admin (borrar/mantener)
+      for (const item of removed) {
+        await revertItemTx(tx, item);
+      }
+      const createdItems = removed.filter((it) => it.createdProduct && it.productId);
       const { deleted, skippedDueToSales } = await deleteCreatedProductsTx(tx, createdItems, productDecisions);
+      if (removed.length) {
+        await tx.purchaseItem.deleteMany({ where: { id: { in: removed.map((it) => it.id) } } });
+      }
 
-      // 3. Borrar los items originales
-      await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
-
-      // 4. Aplicar los items nuevos (snapshots frescos sobre el estado ya revertido)
+      // 4. Líneas nuevas: como en una compra nueva (snapshot sobre el estado de hoy)
       const newItems = [];
-      for (const it of parsedItems) {
+      for (const it of added) {
         newItems.push(await applyItemTx(tx, it));
       }
 
-      // 5. Actualizar la compra con los nuevos datos + items
+      // 5. Actualizar la compra con los nuevos datos + items nuevos
       const updated = await tx.purchase.update({
         where: { id },
         data: {
           supplier:   supplierName,
           supplierId: supplierId ? parseInt(supplierId) : null,
           date:       date ? new Date(date) : original.date,
-          items: { create: newItems },
+          ...(newItems.length ? { items: { create: newItems } } : {}),
         },
         include: { items: true },
       });

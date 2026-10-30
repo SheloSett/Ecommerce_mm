@@ -29,6 +29,8 @@ class FakePrismaClient {
     this.customer = {
       findUnique: async ({ where }) => db.customers[where.id] || null,
     };
+    // Admins: resolvePriceViewer ahora confirma que la sesión del admin siga vigente (A5)
+    this.user = { findUnique: async ({ where }) => (where.id === 1 ? { tokenVersion: 0 } : null) };
     this.category = { findMany: async () => [] };
     this.$queryRaw = async () => [];
     this.$queryRawUnsafe = async () => [];

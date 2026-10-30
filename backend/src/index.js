@@ -4,6 +4,9 @@ const cors = require("cors");
 const path = require("path");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+// Cliente único de la base (lib/prisma.js) y avisos de errores de producción (log + email al admin)
+const prisma = require("./lib/prisma");
+const { reportError } = require("./services/errorAlerts.service");
 
 const authRoutes = require("./routes/auth.routes");
 const productRoutes = require("./routes/product.routes");
@@ -170,9 +173,17 @@ app.use("/api/events",     eventsRoutes);
 app.use("/api/emails",     emailRoutes);
 app.use("/api",            seoRoutes);
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+// Health check. Antes respondía "ok" sin mirar nada: con la base caída seguía diciendo ok. Ahora hace
+// una consulta mínima y, si la base no contesta, responde 503. Lo usan el healthcheck del compose y
+// cualquier monitor externo (UptimeRobot, Better Stack) que se apunte a /api/health.
+app.get("/api/health", async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", db: "ok", timestamp: new Date().toISOString() });
+  } catch (err) {
+    reportError("salud", "La base de datos no responde", err.message);
+    res.status(503).json({ status: "error", db: "sin respuesta", timestamp: new Date().toISOString() });
+  }
 });
 
 // Errores de multer (subida de archivos). Sin este bloque caen en el handler genérico y salen
@@ -189,12 +200,30 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Manejo global de errores
+// Manejo global de errores. Los 5xx se reportan (log + email al admin, ver errorAlerts.service.js) y
+// al cliente le llega un mensaje genérico: antes se le devolvía err.message, que puede traer detalles
+// internos (consultas de Prisma, rutas de archivos).
 app.use((err, req, res, next) => {
+  const status = err.status || 500;
+  if (status >= 500) {
+    reportError("servidor", `${req.method} ${req.originalUrl}: ${err.message}`, err.stack);
+    // Antes: res.status(err.status || 500).json({ error: err.message || "Error interno del servidor" });
+    return res.status(status).json({ error: "Error interno del servidor" });
+  }
   console.error("Error:", err.message);
-  res.status(err.status || 500).json({
-    error: err.message || "Error interno del servidor",
-  });
+  res.status(status).json({ error: err.message || "Error en el pedido" });
+});
+
+// Errores que se escapan de todo: una promesa rechazada sin catch o una excepción fuera de una
+// request. Antes no había handler: en Node 22 una promesa sin catch tira el proceso y Docker lo
+// reiniciaba sin que nadie se enterara. La promesa se reporta y el servidor sigue; la excepción se
+// reporta y el proceso sale (su estado ya no es confiable) para que Docker lo levante limpio.
+process.on("unhandledRejection", (reason) => {
+  reportError("promesa sin catch", reason?.message || String(reason), reason?.stack);
+});
+process.on("uncaughtException", (err) => {
+  reportError("excepción no atrapada", err.message, err.stack);
+  setTimeout(() => process.exit(1), 3000); // tiempo para que salga el email
 });
 
 // 404 para rutas no encontradas
@@ -212,13 +241,12 @@ app.listen(PORT, () => {
 // migración que la cree, una base nueva (o un restore) perdía la búsqueda sin tildes sin
 // que nadie lo note. CREATE EXTENSION IF NOT EXISTS es idempotente e inofensivo si ya existe.
 // Si el usuario de DB no tiene permisos, solo se loguea la advertencia y la app sigue normal.
-const { PrismaClient } = require("@prisma/client");
-const prismaBoot = new PrismaClient();
-prismaBoot
+// Antes: un PrismaClient propio (prismaBoot) solo para esto, que después se desconectaba. Ahora es el
+// cliente único de lib/prisma.js, así que NO se desconecta (se cortaría la base para todo el backend).
+prisma
   .$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS unaccent')
   .then(() => console.log("✅ Extensión unaccent de Postgres verificada (búsqueda sin tildes activa)"))
-  .catch((e) => console.warn("⚠️ No se pudo crear/verificar la extensión unaccent (la búsqueda será sensible a tildes):", e.message))
-  .finally(() => prismaBoot.$disconnect().catch(() => {}));
+  .catch((e) => console.warn("⚠️ No se pudo crear/verificar la extensión unaccent (la búsqueda será sensible a tildes):", e.message));
 
 // Iniciar cron jobs de campañas de email (restock mayoristas + recomendaciones minoristas)
 const { startCronJobs } = require("./services/cron.service");

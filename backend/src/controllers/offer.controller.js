@@ -11,7 +11,6 @@
 // cron podría meterse entre "revertir" y "guardar" y re-aplicar con la lista de productos vieja,
 // dejando precios escritos en productos que justo salían de la campaña.
 
-const { PrismaClient } = require("@prisma/client");
 const {
   withOfferLock,
   revertOffer,
@@ -22,7 +21,7 @@ const {
 } = require("../services/offers.service");
 const { resolvePriceViewer } = require("../utils/productPrivacy");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Estilos de la tarjeta de la campaña en el Home: los mismos que las tarjetas de categoría
 // (frontend/src/components/CategoryCard.jsx → CARD_STYLES), los de fecha especial que son solo de

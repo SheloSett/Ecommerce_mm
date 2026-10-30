@@ -11,7 +11,8 @@ const jwt = require("jsonwebtoken");
 // cualquiera lo puede escribir a mano. Lo que decide es el token, firmado por el servidor.
 
 // Solo el admin: costo y ubicación en depósito / proveedor.
-const ADMIN_ONLY_FIELDS = ["cost", "module", "shelf", "supplierId", "supplier", "stockBreak", "hotSellerThreshold"];
+// hiddenByAdmin: por qué está despublicado (B12) — dato interno del panel.
+const ADMIN_ONLY_FIELDS = ["cost", "module", "shelf", "supplierId", "supplier", "stockBreak", "hotSellerThreshold", "hiddenByAdmin"];
 // Solo el admin y el mayorista aprobado.
 const WHOLESALE_FIELDS = ["wholesalePrice", "wholesaleSalePrice", "wholesalePriceTiers"];
 // Precios minoristas. Se ocultan SOLO en los productos que se venden solo a mayoristas: ahí el panel
@@ -39,14 +40,20 @@ async function resolvePriceViewer(req, prisma) {
     return ANONYMOUS;
   }
 
+  // Sesión vigente (A5): el contador de sesión del token ("tv") tiene que coincidir con la base. Un admin
+  // borrado o una cuenta con la contraseña cambiada ya no ve costos ni precios mayoristas con el token viejo.
+  // Antes: if (ADMIN/SUPERADMIN) return { isAdmin: true, isMayorista: true }; sin mirar la base.
   if (decoded.role === "ADMIN" || decoded.role === "SUPERADMIN") {
+    const user = await prisma.user.findUnique({ where: { id: decoded.id }, select: { tokenVersion: true } });
+    if (!user || (user.tokenVersion ?? 0) !== (decoded.tv ?? 0)) return ANONYMOUS;
     return { isAdmin: true, isMayorista: true };
   }
   if (decoded.role === "CUSTOMER" && decoded.id) {
     const customer = await prisma.customer.findUnique({
       where:  { id: decoded.id },
-      select: { type: true, status: true },
+      select: { type: true, status: true, tokenVersion: true },
     });
+    if (!customer || (customer.tokenVersion ?? 0) !== (decoded.tv ?? 0)) return ANONYMOUS;
     const isMayorista = customer?.type === "MAYORISTA" && customer?.status === "APPROVED";
     return { isAdmin: false, isMayorista };
   }

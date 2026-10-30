@@ -5,6 +5,7 @@ import FitText from "../../components/FitText";
 import { useAuth } from "../../context/AuthContext";
 import { ordersApi, gastosApi } from "../../services/api";
 import { formatPrice as formatMoney } from "../../utils/formatPrice";
+import { localDay } from "../../utils/localDate";
 
 const STATUS_LABEL = {
   PENDING: { label: "Pendiente", color: "bg-yellow-100 text-yellow-800" },
@@ -35,6 +36,9 @@ export default function AdminDashboard() {
   const [gastosUsdYear, setGastosUsdYear] = useState([]);
 
   useEffect(() => {
+    // Sin "finanzas" la pantalla redirige: no pedir los datos (el backend los rechaza, ver A2).
+    // Antes se pedían igual y se descartaban.
+    if (!canSeeFinances) return;
     const now = new Date();
 
     // Mes actual
@@ -47,7 +51,8 @@ export default function AdminDashboard() {
 
     // Acumulado del año (1 enero → hoy)
     const yearFrom = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
-    const yearTo   = now.toISOString().slice(0, 10);
+    // Antes: now.toISOString().slice(0, 10) — después de las 21:00 daba el día siguiente
+    const yearTo   = localDay(now);
 
     // Los gastos ahora piden currency explícito: sin el filtro, un gasto en dólares se sumaría
     // a los totales en pesos (antes no hacía falta porque todos los gastos eran en pesos).
@@ -87,7 +92,7 @@ export default function AdminDashboard() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [canSeeFinances]);
 
   const formatPrice    = (price) => formatMoney(price, "ARS");
   const formatPriceUsd = (price) => formatMoney(price, "USD");

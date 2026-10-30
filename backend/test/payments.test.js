@@ -37,12 +37,19 @@ class FakePrismaClient {
     this.order = {
       findUnique: async ({ where }) => clone(db.orders[where.id]) || null,
       update: async ({ where, data }) => Object.assign(db.orders[where.id], data),
+      // claimApproval: aprueba solo si todavía no estaba aprobado
+      updateMany: async ({ where, data }) => {
+        const o = db.orders[where.id];
+        if (!o || (where.status?.not && o.status === where.status.not)) return { count: 0 };
+        Object.assign(o, data);
+        return { count: 1 };
+      },
     };
     this.product = {
       findUnique: async () => ({ stockUnlimited: true }), // sin stock que descontar
       update: async () => ({}),
     };
-    this.productVariant = { findUnique: async () => null, update: async () => ({}) };
+    this.productVariant = { findUnique: async () => null, update: async () => ({}), count: async () => 0 };
     this.couponUsage = { findFirst: async () => null, create: async () => ({}) };
     this.cart = {
       findUnique: async ({ where }) => clone(db.carts[where.customerId]) || null,

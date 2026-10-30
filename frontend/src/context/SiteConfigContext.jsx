@@ -1,5 +1,13 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { settingsApi } from "../services/api";
+
+// Última configuración recibida, guardada en el navegador: la tienda se dibuja con esa apenas abre y se
+// actualiza cuando llega la nueva (antes mostraba un spinner hasta que respondía /api/settings, hasta 4 s).
+// Si la nueva trae mantenimiento, PublicRoute redirige igual en cuanto llega.
+const CONFIG_CACHE_KEY = "site-config-cache";
+function readCachedConfig() {
+  try { return JSON.parse(localStorage.getItem(CONFIG_CACHE_KEY)) || null; } catch { return null; }
+}
 
 const SiteConfigContext = createContext({
   theme: "clasico",
@@ -66,10 +74,69 @@ export function SiteConfigProvider({ children }) {
     return saved;
   });
 
-  const setTheme = (newTheme) => {
+  const setTheme = useCallback((newTheme) => {
     setThemeState(newTheme);
     localStorage.setItem("site-theme", newTheme);
-  };
+  }, []);
+
+  // Pasa la configuración del backend (res.data de /api/settings) al estado.
+  const applyConfig = useCallback((data) => {
+    setMaintenanceRaw(data.maintenance === "true");
+    // Parsear la fecha programada (vacío o inválido → null)
+    const raw = data.maintenanceScheduledAt;
+    if (raw) {
+      const d = new Date(raw);
+      setScheduledAt(isNaN(d.getTime()) ? null : d);
+    } else {
+      setScheduledAt(null);
+    }
+    // Leer banners de anuncio (nuevo formato: JSON array en announcementBanners)
+    // Fallback al formato legacy de un solo banner para compatibilidad
+    if (data.announcementBanners) {
+      try {
+        const banners = JSON.parse(data.announcementBanners);
+        setAnnouncement(Array.isArray(banners) ? banners.filter((b) => b.active && b.text) : null);
+      } catch { setAnnouncement(null); }
+    } else if (data.announcementActive === "true" && data.announcementText) {
+      setAnnouncement([{
+        id: "legacy",
+        active: true,
+        text: data.announcementText,
+        linkText: data.announcementLinkText || "",
+        url: data.announcementUrl || "",
+        bgColor: data.announcementBgColor || "blue",
+        textColor: data.announcementTextColor || "white",
+        scrollDir: data.announcementScrollDir || "ltr",
+        visibleFor: "AMBOS",
+      }]);
+    } else {
+      setAnnouncement(null);
+    }
+    setMayoristaMinimo(parseFloat(data.mayoristaMinimoCompra) || 0);
+    // Leer datos de contacto del footer
+    setFooterEmail(data.footerEmail || "info@lsmarket.com.ar");
+    setFooterPhone(data.footerPhone || "1150395166");
+    setFooterAddress(data.footerAddress || "Av La Plata 744 Timbre 3");
+    // Leer contenido de páginas — null cuando está vacío (para mostrar el layout predeterminado)
+    setAboutUsContent(data.aboutUsContent || null);
+    setHowToBuyContent(data.howToBuyContent || null);
+    setPrivacyContent(data.privacyContent || null);
+    setTermsContent(data.termsContent || null);
+    // Contenido estructurado — parsear JSON, null si está vacío o inválido
+    const parseJSON = (str) => { try { return str ? JSON.parse(str) : null; } catch { return null; } };
+    setAboutUsHero(parseJSON(data.aboutUsHero));
+    setAboutUsHistoria(parseJSON(data.aboutUsHistoria));
+    setAboutUsValores(parseJSON(data.aboutUsValores));
+    setHowToBuySteps(parseJSON(data.howToBuySteps));
+    setHowToBuyPayments(parseJSON(data.howToBuyPayments));
+    setHowToBuyFaqs(parseJSON(data.howToBuyFaqs));
+    setPrivacySections(parseJSON(data.privacySections));
+    setTermsSections(parseJSON(data.termsSections));
+    // Meta Pixel
+    setMetaPixelId((data.metaPixelId || "").trim());
+    setMetaTrackWholesale(data.metaTrackWholesale === "true");
+    // Ya no leemos theme del backend — viene de localStorage
+  }, []);
 
   const fetchConfig = useCallback(() => {
     // Si el backend no responde en 4s, desbloqueamos la UI igual (sin modo mantenimiento)
@@ -78,78 +145,38 @@ export function SiteConfigProvider({ children }) {
       .get()
       .then((res) => {
         clearTimeout(timeout);
-        setMaintenanceRaw(res.data.maintenance === "true");
-        // Parsear la fecha programada (vacío o inválido → null)
-        const raw = res.data.maintenanceScheduledAt;
-        if (raw) {
-          const d = new Date(raw);
-          setScheduledAt(isNaN(d.getTime()) ? null : d);
-        } else {
-          setScheduledAt(null);
-        }
-        // Leer banners de anuncio (nuevo formato: JSON array en announcementBanners)
-        // Fallback al formato legacy de un solo banner para compatibilidad
-        if (res.data.announcementBanners) {
-          try {
-            const banners = JSON.parse(res.data.announcementBanners);
-            setAnnouncement(Array.isArray(banners) ? banners.filter((b) => b.active && b.text) : null);
-          } catch { setAnnouncement(null); }
-        } else if (res.data.announcementActive === "true" && res.data.announcementText) {
-          setAnnouncement([{
-            id: "legacy",
-            active: true,
-            text: res.data.announcementText,
-            linkText: res.data.announcementLinkText || "",
-            url: res.data.announcementUrl || "",
-            bgColor: res.data.announcementBgColor || "blue",
-            textColor: res.data.announcementTextColor || "white",
-            scrollDir: res.data.announcementScrollDir || "ltr",
-            visibleFor: "AMBOS",
-          }]);
-        } else {
-          setAnnouncement(null);
-        }
-        setMayoristaMinimo(parseFloat(res.data.mayoristaMinimoCompra) || 0);
-        // Leer datos de contacto del footer
-        setFooterEmail(res.data.footerEmail || "info@lsmarket.com.ar");
-        setFooterPhone(res.data.footerPhone || "1150395166");
-        setFooterAddress(res.data.footerAddress || "Av La Plata 744 Timbre 3");
-        // Leer contenido de páginas — null cuando está vacío (para mostrar el layout predeterminado)
-        setAboutUsContent(res.data.aboutUsContent || null);
-        setHowToBuyContent(res.data.howToBuyContent || null);
-        setPrivacyContent(res.data.privacyContent || null);
-        setTermsContent(res.data.termsContent || null);
-        // Contenido estructurado — parsear JSON, null si está vacío o inválido
-        const parseJSON = (str) => { try { return str ? JSON.parse(str) : null; } catch { return null; } };
-        setAboutUsHero(parseJSON(res.data.aboutUsHero));
-        setAboutUsHistoria(parseJSON(res.data.aboutUsHistoria));
-        setAboutUsValores(parseJSON(res.data.aboutUsValores));
-        setHowToBuySteps(parseJSON(res.data.howToBuySteps));
-        setHowToBuyPayments(parseJSON(res.data.howToBuyPayments));
-        setHowToBuyFaqs(parseJSON(res.data.howToBuyFaqs));
-        setPrivacySections(parseJSON(res.data.privacySections));
-        setTermsSections(parseJSON(res.data.termsSections));
-        // Meta Pixel
-        setMetaPixelId((res.data.metaPixelId || "").trim());
-        setMetaTrackWholesale(res.data.metaTrackWholesale === "true");
-        // Ya no leemos theme del backend — viene de localStorage
+        applyConfig(res.data);
+        try { localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(res.data)); } catch { /* sin espacio: no importa */ }
       })
       .catch(console.error)
       .finally(() => { clearTimeout(timeout); setLoading(false); });
-  }, []);
+  }, [applyConfig]);
 
   useEffect(() => {
+    const cached = readCachedConfig();
+    if (cached) {
+      // El mantenimiento NO sale de la copia: si alguien entró durante un mantenimiento y vuelve cuando
+      // ya terminó, lo mandaría a /mantenimiento y perdería el link al que iba. Lo decide la respuesta nueva.
+      applyConfig({ ...cached, maintenance: "false", maintenanceScheduledAt: "" });
+      setLoading(false);
+    }
     fetchConfig();
-  }, [fetchConfig]);
+  }, [applyConfig, fetchConfig]);
 
   // Auto-activar mantenimiento cuando llega la hora programada:
   // Si maintenanceRaw es false pero scheduledAt ya pasó, tratamos como maintenance=true.
-  // Se revisa cada segundo para que el cambio sea inmediato.
+  // Antes: un setInterval de 1 s, haya o no algo programado, que cambiaba el estado cada segundo y
+  // re-dibujaba toda la tienda (barra, pie, carrito, checkout). Ahora un solo temporizador que despierta
+  // a la hora programada, y solo si hay una.
   const [now, setNow] = useState(() => Date.now());
+  const scheduleDue = scheduledAt !== null && now >= scheduledAt.getTime();
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!scheduledAt || maintenanceRaw || scheduleDue) return;
+    // setTimeout acepta hasta ~24,8 días: si falta más, se vuelve a armar cuando vence este
+    const ms = Math.max(0, Math.min(scheduledAt.getTime() - Date.now(), 2 ** 31 - 1));
+    const timer = setTimeout(() => setNow(Date.now()), ms);
+    return () => clearTimeout(timer);
+  }, [scheduledAt, maintenanceRaw, scheduleDue, now]);
 
   // Guard: evita llamadas múltiples al backend si el efecto se dispara más de una vez
   const autoSaveRef = useRef(false);
@@ -169,15 +196,16 @@ export function SiteConfigProvider({ children }) {
         setScheduledAt(null);
       })
       .catch(() => {
-        // Si falla, resetear el guard para que reintente en el próximo tick
+        // Si falla (un visitante no puede guardar la configuración: solo un admin), se libera el guard.
+        // Ya no se reintenta cada segundo; la tienda se muestra en mantenimiento igual (ver abajo).
         autoSaveRef.current = false;
       });
-  // now cambia cada segundo — recalculamos si la hora ya pasó
+  // now cambia cuando vence el temporizador de arriba — recalculamos si la hora ya pasó
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now, maintenanceRaw, scheduledAt]);
 
   // maintenance: true si el admin lo activó manualmente O si la hora programada ya pasó
-  const maintenance = maintenanceRaw || (scheduledAt !== null && now >= scheduledAt.getTime());
+  const maintenance = maintenanceRaw || scheduleDue;
 
   // Aplica el atributo data-theme en <html> para que los CSS overrides funcionen
   useEffect(() => {
@@ -192,36 +220,43 @@ export function SiteConfigProvider({ children }) {
     return () => window.removeEventListener("focus", handleFocus);
   }, [fetchConfig]);
 
+  // Mismo objeto mientras no cambie nada: antes era uno nuevo en cada render y los ~16 componentes que
+  // usan useSiteConfig se volvían a dibujar con cualquier cambio del Provider.
+  const value = useMemo(() => ({
+    theme,
+    setTheme,
+    maintenance,
+    scheduledAt,
+    announcement,
+    mayoristaMinimoCompra,
+    footerEmail,
+    footerPhone,
+    footerAddress,
+    aboutUsContent,
+    howToBuyContent,
+    privacyContent,
+    termsContent,
+    aboutUsHero,
+    aboutUsHistoria,
+    aboutUsValores,
+    howToBuySteps,
+    howToBuyPayments,
+    howToBuyFaqs,
+    privacySections,
+    termsSections,
+    metaPixelId,
+    metaTrackWholesale,
+    loading,
+    refetch: fetchConfig,
+  }), [
+    theme, setTheme, maintenance, scheduledAt, announcement, mayoristaMinimoCompra, footerEmail, footerPhone,
+    footerAddress, aboutUsContent, howToBuyContent, privacyContent, termsContent, aboutUsHero, aboutUsHistoria,
+    aboutUsValores, howToBuySteps, howToBuyPayments, howToBuyFaqs, privacySections, termsSections, metaPixelId,
+    metaTrackWholesale, loading, fetchConfig,
+  ]);
+
   return (
-    <SiteConfigContext.Provider
-      value={{
-        theme,
-        setTheme,
-        maintenance,
-        scheduledAt,
-        announcement,
-        mayoristaMinimoCompra,
-        footerEmail,
-        footerPhone,
-        footerAddress,
-        aboutUsContent,
-        howToBuyContent,
-        privacyContent,
-        termsContent,
-        aboutUsHero,
-        aboutUsHistoria,
-        aboutUsValores,
-        howToBuySteps,
-        howToBuyPayments,
-        howToBuyFaqs,
-        privacySections,
-        termsSections,
-        metaPixelId,
-        metaTrackWholesale,
-        loading,
-        refetch: fetchConfig,
-      }}
-    >
+    <SiteConfigContext.Provider value={value}>
       {children}
     </SiteConfigContext.Provider>
   );

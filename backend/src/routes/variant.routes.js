@@ -1,14 +1,13 @@
 const express = require("express");
 const router  = express.Router();
-const { PrismaClient } = require("@prisma/client");
 // FIX seguridad: se agrega adminMiddleware a TODAS las rutas que mutan variantes/atributos.
 // Antes solo tenían authMiddleware (token válido) → un cliente logueado podía cambiar precios,
 // stock y costos de variantes, o borrarlas. GET /product/:id/attributes queda pública.
 // GET /product/:id (variantes) ahora también es solo admin: exponía costos y precios mayoristas.
-const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const { syncProductVisibility } = require("../controllers/product.controller");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Nota: ya no usamos multer para variantes — las imágenes de variantes son referencias a las
 // fotos del producto principal (Cloudinary URLs). El admin elige cuál de las fotos del producto
@@ -34,7 +33,7 @@ router.get("/product/:productId/attributes", async (req, res) => {
 });
 
 // POST /api/variants/product/:productId/attributes
-router.post("/product/:productId/attributes", authMiddleware, adminMiddleware, async (req, res) => {
+router.post("/product/:productId/attributes", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
     const { name, values = [], visibility } = req.body; // values: string[]; visibility opcional
@@ -70,7 +69,7 @@ router.post("/product/:productId/attributes", authMiddleware, adminMiddleware, a
 });
 
 // PUT /api/variants/attributes/:id  — renombrar atributo, reemplazar valores o cambiar visibility
-router.put("/attributes/:id", authMiddleware, adminMiddleware, async (req, res) => {
+router.put("/attributes/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { name, values, visibility } = req.body;
@@ -115,7 +114,7 @@ router.put("/attributes/:id", authMiddleware, adminMiddleware, async (req, res) 
 });
 
 // DELETE /api/variants/attributes/:id
-router.delete("/attributes/:id", authMiddleware, adminMiddleware, async (req, res) => {
+router.delete("/attributes/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.productAttribute.delete({ where: { id } });
@@ -132,7 +131,7 @@ router.delete("/attributes/:id", authMiddleware, adminMiddleware, async (req, re
 // Solo admin. Antes era pública y devolvía cada variante entera: costo, precios mayoristas,
 // depósito y proveedor, para cualquiera. Solo la usa el panel (editor de variantes); la tienda
 // recibe las variantes dentro de GET /api/products/:id, ya filtradas según quién pide.
-router.get("/product/:productId", authMiddleware, adminMiddleware, async (req, res) => {
+router.get("/product/:productId", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
     const variants  = await prisma.productVariant.findMany({
@@ -150,7 +149,7 @@ router.get("/product/:productId", authMiddleware, adminMiddleware, async (req, r
 // Genera (o regenera) el set completo de variantes a partir del producto cartesiano de atributos.
 // Las variantes existentes que coincidan en combination se mantienen (conservan stock/precio/sku).
 // Las que ya no existen se eliminan; las nuevas se crean con stock 0.
-router.post("/product/:productId/generate", authMiddleware, adminMiddleware, async (req, res) => {
+router.post("/product/:productId/generate", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
 
@@ -217,7 +216,7 @@ router.post("/product/:productId/generate", authMiddleware, adminMiddleware, asy
 //   - price / salePrice           → para minoristas (visibility MINORISTA o AMBOS)
 //   - wholesalePrice / wholesaleSalePrice → para mayoristas (visibility MAYORISTA o AMBOS)
 // La imagen es una URL (de las fotos del producto principal) o null para limpiarla.
-router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
+router.put("/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const id   = parseInt(req.params.id);
     const {
@@ -297,7 +296,7 @@ router.put("/:id", authMiddleware, adminMiddleware, async (req, res) => {
 
 // GET /api/variants/suggestions  — sugerencias de atributos/valores ya usados en otros productos
 // Devuelve { names: [...], valuesByName: { name: [valores] } } para autocomplete en el admin.
-router.get("/suggestions", authMiddleware, adminMiddleware, async (_req, res) => {
+router.get("/suggestions", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (_req, res) => {
   try {
     const attrs = await prisma.productAttribute.findMany({
       include: { values: { select: { value: true } } },
@@ -330,7 +329,7 @@ router.get("/suggestions", authMiddleware, adminMiddleware, async (_req, res) =>
 });
 
 // DELETE /api/variants/product/:productId/all  — eliminar todas las variantes y atributos del producto
-router.delete("/product/:productId/all", authMiddleware, adminMiddleware, async (req, res) => {
+router.delete("/product/:productId/all", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
     await prisma.productVariant.deleteMany({ where: { productId } });

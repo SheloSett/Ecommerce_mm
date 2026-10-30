@@ -1,14 +1,14 @@
 const express = require("express");
+const { isDay, dateOnlyStart, dateOnlyEnd } = require("../utils/arDates");
 const router = express.Router();
-const { PrismaClient } = require("@prisma/client");
 // FIX seguridad: se agrega adminMiddleware. Antes las rutas de gastos solo tenían authMiddleware
 // (token válido) → cualquier cliente logueado podía listar/crear/borrar gastos del negocio.
-const { authMiddleware, adminMiddleware } = require("../middleware/auth.middleware");
+const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // GET /api/gastos - listar gastos con filtros opcionales: type, dateFrom, dateTo
-router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
+router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("finanzas", "caja", "metricas"), async (req, res) => {
   try {
     const { type, dateFrom, dateTo, currency } = req.query;
     const where = {};
@@ -18,12 +18,10 @@ router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
     if (currency && ["ARS", "USD"].includes(currency)) where.currency = currency;
     if (dateFrom || dateTo) {
       where.date = {};
-      if (dateFrom) where.date.gte = new Date(dateFrom);
-      if (dateTo) {
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59, 999);
-        where.date.lte = end;
-      }
+      // Fecha SIN hora (se guarda a las 00:00 UTC del día tipeado): el día se corta en UTC, explícito.
+      // Antes el fin del día usaba setHours, que depende de la zona del servidor. Ver utils/arDates.js.
+      if (isDay(dateFrom)) where.date.gte = dateOnlyStart(dateFrom);
+      if (isDay(dateTo))   where.date.lte = dateOnlyEnd(dateTo);
     }
     const gastos = await prisma.gasto.findMany({ where, orderBy: [{ date: "desc" }, { createdAt: "desc" }] });
     res.json(gastos);
@@ -34,7 +32,7 @@ router.get("/", authMiddleware, adminMiddleware, async (req, res) => {
 });
 
 // POST /api/gastos - crear un gasto
-router.post("/", authMiddleware, adminMiddleware, async (req, res) => {
+router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), async (req, res) => {
   try {
     const { amount, description, type, date, subtype, productId, variantId, quantity, currency } = req.body;
     if (!amount || !description || !type) {
@@ -91,7 +89,7 @@ router.post("/", authMiddleware, adminMiddleware, async (req, res) => {
 });
 
 // DELETE /api/gastos/:id - eliminar un gasto
-router.delete("/:id", authMiddleware, adminMiddleware, async (req, res) => {
+router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("caja"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await prisma.gasto.delete({ where: { id } });

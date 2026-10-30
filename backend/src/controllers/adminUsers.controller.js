@@ -1,8 +1,7 @@
-const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const { findUserByEmail } = require("../utils/email");
 
-const prisma = new PrismaClient();
+const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
 // Lista todos los admins (role ADMIN, excluye SUPERADMIN)
 async function listAdmins(req, res) {
@@ -131,7 +130,9 @@ async function resetPassword(req, res) {
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
-    await prisma.user.update({ where: { id }, data: { password: hashed } });
+    // tokenVersion +1: la contraseña reseteada corta las sesiones abiertas de ese admin
+    // Antes: data: { password: hashed }
+    await prisma.user.update({ where: { id }, data: { password: hashed, tokenVersion: { increment: 1 } } });
 
     res.json({ message: "Contraseña reseteada correctamente" });
   } catch (err) {

@@ -196,7 +196,13 @@ export default function Catalog() {
   // };
 
   const lastTrackedSearch = useRef(null);
+  // Número del último pedido de productos/facetas: una respuesta que llega tarde (de un filtro o una
+  // página que el cliente ya dejó) se descarta. Antes la respuesta más lenta pisaba a la nueva.
+  const productsRequest = useRef(0);
+  const facetsRequest   = useRef(0);
   const fetchProducts = useCallback(() => {
+    const requestId = ++productsRequest.current;
+    const isCurrent = () => requestId === productsRequest.current;
     setLoading(true);
     // Antes: limit: 20 — el cliente pidió 40 productos por página
     const params = { page: currentPage, limit: 40, visibleFor };
@@ -213,6 +219,7 @@ export default function Catalog() {
     productsApi
       .getAll(params)
       .then((res) => {
+        if (!isCurrent()) return;
         setProducts(res.data.products);
         setPagination(res.data.pagination);
         // Analíticas: una búsqueda por término (la paginación y los filtros no la repiten)
@@ -222,11 +229,12 @@ export default function Catalog() {
         }
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { if (isCurrent()) setLoading(false); });
   }, [currentCategory, currentSearch, currentPage, currentOnSale, currentLowStock, currentOfferId, visibleFor, attrsParam, currentSortOrder, currentSortPrice]);
 
   // Traer facetas (atributos disponibles) cada vez que cambian los filtros base (no los de attr)
   const fetchFacets = useCallback(() => {
+    const requestId = ++facetsRequest.current;
     const params = { visibleFor };
     if (currentCategory) params.category = currentCategory;
     if (currentSearch)   params.search   = currentSearch;
@@ -236,8 +244,8 @@ export default function Catalog() {
 
     productsApi
       .getFacets(params)
-      .then((res) => setFacets(res.data.facets))
-      .catch(() => setFacets([]));
+      .then((res) => { if (requestId === facetsRequest.current) setFacets(res.data.facets); })
+      .catch(() => { if (requestId === facetsRequest.current) setFacets([]); });
   }, [currentCategory, currentSearch, currentOnSale, currentLowStock, currentOfferId, visibleFor]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
