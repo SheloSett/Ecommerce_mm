@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -193,8 +193,21 @@ export default function Checkout() {
     setShippingAddress((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
+  // El formulario de dirección se abre debajo de la opción elegida. Al pasar de moto a correo se cierra el de
+  // arriba y la opción tocada subiría fuera de la pantalla: se corrige el scroll antes de pintar para que
+  // quede donde estaba. { card, top }: la opción y su posición al tocarla.
+  const shippingCardPos = useRef(null);
+  useLayoutEffect(() => {
+    const saved = shippingCardPos.current;
+    if (!saved) return;
+    shippingCardPos.current = null;
+    window.scrollBy(0, saved.card.getBoundingClientRect().top - saved.top);
+  }, [shippingMethod]);
+
   // La moto solo va a CABA y Gran Buenos Aires: si venía de elegir otra provincia para el correo, se limpia.
-  const chooseShippingMethod = (method) => {
+  const chooseShippingMethod = (method, e) => {
+    const card = e.currentTarget.closest("label");
+    shippingCardPos.current = { card, top: card.getBoundingClientRect().top };
     setShippingMethod(method);
     if (method === "MOTO" && !["C", "B"].includes(shippingAddress.provinceCode)) {
       setShippingAddress((prev) => ({ ...prev, provinceCode: "" }));
@@ -561,6 +574,185 @@ export default function Checkout() {
         : "border border-[#bdcaba]/50 hover:border-[#bdcaba] bg-white"
     }`;
 
+  // Dirección de entrega (correo y moto). Se muestra debajo de la opción elegida, no de la última.
+  // Las dos usan el mismo formulario: al cambiar de una a la otra, lo escrito se conserva (vive en el estado).
+  const addressForm = (
+    <div className="border border-[#bdcaba]/50 rounded-xl p-4 space-y-3 bg-[#eff4ff]/40">
+      <p className="text-xs font-bold uppercase tracking-wider text-[#565e74]">Dirección de entrega</p>
+
+      {/* Calle + Número */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label htmlFor="ship-street" className="block text-xs text-[#565e74] mb-1">Calle *</label>
+          <input
+            id="ship-street"
+            type="text"
+            name="streetName"
+            autoComplete="address-line1"
+            value={shippingAddress.streetName}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            placeholder="Av. Corrientes"
+            maxLength={100}
+            required
+          />
+        </div>
+        <div className="w-24">
+          <label htmlFor="ship-number" className="block text-xs text-[#565e74] mb-1">Número *</label>
+          <input
+            id="ship-number"
+            type="text"
+            name="streetNumber"
+            value={shippingAddress.streetNumber}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            placeholder="1234"
+            maxLength={10}
+            required
+          />
+        </div>
+      </div>
+
+      {/* Piso + Depto */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label htmlFor="ship-floor" className="block text-xs text-[#565e74] mb-1">Piso</label>
+          <input
+            id="ship-floor"
+            type="text"
+            name="floor"
+            value={shippingAddress.floor}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            placeholder="2"
+            maxLength={10}
+          />
+        </div>
+        <div className="flex-1">
+          <label htmlFor="ship-apartment" className="block text-xs text-[#565e74] mb-1">Depto</label>
+          <input
+            id="ship-apartment"
+            type="text"
+            name="apartment"
+            value={shippingAddress.apartment}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            placeholder="B"
+            maxLength={10}
+          />
+        </div>
+      </div>
+
+      {/* Localidad */}
+      <div>
+        <label htmlFor="ship-city" className="block text-xs text-[#565e74] mb-1">Localidad o barrio *</label>
+        <input
+          id="ship-city"
+          type="text"
+          name="city"
+          autoComplete="address-level2"
+          value={shippingAddress.city}
+          onChange={handleShippingAddressChange}
+          className={inputCls}
+          placeholder="Morón"
+          maxLength={80}
+          required
+        />
+      </div>
+
+      {/* Provincia + CP */}
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label htmlFor="ship-province" className="block text-xs text-[#565e74] mb-1">Provincia *</label>
+          <select
+            id="ship-province"
+            name="provinceCode"
+            value={shippingAddress.provinceCode}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            required
+          >
+            <option value="">Elegí…</option>
+            {PROVINCES
+              .filter((p) => shippingMethod !== "MOTO" || p.code === "C" || p.code === "B")
+              .map((p) => (
+                <option key={p.code} value={p.code}>{p.name}</option>
+              ))}
+          </select>
+        </div>
+        <div className="w-32">
+          <label htmlFor="ship-postal" className="block text-xs text-[#565e74] mb-1">Código Postal *</label>
+          <input
+            id="ship-postal"
+            type="text"
+            name="postalCode"
+            autoComplete="postal-code"
+            value={shippingAddress.postalCode}
+            onChange={handleShippingAddressChange}
+            className={inputCls}
+            placeholder="1425"
+            maxLength={10}
+            required
+          />
+        </div>
+      </div>
+
+      {/* Indicaciones + quién recibe */}
+      <div>
+        <label htmlFor="ship-references" className="block text-xs text-[#565e74] mb-1">Indicaciones para la entrega</label>
+        <input
+          id="ship-references"
+          type="text"
+          name="references"
+          value={shippingAddress.references}
+          onChange={handleShippingAddressChange}
+          className={inputCls}
+          placeholder="Entre calles, timbre, horario…"
+          maxLength={200}
+        />
+      </div>
+      <div>
+        <label htmlFor="ship-recipient" className="block text-xs text-[#565e74] mb-1">¿Recibe otra persona?</label>
+        <input
+          id="ship-recipient"
+          type="text"
+          name="recipientName"
+          value={shippingAddress.recipientName}
+          onChange={handleShippingAddressChange}
+          className={inputCls}
+          placeholder="Nombre y apellido (si no sos vos)"
+          maxLength={100}
+        />
+      </div>
+
+      {/* Resultado de la cotización de la moto */}
+      {shippingMethod === "MOTO" && motoQuoteLoading && (
+        <div className="flex items-center gap-2 text-xs text-[#565e74] pt-1">
+          <span className="w-3 h-3 border-2 border-[#565e74] border-t-transparent rounded-full animate-spin inline-block" />
+          Cotizando envío...
+        </div>
+      )}
+      {shippingMethod === "MOTO" && !motoQuoteLoading && motoAvailable && (
+        <div className="flex items-center justify-between gap-3 text-sm bg-white border border-[#bdcaba]/50 rounded-lg px-3 py-2">
+          <span className="text-[#565e74]">
+            <strong className="text-[#0b1c30]">{motoQuote.zoneName}</strong>
+            {" · "}
+            {isMayorista ? "Sale una vez aprobada la cotización" : motoDeliveryText(motoQuote.delivery)}
+          </span>
+          <span className="font-bold text-[#006b2c] flex-shrink-0">{formatPrice(motoQuote.price)}</span>
+        </div>
+      )}
+      {shippingMethod === "MOTO" && !motoQuoteLoading && motoQuote && !motoQuote.available && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {motoQuote.message}
+        </div>
+      )}
+      {shippingMethod === "MOTO" && !motoQuoteLoading && !motoQuote && (
+        <p className="text-xs text-[#565e74]">Completá la provincia y el código postal para ver el precio y cuándo llega.</p>
+      )}
+    </div>
+  );
+
   // ── Formulario de checkout ───────────────────────────────────────────────────
   return (
     <div className="storefront min-h-screen flex flex-col bg-[#f8f9ff]">
@@ -814,7 +1006,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="RETIRO"
                       checked={shippingMethod === "RETIRO"}
-                      onChange={() => chooseShippingMethod("RETIRO")}
+                      onChange={(e) => chooseShippingMethod("RETIRO", e)}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span
@@ -837,7 +1029,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="ENVIO"
                       checked={shippingMethod === "ENVIO"}
-                      onChange={() => chooseShippingMethod("ENVIO")}
+                      onChange={(e) => chooseShippingMethod("ENVIO", e)}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">local_shipping</span>
@@ -849,7 +1041,7 @@ export default function Checkout() {
                   </label>
 
                   {/* Envío a domicilio: por correo a todo el país, o en moto en CABA y GBA. Los dos usan
-                      el mismo formulario de dirección, que aparece abajo al elegir uno. */}
+                      el mismo formulario de dirección (addressForm), que se abre debajo del elegido. */}
                   <p className="text-xs font-bold uppercase tracking-wider text-[#565e74] pt-2">Envío a domicilio</p>
 
                   {/* Moto: precio por zona, según la dirección */}
@@ -859,7 +1051,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="MOTO"
                       checked={shippingMethod === "MOTO"}
-                      onChange={() => chooseShippingMethod("MOTO")}
+                      onChange={(e) => chooseShippingMethod("MOTO", e)}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">two_wheeler</span>
@@ -870,6 +1062,8 @@ export default function Checkout() {
                     {motoAvailable && <span className="text-xs font-bold text-[#006b2c] flex-shrink-0">{formatPrice(motoQuote.price)}</span>}
                   </label>
 
+                  {shippingMethod === "MOTO" && addressForm}
+
                   {/* Correo: todavía sin tarifas integradas, el costo lo confirma la tienda */}
                   <label className={radioCardCls(shippingMethod === "CORREO_ARGENTINO")}>
                     <input
@@ -877,7 +1071,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="CORREO_ARGENTINO"
                       checked={shippingMethod === "CORREO_ARGENTINO"}
-                      onChange={() => chooseShippingMethod("CORREO_ARGENTINO")}
+                      onChange={(e) => chooseShippingMethod("CORREO_ARGENTINO", e)}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">local_post_office</span>
@@ -888,183 +1082,7 @@ export default function Checkout() {
                     <span className="text-xs font-medium text-[#565e74] flex-shrink-0">A confirmar</span>
                   </label>
 
-                  {/* Formulario de dirección — solo visible al elegir correo o moto */}
-                  {needsAddress && (
-                    <div className="border border-[#bdcaba]/50 rounded-xl p-4 space-y-3 bg-[#eff4ff]/40">
-                      <p className="text-xs font-bold uppercase tracking-wider text-[#565e74]">Dirección de entrega</p>
-
-                      {/* Calle + Número */}
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <label htmlFor="ship-street" className="block text-xs text-[#565e74] mb-1">Calle *</label>
-                          <input
-                            id="ship-street"
-                            type="text"
-                            name="streetName"
-                            autoComplete="address-line1"
-                            value={shippingAddress.streetName}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            placeholder="Av. Corrientes"
-                            maxLength={100}
-                            required
-                          />
-                        </div>
-                        <div className="w-24">
-                          <label htmlFor="ship-number" className="block text-xs text-[#565e74] mb-1">Número *</label>
-                          <input
-                            id="ship-number"
-                            type="text"
-                            name="streetNumber"
-                            value={shippingAddress.streetNumber}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            placeholder="1234"
-                            maxLength={10}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      {/* Piso + Depto */}
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <label htmlFor="ship-floor" className="block text-xs text-[#565e74] mb-1">Piso</label>
-                          <input
-                            id="ship-floor"
-                            type="text"
-                            name="floor"
-                            value={shippingAddress.floor}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            placeholder="2"
-                            maxLength={10}
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label htmlFor="ship-apartment" className="block text-xs text-[#565e74] mb-1">Depto</label>
-                          <input
-                            id="ship-apartment"
-                            type="text"
-                            name="apartment"
-                            value={shippingAddress.apartment}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            placeholder="B"
-                            maxLength={10}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Localidad */}
-                      <div>
-                        <label htmlFor="ship-city" className="block text-xs text-[#565e74] mb-1">Localidad o barrio *</label>
-                        <input
-                          id="ship-city"
-                          type="text"
-                          name="city"
-                          autoComplete="address-level2"
-                          value={shippingAddress.city}
-                          onChange={handleShippingAddressChange}
-                          className={inputCls}
-                          placeholder="Morón"
-                          maxLength={80}
-                          required
-                        />
-                      </div>
-
-                      {/* Provincia + CP */}
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <label htmlFor="ship-province" className="block text-xs text-[#565e74] mb-1">Provincia *</label>
-                          <select
-                            id="ship-province"
-                            name="provinceCode"
-                            value={shippingAddress.provinceCode}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            required
-                          >
-                            <option value="">Elegí…</option>
-                            {PROVINCES
-                              .filter((p) => shippingMethod !== "MOTO" || p.code === "C" || p.code === "B")
-                              .map((p) => (
-                                <option key={p.code} value={p.code}>{p.name}</option>
-                              ))}
-                          </select>
-                        </div>
-                        <div className="w-32">
-                          <label htmlFor="ship-postal" className="block text-xs text-[#565e74] mb-1">Código Postal *</label>
-                          <input
-                            id="ship-postal"
-                            type="text"
-                            name="postalCode"
-                            autoComplete="postal-code"
-                            value={shippingAddress.postalCode}
-                            onChange={handleShippingAddressChange}
-                            className={inputCls}
-                            placeholder="1425"
-                            maxLength={10}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      {/* Indicaciones + quién recibe */}
-                      <div>
-                        <label htmlFor="ship-references" className="block text-xs text-[#565e74] mb-1">Indicaciones para la entrega</label>
-                        <input
-                          id="ship-references"
-                          type="text"
-                          name="references"
-                          value={shippingAddress.references}
-                          onChange={handleShippingAddressChange}
-                          className={inputCls}
-                          placeholder="Entre calles, timbre, horario…"
-                          maxLength={200}
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor="ship-recipient" className="block text-xs text-[#565e74] mb-1">¿Recibe otra persona?</label>
-                        <input
-                          id="ship-recipient"
-                          type="text"
-                          name="recipientName"
-                          value={shippingAddress.recipientName}
-                          onChange={handleShippingAddressChange}
-                          className={inputCls}
-                          placeholder="Nombre y apellido (si no sos vos)"
-                          maxLength={100}
-                        />
-                      </div>
-
-                      {/* Resultado de la cotización de la moto */}
-                      {shippingMethod === "MOTO" && motoQuoteLoading && (
-                        <div className="flex items-center gap-2 text-xs text-[#565e74] pt-1">
-                          <span className="w-3 h-3 border-2 border-[#565e74] border-t-transparent rounded-full animate-spin inline-block" />
-                          Cotizando envío...
-                        </div>
-                      )}
-                      {shippingMethod === "MOTO" && !motoQuoteLoading && motoAvailable && (
-                        <div className="flex items-center justify-between gap-3 text-sm bg-white border border-[#bdcaba]/50 rounded-lg px-3 py-2">
-                          <span className="text-[#565e74]">
-                            <strong className="text-[#0b1c30]">{motoQuote.zoneName}</strong>
-                            {" · "}
-                            {isMayorista ? "Sale una vez aprobada la cotización" : motoDeliveryText(motoQuote.delivery)}
-                          </span>
-                          <span className="font-bold text-[#006b2c] flex-shrink-0">{formatPrice(motoQuote.price)}</span>
-                        </div>
-                      )}
-                      {shippingMethod === "MOTO" && !motoQuoteLoading && motoQuote && !motoQuote.available && (
-                        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                          {motoQuote.message}
-                        </div>
-                      )}
-                      {shippingMethod === "MOTO" && !motoQuoteLoading && !motoQuote && (
-                        <p className="text-xs text-[#565e74]">Completá la provincia y el código postal para ver el precio y cuándo llega.</p>
-                      )}
-                    </div>
-                  )}
+                  {shippingMethod === "CORREO_ARGENTINO" && addressForm}
 
                 </div>
               </section>

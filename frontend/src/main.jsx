@@ -94,8 +94,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <AppErrorBoundary>
       <App />
       </AppErrorBoundary>
+      {/* containerStyle: los avisos salen debajo de la barra. Arriba de todo tapaban el botón del carrito. */}
       <Toaster
         position="top-right"
+        containerStyle={{ top: 88 }}
         toastOptions={{
           duration: 3000,
           style: {
