@@ -286,9 +286,10 @@ export default function AdminLayout({ children, title }) {
     </>
   );
 
-  // overflow-x-hidden previene que cualquier hijo desborde el ancho de la pantalla en mobile
+  // overflow-x-clip previene que cualquier hijo desborde el ancho de la pantalla en mobile.
+  // Antes: overflow-x-hidden, que además dejaba sin efecto el sticky del encabezado de abajo.
   return (
-    <div className={`min-h-screen flex overflow-x-hidden ${darkMode ? "admin-dark bg-slate-950" : "bg-slate-100"}`}>
+    <div className={`min-h-screen flex overflow-x-clip ${darkMode ? "admin-dark bg-slate-950" : "bg-slate-100"}`}>
       {/* ── Sidebar desktop: siempre visible en lg+ ── */}
       <aside className="hidden lg:flex w-60 bg-slate-900 text-white flex-col fixed inset-y-0 left-0 z-30">
         {sidebarContent}

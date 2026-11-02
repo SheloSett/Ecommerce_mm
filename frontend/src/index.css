@@ -14,6 +14,15 @@
     overflow-x: hidden;
     max-width: 100vw;
   }
+  /* clip recorta igual que hidden, pero sin convertir al body en un contenedor de scroll. Con hidden, ningún
+     "sticky" del sitio funcionaba (barra de arriba, filtros del catálogo, resumen del carrito y del checkout):
+     se quedaban pegados al body, que nunca scrollea. Los navegadores sin clip (Safari anterior al 16) siguen
+     con hidden, como antes. La regla de html no se toca: es la que frena el corrimiento lateral en iOS. */
+  @supports (overflow-x: clip) {
+    body {
+      overflow-x: clip;
+    }
+  }
 }
 
 @layer components {

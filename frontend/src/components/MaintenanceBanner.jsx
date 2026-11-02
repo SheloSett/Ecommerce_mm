@@ -51,7 +51,9 @@ export default function MaintenanceBanner() {
   const pad = (n) => String(n).padStart(2, "0");
 
   return (
-    <div className="sticky top-0 w-full bg-amber-500 text-white px-4 py-2.5 flex items-center justify-center gap-3 text-sm font-medium z-50 shadow-sm">
+    // Antes: sticky top-0. Nunca llegó a quedar fijo (ver el overflow del body en index.css); ahora que el
+    // sticky funciona, se pegaría arriba tapando la barra de navegación, que también está en top-0.
+    <div className="relative w-full bg-amber-500 text-white px-4 py-2.5 flex items-center justify-center gap-3 text-sm font-medium z-50 shadow-sm">
       {/* Ícono */}
       <span className="text-base flex-shrink-0">🔧</span>
 
