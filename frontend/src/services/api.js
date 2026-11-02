@@ -425,7 +425,8 @@ export const offersApi = {
 };
 
 export const slidesApi = {
-  getAll:  (params) => api.get("/slides", { params }),
+  // Con el token del cliente: los slides solo para mayoristas se entregan según la sesión (ver productsApi)
+  getAll:  (params) => api.get("/slides", { params, headers: storefrontAuthHeaders() }),
   create:  (formData) => api.post("/slides", formData),        // FormData con imagen
   update:  (id, formData) => api.patch(`/slides/${id}`, formData),
   remove:  (id) => api.delete(`/slides/${id}`),

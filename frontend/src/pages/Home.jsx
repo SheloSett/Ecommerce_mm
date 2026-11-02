@@ -116,20 +116,27 @@ export default function Home() {
 
   useEffect(() => {
     const visibleFor = customer?.type || "MINORISTA";
+    // Si el tipo de cliente cambia con un pedido en camino (cerrar sesión mientras carga), la respuesta
+    // vieja no puede pisar a la nueva: un visitante se quedaría viendo los slides de mayoristas.
+    let cancelled = false;
     Promise.all([
       productsApi.getAll({ featured: true, limit: 8, visibleFor }),
       productsApi.getAll({ homeOffer: true, limit: 8, visibleFor }),
       categoriesApi.getAll(),
-      slidesApi.getAll(),
+      slidesApi.getAll({ visibleFor }),
     ])
       .then(([productsRes, saleRes, catsRes, slidesRes]) => {
+        if (cancelled) return;
         setFeaturedProducts(productsRes.data.products);
         setSaleProducts(saleRes.data.products);
         setCategories(catsRes.data);
         setSlides(slidesRes.data);
+        // Cada tipo de cliente tiene su lista: el índice anterior podría no existir en la nueva
+        setCurrentSlide(0);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [customer?.type]);
 
   // Campañas de oferta vigentes: primero los metadatos (nombre, subtítulo, fin) y después los

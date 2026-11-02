@@ -35,7 +35,7 @@ const VISIBILITY_OPTIONS = [
 const BG_CSS   = { blue: "bg-blue-600", green: "bg-emerald-600", amber: "bg-amber-400", red: "bg-red-600", slate: "bg-slate-800", black: "bg-black", purple: "bg-purple-600" };
 const TEXT_CSS = { white: "text-white", black: "text-black", yellow: "text-yellow-300", amber: "text-amber-900", slate: "text-slate-200" };
 
-const EMPTY_SLIDE = { title: "", subtitle: "", url: "", active: true };
+const EMPTY_SLIDE = { title: "", subtitle: "", url: "", active: true, visibility: "AMBOS" };
 // Orden de los slides: por `order` y, si se repite, por antigüedad (id). Mismo criterio que el
 // carrusel del inicio (getSlides en el backend), para que el panel muestre lo mismo que la tienda.
 const bySlideOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id;
@@ -44,6 +44,23 @@ const newBanner = () => ({
   active: true, text: "", linkText: "", url: "",
   bgColor: "blue", textColor: "white", scrollDir: "rtl", visibleFor: "AMBOS",
 });
+
+// ── Sub-componente: "Visible para" (lo usan los banners de anuncio y los slides) ──
+function VisibilityPicker({ value, onChange }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
+      <div className="flex flex-wrap gap-2">
+        {VISIBILITY_OPTIONS.map((o) => (
+          <button key={o.key} type="button" onClick={() => onChange(o.key)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 text-sm font-medium transition-all ${value === o.key ? "border-blue-500 ring-2 ring-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 hover:border-slate-300"}`}>
+            <span>{o.icon}</span>{o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ── Sub-componente: card de un banner individual ───────────────────────────────
 function BannerCard({ banner, onChange, onDelete, index }) {
@@ -73,17 +90,7 @@ function BannerCard({ banner, onChange, onDelete, index }) {
         <button type="button" onClick={onDelete} className="text-red-400 hover:text-red-600 text-sm font-medium transition-colors">Eliminar</button>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Visible para</label>
-        <div className="flex gap-2">
-          {VISIBILITY_OPTIONS.map((o) => (
-            <button key={o.key} type="button" onClick={() => update("visibleFor", o.key)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 text-sm font-medium transition-all ${banner.visibleFor === o.key ? "border-blue-500 ring-2 ring-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 hover:border-slate-300"}`}>
-              <span>{o.icon}</span>{o.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <VisibilityPicker value={banner.visibleFor} onChange={(v) => update("visibleFor", v)} />
 
       <div>
         <label className="block text-sm font-medium text-slate-700 mb-1">Texto <span className="text-red-500">*</span></label>
@@ -223,7 +230,7 @@ export default function CarouselSectionContent() {
 
   function openEdit(slide) {
     setEditing(slide);
-    setForm({ title: slide.title || "", subtitle: slide.subtitle || "", url: slide.url || "", active: slide.active });
+    setForm({ title: slide.title || "", subtitle: slide.subtitle || "", url: slide.url || "", active: slide.active, visibility: slide.visibility || "AMBOS" });
     setImageFiles([]); setImagePreviews([]);
     resetMobile();
     setShowModal(true);
@@ -270,6 +277,7 @@ export default function CarouselSectionContent() {
         else if (removeMobile) fd.append("removeMobileImage", "true");
         fd.append("title", form.title); fd.append("subtitle", form.subtitle);
         fd.append("url", form.url); fd.append("active", form.active ? "true" : "false");
+        fd.append("visibility", form.visibility);
         await slidesApi.update(editing.id, fd);
         toast.success("Slide actualizado");
         setShowModal(false); loadSlides();
@@ -286,6 +294,7 @@ export default function CarouselSectionContent() {
           if (mobileFile && imageFiles.length === 1) fd.append("mobileImage", mobileFile);
           fd.append("subtitle", form.subtitle); fd.append("url", form.url);
           fd.append("active", form.active ? "true" : "false");
+          fd.append("visibility", form.visibility);
           // Al final de la lista: el siguiente al número más alto. Antes: slides.length + i, que
           // chocaba con el de un slide existente si había huecos (slides borrados) o si la lista
           // todavía no había cargado (daba 0), y después ese slide no se podía mover.
@@ -419,6 +428,14 @@ export default function CarouselSectionContent() {
                     ) : (
                       <span className="inline-block mt-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">📱 Sin versión para celular</span>
                     )}
+                    {(() => {
+                      const vis = VISIBILITY_OPTIONS.find((o) => o.key === slide.visibility) || VISIBILITY_OPTIONS[0];
+                      return (
+                        <span className={`inline-block mt-1 ml-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${vis.key === "AMBOS" ? "bg-slate-100 text-slate-600" : "bg-blue-50 text-blue-700"}`}>
+                          {vis.icon} {vis.key === "AMBOS" ? "Todos" : `Solo ${vis.label.toLowerCase()}`}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <div className="flex flex-col gap-0.5">
@@ -588,7 +605,7 @@ export default function CarouselSectionContent() {
 
               {!editing && imagePreviews.length > 1 && (
                 <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-                  El título, subtítulo y URL se aplicarán a todos los slides. Podés editarlos individualmente después.
+                  El título, subtítulo, URL y a quién se le muestran se aplicarán a todos los slides. Podés editarlos individualmente después.
                 </p>
               )}
 
@@ -604,6 +621,7 @@ export default function CarouselSectionContent() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">URL al hacer click <span className="text-slate-400 font-normal">— opcional</span></label>
                 <input type="text" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="ej: /catalogo" className="input" />
               </div>
+              <VisibilityPicker value={form.visibility} onChange={(v) => setForm({ ...form, visibility: v })} />
               <div className="flex items-center gap-3">
                 <input type="checkbox" id="slide-active-modal" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} className="w-4 h-4 accent-blue-600" />
                 <label htmlFor="slide-active-modal" className="text-sm font-medium text-slate-700">Visible en el carrusel</label>

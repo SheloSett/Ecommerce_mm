@@ -597,6 +597,7 @@ model Slide {
   mobileHeight Int?
   order     Int      @default(0) // posición en el carrusel (menor = primero)
   active    Boolean  @default(true)
+  visibility CustomerVisibility @default(AMBOS) // Quién ve este slide: AMBOS, MAYORISTA o MINORISTA
   createdAt DateTime @default(now())
 
   @@map("slides")

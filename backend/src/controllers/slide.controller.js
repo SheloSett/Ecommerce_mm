@@ -3,6 +3,10 @@ const fs = require("fs");
 const { uploadBuffer, deleteByUrl } = require("../config/cloudinary");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+const { resolvePriceViewer, effectiveVisibleFor } = require("../utils/productPrivacy");
+
+// Quién puede ver un slide (enum CustomerVisibility). Viene de un form: se valida antes de subir nada.
+const VISIBILITIES = ["AMBOS", "MINORISTA", "MAYORISTA"];
 
 // Transformación panorámica para banners del hero (1920x600 recomendado).
 // crop "limit": solo achica si excede el tamaño, nunca recorta ni rellena —
@@ -51,9 +55,20 @@ async function removeSlideImage(img) {
 // GET /api/slides — Listar slides activos (público, para el carrusel)
 async function getSlides(req, res) {
   try {
-    const onlyActive = req.query.all !== "true"; // ?all=true para el admin
+    // Qué slides ve cada uno lo decide el token, no lo que pida el navegador (ver productPrivacy.js).
+    // Antes: const onlyActive = req.query.all !== "true"; — ?all=true funcionaba sin sesión, y con
+    // slides solo para mayoristas le habría mostrado esos banners a cualquiera.
+    const viewer = await resolvePriceViewer(req, prisma);
+    const where = {};
+    if (!viewer.isAdmin || req.query.all !== "true") { // ?all=true para el admin
+      where.active = true;
+      const visibleFor = effectiveVisibleFor(req.query.visibleFor, viewer);
+      if (visibleFor === "MAYORISTA" || visibleFor === "MINORISTA") {
+        where.visibility = { in: ["AMBOS", visibleFor] };
+      }
+    }
     const slides = await prisma.slide.findMany({
-      where: onlyActive ? { active: true } : {},
+      where,
       // Antes: orderBy: { order: "asc" } — con números de orden repetidos el carrusel salía en
       // cualquier orden. Si empatan, el más viejo primero (mismo criterio que el panel).
       orderBy: [{ order: "asc" }, { id: "asc" }],
@@ -68,11 +83,14 @@ async function getSlides(req, res) {
 // POST /api/slides — Crear slide (admin, con imagen)
 async function createSlide(req, res) {
   try {
-    const { title, subtitle, url, order, active } = req.body;
+    const { title, subtitle, url, order, active, visibility } = req.body;
 
     const imageFile = fileOf(req, "image");
     if (!imageFile) {
       return res.status(400).json({ error: "La imagen es requerida" });
+    }
+    if (visibility !== undefined && !VISIBILITIES.includes(visibility)) {
+      return res.status(400).json({ error: "visibility debe ser AMBOS, MINORISTA o MAYORISTA" });
     }
 
     const uploaded = await uploadBuffer(imageFile.buffer, "ecommerce/slides", SLIDE_EAGER);
@@ -96,6 +114,7 @@ async function createSlide(req, res) {
         url: url || null,
         order: position, // Antes: order !== undefined ? parseInt(order) : 0
         active: active !== "false" && active !== false,
+        visibility: visibility || "AMBOS",
       },
     });
 
@@ -110,7 +129,11 @@ async function createSlide(req, res) {
 async function updateSlide(req, res) {
   try {
     const { id } = req.params;
-    const { title, subtitle, url, order, active } = req.body;
+    const { title, subtitle, url, order, active, visibility } = req.body;
+
+    if (visibility !== undefined && !VISIBILITIES.includes(visibility)) {
+      return res.status(400).json({ error: "visibility debe ser AMBOS, MINORISTA o MAYORISTA" });
+    }
 
     const existing = await prisma.slide.findUnique({ where: { id: parseInt(id) } });
     if (!existing) return res.status(404).json({ error: "Slide no encontrado" });
@@ -121,6 +144,7 @@ async function updateSlide(req, res) {
     if (url !== undefined) data.url = url || null;
     if (order !== undefined) data.order = parseInt(order);
     if (active !== undefined) data.active = active === true || active === "true";
+    if (visibility !== undefined) data.visibility = visibility;
 
     // Si se subió nueva imagen, subir a Cloudinary y eliminar la anterior
     const imageFile = fileOf(req, "image");
