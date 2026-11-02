@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { slidesApi, settingsApi, getImageUrl } from "../../services/api";
 import FileDropZone from "./FileDropZone";
 import { useSiteConfig } from "../../context/SiteConfigContext";
+import { bannerToggled, bannersChanged } from "../../utils/announcementBanners";
 import toast from "react-hot-toast";
 
 // ── Constantes para el banner de anuncio ───────────────────────────────────────
@@ -63,7 +64,7 @@ function VisibilityPicker({ value, onChange }) {
 }
 
 // ── Sub-componente: card de un banner individual ───────────────────────────────
-function BannerCard({ banner, onChange, onDelete, index }) {
+function BannerCard({ banner, onChange, onDelete, onToggleActive, toggleDisabled, index }) {
   const update = (field, value) => onChange({ ...banner, [field]: value });
   const renderPreview = () => {
     if (!banner.linkText || !banner.text.includes(banner.linkText)) return banner.text;
@@ -81,8 +82,8 @@ function BannerCard({ banner, onChange, onDelete, index }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Banner {index + 1}</span>
-          <button type="button" onClick={() => update("active", !banner.active)}
-            className={`relative inline-flex h-6 w-10 flex-shrink-0 items-center rounded-full transition-colors ${banner.active ? "bg-blue-500" : "bg-slate-300"}`}>
+          <button type="button" onClick={onToggleActive} disabled={toggleDisabled}
+            className={`relative inline-flex h-6 w-10 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${banner.active ? "bg-blue-500" : "bg-slate-300"}`}>
             <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transform transition-transform ${banner.active ? "translate-x-5" : "translate-x-1"}`} />
           </button>
           <span className="text-xs text-slate-500">{banner.active ? "Activo" : "Inactivo"}</span>
@@ -179,8 +180,19 @@ export default function CarouselSectionContent() {
 
   // ── Estado de banners de anuncio ────────────────────────────────────────────
   const [banners, setBanners]         = useState([]);
+  // Lo último guardado: para saber si hay cambios en pantalla y para guardar solo el interruptor
+  const [savedBanners, setSavedBanners] = useState([]);
   const [loadingBanners, setLoadingBanners] = useState(true);
   const [savingBanners, setSavingBanners]   = useState(false);
+  const bannersDirty = bannersChanged(banners, savedBanners);
+
+  // Refrescar o cerrar con cambios sin guardar: que el navegador pregunte antes de perderlos
+  useEffect(() => {
+    if (!bannersDirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [bannersDirty]);
 
   // ── Tab activo dentro de la sección ────────────────────────────────────────
   const [tab, setTab] = useState("slides");
@@ -188,22 +200,23 @@ export default function CarouselSectionContent() {
   useEffect(() => {
     loadSlides();
     settingsApi.get().then((res) => {
+      let loaded = [];
       if (res.data.announcementBanners) {
         try {
           const parsed = JSON.parse(res.data.announcementBanners);
-          setBanners(Array.isArray(parsed) ? parsed : []);
-        } catch { setBanners([]); }
+          if (Array.isArray(parsed)) loaded = parsed;
+        } catch { /* queda vacío */ }
       } else if (res.data.announcementText) {
-        setBanners([{
+        loaded = [{
           id: "legacy", active: res.data.announcementActive === "true",
           text: res.data.announcementText || "", linkText: res.data.announcementLinkText || "",
           url: res.data.announcementUrl || "", bgColor: res.data.announcementBgColor || "blue",
           textColor: res.data.announcementTextColor || "white",
           scrollDir: res.data.announcementScrollDir || "rtl", visibleFor: "AMBOS",
-        }]);
-      } else {
-        setBanners([]);
+        }];
       }
+      setBanners(loaded);
+      setSavedBanners(loaded);
     }).catch(console.error).finally(() => setLoadingBanners(false));
   }, []);
 
@@ -362,10 +375,33 @@ export default function CarouselSectionContent() {
     setSavingBanners(true);
     try {
       await settingsApi.update({ announcementBanners: JSON.stringify(banners) });
+      setSavedBanners(banners);
       refetch();
       toast.success("Banners guardados");
     } catch { toast.error("Error al guardar"); }
     finally { setSavingBanners(false); }
+  }
+
+  // Prender o apagar se guarda al tocar, como el "Visible" de los slides. Antes solo cambiaba en pantalla hasta
+  // tocar "Guardar banners", al final de la lista: al refrescar, el banner seguía como estaba.
+  // Lo demás que esté sin guardar sigue esperando el botón (ver bannerToggled).
+  async function handleToggleBanner(banner) {
+    const active = !banner.active;
+    const setActiveOnScreen = (value) =>
+      setBanners((prev) => prev.map((b) => (b.id === banner.id ? { ...b, active: value } : b)));
+    setActiveOnScreen(active);
+    const nextSaved = bannerToggled(savedBanners, banner.id, active);
+    if (!nextSaved) return; // recién creado: se guarda entero con el botón
+    setSavingBanners(true);
+    try {
+      await settingsApi.update({ announcementBanners: JSON.stringify(nextSaved) });
+      setSavedBanners(nextSaved);
+      refetch();
+      toast.success(active ? "Banner activado" : "Banner desactivado");
+    } catch {
+      setActiveOnScreen(!active);
+      toast.error("No se pudo guardar: el banner sigue como estaba");
+    } finally { setSavingBanners(false); }
   }
 
   // Antes: .sort((a, b) => a.order - b.order) — con números repetidos el orden quedaba al azar.
@@ -488,18 +524,24 @@ export default function CarouselSectionContent() {
                     key={b.id} banner={b} index={i}
                     onChange={(updated) => setBanners((prev) => prev.map((x) => x.id === b.id ? updated : x))}
                     onDelete={() => setBanners((prev) => prev.filter((x) => x.id !== b.id))}
+                    onToggleActive={() => handleToggleBanner(b)}
+                    toggleDisabled={savingBanners}
                   />
                 ))}
               </div>
-              <div className="flex items-center justify-between pt-2">
+              {/* Con cambios sin guardar la barra queda pegada abajo: el botón estaba al final de una lista larga */}
+              <div className={`flex flex-wrap items-center justify-between gap-3 pt-2 ${bannersDirty ? "sticky bottom-4 z-10 rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-lg" : ""}`}>
                 <button type="button" onClick={() => setBanners((prev) => [...prev, newBanner()])}
                   className="px-4 py-2 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 text-sm font-medium transition-colors">
                   + Agregar banner
                 </button>
-                <button onClick={handleSaveBanners} disabled={savingBanners}
-                  className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                  {savingBanners ? "Guardando…" : "Guardar banners"}
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  {bannersDirty && <span className="text-sm font-medium text-amber-700">Tenés cambios sin guardar</span>}
+                  <button onClick={handleSaveBanners} disabled={savingBanners}
+                    className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                    {savingBanners ? "Guardando…" : "Guardar banners"}
+                  </button>
+                </div>
               </div>
             </>
           )}

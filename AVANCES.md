@@ -394,6 +394,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 188- checkout (02/11/2026): el formulario de dirección se abre debajo de la opción elegida (moto o correo), no siempre abajo de la última; al cambiar de una a la otra lo escrito se conserva y la pantalla no salta. Los avisos de la tienda salen debajo de la barra, porque arriba de todo tapaban el botón del carrito. ✅
 
+189- banners de anuncio (02/11/2026): prender o apagar un banner ahora se guarda al tocarlo, como los slides. Antes solo cambiaba en pantalla hasta tocar "Guardar banners", al final de la lista, y al refrescar seguía como estaba. Además, con cambios sin guardar aparece abajo una barra de aviso y el navegador pregunta antes de refrescar.
+
 ##
 
 
