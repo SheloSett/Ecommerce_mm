@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { HelmetProvider } from "react-helmet-async";
-import App from "./App";
+import App, { PageLoader } from "./App";
 import "./index.css";
 
 // Avisa al servidor de un error del navegador (POST /api/events/client-error), que lo registra y le
@@ -27,11 +27,21 @@ function reportClientError(error, extra = "") {
 // Después de un deploy, una pestaña abierta con la versión anterior pide archivos de pantallas que ya
 // no existen (ver los lazy de App.jsx). Se recarga una vez para traer la versión nueva; la marca en
 // sessionStorage evita recargar en bucle si el problema es otro.
+// También pasa sin deploy: un corte de internet del visitante en plena descarga cae en este mismo camino.
+//
+// recargandoPorArchivo: al cancelar el error con preventDefault, Vite le entrega a React.lazy una
+// pantalla vacía y React rompe con "Cannot read properties of undefined (reading 'default')" mientras
+// la recarga viene en camino. Esa rotura es un efecto de esta recarga, no un error: sin esta marca
+// llegaba un email de error falso al admin y el visitante veía "Algo falló" hasta que cargaba la
+// página (ver AppErrorBoundary). Si la recarga tampoco alcanza, acá se entra con la marca de
+// sessionStorage puesta: no se cancela nada y el error real se muestra y se avisa como siempre.
+let recargandoPorArchivo = false;
 window.addEventListener("vite:preloadError", (event) => {
   try {
     if (sessionStorage.getItem("chunkReload") === "1") return;
     sessionStorage.setItem("chunkReload", "1");
   } catch { /* sin sessionStorage: recargar igual */ }
+  recargandoPorArchivo = true;
   event.preventDefault();
   window.location.reload();
 });
@@ -51,10 +61,12 @@ class AppErrorBoundary extends React.Component {
   }
   componentDidCatch(error, info) {
     console.error(error);
+    if (recargandoPorArchivo) return; // la página ya se está recargando sola: no hay nada que avisar
     reportClientError(error, info?.componentStack);
   }
   render() {
     if (this.state.hasError) {
+      if (recargandoPorArchivo) return <PageLoader />; // lo mismo que se ve al cargar cualquier pantalla
       return (
         <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0f172a", fontFamily: "sans-serif" }}>
           <div style={{ textAlign: "center", padding: "40px", background: "#1e293b", borderRadius: "16px", maxWidth: "400px" }}>
