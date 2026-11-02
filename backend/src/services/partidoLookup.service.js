@@ -58,7 +58,7 @@ async function lookupPartidos(city) {
   waiting++;
   const run = queue.then(() => search(String(city).trim()));
   // La pausa va después de cada consulta, salga bien o mal.
-  queue = run.catch(() => {}).then(() => new Promise((resolve) => setTimeout(resolve, gapMs()).unref?.()));
+  queue = run.catch(() => {}).then(() => new Promise((resolve) => setTimeout(resolve, gapMs())));
   try {
     const partidos = await run;
     if (cache.size >= MAX_CACHE) cache.clear();
