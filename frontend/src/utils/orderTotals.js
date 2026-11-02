@@ -44,6 +44,9 @@ function sumLines(items, currency) {
 export function getOrderTotals(order) {
   const items = order?.items || [];
   const hasUsd = items.some(isUsdItem);
+  // Costo de envío: siempre en pesos y ya sumado en order.total. Sin restarlo, el subtotal de abajo
+  // quedaría inflado con el envío, y la ganancia lo contaría como plata de la tienda.
+  const shipping = order?.shippingCost || 0;
 
   // ── Caso 1: sin dólares ────────────────────────────────────────────────────
   if (!hasUsd) {
@@ -62,8 +65,8 @@ export function getOrderTotals(order) {
     return {
       hasUsd:  false,
       legacy:  false,
-      ars: { subtotal: total + discount - iva, discount, line, coupon, manual, iva, total },
-      usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: 0 },
+      ars: { subtotal: total + discount - iva - shipping, discount, line, coupon, manual, iva, shipping, total },
+      usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: 0 },
     };
   }
 
@@ -77,8 +80,8 @@ export function getOrderTotals(order) {
     return {
       hasUsd: true,
       legacy: true,
-      ars: { subtotal: subtotalArs, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: subtotalArs },
-      usd: { subtotal: subtotalUsd, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, total: subtotalUsd },
+      ars: { subtotal: subtotalArs, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: subtotalArs },
+      usd: { subtotal: subtotalUsd, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: subtotalUsd },
     };
   }
 
@@ -96,8 +99,8 @@ export function getOrderTotals(order) {
   return {
     hasUsd: true,
     legacy: false,
-    ars: { subtotal: (order.total || 0) + dArs - iArs, discount: dArs, line: lArs, coupon: cArs, manual: mArs, iva: iArs, total: order.total || 0 },
-    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, iva: iUsd, total: order.totalUsd || 0 },
+    ars: { subtotal: (order.total || 0) + dArs - iArs - shipping, discount: dArs, line: lArs, coupon: cArs, manual: mArs, iva: iArs, shipping, total: order.total || 0 },
+    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, iva: iUsd, shipping: 0, total: order.totalUsd || 0 },
   };
 }
 
@@ -124,7 +127,7 @@ export function getTotalsBreakdown(order) {
 
   const blocks = [];
   // El bloque en pesos se omite solo si el pedido es 100% en dólares.
-  if (!T.hasUsd || T.ars.subtotal > 0) blocks.push(armarBloque(T.ars, "ARS"));
+  if (!T.hasUsd || T.ars.subtotal > 0 || T.ars.shipping > 0) blocks.push(armarBloque(T.ars, "ARS"));
   if (T.hasUsd) blocks.push(armarBloque(T.usd, "USD"));
 
   return { hasUsd: T.hasUsd, legacy: T.legacy, blocks };
@@ -143,6 +146,7 @@ function etiquetas(bloque, hasUsd, couponCode) {
     subtotal: `Subtotal${suf}`,
     descuento: `Descuento${suf}${couponCode ? ` (${couponCode})` : ""}`,
     iva: `IVA${suf}${bloque.ivaRate ? ` (${bloque.ivaRate}%)` : ""}`,
+    envio: "Envío",
     total: hasUsd ? `TOTAL ${bloque.currency}` : "TOTAL",
   };
 }
@@ -159,6 +163,7 @@ export function breakdownRowsAoa(order, couponCode) {
     filas.push(["", "", "", L.subtotal, fmt(b.subtotal, b.currency)]);
     if (b.discount > 0) filas.push(["", "", "", L.descuento, `−${fmt(b.discount, b.currency)}`]);
     if (b.iva > 0)      filas.push(["", "", "", L.iva, `+${fmt(b.iva, b.currency)}`]);
+    if (b.shipping > 0) filas.push(["", "", "", L.envio, `+${fmt(b.shipping, b.currency)}`]);
     filas.push(["", "", "", L.total, fmt(b.total, b.currency)]);
   });
   return filas;
@@ -180,6 +185,7 @@ export function breakdownRowsHtml(order, couponCode) {
       chica(L.subtotal, fmt(b.subtotal, b.currency), "#64748b"),
       b.discount > 0 ? chica(L.descuento, `−${fmt(b.discount, b.currency)}`, "#16a34a") : "",
       b.iva > 0      ? chica(L.iva, `+${fmt(b.iva, b.currency)}`, "#64748b") : "",
+      b.shipping > 0 ? chica(L.envio, `+${fmt(b.shipping, b.currency)}`, "#64748b") : "",
       grande(L.total, fmt(b.total, b.currency)),
     ].join("");
   }).join("");
@@ -188,8 +194,8 @@ export function breakdownRowsHtml(order, couponCode) {
 // Ganancia de una venta, SIN el IVA.
 // El IVA se le cobra al cliente para girárselo a ARCA: entra y sale, nunca fue plata de la tienda.
 // Por eso la ganancia se mide contra el total SIN IVA (pero sí neto del cupón, que es plata que
-// realmente no entró a la caja).
+// realmente no entró a la caja). El envío tampoco: se le cobra al cliente para pagarle al correo o a la moto.
 export function profitFromTotals(monedaTotals, costo) {
-  const ventaSinIva = (monedaTotals?.total || 0) - (monedaTotals?.iva || 0);
+  const ventaSinIva = (monedaTotals?.total || 0) - (monedaTotals?.iva || 0) - (monedaTotals?.shipping || 0);
   return ventaSinIva - (costo || 0);
 }

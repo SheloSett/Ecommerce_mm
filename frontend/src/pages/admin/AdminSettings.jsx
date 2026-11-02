@@ -13,6 +13,7 @@ import HowToBuySectionContent from "../../components/admin/HowToBuySectionConten
 import PrivacySectionContent from "../../components/admin/PrivacySectionContent";
 import TermsSectionContent from "../../components/admin/TermsSectionContent";
 import MetaSectionContent from "../../components/admin/MetaSectionContent";
+import ShippingSectionContent from "../../components/admin/ShippingSectionContent";
 // RichTextEditor: se usaba para el viejo enfoque RTE de edición de páginas — reemplazado por secciones estructuradas
 // import RichTextEditor from "../../components/RichTextEditor";
 import toast from "react-hot-toast";
@@ -20,6 +21,8 @@ import toast from "react-hot-toast";
 const SECTIONS = [
   { id: "mantenimiento",  label: "Modo mantenimiento",  icon: "🔧" },
   { id: "mayoristas",     label: "Reglas mayoristas",   icon: "🏭" },
+  // Envío en moto: precios por zona, hora de corte y códigos postales
+  { id: "envios",         label: "Envíos",              icon: "🛵" },
   // Meta (Facebook / Instagram): Pixel, API de conversiones y feed del catálogo
   { id: "meta",           label: "Meta / Instagram",    icon: "📣" },
   // "Campañas de email" se movió a Admin → Emails → Automáticos (components/admin/EmailAutomationsSection.jsx)
@@ -501,6 +504,10 @@ export default function AdminSettings() {
                     : "Sin mínimo — los mayoristas pueden cotizar cualquier monto."}
                 </div>
               </div>
+            )}
+
+            {activeSection === "envios" && (
+              <ShippingSectionContent />
             )}
 
             {activeSection === "meta" && (

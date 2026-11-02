@@ -6,6 +6,7 @@ import { ordersApi, productsApi, shippingApi, suppliersApi, getImageUrl } from "
 import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
+import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -50,8 +51,9 @@ const TYPE_LABEL = {
 
 const SHIPPING_LABEL = {
   RETIRO:           { label: "Retiro en local",   icon: "🏪" },
-  ENVIO:            { label: "Envío a domicilio",  icon: "🚚" },
-  CORREO_ARGENTINO: { label: "Correo Argentino",   icon: "📮" },
+  ENVIO:            { label: "Acordar envío",     icon: "🚚" },
+  CORREO_ARGENTINO: { label: "Envío por correo",  icon: "📮" },
+  MOTO:             { label: "Envío en moto",     icon: "🛵" },
 };
 
 function formatDate(dateStr) {
@@ -100,6 +102,7 @@ export default function AdminOrderDetail() {
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [shippingCostInput, setShippingCostInput] = useState(null); // null = sin tocar: muestra el del pedido
   const [updatingFields, setUpdatingFields] = useState(false);
   const [generatingShipping, setGeneratingShipping] = useState(false);
   const [trackingInput, setTrackingInput] = useState("");
@@ -164,22 +167,45 @@ export default function AdminOrderDetail() {
   const handleUpdateFields = async (fields) => {
     setUpdatingFields(true);
     try {
-      await ordersApi.updateFields(order.id, fields);
-      setOrder((prev) => ({ ...prev, ...fields }));
+      // Antes: solo mergeaba los campos enviados. Cambiar el envío cambia el total, que lo calcula el servidor.
+      const res = await ordersApi.updateFields(order.id, fields);
+      setOrder((prev) => ({ ...prev, ...fields, ...res.data }));
       toast.success("Actualizado");
-    } catch {
-      toast.error("Error al actualizar");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Error al actualizar");
     } finally {
       setUpdatingFields(false);
     }
+  };
+
+  // Un pedido por Mercado Pago ya tiene un link (o un pago) por el total anterior: cambiar el envío no lo actualiza.
+  const mpShippingNote = () => {
+    if (order.paymentMethod !== "MERCADOPAGO") return "";
+    return order.status === "APPROVED"
+      ? "\n\nEl pedido ya está cobrado por Mercado Pago: la diferencia no se cobra ni se devuelve sola, hay que hacerlo aparte."
+      : "\n\nSi el cliente paga con el link de Mercado Pago que ya tiene, el monto no va a coincidir y el pedido queda en Revisión de pago.";
   };
 
   const handleShippingChange = (newMethod) => {
     if (newMethod === order.shippingMethod) return;
     const oldLabel = SHIPPING_LABEL[order.shippingMethod]?.label || order.shippingMethod;
     const newLabel = SHIPPING_LABEL[newMethod]?.label || newMethod;
-    if (!window.confirm(`¿Cambiar método de entrega?\n\n"${oldLabel}" → "${newLabel}"\n\nEsta acción modifica el pedido aunque ya esté entregado.`)) return;
+    // Pasar a retiro saca el costo de envío del total (lo hace el servidor).
+    const costNote = newMethod === "RETIRO" && order.shippingCost > 0
+      ? `\n\nSe saca del total el costo de envío de ${formatPrice(order.shippingCost)}.${mpShippingNote()}`
+      : "";
+    if (!window.confirm(`¿Cambiar método de entrega?\n\n"${oldLabel}" → "${newLabel}"\n\nEsta acción modifica el pedido aunque ya esté entregado.${costNote}`)) return;
     handleUpdateFields({ shippingMethod: newMethod });
+  };
+
+  // Costo de envío cargado a mano (el del correo, una vez confirmado). Se suma al total.
+  const handleSaveShippingCost = async () => {
+    const cost = Number(shippingCostInput);
+    if (shippingCostInput === "" || !Number.isFinite(cost) || cost < 0) return toast.error("Costo de envío inválido");
+    if (order.paymentMethod === "MERCADOPAGO" && cost !== (order.shippingCost || 0)
+      && !window.confirm(`¿Cambiar el costo de envío a ${formatPrice(cost)}?${mpShippingNote()}`)) return;
+    await handleUpdateFields({ shippingCost: cost });
+    setShippingCostInput(null);
   };
 
   const handleGenerateShipping = async () => {
@@ -458,6 +484,7 @@ export default function AdminOrderDetail() {
   // withPrices = false: sin precio por unidad, sin total por línea y sin totales; la cantidad pasa
   // a la columna de la derecha. Misma hoja que la impresión de la lista (AdminOrders.jsx).
   const printOrder = (withPrices) => {
+    const printAddress = deliveryAddressOf(order);
     const status  = STATUS_CONFIG[order.status]          || STATUS_CONFIG.PENDING;
     const payment = PAYMENT_LABEL[order.paymentMethod]   || PAYMENT_LABEL.EFECTIVO;
     const type    = TYPE_LABEL[order.customerType]        || { label: order.customerType };
@@ -528,6 +555,7 @@ export default function AdminOrderDetail() {
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
       ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
+      ${Tp.ars.shipping > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Envío</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.shipping)}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
       ${hasUsdPrint ? `<tr ${showArsPrint ? "" : 'style="border-top:2px solid #1e293b"'}><td ${totLabelStyle}>TOTAL USD</td><td ${totValueStyle}>${formatPriceWithCurrency(totalUsdPrint, "USD")}</td></tr>` : ""}`;
 
@@ -597,6 +625,11 @@ export default function AdminOrderDetail() {
     </div>
   </div>
 
+  ${printAddress ? `<div class="card" style="margin-bottom:14px">
+    <div class="card-title">Entrega: ${esc((SHIPPING_LABEL[order.shippingMethod] || {}).label || order.shippingMethod)}${printAddress.zoneName ? ` · ${esc(printAddress.zoneName)}` : ""}</div>
+    ${shippingAddressLines(printAddress).map((line) => `<div style="font-size:12px;font-weight:600">${esc(line)}</div>`).join("")}
+    ${printAddress.deliveryDate ? `<div style="font-size:12px;margin-top:4px">Entrega estimada: <strong>${esc(formatDeliveryDate(printAddress.deliveryDate))}</strong></div>` : ""}
+  </div>` : ""}
   ${order.customerNote ? `<div class="note-box" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e">💬 <strong>Nota del cliente:</strong> ${esc(order.customerNote)}</div>` : ""}
   ${order.adminNotes   ? `<div class="note-box" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af">📋 <strong>Nota interna:</strong> ${esc(order.adminNotes)}</div>` : ""}
 
@@ -662,6 +695,8 @@ export default function AdminOrderDetail() {
   const ivaRate          = subtotal > 0 && iva > 0 ? iva / subtotal : 0;
   const originalIva      = isSnapObj ? (rawSnap.ivaAmount || 0) : Math.round(subtotalOriginal * ivaRate * 100) / 100;
   const originalTotal    = isSnapObj ? rawSnap.total : (subtotalOriginal + originalIva - originalDiscount);
+  const originalShipping = isSnapObj ? (rawSnap.shippingCost || 0) : 0;
+  const deliveryAddress  = deliveryAddressOf(order);
 
   // ── Totales por moneda ─────────────────────────────────────────────────────────────────────
   // Un pedido puede mezclar ítems en pesos y en dólares (por eso el backend fuerza A_CONVENIR
@@ -757,6 +792,8 @@ export default function AdminOrderDetail() {
       ? { value: "ENVIADO", label: "Pedido listo", icon: "🏪", color: "bg-orange-100 text-orange-800" }
       : order.shippingMethod === "CORREO_ARGENTINO"
       ? { value: "ENVIADO", label: "En camino",    icon: "📮", color: "bg-red-100 text-red-800" }
+      : order.shippingMethod === "MOTO"
+      ? { value: "ENVIADO", label: "En camino",    icon: "🛵", color: "bg-red-100 text-red-800" }
       : { value: "ENVIADO", label: "Enviado",      icon: "🚚", color: "bg-blue-100 text-blue-800" },
     { value: "ENTREGADO", label: "Entregado", icon: "✅", color: "bg-green-100 text-green-800" },
   ];
@@ -1115,8 +1152,9 @@ export default function AdminOrderDetail() {
                               <span className="text-emerald-600 font-semibold"> −{formatPrice(descTotalArs)}{descTotalUsd > 0 && ` / −${formatPriceWithCurrency(descTotalUsd, "USD")}`}</span>
                             </span>
                           ) : null}
-                          {(!anyUsd || ars > 0) && formatPrice(Math.max(0, ars - dArs))}
-                          {(!anyUsd || ars > 0) && anyUsd && " + "}
+                          {/* El envío se mantiene al modificar el pedido: va en el total */}
+                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - dArs) + (order.shippingCost || 0))}
+                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && anyUsd && " + "}
                           {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd), "USD")}
                         </span>
                       );
@@ -1231,6 +1269,12 @@ export default function AdminOrderDetail() {
                         <span>+{formatPrice(originalIva)}</span>
                       </div>
                     )}
+                    {originalShipping > 0 && (
+                      <div className="flex justify-between text-sm text-slate-500">
+                        <span>Envío</span>
+                        <span>+{formatPrice(originalShipping)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between font-bold text-lg text-slate-900 pt-2 border-t border-slate-200">
                       <span>Total original</span>
                       <span>{formatPrice(originalTotal)}</span>
@@ -1244,7 +1288,7 @@ export default function AdminOrderDetail() {
                     {/* Cada renglón muestra las dos monedas cuando el pedido las mezcla. Antes todos
                         usaban formatPrice() a secas, o sea que un pedido mixto mostraba el descuento
                         y el IVA de los dólares con el signo "$" de pesos. */}
-                    {(discount > 0 || iva > 0 || T.usd.discount > 0 || T.usd.iva > 0) && (
+                    {(discount > 0 || iva > 0 || T.usd.discount > 0 || T.usd.iva > 0 || T.ars.shipping > 0) && (
                       <div className="flex justify-between items-start text-sm text-slate-500">
                         <span>Subtotal</span>
                         {moneyPair(subtotal, T.usd.subtotal)}
@@ -1286,6 +1330,12 @@ export default function AdminOrderDetail() {
                       <div className="flex justify-between items-start text-sm text-slate-500">
                         <span>IVA</span>
                         {moneyPair(iva, T.usd.iva, { prefix: "+" })}
+                      </div>
+                    )}
+                    {T.ars.shipping > 0 && (
+                      <div className="flex justify-between items-start text-sm text-slate-500">
+                        <span>Envío</span>
+                        <span>+{formatPrice(T.ars.shipping)}</span>
                       </div>
                     )}
                     <div className="flex justify-between items-start font-bold text-lg text-slate-900 pt-2 border-t border-slate-200">
@@ -1424,23 +1474,57 @@ export default function AdminOrderDetail() {
               </div>
             </div>
 
+            {/* Envío a domicilio: dirección que cargó el cliente, zona y día, y el costo */}
+            {order.shippingMethod !== "RETIRO" && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+                <h2 className="font-bold text-slate-800 text-sm">Datos del envío</h2>
+                {deliveryAddress ? (
+                  <div className="text-sm text-slate-700 space-y-0.5">
+                    {shippingAddressLines(deliveryAddress).map((line) => <p key={line}>{line}</p>)}
+                    {deliveryAddress.zoneName && (
+                      <p className="font-semibold text-slate-800 pt-1">🛵 {deliveryAddress.zoneName}</p>
+                    )}
+                    {deliveryAddress.deliveryDate && (
+                      <p className="font-semibold text-slate-800">Entrega estimada: {formatDeliveryDate(deliveryAddress.deliveryDate)}</p>
+                    )}
+                    {deliveryAddress.reviewCity && (
+                      <p className="mt-2 text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                        ⚠ La localidad no figura para ese código postal: revisá que la zona y el precio sean los correctos.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">El cliente no cargó dirección: coordinala por WhatsApp.</p>
+                )}
+                <div>
+                  <label htmlFor="shipping-cost" className="block text-xs text-slate-500 mb-1">
+                    Costo de envío (se suma al total)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      id="shipping-cost"
+                      type="number"
+                      min="0"
+                      value={shippingCostInput ?? (order.shippingCost || 0)}
+                      onChange={(e) => setShippingCostInput(e.target.value)}
+                      className="flex-1 min-w-0 border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white"
+                    />
+                    <button
+                      onClick={handleSaveShippingCost}
+                      disabled={updatingFields || shippingCostInput === null}
+                      className="px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg disabled:opacity-50 transition-colors"
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Sección MiCorreo — solo si el método es Correo Argentino */}
             {order.shippingMethod === "CORREO_ARGENTINO" && (
               <div className="bg-red-50 border border-red-200 rounded-2xl p-5 space-y-3">
                 <h2 className="font-bold text-slate-800 text-sm">📮 Correo Argentino</h2>
-
-                {/* Dirección de envío */}
-                {order.shippingAddress && (
-                  <div className="text-sm text-slate-700 space-y-0.5">
-                    <p className="font-medium text-slate-600">Dirección:</p>
-                    <p>
-                      {order.shippingAddress.streetName} {order.shippingAddress.streetNumber}
-                      {order.shippingAddress.floor ? `, Piso ${order.shippingAddress.floor}` : ""}
-                      {order.shippingAddress.apartment ? ` Dpto ${order.shippingAddress.apartment}` : ""}
-                    </p>
-                    <p className="text-slate-500">{order.shippingAddress.city} · CP {order.shippingAddress.postalCode}</p>
-                  </div>
-                )}
 
                 {/* Tracking existente */}
                 {order.trackingNumber && (

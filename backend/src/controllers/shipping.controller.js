@@ -1,6 +1,46 @@
 const { getRates, importShipping, getTracking } = require("../services/micorreo.service");
+const { loadMotoConfig, saveMotoConfig } = require("../services/shipping.service");
+const { quoteMoto, validateMotoConfig } = require("../utils/motoShipping");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+
+// GET /api/shipping/moto/quote?postalCode=&provinceCode=&city= — público: lo usa el checkout mientras
+// el cliente completa la dirección. Siempre 200: que la moto no llegue es una respuesta, no un error.
+async function motoQuote(req, res) {
+  try {
+    const { postalCode, provinceCode, city } = req.query;
+    const quote = quoteMoto(await loadMotoConfig(), { postalCode, provinceCode, city });
+    // reviewCity es para el panel: al cliente no le dice nada.
+    const { reviewCity, ...publicQuote } = quote;
+    res.json(publicQuote);
+  } catch (err) {
+    console.error("motoQuote error:", err.message);
+    res.status(500).json({ error: "No se pudo cotizar el envío" });
+  }
+}
+
+// GET /api/shipping/moto/config — admin: precios, zonas y hora de corte
+async function getMotoConfig(req, res) {
+  try {
+    res.json(await loadMotoConfig());
+  } catch (err) {
+    console.error("getMotoConfig error:", err.message);
+    res.status(500).json({ error: "No se pudo leer la configuración de envíos" });
+  }
+}
+
+// PUT /api/shipping/moto/config — admin
+async function updateMotoConfig(req, res) {
+  try {
+    const { config, error } = validateMotoConfig(req.body);
+    if (error) return res.status(400).json({ error });
+    await saveMotoConfig(config);
+    res.json(config);
+  } catch (err) {
+    console.error("updateMotoConfig error:", err.message);
+    res.status(500).json({ error: "No se pudo guardar la configuración de envíos" });
+  }
+}
 
 // POST /api/shipping/rates — público: cotizar costo de envío para un CP destino
 async function shippingRates(req, res) {
@@ -54,6 +94,11 @@ async function generateShipping(req, res) {
     }
     if (!order.shippingAddress) {
       return res.status(400).json({ error: "La orden no tiene dirección de envío registrada" });
+    }
+    // Sin la cuenta de MiCorreo cargada no hay a dónde mandarlo: antes salía un error de autenticación
+    // que no decía qué hacer. El seguimiento se puede cargar a mano igual.
+    if (!process.env.MICORREO_USER || !process.env.MICORREO_PASS) {
+      return res.status(400).json({ error: "MiCorreo no está configurado: despachalo por tu cuenta y cargá el número de seguimiento a mano." });
     }
 
     await importShipping(order, order.shippingAddress);
@@ -142,4 +187,4 @@ async function updateTrackingManual(req, res) {
   }
 }
 
-module.exports = { shippingRates, generateShipping, refreshTracking, updateTrackingManual };
+module.exports = { shippingRates, generateShipping, refreshTracking, updateTrackingManual, motoQuote, getMotoConfig, updateMotoConfig };

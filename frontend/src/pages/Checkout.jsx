@@ -12,34 +12,7 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 // Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
 import ProductImage from "../components/ProductImage";
-
-// Provincias argentinas con sus códigos para el selector de Correo Argentino
-const PROVINCES = [
-  { code: "C", name: "CABA" },
-  { code: "B", name: "Buenos Aires" },
-  { code: "X", name: "Córdoba" },
-  { code: "S", name: "Santa Fe" },
-  { code: "M", name: "Mendoza" },
-  { code: "T", name: "Tucumán" },
-  { code: "E", name: "Entre Ríos" },
-  { code: "A", name: "Salta" },
-  { code: "N", name: "Misiones" },
-  { code: "W", name: "Corrientes" },
-  { code: "H", name: "Chaco" },
-  { code: "G", name: "Santiago del Estero" },
-  { code: "K", name: "Catamarca" },
-  { code: "J", name: "San Juan" },
-  { code: "D", name: "San Luis" },
-  { code: "P", name: "Formosa" },
-  { code: "R", name: "Río Negro" },
-  { code: "Q", name: "Neuquén" },
-  { code: "F", name: "La Rioja" },
-  { code: "L", name: "La Pampa" },
-  { code: "Y", name: "Jujuy" },
-  { code: "U", name: "Chubut" },
-  { code: "Z", name: "Santa Cruz" },
-  { code: "V", name: "Tierra del Fuego" },
-];
+import { PROVINCES, formatDeliveryDate, motoDeliveryText, shippingAddressLines } from "../utils/shipping";
 
 // Íconos de métodos de pago como SVG inline para no depender de librerías externas
 function IconMP() {
@@ -128,17 +101,23 @@ export default function Checkout() {
     isMayorista ? "COTIZACION" : "MERCADOPAGO"
   );
 
-  // Método de envío: "RETIRO" = retirar en el local, "ENVIO" = acordar envío, "CORREO_ARGENTINO" = Correo Argentino
+  // Método de envío: "RETIRO" = retirar en el local, "ENVIO" = acordar por WhatsApp,
+  // "CORREO_ARGENTINO" = a domicilio por correo (todo el país), "MOTO" = en el día o al siguiente (CABA y GBA)
   const [shippingMethod, setShippingMethod] = useState("RETIRO");
+  const needsAddress = shippingMethod === "CORREO_ARGENTINO" || shippingMethod === "MOTO";
 
-  // Datos de dirección para CORREO_ARGENTINO
+  // Dirección de entrega (correo y moto). La provincia arranca sin elegir: si arrancara en CABA, alguien de
+  // Morón que no la toca tendría un CP que no cierra con la provincia.
   const [shippingAddress, setShippingAddress] = useState({
     streetName: "", streetNumber: "", floor: "", apartment: "",
-    city: "", provinceCode: "C", postalCode: "",
+    city: "", provinceCode: "", postalCode: "", references: "", recipientName: "",
   });
-  // Tarifa de envío cotizada en tiempo real (null = no cotizada aún)
-  const [shippingRate, setShippingRate] = useState(null);
-  const [rateLoading, setRateLoading]   = useState(false);
+  // Cotización de la moto para esa dirección: null = todavía no se puede cotizar (faltan datos).
+  // { available: true, zoneName, price, delivery } o { available: false, message }.
+  const [motoQuote, setMotoQuote]         = useState(null);
+  const [motoQuoteLoading, setMotoQuoteLoading] = useState(false);
+  // Se suma 1 para volver a cotizar sin que cambie la dirección (si el precio cambió mientras compraba).
+  const [motoQuoteRetry, setMotoQuoteRetry] = useState(0);
 
   // formatPrice sigue siendo ARS por defecto (subtotal/IVA/envío/total siempre se calculan en pesos);
   // los montos en USD usan formatPriceWithCurrency(monto, "USD") explícitamente donde corresponde.
@@ -204,8 +183,9 @@ export default function Checkout() {
       }, 0)
     : 0;
   const finalTotalUsd = baseTotalUsd + ivaAmountUsd;
-  // Costo de envío: solo aplica si el método es CORREO_ARGENTINO y ya se cotizó
-  const shippingCost = shippingMethod === "CORREO_ARGENTINO" ? (shippingRate?.price || 0) : 0;
+  // Costo de envío: solo la moto tiene precio al comprar (por zona). El del correo lo confirma la tienda.
+  const motoAvailable = shippingMethod === "MOTO" && motoQuote?.available === true;
+  const shippingCost = motoAvailable ? motoQuote.price : 0;
   const finalTotal   = baseTotal + ivaAmount + shippingCost;
 
   // Actualizar handler de dirección de envío
@@ -213,25 +193,38 @@ export default function Checkout() {
     setShippingAddress((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  // Cotizar automáticamente cuando cambia el CP destino (debounce 800ms)
+  // La moto solo va a CABA y Gran Buenos Aires: si venía de elegir otra provincia para el correo, se limpia.
+  const chooseShippingMethod = (method) => {
+    setShippingMethod(method);
+    if (method === "MOTO" && !["C", "B"].includes(shippingAddress.provinceCode)) {
+      setShippingAddress((prev) => ({ ...prev, provinceCode: "" }));
+    }
+  };
+
+  // Cotizar la moto cuando cambia la dirección. Cruza CP, provincia y localidad: se pide de nuevo con cada
+  // cambio de cualquiera de los tres.
   useEffect(() => {
-    if (shippingMethod !== "CORREO_ARGENTINO") return;
-    if (shippingAddress.postalCode.length < 4) { setShippingRate(null); return; }
+    if (shippingMethod !== "MOTO") return;
+    const { postalCode, provinceCode, city } = shippingAddress;
+    if (postalCode.trim().length < 4 || !provinceCode) {
+      setMotoQuote(null);
+      setMotoQuoteLoading(false);
+      return;
+    }
     let cancelled = false;
+    setMotoQuoteLoading(true);
     const timer = setTimeout(async () => {
-      setRateLoading(true);
       try {
-        const res = await shippingApi.getRates(shippingAddress.postalCode);
-        if (!cancelled) setShippingRate(res.data);
+        const res = await shippingApi.motoQuote({ postalCode, provinceCode, city });
+        if (!cancelled) setMotoQuote(res.data);
       } catch {
-        if (!cancelled) setShippingRate(null);
+        if (!cancelled) setMotoQuote({ available: false, message: "No pudimos cotizar el envío. Probá de nuevo en un momento." });
       } finally {
-        if (!cancelled) setRateLoading(false);
+        if (!cancelled) setMotoQuoteLoading(false);
       }
-    }, 800);
+    }, 500);
     return () => { cancelled = true; clearTimeout(timer); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shippingAddress.postalCode, shippingMethod]);
+  }, [shippingAddress.postalCode, shippingAddress.provinceCode, shippingAddress.city, shippingMethod, motoQuoteRetry]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -280,18 +273,17 @@ export default function Checkout() {
       toast.error("Por favor completá los campos requeridos");
       return;
     }
-    // Validar dirección y cotización si se eligió Correo Argentino
-    if (shippingMethod === "CORREO_ARGENTINO") {
+    // Validar dirección y cotización si el pedido se manda a domicilio
+    if (needsAddress) {
       const { streetName, streetNumber, city, provinceCode, postalCode } = shippingAddress;
-      if (!streetName || !streetNumber || !city || !provinceCode || !postalCode) {
-        toast.error("Completá todos los campos de dirección de envío");
+      if (!streetName.trim() || !streetNumber.trim() || !city.trim() || !provinceCode || !postalCode.trim()) {
+        toast.error("Completá todos los datos de la dirección de entrega");
         return;
       }
-      // No permitir continuar sin cotización confirmada
-      if (!shippingRate || shippingCost === 0) {
-        toast.error("Ingresá el código postal para cotizar el envío antes de continuar");
-        return;
-      }
+    }
+    if (shippingMethod === "MOTO" && !motoAvailable) {
+      toast.error(motoQuote?.message || "Completá la dirección para cotizar el envío en moto");
+      return;
     }
     // Antes: if (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)
     if (faltaMinimo) {
@@ -317,11 +309,10 @@ export default function Checkout() {
         // (ver createOrder) — se manda así también para que la UI post-creación ya lo refleje.
         paymentMethod: isMayorista ? "COTIZACION" : (cartHasUsd ? "A_CONVENIR" : paymentMethod),
         shippingMethod,
-        // Incluir dirección y costo si el método es Correo Argentino
-        ...(shippingMethod === "CORREO_ARGENTINO" ? {
-          shippingAddress,
-          shippingCost,
-        } : {}),
+        // La dirección va solo si se manda a domicilio. shippingCost (moto) es lo que el cliente ve en
+        // pantalla: el servidor calcula el suyo y, si no coincide, avisa en vez de cobrar otro número.
+        ...(needsAddress ? { shippingAddress } : {}),
+        ...(shippingMethod === "MOTO" ? { shippingCost } : {}),
         wantsInvoice: isMayorista ? wantsInvoice : false,
         ...(couponResult ? { couponCode: couponResult.coupon.code } : {}),
         ...(form.customerNote.trim() ? { customerNote: form.customerNote.trim() } : {}),
@@ -370,6 +361,8 @@ export default function Checkout() {
     } catch (err) {
       const msg = err.response?.data?.error || "Error al procesar el pedido";
       toast.error(msg);
+      // 409: cambió el precio del envío mientras compraba. Se vuelve a cotizar para mostrarle el nuevo.
+      if (err.response?.status === 409) setMotoQuoteRetry((n) => n + 1);
     } finally {
       setLoading(false);
     }
@@ -446,6 +439,12 @@ export default function Checkout() {
                   <span>+{formatPrice(successOrder.ivaAmount)}</span>
                 </div>
               )}
+              {successOrder.shippingCost > 0 && (
+                <div className="flex justify-between text-sm text-[#565e74]">
+                  <span>Envío en moto{successOrder.shippingAddress?.zoneName ? ` (${successOrder.shippingAddress.zoneName})` : ""}</span>
+                  <span>+{formatPrice(successOrder.shippingCost)}</span>
+                </div>
+              )}
               <div className="border-t border-[#bdcaba]/30 pt-2 flex justify-between font-bold text-[#0b1c30]">
                 <span>{isCotizacion ? "Total estimado" : "Total"}</span>
                 <span>{isACConvenir ? "A convenir" : formatPrice(successOrder.total)}</span>
@@ -460,16 +459,25 @@ export default function Checkout() {
               >
                 {successOrder.shippingMethod === "CORREO_ARGENTINO"
                   ? "local_post_office"
+                  : successOrder.shippingMethod === "MOTO"
+                  ? "two_wheeler"
                   : successOrder.shippingMethod === "ENVIO"
                   ? "local_shipping"
                   : "storefront"}
               </span>
               <span>
                 {successOrder.shippingMethod === "CORREO_ARGENTINO"
-                  ? "Tu pedido se enviará por Correo Argentino. Te informaremos el número de seguimiento cuando el envío esté listo."
+                  ? "Lo enviamos por correo. Te confirmamos el costo por WhatsApp y te pasamos el número de seguimiento cuando esté despachado."
+                  : successOrder.shippingMethod === "MOTO"
+                  ? (successOrder.shippingAddress?.deliveryDate
+                    ? `Lo enviamos en moto. Entrega estimada: ${formatDeliveryDate(successOrder.shippingAddress.deliveryDate)}, una vez acreditado el pago.`
+                    : "Lo enviamos en moto una vez aprobada la cotización.")
                   : successOrder.shippingMethod === "ENVIO"
                   ? "Acordamos el envío por WhatsApp una vez confirmado el pedido."
                   : "Retiro en el local — Av. La Plata 744 Timbre 3, CABA."}
+                {shippingAddressLines(successOrder.shippingAddress).slice(0, 2).map((line) => (
+                  <span key={line} className="block mt-1 font-medium text-[#0b1c30]">{line}</span>
+                ))}
               </span>
             </div>
 
@@ -806,7 +814,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="RETIRO"
                       checked={shippingMethod === "RETIRO"}
-                      onChange={() => setShippingMethod("RETIRO")}
+                      onChange={() => chooseShippingMethod("RETIRO")}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span
@@ -829,7 +837,7 @@ export default function Checkout() {
                       name="shippingMethod"
                       value="ENVIO"
                       checked={shippingMethod === "ENVIO"}
-                      onChange={() => setShippingMethod("ENVIO")}
+                      onChange={() => chooseShippingMethod("ENVIO")}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">local_shipping</span>
@@ -840,57 +848,79 @@ export default function Checkout() {
                     <span className="material-symbols-outlined text-[#bdcaba] text-[18px] flex-shrink-0">handshake</span>
                   </label>
 
-                  {/* Correo Argentino — COMENTADO temporalmente. Todavía no tenemos las APIs
-                      integradas con Correo Argentino para cotizar/generar etiquetas, así que la
-                      opción queda oculta del flujo de checkout. El backend igual sigue aceptando
-                      el valor CORREO_ARGENTINO por si hay órdenes históricas o se reactiva. */}
-                  {/*
+                  {/* Envío a domicilio: por correo a todo el país, o en moto en CABA y GBA. Los dos usan
+                      el mismo formulario de dirección, que aparece abajo al elegir uno. */}
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#565e74] pt-2">Envío a domicilio</p>
+
+                  {/* Moto: precio por zona, según la dirección */}
+                  <label className={radioCardCls(shippingMethod === "MOTO")}>
+                    <input
+                      type="radio"
+                      name="shippingMethod"
+                      value="MOTO"
+                      checked={shippingMethod === "MOTO"}
+                      onChange={() => chooseShippingMethod("MOTO")}
+                      className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
+                    />
+                    <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">two_wheeler</span>
+                    <div className="flex-1">
+                      <p className="font-semibold text-[#0b1c30] text-sm">Envío en moto</p>
+                      <p className="text-xs text-[#565e74]">CABA, Gran Buenos Aires y La Plata · Llega en el día o al siguiente, según la hora. Precio según tu zona</p>
+                    </div>
+                    {motoAvailable && <span className="text-xs font-bold text-[#006b2c] flex-shrink-0">{formatPrice(motoQuote.price)}</span>}
+                  </label>
+
+                  {/* Correo: todavía sin tarifas integradas, el costo lo confirma la tienda */}
                   <label className={radioCardCls(shippingMethod === "CORREO_ARGENTINO")}>
                     <input
                       type="radio"
                       name="shippingMethod"
                       value="CORREO_ARGENTINO"
                       checked={shippingMethod === "CORREO_ARGENTINO"}
-                      onChange={() => setShippingMethod("CORREO_ARGENTINO")}
+                      onChange={() => chooseShippingMethod("CORREO_ARGENTINO")}
                       className="h-5 w-5 accent-[#006b2c] flex-shrink-0"
                     />
                     <span className="material-symbols-outlined text-[#565e74] flex-shrink-0">local_post_office</span>
                     <div className="flex-1">
-                      <p className="font-semibold text-[#0b1c30] text-sm">Correo Argentino</p>
-                      <p className="text-xs text-[#565e74]">Envío a domicilio — ingresá tu dirección para ver el costo</p>
+                      <p className="font-semibold text-[#0b1c30] text-sm">Envío por correo</p>
+                      <p className="text-xs text-[#565e74]">A todo el país · Te confirmamos el costo por WhatsApp antes de despacharlo</p>
                     </div>
-                    <span className="material-symbols-outlined text-[#bdcaba] text-[18px] flex-shrink-0">arrow_forward_ios</span>
+                    <span className="text-xs font-medium text-[#565e74] flex-shrink-0">A confirmar</span>
                   </label>
-                  */}
 
-                  {/* Formulario de dirección — solo visible cuando se elige Correo Argentino */}
-                  {shippingMethod === "CORREO_ARGENTINO" && (
+                  {/* Formulario de dirección — solo visible al elegir correo o moto */}
+                  {needsAddress && (
                     <div className="border border-[#bdcaba]/50 rounded-xl p-4 space-y-3 bg-[#eff4ff]/40">
                       <p className="text-xs font-bold uppercase tracking-wider text-[#565e74]">Dirección de entrega</p>
 
                       {/* Calle + Número */}
                       <div className="flex gap-2">
                         <div className="flex-1">
-                          <label className="block text-xs text-[#565e74] mb-1">Calle *</label>
+                          <label htmlFor="ship-street" className="block text-xs text-[#565e74] mb-1">Calle *</label>
                           <input
+                            id="ship-street"
                             type="text"
                             name="streetName"
+                            autoComplete="address-line1"
                             value={shippingAddress.streetName}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
                             placeholder="Av. Corrientes"
+                            maxLength={100}
                             required
                           />
                         </div>
                         <div className="w-24">
-                          <label className="block text-xs text-[#565e74] mb-1">Número *</label>
+                          <label htmlFor="ship-number" className="block text-xs text-[#565e74] mb-1">Número *</label>
                           <input
+                            id="ship-number"
                             type="text"
                             name="streetNumber"
                             value={shippingAddress.streetNumber}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
                             placeholder="1234"
+                            maxLength={10}
                             required
                           />
                         </div>
@@ -899,39 +929,46 @@ export default function Checkout() {
                       {/* Piso + Depto */}
                       <div className="flex gap-2">
                         <div className="flex-1">
-                          <label className="block text-xs text-[#565e74] mb-1">Piso</label>
+                          <label htmlFor="ship-floor" className="block text-xs text-[#565e74] mb-1">Piso</label>
                           <input
+                            id="ship-floor"
                             type="text"
                             name="floor"
                             value={shippingAddress.floor}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
                             placeholder="2"
+                            maxLength={10}
                           />
                         </div>
                         <div className="flex-1">
-                          <label className="block text-xs text-[#565e74] mb-1">Depto</label>
+                          <label htmlFor="ship-apartment" className="block text-xs text-[#565e74] mb-1">Depto</label>
                           <input
+                            id="ship-apartment"
                             type="text"
                             name="apartment"
                             value={shippingAddress.apartment}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
                             placeholder="B"
+                            maxLength={10}
                           />
                         </div>
                       </div>
 
-                      {/* Ciudad */}
+                      {/* Localidad */}
                       <div>
-                        <label className="block text-xs text-[#565e74] mb-1">Ciudad *</label>
+                        <label htmlFor="ship-city" className="block text-xs text-[#565e74] mb-1">Localidad o barrio *</label>
                         <input
+                          id="ship-city"
                           type="text"
                           name="city"
+                          autoComplete="address-level2"
                           value={shippingAddress.city}
                           onChange={handleShippingAddressChange}
                           className={inputCls}
-                          placeholder="Buenos Aires"
+                          placeholder="Morón"
+                          maxLength={80}
                           required
                         />
                       </div>
@@ -939,25 +976,30 @@ export default function Checkout() {
                       {/* Provincia + CP */}
                       <div className="flex gap-2">
                         <div className="flex-1">
-                          <label className="block text-xs text-[#565e74] mb-1">Provincia *</label>
+                          <label htmlFor="ship-province" className="block text-xs text-[#565e74] mb-1">Provincia *</label>
                           <select
+                            id="ship-province"
                             name="provinceCode"
                             value={shippingAddress.provinceCode}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
+                            required
                           >
-                            {PROVINCES.map((p) => (
-                              <option key={p.code} value={p.code}>{p.name}</option>
-                            ))}
+                            <option value="">Elegí…</option>
+                            {PROVINCES
+                              .filter((p) => shippingMethod !== "MOTO" || p.code === "C" || p.code === "B")
+                              .map((p) => (
+                                <option key={p.code} value={p.code}>{p.name}</option>
+                              ))}
                           </select>
                         </div>
                         <div className="w-32">
-                          <label className="block text-xs text-[#565e74] mb-1">Código Postal *</label>
+                          <label htmlFor="ship-postal" className="block text-xs text-[#565e74] mb-1">Código Postal *</label>
                           <input
+                            id="ship-postal"
                             type="text"
                             name="postalCode"
                             autoComplete="postal-code"
-                            inputMode="numeric"
                             value={shippingAddress.postalCode}
                             onChange={handleShippingAddressChange}
                             className={inputCls}
@@ -968,25 +1010,58 @@ export default function Checkout() {
                         </div>
                       </div>
 
-                      {/* Resultado de la cotización */}
-                      {rateLoading && (
+                      {/* Indicaciones + quién recibe */}
+                      <div>
+                        <label htmlFor="ship-references" className="block text-xs text-[#565e74] mb-1">Indicaciones para la entrega</label>
+                        <input
+                          id="ship-references"
+                          type="text"
+                          name="references"
+                          value={shippingAddress.references}
+                          onChange={handleShippingAddressChange}
+                          className={inputCls}
+                          placeholder="Entre calles, timbre, horario…"
+                          maxLength={200}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="ship-recipient" className="block text-xs text-[#565e74] mb-1">¿Recibe otra persona?</label>
+                        <input
+                          id="ship-recipient"
+                          type="text"
+                          name="recipientName"
+                          value={shippingAddress.recipientName}
+                          onChange={handleShippingAddressChange}
+                          className={inputCls}
+                          placeholder="Nombre y apellido (si no sos vos)"
+                          maxLength={100}
+                        />
+                      </div>
+
+                      {/* Resultado de la cotización de la moto */}
+                      {shippingMethod === "MOTO" && motoQuoteLoading && (
                         <div className="flex items-center gap-2 text-xs text-[#565e74] pt-1">
                           <span className="w-3 h-3 border-2 border-[#565e74] border-t-transparent rounded-full animate-spin inline-block" />
                           Cotizando envío...
                         </div>
                       )}
-                      {!rateLoading && shippingRate && (
-                        <div className="flex items-center justify-between text-sm bg-white border border-[#bdcaba]/50 rounded-lg px-3 py-2">
+                      {shippingMethod === "MOTO" && !motoQuoteLoading && motoAvailable && (
+                        <div className="flex items-center justify-between gap-3 text-sm bg-white border border-[#bdcaba]/50 rounded-lg px-3 py-2">
                           <span className="text-[#565e74]">
-                            Correo Arg. Clásico · {shippingRate.deliveryTimeMin}–{shippingRate.deliveryTimeMax} días hábiles
+                            <strong className="text-[#0b1c30]">{motoQuote.zoneName}</strong>
+                            {" · "}
+                            {isMayorista ? "Sale una vez aprobada la cotización" : motoDeliveryText(motoQuote.delivery)}
                           </span>
-                          <span className="font-bold text-[#006b2c]">{formatPrice(shippingRate.price)}</span>
+                          <span className="font-bold text-[#006b2c] flex-shrink-0">{formatPrice(motoQuote.price)}</span>
                         </div>
                       )}
-                      {!rateLoading && !shippingRate && shippingAddress.postalCode.length >= 4 && (
+                      {shippingMethod === "MOTO" && !motoQuoteLoading && motoQuote && !motoQuote.available && (
                         <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                          ⚠️ No se encontró tarifa para ese código postal. Verificá que sea correcto, o elegí &quot;Acordar envío&quot; para coordinar por WhatsApp.
+                          {motoQuote.message}
                         </div>
+                      )}
+                      {shippingMethod === "MOTO" && !motoQuoteLoading && !motoQuote && (
+                        <p className="text-xs text-[#565e74]">Completá la provincia y el código postal para ver el precio y cuándo llega.</p>
                       )}
                     </div>
                   )}
@@ -1011,19 +1086,6 @@ export default function Checkout() {
                       Te faltan <strong>{formatPrice(mayoristaMinimoCompra - subtotalArs)}</strong> para continuar.
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* Aviso cuando Correo Argentino está seleccionado pero sin cotización */}
-              {shippingMethod === "CORREO_ARGENTINO" && !shippingRate && !rateLoading && (
-                <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                  <span
-                    className="material-symbols-outlined text-[18px]"
-                    style={{ fontVariationSettings: "'FILL' 1" }}
-                  >
-                    warning
-                  </span>
-                  <span>Ingresá el código postal de destino para cotizar el envío y poder continuar.</span>
                 </div>
               )}
 
@@ -1221,15 +1283,21 @@ export default function Checkout() {
                       </div>
                     )}
 
-                    {/* Línea de envío — visible solo para Correo Argentino */}
+                    {/* Línea de envío: la moto con su precio; en correo y moto sin cotizar, aclarado */}
                     {shippingCost > 0 && (
                       <div className="flex justify-between text-sm text-[#565e74]">
-                        <span>Envío (Correo Arg.)</span>
+                        <span>Envío en moto ({motoQuote.zoneName})</span>
                         <span>+{formatPrice(shippingCost)}</span>
                       </div>
                     )}
-                    {shippingMethod === "CORREO_ARGENTINO" && shippingCost === 0 && !rateLoading && (
-                      <div className="text-xs text-[#565e74]/70 italic">Costo de envío: ingresá el CP para cotizar</div>
+                    {shippingMethod === "MOTO" && shippingCost === 0 && !motoQuoteLoading && (
+                      <div className="text-xs text-[#565e74]/70 italic">Envío en moto: completá la dirección para cotizar</div>
+                    )}
+                    {shippingMethod === "CORREO_ARGENTINO" && (
+                      <div className="flex justify-between text-sm text-[#565e74]">
+                        <span>Envío por correo</span>
+                        <span>A confirmar</span>
+                      </div>
                     )}
 
                     {(isMayorista || cartHasUsd) && (
@@ -1251,7 +1319,8 @@ export default function Checkout() {
                         <span className="text-[#006b2c]">A convenir</span>
                       ) : hayUsdEnCarrito ? (
                         <span className="text-[#006b2c] text-right leading-tight">
-                          {subtotalArs > 0 && <div>{formatPrice(finalTotal)}</div>}
+                          {/* La moto se cobra en pesos aunque los productos estén en dólares */}
+                          {(subtotalArs > 0 || shippingCost > 0) && <div>{formatPrice(finalTotal)}</div>}
                           <div>{formatPriceWithCurrency(finalTotalUsd, "USD")}</div>
                         </span>
                       ) : (
@@ -1265,11 +1334,10 @@ export default function Checkout() {
                     type="submit"
                     disabled={
                       loading ||
-                      rateLoading ||
                       // Antes: (isMayorista && mayoristaMinimoCompra > 0 && subtotal < mayoristaMinimoCompra)
                       faltaMinimo ||
-                      // Bloquear si eligió Correo Argentino pero aún no hay cotización confirmada
-                      (shippingMethod === "CORREO_ARGENTINO" && (!shippingRate || shippingCost === 0))
+                      // Bloquear la moto hasta tener precio: que el botón no diga un total sin el envío
+                      (shippingMethod === "MOTO" && (motoQuoteLoading || !motoAvailable))
                     }
                     className="w-full py-4 bg-[#006b2c] text-white font-semibold rounded-xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 group disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 mt-2"
                   >
@@ -1278,7 +1346,7 @@ export default function Checkout() {
                         <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         <span>Procesando...</span>
                       </>
-                    ) : rateLoading && shippingMethod === "CORREO_ARGENTINO" ? (
+                    ) : motoQuoteLoading && shippingMethod === "MOTO" ? (
                       <>
                         <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                         <span>Cotizando envío...</span>

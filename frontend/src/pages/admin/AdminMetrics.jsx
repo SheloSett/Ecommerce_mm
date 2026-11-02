@@ -122,6 +122,13 @@ export default function AdminMetrics() {
                       <span>Costo</span>
                       <span className="font-semibold text-white">−{formatPrice(stats.totalCost)}</span>
                     </div>
+                    {/* El envío se le cobra al cliente y se le paga al correo o a la moto: no es ganancia */}
+                    {stats.totalShipping > 0 && (
+                      <div className="flex justify-between text-xs text-emerald-100">
+                        <span>Envíos cobrados</span>
+                        <span className="font-semibold text-white">−{formatPrice(stats.totalShipping)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 

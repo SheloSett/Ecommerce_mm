@@ -47,9 +47,11 @@ function sumItems(items, currency) {
  * @param {Object} manualDiscount - descuento que puso el vendedor sobre toda la venta:
  *                            { type: "PERCENTAGE" | "FIXED", value } o null. Se aplica DESPUÉS del
  *                            cupón (sobre lo que queda) y con las mismas reglas de moneda.
+ * @param {number} shippingCost - costo de envío, siempre en pesos. Se suma al total en pesos después
+ *                            de todo: ni el cupón ni los descuentos lo bajan, y no lleva IVA.
  * @returns {Object} subtotal / descuentos / IVA / total, por moneda.
  */
-function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null }) {
+function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null, shippingCost = 0 }) {
   const subtotalArs = sumItems(items, "ARS");
   const subtotalUsd = sumItems(items, "USD");
 
@@ -122,7 +124,9 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDisco
   // ── Totales ────────────────────────────────────────────────────────────────
   // (subtotal − cupón) + IVA — en ese orden, ver la explicación de arriba.
   // Math.max(0, ...) por las dudas: un cupón nunca puede dejar un total negativo.
-  const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs));
+  // El envío va afuera del Math.max: un cupón del 100% deja en 0 los productos, no el envío.
+  // Antes: round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs))
+  const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs) + (shippingCost || 0));
   const totalUsd = round2(Math.max(0, subtotalUsd - couponDiscountUsd - manualDiscountUsd + ivaAmountUsd));
 
   return {

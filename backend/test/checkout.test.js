@@ -88,7 +88,7 @@ class FakePrismaClient {
       update: async ({ where, data }) => clone(applyData(db.variants[where.id], data)),
       count: async ({ where }) => Object.values(db.variants).filter((v) => v.productId === where.productId && (where.active === undefined || v.active === where.active)).length,
     };
-    this.siteConfig = { findMany: async () => [] };
+    this.siteConfig = { findMany: async () => [], findUnique: async () => null };
     this.coupon = {
       findUnique: async ({ where }) => {
         const c = Object.values(db.coupons).find((x) => x.code === where.code);
@@ -298,6 +298,32 @@ describe("Mercado Pago cobra el total del pedido", () => {
     const order = await placeOrder({ items: [{ productId: 2, variantId: 21, quantity: 2 }] });
     await createPreference({ body: { orderId: order.body.id } }, fakeRes());
     assert.deepEqual(mp.preferences[0].items.map((i) => [i.title, i.unit_price, i.quantity]), [["Cable", 500, 2]]);
+  });
+
+  test("con envío en moto, el envío va como una línea más y se cobra el total", async () => {
+    const order = await placeOrder({
+      items: [{ productId: 2, variantId: 21, quantity: 2 }],
+      shippingMethod: "MOTO",
+      shippingAddress: { streetName: "Rivadavia", streetNumber: "100", city: "Morón", provinceCode: "B", postalCode: "1708" },
+    });
+    assert.equal(order.code, 201);
+    assert.equal(db.orders[order.body.id].total, 7200);
+    await createPreference({ body: { orderId: order.body.id } }, fakeRes());
+    assert.deepEqual(mp.preferences[0].items.map((i) => [i.title, i.unit_price, i.quantity]), [["Cable", 500, 2], ["Envío", 6200, 1]]);
+    assert.equal(prefTotal(mp.preferences[0]), 7200);
+  });
+
+  test("con cupón y envío, una sola línea con el total", async () => {
+    const order = await placeOrder({
+      couponCode: "TODOS10",
+      items: [{ productId: 1, quantity: 1 }],
+      shippingMethod: "MOTO",
+      shippingAddress: { streetName: "Rivadavia", streetNumber: "100", city: "Morón", provinceCode: "B", postalCode: "1708" },
+    });
+    assert.equal(db.orders[order.body.id].total, 1806200, "el cupón no le descuenta al envío");
+    await createPreference({ body: { orderId: order.body.id } }, fakeRes());
+    assert.equal(mp.preferences[0].items.length, 1);
+    assert.equal(prefTotal(mp.preferences[0]), 1806200);
   });
 
   test("un pedido que no es de Mercado Pago no genera link de pago", async () => {

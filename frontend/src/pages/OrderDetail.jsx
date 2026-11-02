@@ -8,6 +8,7 @@ import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
+import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../utils/shipping";
 // Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
 import { escapeHtml as esc } from "../utils/escapeHtml";
 import { withReturnTo } from "../utils/returnTo";
@@ -32,12 +33,13 @@ const PAYMENT_LABEL = {
 
 const SHIPPING_LABEL = {
   RETIRO:           "Retiro en el local",
-  ENVIO:            "Envío a domicilio",
-  CORREO_ARGENTINO: "Correo Argentino",
+  ENVIO:            "Acordar envío",
+  CORREO_ARGENTINO: "Envío por correo",
+  MOTO:             "Envío en moto",
 };
 
 const SHIPPING_ICON = {
-  RETIRO: "🏪", ENVIO: "🚚", CORREO_ARGENTINO: "📮",
+  RETIRO: "🏪", ENVIO: "🚚", CORREO_ARGENTINO: "📮", MOTO: "🛵",
 };
 
 const FULFILLMENT_STAGES_ENVIO = [
@@ -55,7 +57,8 @@ const FULFILLMENT_STAGES_RETIRO = [
 ];
 
 function FulfillmentTracker({ status = "PENDIENTE", shippingMethod = "RETIRO" }) {
-  const stages = (shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO")
+  // Antes: (shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO")
+  const stages = shippingMethod !== "RETIRO"
     ? FULFILLMENT_STAGES_ENVIO : FULFILLMENT_STAGES_RETIRO;
   const currentIdx = stages.findIndex((s) => s.value === status);
   return (
@@ -88,7 +91,7 @@ function FulfillmentTracker({ status = "PENDIENTE", shippingMethod = "RETIRO" })
 
 function exportExcel(order, customer) {
   const isMayorista = customer?.type === "MAYORISTA";
-  const subtotal = order.total + (order.couponDiscount || 0) - (order.ivaAmount || 0);
+  const subtotal = order.total + (order.couponDiscount || 0) - (order.ivaAmount || 0) - (order.shippingCost || 0);
   const header = [
     ["Pedido #", order.id], ["Fecha", formatDate(order.createdAt)],
     ["Estado", order.status === "PENDING" ? "Pendiente de pago" : order.status === "PAYMENT_REVIEW" ? "Revisión de pago" : order.status === "QUOTE_APPROVED" ? "Aprobada (sin pagar)" : "Abonada"],
@@ -157,13 +160,12 @@ function exportPDF(order, customer) {
   // arma Subtotal / Descuento / IVA (con alicuota) / TOTAL para cada moneda.
   const totalRows = breakdownRowsHtml(order, order.coupon?.code);
 
-  const addr = order.shippingAddress;
+  const addr = deliveryAddressOf(order);
   const addrHtml = addr
     ? `<div style="margin-bottom:14px;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:11px;color:#1e293b">
         <div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;font-weight:800;margin-bottom:6px">Dirección de envío</div>
-        ${addr.street ? `<div>${esc(addr.street)}${addr.number ? ` ${esc(addr.number)}` : ""}${addr.floor ? ` ${esc(addr.floor)}` : ""}</div>` : ""}
-        ${addr.city ? `<div>${esc(addr.city)}${addr.province ? `, ${esc(addr.province)}` : ""}</div>` : ""}
-        ${addr.postalCode ? `<div>CP ${esc(addr.postalCode)}</div>` : ""}
+        ${shippingAddressLines(addr).map((line) => `<div>${esc(line)}</div>`).join("")}
+        ${addr.deliveryDate ? `<div style="font-weight:700;margin-top:4px">Entrega estimada: ${esc(formatDeliveryDate(addr.deliveryDate))}</div>` : ""}
       </div>` : "";
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Pedido #${order.id}</title>
@@ -284,7 +286,8 @@ export default function OrderDetail() {
   const originalTotal  = isSnapObj
     ? rawSnap.total
     : (subtotalOriginal + originalIva - originalDiscount);
-  const addr          = order.shippingAddress;
+  const originalShipping = isSnapObj ? (rawSnap.shippingCost || 0) : 0;
+  const addr          = deliveryAddressOf(order);
   const isEnvio       = order.shippingMethod !== "RETIRO";
 
   return (
@@ -437,6 +440,12 @@ export default function OrderDetail() {
                     <span>+{formatPrice(originalIva)}</span>
                   </div>
                 )}
+                {originalShipping > 0 && (
+                  <div className="flex justify-between text-sm text-slate-500">
+                    <span>Envío</span>
+                    <span>+{formatPrice(originalShipping)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-base font-bold text-slate-800 pt-2 border-t border-slate-200">
                   <span>Total original</span>
                   <span>{formatPrice(originalTotal)}</span>
@@ -503,9 +512,14 @@ export default function OrderDetail() {
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
               <h2 className="text-sm font-semibold text-slate-600 mb-3">Dirección de envío</h2>
               <div className="text-sm text-slate-700 space-y-0.5">
-                {addr.street && <p>{addr.street}{addr.number ? ` ${addr.number}` : ""}{addr.floor ? `, ${addr.floor}` : ""}</p>}
-                {addr.city && <p>{addr.city}{addr.province ? `, ${addr.province}` : ""}</p>}
-                {addr.postalCode && <p>CP {addr.postalCode}</p>}
+                {/* Antes leía addr.street/number/province, campos que nunca se guardaron con esos nombres */}
+                {shippingAddressLines(addr).map((line) => <p key={line}>{line}</p>)}
+                {addr.deliveryDate && (
+                  <p className="font-semibold text-slate-800 pt-1">Entrega estimada: {formatDeliveryDate(addr.deliveryDate)}</p>
+                )}
+                {order.shippingMethod === "CORREO_ARGENTINO" && !shippingCost && (
+                  <p className="text-slate-500 pt-1">El costo del envío te lo confirmamos por WhatsApp.</p>
+                )}
               </div>
             </div>
           )}

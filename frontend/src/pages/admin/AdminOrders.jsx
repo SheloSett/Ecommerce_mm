@@ -7,6 +7,7 @@ import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals } from "../../utils/orderTotals";
+import { formatDeliveryDate } from "../../utils/shipping";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
 import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
@@ -51,7 +52,10 @@ const TYPE_LABEL = {
 // Etiquetas para método de entrega
 const SHIPPING_LABEL = {
   RETIRO: { label: "Retiro",  icon: "🏪" },
-  ENVIO:  { label: "Envío",   icon: "🚚" },
+  ENVIO:  { label: "Acordar", icon: "🚚" },
+  // Faltaban: el listado los mostraba como "Retiro"
+  CORREO_ARGENTINO: { label: "Correo", icon: "📮" },
+  MOTO:   { label: "Moto",    icon: "🛵" },
 };
 
 export default function AdminOrders() {
@@ -2308,6 +2312,10 @@ ${pagesHtml}
                             return (
                               <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
                                 {sh.icon} {sh.label}
+                                {/* La moto con su día: es lo que hay que despachar hoy */}
+                                {order.shippingMethod === "MOTO" && order.shippingAddress?.deliveryDate && (
+                                  <span className="block text-[11px] font-normal text-slate-400">{formatDeliveryDate(order.shippingAddress.deliveryDate)}</span>
+                                )}
                               </span>
                             );
                           })()}

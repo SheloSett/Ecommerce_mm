@@ -115,7 +115,7 @@ async function importShipping(order, shippingAddress) {
       },
     },
     recipient: {
-      name: order.customerName,
+      name: shippingAddress.recipientName || order.customerName,
       phone: order.customerPhone || "",
       cellPhone: order.customerPhone || "",
       email: order.customerEmail,
@@ -134,7 +134,8 @@ async function importShipping(order, shippingAddress) {
       },
       productType: "CP",
       weight: 1000,
-      declaredValue: Math.round(order.total),
+      // Se declara lo que vale la mercadería: el envío ya está sumado en el total.
+      declaredValue: Math.round(order.total - (order.shippingCost || 0)),
       height: 10,
       length: 30,
       width: 20,

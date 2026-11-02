@@ -57,13 +57,16 @@ const DEFAULTS = {
 
 // Claves que no se devuelven nunca al navegador (ni al admin: el panel solo sabe si están cargadas).
 const SECRET_KEYS = ["metaCapiToken"];
+// Claves con su propia ruta: la configuración de la moto (lista larga de códigos postales) no tiene que
+// viajar en esta respuesta, que la pide cada visitante en cada entrada a la tienda. Ver shipping.routes.js.
+const HIDDEN_KEYS = ["motoShipping"];
 
 // Config completa (defaults + lo guardado), con los secretos reemplazados por un "<clave>Set".
 async function readSettings() {
   const rows = await prisma.siteConfig.findMany();
   const settings = { ...DEFAULTS };
   rows.forEach((r) => {
-    settings[r.key] = r.value;
+    if (!HIDDEN_KEYS.includes(r.key)) settings[r.key] = r.value;
   });
   for (const key of SECRET_KEYS) {
     settings[`${key}Set`] = settings[key] ? "true" : "false";

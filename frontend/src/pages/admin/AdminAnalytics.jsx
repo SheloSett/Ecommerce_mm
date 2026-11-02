@@ -307,7 +307,7 @@ function EmbudoTab({ data }) {
               { key: "id", label: "#", render: (r) => <Link to={`/admin/ordenes/${r.id}`} className="font-semibold text-blue-600 hover:underline">#{r.id}</Link> },
               { key: "customerName", label: "Cliente" },
               { key: "fulfillmentStatus", label: "Estado", render: (r) => FULFILL[r.fulfillmentStatus] || r.fulfillmentStatus },
-              { key: "shippingMethod", label: "Entrega", render: (r) => ({ RETIRO: "Retiro", ENVIO: "Envío", CORREO_ARGENTINO: "Correo Arg." }[r.shippingMethod] || r.shippingMethod) },
+              { key: "shippingMethod", label: "Entrega", render: (r) => ({ RETIRO: "Retiro", ENVIO: "Acordar", CORREO_ARGENTINO: "Correo", MOTO: "Moto" }[r.shippingMethod] || r.shippingMethod) },
               { key: "dias", label: "Días", align: "right", render: (r) => <span className="font-bold text-red-500">{r.dias}</span> },
             ]} />
           </div>

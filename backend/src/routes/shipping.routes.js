@@ -5,8 +5,17 @@ const {
   generateShipping,
   refreshTracking,
   updateTrackingManual,
+  motoQuote,
+  getMotoConfig,
+  updateMotoConfig,
 } = require("../controllers/shipping.controller");
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
+
+// Moto: cotización para el checkout (pública, no llama a nada externo: es buscar el CP en la tabla) y
+// precios/zonas para Admin → Configuración → Envíos.
+router.get("/moto/quote", motoQuote);
+router.get("/moto/config", authMiddleware, adminMiddleware, requireAnyPermission("configuracion"), getMotoConfig);
+router.put("/moto/config", authMiddleware, adminMiddleware, requireAnyPermission("configuracion"), updateMotoConfig);
 
 // POST /api/shipping/rates — DESMONTADA (30/10/2026). Era pública y el checkout ya no la usa (la opción
 // Correo Argentino está comentada): cada llamada hacía que el servidor se logueara en MiCorreo con la

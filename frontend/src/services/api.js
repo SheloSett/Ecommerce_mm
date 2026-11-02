@@ -514,9 +514,13 @@ export const emailsApi = {
 // ─── Wishlist / Favoritos ─────────────────────────────────────────────────────
 // ─── Correo Argentino / MiCorreo ─────────────────────────────────────────────
 export const shippingApi = {
-  // Público: cotizar envío para un código postal destino
-  getRates: (postalCodeDestination, dimensions = {}) =>
-    api.post("/shipping/rates", { postalCodeDestination, dimensions }),
+  // Antes: getRates → POST /shipping/rates (cotizar con MiCorreo). La ruta está desmontada: el correo
+  // todavía no tiene tarifas integradas y su costo lo confirma la tienda.
+  // Público: precio y día de entrega de la moto para una dirección ({ postalCode, provinceCode, city })
+  motoQuote: (params) => api.get("/shipping/moto/quote", { params }),
+  // Admin: precios por zona, hora de corte y días de reparto
+  getMotoConfig: () => api.get("/shipping/moto/config"),
+  saveMotoConfig: (config) => api.put("/shipping/moto/config", config),
   // Admin: generar envío en MiCorreo
   generate: (orderId) => api.post(`/shipping/generate/${orderId}`),
   // Admin: refrescar tracking desde MiCorreo

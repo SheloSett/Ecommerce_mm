@@ -206,11 +206,14 @@ model Order {
   // fulfillmentStatus: etapa logística del pedido (independiente del estado de pago)
   fulfillmentStatus   String        @default("PENDIENTE")  // PENDIENTE | EN_PREPARACION | ENVIADO | ENTREGADO
   // shippingMethod: cómo el cliente quiere recibir su pedido.
-  // RETIRO = retiro en local, ENVIO = acordar envío, CORREO_ARGENTINO = envío por Correo Argentino via MiCorreo
-  shippingMethod      String        @default("RETIRO")     // RETIRO | ENVIO | CORREO_ARGENTINO
-  // shippingAddress: dirección de envío del cliente (solo para pedidos CORREO_ARGENTINO)
+  // RETIRO = retiro en local, ENVIO = acordar envío, CORREO_ARGENTINO = a domicilio por correo,
+  // MOTO = en el día o al siguiente, CABA y GBA (ver utils/motoShipping.js)
+  shippingMethod      String        @default("RETIRO")     // RETIRO | ENVIO | CORREO_ARGENTINO | MOTO
+  // shippingAddress: dirección de entrega (correo y moto). En la moto además zoneId, zoneName, deliveryDate
+  // ("AAAA-MM-DD", null en cotizaciones) y reviewCity (la localidad no figura para ese CP: que lo revise el panel).
   shippingAddress     Json?
-  // shippingCost: costo de envío calculado por MiCorreo al momento del checkout (0 para RETIRO/ENVIO)
+  // shippingCost: costo de envío en pesos, YA SUMADO en total. Lo calcula el servidor en la moto; en el correo
+  // arranca en 0 y lo carga el admin cuando lo confirma. 0 para RETIRO/ENVIO. No es ganancia.
   shippingCost        Float         @default(0)
   // shippingImported: true si el admin ya generó el envío en MiCorreo desde el panel
   shippingImported    Boolean       @default(false)

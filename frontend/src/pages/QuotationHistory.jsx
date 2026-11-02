@@ -393,6 +393,10 @@ export default function QuotationHistory() {
                           </p>
                         </div>
                       )}
+                      {/* El envío ya está sumado en el total: se muestra para que la cuenta cierre */}
+                      {T.ars.shipping > 0 && (
+                        <p className="mb-2 text-sm text-[#565e74]">Envío: +{formatPrice(T.ars.shipping)}</p>
+                      )}
                       {hasUsd ? (
                         <div className={cardBorder ? "text-[#006b2c]" : "text-[#0b1c30]"}>
                           <p className="text-xs font-semibold uppercase tracking-wide text-[#565e74] mb-1">

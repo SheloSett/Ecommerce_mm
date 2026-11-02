@@ -334,6 +334,13 @@ export default function PayQuotation() {
                 </div>
               )}
 
+              {/* El envío ya está sumado en el total: se muestra para que la cuenta cierre */}
+              {T.ars.shipping > 0 && (
+                <div className="mb-3 flex justify-between text-sm text-[#565e74]">
+                  <span>Envío</span>
+                  <span>+{formatPrice(T.ars.shipping)}</span>
+                </div>
+              )}
               <div className="flex justify-between items-start">
                 {/* Antes: text-slate-700 / text-slate-800 */}
                 <span className="font-semibold text-[#0b1c30]">{quoteHasUsd ? "Total (por moneda)" : "Total a pagar"}</span>

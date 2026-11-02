@@ -36,14 +36,16 @@ const PAYMENT_LABEL = {
 
 const SHIPPING_LABEL = {
   RETIRO:           "Retiro en el local",
-  ENVIO:            "Envío a domicilio",
-  CORREO_ARGENTINO: "Correo Argentino",
+  ENVIO:            "Acordar envío",
+  CORREO_ARGENTINO: "Envío por correo",
+  MOTO:             "Envío en moto",
 };
 
 const SHIPPING_ICON = {
   RETIRO:           "store",
   ENVIO:            "local_shipping",
   CORREO_ARGENTINO: "mail",
+  MOTO:             "two_wheeler",
 };
 
 // Etapas con iconos Material Symbols para pedidos con envío
@@ -63,8 +65,9 @@ const FULFILLMENT_STAGES_RETIRO = [
 ];
 
 function FulfillmentTracker({ status = "PENDIENTE", shippingMethod = "RETIRO" }) {
+  // Antes: shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO"
   const stages =
-    shippingMethod === "ENVIO" || shippingMethod === "CORREO_ARGENTINO"
+    shippingMethod !== "RETIRO"
       ? FULFILLMENT_STAGES_ENVIO
       : FULFILLMENT_STAGES_RETIRO;
   const currentIdx = stages.findIndex((s) => s.value === status);
@@ -681,7 +684,7 @@ export default function OrderHistory() {
 
                       {/* Desglose de totales */}
                       <div className="border-t border-[#bdcaba]/30 pt-3 mt-1 space-y-1.5">
-                        {(discount > 0 || (isMayorista && iva > 0)) && (
+                        {(discount > 0 || (isMayorista && iva > 0) || T.ars.shipping > 0) && (
                           <div className="flex justify-between text-xs text-[#565e74]">
                             <span>Subtotal</span>
                             <span>{formatPrice(subtotal)}</span>
@@ -699,6 +702,12 @@ export default function OrderHistory() {
                           <div className="flex justify-between text-xs text-[#565e74]">
                             <span>IVA</span>
                             <span>+{formatPrice(iva)}</span>
+                          </div>
+                        )}
+                        {T.ars.shipping > 0 && (
+                          <div className="flex justify-between text-xs text-[#565e74]">
+                            <span>Envío</span>
+                            <span>+{formatPrice(T.ars.shipping)}</span>
                           </div>
                         )}
                         <div className="flex flex-col gap-0.5 pt-1 border-t border-[#bdcaba]/30">

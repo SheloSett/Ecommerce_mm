@@ -127,7 +127,9 @@ function orderFinancials(order) {
     revenueArs,
     ivaArs,
     costArs,
-    profitArs: revenueArs - ivaArs - costArs,
+    // El envío cobrado tampoco es ganancia: se le paga al correo o a la moto (igual que el IVA a ARCA).
+    // Antes: revenueArs - ivaArs - costArs
+    profitArs: revenueArs - ivaArs - (order.shippingCost || 0) - costArs,
     revenueUsd,
     hasUsd,
   };
@@ -279,7 +281,7 @@ async function getOrigen(req, res) {
       WEB: "Tienda online", MOSTRADOR: "Venta manual / mostrador",
       MERCADOPAGO: "Mercado Pago", EFECTIVO: "Efectivo", TRANSFERENCIA: "Transferencia",
       COTIZACION: "Cotización", A_CONVENIR: "A convenir",
-      RETIRO: "Retiro en el local", ENVIO: "Envío", CORREO_ARGENTINO: "Correo Argentino",
+      RETIRO: "Retiro en el local", ENVIO: "Acordar envío", CORREO_ARGENTINO: "Correo", MOTO: "Moto",
     };
     const label = (k) => LABELS[k] || k;
 
@@ -489,7 +491,7 @@ async function getClientes(req, res) {
         where: { status: "APPROVED" },
         select: {
           id: true, customerId: true, customerName: true, customerEmail: true, customerType: true,
-          total: true, totalUsd: true, ivaAmount: true, createdAt: true,
+          total: true, totalUsd: true, ivaAmount: true, shippingCost: true, createdAt: true,
           items: { select: { price: true, quantity: true, currency: true, cost: true, product: { select: { cost: true, currency: true } } } },
         },
         orderBy: { createdAt: "asc" },

@@ -52,6 +52,10 @@ function mpItemsFor(order) {
     unit_price:  item.price,
     currency_id: "ARS",
   }));
+  // El envío va como una línea más, para que el cliente vea en MP qué está pagando.
+  if (order.shippingCost > 0) {
+    items.push({ id: "envio", title: "Envío", quantity: 1, unit_price: order.shippingCost, currency_id: "ARS" });
+  }
   const sum = round2(items.reduce((s, i) => s + i.unit_price * i.quantity, 0));
   if (Math.abs(sum - round2(order.total)) < 0.01) return items;
   return [{

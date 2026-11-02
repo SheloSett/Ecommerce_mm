@@ -7,6 +7,7 @@ const http  = require("http");
 const sharp = require("sharp");
 // Datos que escribe el cliente dentro del HTML de los emails: siempre escapados (ver utils/escapeHtml.js)
 const { escapeHtml: esc } = require("../utils/escapeHtml");
+const { SHIPPING_NAMES, formatDeliveryDate, shippingAddressLines } = require("../utils/motoShipping");
 
 // Crea el transporte solo si las variables de entorno de SMTP están configuradas.
 // extra: opciones adicionales de nodemailer (ver createBulkTransporter).
@@ -103,6 +104,22 @@ function splitTotalsByCurrency(order) {
   const totalArs = items.filter((i) => (i.currency || "ARS") !== "USD").reduce((s, i) => s + i.price * i.quantity, 0);
   const totalUsd = items.filter((i) => i.currency === "USD").reduce((s, i) => s + i.price * i.quantity, 0);
   return { hasUsd, totalArs, totalUsd };
+}
+
+// Cómo se entrega el pedido, para el mail y el PDF (textos sin escapar: cada plantilla escapa lo suyo).
+// El costo de envío ya está sumado en Order.total, así que tiene que verse como renglón para que la cuenta cierre.
+function shippingInfo(order) {
+  if (!order?.shippingMethod) return null;
+  // Si el admin lo pasó a retiro, la dirección queda guardada (por si vuelve a envío) pero ya no va.
+  const address = order.shippingMethod === "RETIRO" ? null : order.shippingAddress;
+  const isMoto = order.shippingMethod === "MOTO";
+  return {
+    name: (SHIPPING_NAMES[order.shippingMethod] || order.shippingMethod) + (isMoto && address?.zoneName ? ` (${address.zoneName})` : ""),
+    lines: shippingAddressLines(address),
+    when: isMoto && address?.deliveryDate ? `Entrega estimada: ${formatDeliveryDate(address.deliveryDate)}` : "",
+    // El correo no tiene tarifa cargada: la confirma la tienda después de la compra.
+    costPending: order.shippingMethod === "CORREO_ARGENTINO" && !(order.shippingCost > 0),
+  };
 }
 
 // Resuelve la ruta local de una imagen de producto.
@@ -265,6 +282,15 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
     const dateStr = new Date(order.createdAt || Date.now()).toLocaleDateString("es-AR");
     doc.text(`Fecha:    ${dateStr}`, 320, infoY + 14);
 
+    const delivery = shippingInfo(order);
+    const deliveryLines = delivery
+      ? [`Entrega:  ${delivery.name}`, ...delivery.lines, delivery.when, delivery.costPending ? "Costo de envío a confirmar" : ""].filter(Boolean)
+      : [];
+    deliveryLines.forEach((line, i) => {
+      // Un renglón por dato: la altura de la tabla se calcula contando renglones. Con height, lo largo se corta con "...".
+      doc.text(line, 320, infoY + 26 + i * 12, { width: 225, height: 11, ellipsis: true });
+    });
+
     // ── Tabla ────────────────────────────────────────────────────────────────
     // Columnas: # | Imagen | Producto | Precio unit. | Cant. | Subtotal
     const cols = { num: 25, img: 55, name: 185, price: 90, qty: 45, subtotal: 95 };
@@ -272,7 +298,9 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
     const tableW = PAGE_W;
     const rowH   = 52;
     const headerH = 22;
-    let tableY = order.customerPhone ? infoY + 62 : infoY + 50;
+    // La tabla arranca debajo de lo que sea más largo: los datos del cliente o los de la entrega.
+    // Antes: let tableY = order.customerPhone ? infoY + 62 : infoY + 50;
+    let tableY = Math.max(order.customerPhone ? infoY + 62 : infoY + 50, infoY + 38 + deliveryLines.length * 12);
 
     // Cabecera
     doc.rect(tableX, tableY, tableW, headerH).fill(BRAND);
@@ -366,6 +394,19 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
         .text("IVA (21%)", tableX + 8, rowY + 6, { width: tableW - cols.subtotal - 8 });
       doc.text(
         `+ ${formatARS(order.ivaAmount)}${order.ivaAmountUsd > 0 ? ` · + ${formatMoney(order.ivaAmountUsd, "USD")}` : ""}`,
+        tableX + tableW - cols.subtotal - 4, rowY + 6,
+        { width: cols.subtotal - 4, align: "right" }
+      );
+      rowY += 22;
+    }
+
+    // Fila de envío (ya está sumado en el total)
+    if (order.shippingCost > 0) {
+      doc.rect(tableX, rowY, tableW, 22).fill("#f1f5f9");
+      doc.fillColor("#334155").fontSize(9).font("Helvetica-Bold")
+        .text(delivery?.name || "Envío", tableX + 8, rowY + 6, { width: tableW - cols.subtotal - 8 });
+      doc.text(
+        `+ ${formatARS(order.shippingCost)}`,
         tableX + tableW - cols.subtotal - 4, rowY + 6,
         { width: cols.subtotal - 4, align: "right" }
       );
@@ -497,6 +538,18 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
       + totalRow("TOTAL USD", formatMoney(htmlTotals.totalUsd, "USD"))
     : totalRow("TOTAL", formatARS(order.total));
 
+  // Entrega: método, dirección y, en la moto, el día estimado.
+  const delivery = shippingInfo(order);
+  const deliveryRow = (text) => `<p style="margin:2px 0 0;font-size:13px;color:#334155;">${text}</p>`;
+  const deliveryHtml = delivery
+    ? [
+        deliveryRow(`<strong>Entrega:</strong> ${esc(delivery.name)}`),
+        ...delivery.lines.map((line) => deliveryRow(esc(line))),
+        delivery.when ? deliveryRow(`<strong>${esc(delivery.when)}</strong>`) : "",
+        delivery.costPending ? deliveryRow("El costo del envío no está incluido: te lo confirmamos por WhatsApp.") : "",
+      ].join("")
+    : "";
+
   const html = `<!DOCTYPE html>
 <html lang="es">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -533,6 +586,7 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                   <p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Email:</strong> ${esc(order.customerEmail)}</p>
                   ${order.customerPhone ? `<p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Teléfono:</strong> ${esc(order.customerPhone)}</p>` : ""}
                   <p style="margin:2px 0 0;font-size:13px;color:#334155;"><strong>Fecha:</strong> ${new Date(order.createdAt || Date.now()).toLocaleDateString("es-AR")}</p>
+                  ${deliveryHtml}
                 </td>
               </tr>
             </table>
@@ -573,6 +627,15 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
                   </td>
                   <td style="padding:10px 16px;color:#2563eb;font-weight:700;font-size:13px;text-align:right;">
                     + ${formatARS(order.ivaAmount)}${order.ivaAmountUsd > 0 ? `<br>+ ${formatMoney(order.ivaAmountUsd, "USD")}` : ""}
+                  </td>
+                </tr>` : ""}
+                ${order.shippingCost > 0 ? `
+                <tr style="background:#f8fafc;">
+                  <td colspan="5" style="padding:10px 16px;color:#334155;font-size:13px;font-weight:600;">
+                    🚚 ${esc(delivery?.name || "Envío")}
+                  </td>
+                  <td style="padding:10px 16px;color:#334155;font-weight:700;font-size:13px;text-align:right;">
+                    + ${formatARS(order.shippingCost)}
                   </td>
                 </tr>` : ""}
                 <!-- COMENTADO: acá iba una sola fila TOTAL con formatARS(order.total). En un pedido
@@ -1340,7 +1403,13 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
     return;
   }
 
-  const isRetiro = order.shippingMethod !== "ENVIO";
+  // Antes: order.shippingMethod !== "ENVIO" — a un pedido por correo le decía "listo para retirar"
+  const isRetiro = (order.shippingMethod || "RETIRO") === "RETIRO";
+  const onTheWay = order.shippingMethod === "MOTO"
+    ? "Tu pedido salió en moto y llega a la dirección que nos pasaste."
+    : order.shippingMethod === "CORREO_ARGENTINO"
+    ? `Tu pedido fue despachado por correo.${order.trackingNumber ? ` Número de seguimiento: <strong>${esc(order.trackingNumber)}</strong>.` : " Te pasamos el número de seguimiento apenas lo tengamos."}`
+    : "Tu pedido ya está en camino. Te contactaremos para coordinar la entrega.";
 
   const configs = {
     EN_PREPARACION: {
@@ -1364,7 +1433,7 @@ async function sendOrderFulfillmentEmail(order, newFulfillmentStatus) {
       subtitle: `Hola ${esc(order.customerName)}, tu pedido fue despachado.`,
       color:   "#2563eb",
       icon:    "🚚",
-      message: "Tu pedido ya está en camino. Te contactaremos para coordinar la entrega.",
+      message: onTheWay,
     },
     ENTREGADO: {
       subject: `✅ Pedido entregado — #${order.id}`,

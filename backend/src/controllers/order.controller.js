@@ -40,6 +40,7 @@ const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
+const { resolveOrderShipping } = require("../services/shipping.service");
 
 // Datos del proveedor que viajan en los pedidos del panel (producto y variante). La orden de compra
 // imprime la calle y el teléfono junto al nombre. Antes solo iban id y nombre, y para que la
@@ -302,7 +303,7 @@ async function getOrder(req, res) {
 // POST /api/orders - Crear orden (desde el checkout público)
 async function createOrder(req, res) {
   try {
-    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, sessionId, metaBrowser } = req.body;
+    const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, shippingAddress, shippingCost, sessionId, metaBrowser } = req.body;
     // Meta: cookies del Pixel (_fbp/_fbc) + IP + navegador del cliente al momento de comprar. Se
     // guardan en el pedido para que el Purchase que manda el servidor al aprobarse el pago se pueda
     // atribuir al anuncio. null si el Pixel no está activo o no vino nada. Ver services/meta.service.js.
@@ -621,10 +622,18 @@ async function createOrder(req, res) {
       ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
     }
 
+    // Envío: método, dirección y costo validados acá (ver services/shipping.service.js). shippingCost es
+    // lo que el cliente vio en pantalla: solo sirve para avisarle si cambió, nunca se cobra ese número.
+    const shipping = await resolveOrderShipping({
+      shippingMethod, shippingAddress, expectedCost: shippingCost, isQuotation: method === "COTIZACION",
+    });
+    if (shipping.error) return res.status(shipping.status).json({ error: shipping.error });
+
     const totales = computeOrderTotals({
       items:  orderItems,
       coupon: appliedCoupon,
       ivaRates,
+      shippingCost: shipping.cost,
     });
 
     // Nombres viejos mantenidos para no tocar el resto de la función: ahora son SOLO la parte
@@ -663,9 +672,10 @@ async function createOrder(req, res) {
         customerNote: customerNote?.trim() || null,
         sessionId: trackingSessionId,
         ...(metaBrowserData ? { metaBrowser: metaBrowserData } : {}),
-        // shippingMethod: "RETIRO" (retiro en el local) o "ENVIO" (acordar envío).
-        // Solo se aceptan los dos valores válidos; cualquier otro valor usa el default "RETIRO".
-        shippingMethod: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO",
+        // Antes: ["RETIRO", "ENVIO"].includes(shippingMethod) ? shippingMethod : "RETIRO"
+        shippingMethod: shipping.method,
+        shippingCost:   shipping.cost,
+        ...(shipping.address ? { shippingAddress: shipping.address } : {}),
         ...(appliedCoupon ? {
           couponId: appliedCoupon.id,
           couponDiscount,
@@ -1087,7 +1097,8 @@ async function getStats(req, res) {
           where: { status: "APPROVED", ...orderDateWhere, ...noUsdItems },
           // ivaAmount: se suma para poder DESCONTARLO de la ganancia más abajo. El IVA es plata que
           // se le cobra al cliente para girarla a ARCA, no es ingreso propio.
-          _sum: { total: true, ivaAmount: true },
+          // shippingCost: lo mismo, es para el correo o la moto.
+          _sum: { total: true, ivaAmount: true, shippingCost: true },
         }),
         prisma.product.count({ where: { active: true } }),
         // Traer todos los items de órdenes APPROVED con el costo del producto
@@ -1120,7 +1131,7 @@ async function getStats(req, res) {
         // Pedidos mixtos NUEVOS: su Order.total ya es la parte en pesos, neta de cupón y con IVA.
         prisma.order.aggregate({
           where: { status: "APPROVED", ...orderDateWhere, ...hasUsdItems, totalUsd: { not: null } },
-          _sum: { total: true, ivaAmount: true },
+          _sum: { total: true, ivaAmount: true, shippingCost: true },
         }),
       ]);
 
@@ -1155,10 +1166,13 @@ async function getStats(req, res) {
     // ya se reconstruye desde las líneas, que vienen sin IVA.
     const ivaFacturado = (totalRevenue._sum.ivaAmount || 0) + (mixedNewRevenue._sum.ivaAmount || 0);
 
+    // El envío que se le cobra al cliente tampoco es ganancia: se le paga al correo o a la moto.
+    const envioCobrado = (totalRevenue._sum.shippingCost || 0) + (mixedNewRevenue._sum.shippingCost || 0);
+
     // Antes: const totalProfit = revenue - totalCost;
     // Comentado: contaba el IVA como ganancia. Un pedido de $100.000 + 21% mostraba $21.000 de
     // ganancia extra que en realidad hay que depositarle a ARCA.
-    const totalProfit = revenue - ivaFacturado - totalCost;
+    const totalProfit = revenue - ivaFacturado - envioCobrado - totalCost;
 
     res.json({
       totalOrders,
@@ -1170,6 +1184,7 @@ async function getStats(req, res) {
       // totalIva: lo consume el dashboard para poder aclarar de dónde sale la diferencia entre
       // facturación y ganancia.
       totalIva: Math.round(ivaFacturado * 100) / 100,
+      totalShipping: Math.round(envioCobrado * 100) / 100,
       totalProducts,
     });
   } catch (err) {
@@ -1366,7 +1381,7 @@ async function saveOriginalAndMarkModified(orderId, order) {
       where:   { orderId },
       include: { product: { select: { name: true, images: true } } },
     });
-    // El snapshot ahora es un objeto { items, total, ivaAmount, couponDiscount }
+    // El snapshot ahora es un objeto { items, total, ivaAmount, couponDiscount, shippingCost }
     // para poder mostrar el desglose de precios originales al cliente.
     const snapshot = {
       items: preItems.map((i) => ({
@@ -1381,6 +1396,7 @@ async function saveOriginalAndMarkModified(orderId, order) {
       total:          order.total,
       ivaAmount:      order.ivaAmount      || 0,
       couponDiscount: order.couponDiscount || 0,
+      shippingCost:   order.shippingCost   || 0,
     };
     await prisma.order.update({
       where: { id: orderId },
@@ -1815,7 +1831,9 @@ async function getMyCotizaciones(req, res) {
 // lado y en el orden correcto — (subtotal − cupón) + IVA sobre la base ya descontada.
 // overrideManual: { type, value } | null → si viene, reemplaza al descuento manual guardado (lo usa
 // la edición del pedido, donde el vendedor puede cambiarlo en el mismo guardado).
-async function recalcOrderTotals(orderId, overrideManual = undefined) {
+// overrideShipping: costo de envío nuevo, si es lo que se está cambiando (si no, el que ya tenía el pedido).
+// Antes no miraba el envío: modificar un pedido se lo sacaba del total.
+async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -1839,7 +1857,8 @@ async function recalcOrderTotals(orderId, overrideManual = undefined) {
     ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
   }
 
-  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual });
+  const shippingCost = overrideShipping !== undefined ? overrideShipping : (order.shippingCost || 0);
+  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost });
 
   return {
     total:     t.totalArs,
@@ -2631,8 +2650,9 @@ async function applyCouponToOrder(req, res) {
     if (coupon.expiresAt && new Date() > new Date(coupon.expiresAt)) {
       return res.json({ valid: false, error: "El cupón ya venció" });
     }
-    // El total de la cotización es el precio acordado por el admin (sin descuentos previos)
-    if (coupon.minPurchase && order.total < coupon.minPurchase) {
+    // El total de la cotización es el precio acordado por el admin (sin descuentos previos). El envío no
+    // cuenta para el mínimo, igual que al comprar desde el checkout.
+    if (coupon.minPurchase && order.total - (order.shippingCost || 0) < coupon.minPurchase) {
       return res.json({
         valid: false,
         error: `El cupón requiere una compra mínima de $${coupon.minPurchase.toLocaleString("es-AR")}`,
@@ -2683,6 +2703,7 @@ async function applyCouponToOrder(req, res) {
       items: order.items, coupon, ivaRates: ivaRatesQuote,
       // Si el vendedor ya le había puesto un descuento a mano, se mantiene además del cupón.
       manualDiscount: parseManualDiscount(order.manualDiscountType, order.manualDiscountValue),
+      shippingCost: order.shippingCost || 0,
     });
     const discount = totalesQuote.couponDiscountArs;
     const newTotal = totalesQuote.totalArs;
@@ -3056,13 +3077,13 @@ async function createManualOrder(req, res) {
   }
 }
 
-// PATCH /api/orders/:id/fields — actualiza paymentMethod, fulfillmentStatus, shippingMethod
+// PATCH /api/orders/:id/fields — actualiza paymentMethod, fulfillmentStatus, shippingMethod, shippingCost
 // y/o el descuento general del pedido
 async function updateOrderFields(req, res) {
   try {
     const { id } = req.params;
     // shippingMethod: antes no estaba incluido → al enviarlo desde el frontend data quedaba vacío → 400
-    const { paymentMethod, fulfillmentStatus, shippingMethod, manualDiscountType, manualDiscountValue } = req.body;
+    const { paymentMethod, fulfillmentStatus, shippingMethod, shippingCost, manualDiscountType, manualDiscountValue } = req.body;
 
     const data = {};
 
@@ -3090,27 +3111,43 @@ async function updateOrderFields(req, res) {
     }
 
     if (shippingMethod) {
-      const validShipping = ["RETIRO", "ENVIO", "CORREO_ARGENTINO"];
+      const validShipping = ["RETIRO", "ENVIO", "CORREO_ARGENTINO", "MOTO"];
       if (!validShipping.includes(shippingMethod)) {
         return res.status(400).json({ error: "Método de entrega inválido" });
       }
       data.shippingMethod = shippingMethod;
     }
 
+    // Costo de envío: lo carga el admin (por ejemplo, el del correo una vez que lo confirma) y se suma al
+    // total. Pasar a retiro en el local lo saca.
+    let nuevoEnvio;
+    if (shippingCost !== undefined) {
+      nuevoEnvio = Number(shippingCost);
+      if (!Number.isFinite(nuevoEnvio) || nuevoEnvio < 0) {
+        return res.status(400).json({ error: "Costo de envío inválido" });
+      }
+    }
+    if (shippingMethod === "RETIRO") nuevoEnvio = 0;
+    if (nuevoEnvio !== undefined) data.shippingCost = nuevoEnvio;
+
     if (Object.keys(data).length === 0 && !recalcularPorDescuento) {
       return res.status(400).json({ error: "No se envió ningún campo para actualizar" });
     }
 
-    if (recalcularPorDescuento) {
-      const manual = parseManualDiscount(manualDiscountType, manualDiscountValue);
-      Object.assign(data, await recalcOrderTotals(parseInt(id), manual));
-      // El cliente ve el snapshot: se republica para que el total nuevo le llegue junto con los ítems.
-      const orden = await prisma.order.findUnique({ where: { id: parseInt(id) }, select: { paymentMethod: true } });
-      if (orden?.paymentMethod === "COTIZACION") data.clientSnapshot = await buildSnapshot(parseInt(id));
-    }
-
     // Obtener la orden antes de actualizar para tener customerEmail y shippingMethod
     const existing = await prisma.order.findUnique({ where: { id: parseInt(id) } });
+
+    if (recalcularPorDescuento) {
+      const manual = parseManualDiscount(manualDiscountType, manualDiscountValue);
+      Object.assign(data, await recalcOrderTotals(parseInt(id), manual, nuevoEnvio));
+      // El cliente ve el snapshot: se republica para que el total nuevo le llegue junto con los ítems.
+      if (existing?.paymentMethod === "COTIZACION") data.clientSnapshot = await buildSnapshot(parseInt(id));
+    } else if (existing && nuevoEnvio !== undefined && nuevoEnvio !== (existing.shippingCost || 0)) {
+      // Solo cambia el envío: el total se corrige por la diferencia. Recalcularlo entero leería el cupón y
+      // el IVA de hoy y le cambiaría esos montos a un pedido ya cerrado; y el snapshot no se toca para no
+      // publicarle al cliente los ítems que el admin todavía está editando.
+      data.total = Math.round((existing.total - (existing.shippingCost || 0) + nuevoEnvio) * 100) / 100;
+    }
 
     const order = await prisma.order.update({
       where: { id: parseInt(id) },
