@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
 import { useSiteConfig } from "../context/SiteConfigContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { Flames, Bolts, Frost } from "./CategoryCard";
+import { bannerTheme } from "../utils/bannerTheme";
+import "./category-cards.css";
 
 // Detecta si una URL es interna (relativa o al mismo origen) para usar React Router Link
 // y evitar un page reload que rompe las conexiones SSE.
@@ -33,9 +36,25 @@ const TEXT_MAP = {
   slate:  "text-slate-200",
 };
 
-function BannerRow({ banner }) {
-  const bgCls   = BG_MAP[banner.bgColor]   || "bg-blue-600";
-  const textCls = TEXT_MAP[banner.textColor] || "text-white";
+// Adornos de los estilos especiales, detrás del texto. Llamas y relámpagos van repetidos: uno solo estirado
+// a todo el ancho de la barra quedaba como una línea chata.
+function BarDecor({ theme }) {
+  if (theme === "fire") return <div className="cc-bar-row">{[0, 1, 2, 3].map((i) => <Flames key={i} />)}</div>;
+  if (theme === "bolt") return <div className="cc-bar-row">{[0, 1, 2].map((i) => <Bolts key={i} />)}</div>;
+  if (theme === "ice") return <Frost />;
+  return null;
+}
+
+// preview: en el panel se dibuja quieto y con el link sin navegar, para no perder lo que no se guardó.
+export function BannerRow({ banner, preview = false }) {
+  const theme = bannerTheme(banner);
+  const themed = theme.key !== "normal";
+  // Con estilo especial mandan sus colores: el fondo y la letra elegidos son solo para "Normal".
+  const colorCls = themed
+    ? `cc-bar cc-${theme.key}`
+    : `${BG_MAP[banner.bgColor] || "bg-blue-600"} ${TEXT_MAP[banner.textColor] || "text-white"}`;
+  const textCls = themed ? "cc-bar-text" : "";
+  const scrollDir = preview ? "none" : banner.scrollDir;
 
   const renderContent = () => {
     const { text, linkText, url } = banner;
@@ -44,7 +63,9 @@ function BannerRow({ banner }) {
     // Si la URL es interna usar Link de React Router (client-side nav), si no usar <a>
     // con target="_blank" — evita un full reload que rompía las conexiones SSE persistentes
     const internal = isInternalUrl(url);
-    const linkEl = internal ? (
+    const linkEl = preview ? (
+      <span className="underline font-semibold">{linkText}</span>
+    ) : internal ? (
       <Link to={url.replace(window.location.origin, "")} className="underline font-semibold hover:opacity-80 transition-opacity">
         {linkText}
       </Link>
@@ -64,26 +85,36 @@ function BannerRow({ banner }) {
 
   // Determinar clase de animación según el modo de scroll
   const animClass =
-    banner.scrollDir === "rtl"    ? "ann-rtl"    :
-    banner.scrollDir === "ltr"    ? "ann-ltr"    :
-    banner.scrollDir === "bounce" ? "ann-bounce" : null;
+    scrollDir === "rtl"    ? "ann-rtl"    :
+    scrollDir === "ltr"    ? "ann-ltr"    :
+    scrollDir === "bounce" ? "ann-bounce" : "";
+
+  const decor = themed && <BarDecor theme={theme.key} />;
+  const body = (
+    <>
+      {themed && <span className="material-symbols-outlined cc-icon" aria-hidden="true">{theme.icon}</span>}
+      {renderContent()}
+    </>
+  );
 
   // El modo "bounce" usa inline-block + translateX con calc — más confiable que position:absolute
-  if (banner.scrollDir === "bounce") {
+  if (scrollDir === "bounce") {
     return (
-      <div className={`${bgCls} ${textCls} text-sm py-2 overflow-hidden`}>
-        <div className="ann-bounce">{renderContent()}</div>
+      <div className={`${colorCls} text-sm py-2 overflow-hidden`}>
+        {decor}
+        <div className={`ann-bounce ${textCls}`}>{body}</div>
       </div>
     );
   }
 
   return (
-    <div className={`${bgCls} ${textCls} text-sm py-2 ${banner.scrollDir === "none" ? "text-center px-4" : "overflow-hidden"}`}>
-      {banner.scrollDir === "none" ? (
-        <span>{renderContent()}</span>
+    <div className={`${colorCls} text-sm py-2 ${scrollDir === "none" ? "text-center px-4" : "overflow-hidden"} ${preview ? "rounded-xl" : ""}`}>
+      {decor}
+      {scrollDir === "none" ? (
+        <span className={textCls}>{body}</span>
       ) : (
-        <span className={animClass}>
-          {renderContent()}
+        <span className={`${animClass} ${textCls}`}>
+          {body}
         </span>
       )}
     </div>

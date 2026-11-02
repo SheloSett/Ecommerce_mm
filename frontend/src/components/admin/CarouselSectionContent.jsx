@@ -3,6 +3,8 @@ import { slidesApi, settingsApi, getImageUrl } from "../../services/api";
 import FileDropZone from "./FileDropZone";
 import { useSiteConfig } from "../../context/SiteConfigContext";
 import { bannerToggled, bannersChanged } from "../../utils/announcementBanners";
+import { BANNER_THEMES, bannerTheme } from "../../utils/bannerTheme";
+import { BannerRow } from "../AnnouncementBar";
 import toast from "react-hot-toast";
 
 // ── Constantes para el banner de anuncio ───────────────────────────────────────
@@ -33,8 +35,6 @@ const VISIBILITY_OPTIONS = [
   { key: "MINORISTA", label: "Minoristas", icon: "🛍" },
   { key: "MAYORISTA", label: "Mayoristas", icon: "🏭" },
 ];
-const BG_CSS   = { blue: "bg-blue-600", green: "bg-emerald-600", amber: "bg-amber-400", red: "bg-red-600", slate: "bg-slate-800", black: "bg-black", purple: "bg-purple-600" };
-const TEXT_CSS = { white: "text-white", black: "text-black", yellow: "text-yellow-300", amber: "text-amber-900", slate: "text-slate-200" };
 
 const EMPTY_SLIDE = { title: "", subtitle: "", url: "", active: true, visibility: "AMBOS" };
 // Orden de los slides: por `order` y, si se repite, por antigüedad (id). Mismo criterio que el
@@ -43,7 +43,7 @@ const bySlideOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id - b.id;
 const newBanner = () => ({
   id: Date.now().toString(),
   active: true, text: "", linkText: "", url: "",
-  bgColor: "blue", textColor: "white", scrollDir: "rtl", visibleFor: "AMBOS",
+  theme: "normal", bgColor: "blue", textColor: "white", scrollDir: "rtl", visibleFor: "AMBOS",
 });
 
 // ── Sub-componente: "Visible para" (lo usan los banners de anuncio y los slides) ──
@@ -66,17 +66,7 @@ function VisibilityPicker({ value, onChange }) {
 // ── Sub-componente: card de un banner individual ───────────────────────────────
 function BannerCard({ banner, onChange, onDelete, onToggleActive, toggleDisabled, index }) {
   const update = (field, value) => onChange({ ...banner, [field]: value });
-  const renderPreview = () => {
-    if (!banner.linkText || !banner.text.includes(banner.linkText)) return banner.text;
-    const idx = banner.text.indexOf(banner.linkText);
-    return (
-      <>
-        {banner.text.slice(0, idx)}
-        <span className="underline font-semibold">{banner.linkText}</span>
-        {banner.text.slice(idx + banner.linkText.length)}
-      </>
-    );
-  };
+  const theme = bannerTheme(banner);
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
       <div className="flex items-center justify-between">
@@ -111,28 +101,46 @@ function BannerCard({ banner, onChange, onDelete, onToggleActive, toggleDisabled
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-slate-700 mb-2">Color de fondo</label>
+        <label className="block text-xs font-medium text-slate-700 mb-2">Estilo</label>
         <div className="flex flex-wrap gap-2">
-          {BG_OPTIONS.map((c) => (
-            <button key={c.key} type="button" onClick={() => update("bgColor", c.key)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border-2 text-xs font-medium transition-all ${banner.bgColor === c.key ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"}`}>
-              <span className={`w-3 h-3 rounded-full ${c.cls}`} />{c.label}
+          {BANNER_THEMES.map((t) => (
+            <button key={t.key} type="button" onClick={() => update("theme", t.key)} title={t.hint}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border-2 text-xs font-medium transition-all ${theme.key === t.key ? "border-blue-500 ring-2 ring-blue-200 bg-blue-50 text-blue-700" : "border-slate-200 hover:border-slate-300"}`}>
+              <span className="material-symbols-outlined text-[15px] leading-none" aria-hidden="true">{t.icon}</span>{t.label}
             </button>
           ))}
         </div>
+        <p className="text-xs text-slate-400 mt-1.5 leading-snug">{theme.hint}</p>
       </div>
 
-      <div>
-        <label className="block text-xs font-medium text-slate-700 mb-2">Color de letra</label>
-        <div className="flex flex-wrap gap-2">
-          {TEXT_OPTIONS.map((c) => (
-            <button key={c.key} type="button" onClick={() => update("textColor", c.key)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border-2 text-xs font-medium transition-all ${banner.textColor === c.key ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"}`}>
-              <span className={`w-3 h-3 rounded-full ${c.cls}`} />{c.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Los colores son solo del estilo Normal: los especiales traen los suyos */}
+      {theme.key === "normal" && (
+        <>
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Color de fondo</label>
+            <div className="flex flex-wrap gap-2">
+              {BG_OPTIONS.map((c) => (
+                <button key={c.key} type="button" onClick={() => update("bgColor", c.key)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border-2 text-xs font-medium transition-all ${banner.bgColor === c.key ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"}`}>
+                  <span className={`w-3 h-3 rounded-full ${c.cls}`} />{c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-2">Color de letra</label>
+            <div className="flex flex-wrap gap-2">
+              {TEXT_OPTIONS.map((c) => (
+                <button key={c.key} type="button" onClick={() => update("textColor", c.key)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border-2 text-xs font-medium transition-all ${banner.textColor === c.key ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200 hover:border-slate-300"}`}>
+                  <span className={`w-3 h-3 rounded-full ${c.cls}`} />{c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <div>
         <label className="block text-xs font-medium text-slate-700 mb-2">Movimiento</label>
@@ -149,9 +157,7 @@ function BannerCard({ banner, onChange, onDelete, onToggleActive, toggleDisabled
       {banner.text && (
         <div>
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Vista previa</p>
-          <div className={`${BG_CSS[banner.bgColor] || "bg-blue-600"} ${TEXT_CSS[banner.textColor] || "text-white"} text-sm py-2 px-4 rounded-xl text-center overflow-hidden`}>
-            {renderPreview()}
-          </div>
+          <BannerRow banner={banner} preview />
         </div>
       )}
     </div>

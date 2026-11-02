@@ -396,6 +396,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 189- banners de anuncio (02/11/2026): prender o apagar un banner ahora se guarda al tocarlo, como los slides. Antes solo cambiaba en pantalla hasta tocar "Guardar banners", al final de la lista, y al refrescar seguía como estaba. Además, con cambios sin guardar aparece abajo una barra de aviso y el navegador pregunta antes de refrescar.
 
+190- estilos para los banners de anuncio (02/11/2026): cada banner tiene la opción "Estilo" con Black Friday, Cyber Monday, Fuego, Oferta, Nuevo, Premium, Rayo, Neón y Congelado, cada uno con sus colores, ícono y animación. Normal mantiene los colores elegidos y los banners que ya estaban no cambian. La vista previa del panel usa la misma barra que la tienda.
+
 ##
 
 
