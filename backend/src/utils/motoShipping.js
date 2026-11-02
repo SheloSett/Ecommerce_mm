@@ -8,9 +8,18 @@
 // guardado nada rige DEFAULT_MOTO_CONFIG.
 //
 // Las zonas de partida son las del mapa de la mensajería, partido por partido (CABA va aparte, con su
-// precio). El mapa da partidos y el precio sale del CP, así que cada CP va en la zona de su localidad
-// principal. Formato de cada renglón: "CP Localidad, Otra localidad" o "CP-CP Nombre" para un rango.
+// precio). Cómo se decide la zona de una dirección, en este orden (ver quoteMoto):
+//   1. El CP está en la lista de una zona. La lista resuelve también las excepciones del mapa: La Matanza
+//      está partida en dos zonas y Nordelta es de Tigre, pero va en Zona 3.
+//   2. La localidad está en la lista de una zona, o en la base oficial (utils/motoLocalidades.js), que dice
+//      de qué partido es. Por eso no hace falta cargar los códigos postales uno por uno.
+//   3. Nadie la conoce (un barrio): se busca de qué partido es (services/partidoLookup.service.js).
+//   4. Si tampoco aparece, un CP casi igual a uno de la lista cuenta como esa zona, para revisar.
+// Formato de cada renglón de la lista: "CP Localidad, Otra localidad" o "CP-CP Nombre" para un rango.
 // Los renglones con # son títulos, para que la lista se pueda leer y editar a mano.
+
+const { normalizeName } = require("./placeName");
+const { PARTIDOS, RURAL: RURAL_LIST, ISLANDS: ISLAND_LIST, LOCALITIES } = require("./motoLocalidades");
 
 const CABA_FROM = 1000;
 const CABA_TO = 1499;
@@ -185,18 +194,30 @@ const ZONA_3 = `# Escobar
 1897 Gonnet, Manuel B. Gonnet
 1900 La Plata, Tolosa, Los Hornos
 1901 Ringuelet, Lisandro Olmos
+1902 La Plata, Tolosa, Los Hornos
 1903 Melchor Romero, Abasto
+1904 La Plata, Tolosa, Los Hornos
+1906 La Plata, Tolosa, Los Hornos
 # Berisso y Ensenada
 1923 Berisso
 1925 Ensenada
 1931 Punta Lara
 # Luján
 6700 Luján
+6702 Luján
 6706 Jáuregui
 6708 Open Door
 # Campana y Zárate
 2800 Zárate
 2804 Campana`;
+
+// Los partidos de cada zona, según el mapa. La Matanza está en dos: decide el CP más cercano de cada lista.
+const DEFAULT_PARTIDOS = {
+  caba: "",
+  zona1: "San Fernando, San Isidro, Vicente López, General San Martín, Tres de Febrero, Morón, Hurlingham, Ituzaingó, La Matanza, Lanús, Lomas de Zamora, Avellaneda",
+  zona2: "Tigre, Malvinas Argentinas, José C. Paz, San Miguel, Moreno, Merlo, La Matanza, Ezeiza, Esteban Echeverría, Almirante Brown, Quilmes, Berazategui, Florencio Varela",
+  zona3: "Escobar, Pilar, General Rodríguez, Marcos Paz, Presidente Perón, San Vicente, Cañuelas, La Plata, Berisso, Ensenada, Luján, Campana, Zárate",
+};
 
 const DEFAULT_MOTO_CONFIG = {
   enabled: true,
@@ -209,9 +230,9 @@ const DEFAULT_MOTO_CONFIG = {
   closedDates: [],
   zones: [
     { id: "caba",  name: "CABA",   price: 4500, postalCodes: "1000-1499 CABA, Capital Federal, Ciudad de Buenos Aires, Ciudad Autónoma de Buenos Aires" },
-    { id: "zona1", name: "Zona 1", price: 6200, postalCodes: ZONA_1 },
-    { id: "zona2", name: "Zona 2", price: 7800, postalCodes: ZONA_2 },
-    { id: "zona3", name: "Zona 3", price: 9200, postalCodes: ZONA_3 },
+    { id: "zona1", name: "Zona 1", price: 6200, partidos: DEFAULT_PARTIDOS.zona1, postalCodes: ZONA_1 },
+    { id: "zona2", name: "Zona 2", price: 7800, partidos: DEFAULT_PARTIDOS.zona2, postalCodes: ZONA_2 },
+    { id: "zona3", name: "Zona 3", price: 9200, partidos: DEFAULT_PARTIDOS.zona3, postalCodes: ZONA_3 },
   ],
 };
 
@@ -229,13 +250,6 @@ function parsePostalCode(raw) {
   const m = String(raw ?? "").trim().toUpperCase().match(/^([A-Z])?\s*(\d{4})\s*([A-Z]{3})?$/);
   if (!m) return null;
   return { cp: parseInt(m[2], 10), text: m[2], letter: m[1] || null };
-}
-
-// "Martínez " → "martinez". Para comparar localidades sin que importen acentos ni mayúsculas.
-function normalizeName(raw) {
-  return String(raw ?? "")
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 // ¿El CP cierra con la provincia? null si sí; si no, el mensaje para el cliente. Lo único que se puede
@@ -271,8 +285,22 @@ function parseZoneAreas(text) {
   return { areas, errors };
 }
 
+// "Morón, Hurlingham" → ["moron", "hurlingham"]
+function parsePartidos(text) {
+  return String(text ?? "").split(/[,\n]/).map(normalizeName).filter(Boolean);
+}
+
 function zonesWithAreas(config) {
-  return (config.zones || []).map((zone) => ({ ...zone, areas: parseZoneAreas(zone.postalCodes).areas }));
+  return (config.zones || []).map((zone) => ({
+    ...zone,
+    areas: parseZoneAreas(zone.postalCodes).areas,
+    partidoNames: parsePartidos(zone.partidos),
+  }));
+}
+
+// Lo guardado antes de que las zonas tuvieran partidos: se completa con los del mapa.
+function withDefaultPartidos(config) {
+  return { ...config, zones: (config.zones || []).map((z) => ({ ...z, partidos: z.partidos ?? DEFAULT_PARTIDOS[z.id] ?? "" })) };
 }
 
 const ymd = (d) => d.toISOString().slice(0, 10);
@@ -328,13 +356,76 @@ function shippingAddressLines(address) {
 
 const unavailable = (code, message) => ({ available: false, code, message });
 
+// Los códigos nuevos (CPA) de una ciudad no siempre empiezan con su CP de siempre: Luján es 6700 y sus calles
+// usan B6702; La Plata es 1900 y usa B1902, B1904 y B1906. Un CP a esta distancia de uno de la lista de la
+// zona se toma como de la misma ciudad; más lejos, el pedido queda marcado para que el panel lo revise.
+const CPA_MARGIN = 9;
+
+// Primeros dos dígitos de los CP donde hay partidos del mapa: Gran Buenos Aires y La Plata (16 a 19),
+// Campana y Zárate (28), Luján (66 y 67). La localidad decide la zona solo si el CP es de la región: hay un
+// San Justo en La Matanza y otro en Ayacucho (7150). Los de las listas del panel se suman a estos.
+const BASE_CP_REGIONS = [16, 17, 18, 19, 28, 66, 67];
+
+const OFFICIAL_LOCALITIES = new Map(Object.entries(LOCALITIES).map(([name, partidos]) => [name, partidos.split("|")]));
+const KNOWN_PARTIDOS = new Set(PARTIDOS.map(normalizeName));
+const RURAL = new Set(RURAL_LIST);
+const ISLANDS = new Set(ISLAND_LIST);
+
+const isCabaZone = (zone) => zone.id === "caba";
+
+function cpRegions(zones) {
+  const regions = new Set(BASE_CP_REGIONS);
+  for (const zone of zones) {
+    if (isCabaZone(zone)) continue;
+    for (const area of zone.areas) {
+      for (let r = Math.floor(area.from / 100); r <= Math.floor(area.to / 100); r++) regions.add(r);
+    }
+  }
+  return regions;
+}
+
+// Qué tan lejos queda el CP del más cercano de la lista de la zona.
+function cpDistance(zone, cp) {
+  return Math.min(Infinity, ...zone.areas.map((a) => (cp < a.from ? a.from - cp : cp > a.to ? cp - a.to : 0)));
+}
+
+function zonesOfPartidos(zones, partidos) {
+  const wanted = new Set(partidos.map(normalizeName));
+  return zones.filter((zone) => zone.partidoNames.some((p) => wanted.has(p)));
+}
+
+// La zona de un CP que no está en ninguna lista, según la localidad. Devuelve { zone, review }, null si la
+// moto no llega, o { needsLookup: true } si hay que buscar de qué partido es (lookedUp: lo que se encontró,
+// undefined si todavía no se buscó, null si la búsqueda no respondió).
+function zoneByLocality(zones, cp, cityName, lookedUp) {
+  const delivery = zones.filter((zone) => !isCabaZone(zone));
+  const listed = delivery.filter((zone) => zone.areas.some((a) => a.names.includes(cityName)));
+  const official = OFFICIAL_LOCALITIES.get(cityName);
+  let candidates = listed.length ? listed : official ? zonesOfPartidos(delivery, official) : [];
+  let review = !listed.length && RURAL.has(cityName);
+
+  if (!listed.length && !official) {
+    if (lookedUp === undefined) return { needsLookup: true };
+    candidates = lookedUp?.length
+      ? zonesOfPartidos(delivery, lookedUp)
+      : delivery.filter((zone) => cpDistance(zone, cp) <= CPA_MARGIN);
+    review = true;
+  }
+  if (candidates.length === 0) return null;
+  const zone = candidates.reduce((best, z) => (cpDistance(z, cp) < cpDistance(best, cp) ? z : best));
+  return { zone, review: review || cpDistance(zone, cp) > CPA_MARGIN };
+}
+
 // Cotización para una dirección: cruza CP, provincia y localidad, y devuelve zona, precio y día de entrega.
 //
 // La localidad frena solo si es de OTRA zona (CP 1425 con "Pilar"): ahí el precio saldría mal, sea error o
 // sea para pagar menos. Si no la conocemos (un barrio, una forma de escribirla que no está en la lista) se
 // cotiza igual por el CP y queda marcado para que el panel lo revise: rebotarle la compra a alguien porque
 // escribió su barrio sale más caro que mirarlo.
-function quoteMoto(config, { postalCode, provinceCode, city } = {}, now = new Date()) {
+//
+// lookedUp es lo que encontró la búsqueda de partido; si hace falta buscar y no vino, devuelve needsLookup
+// (la búsqueda es por red: la hace quoteMotoOnline, en services/shipping.service.js).
+function quoteMoto(config, { postalCode, provinceCode, city } = {}, now = new Date(), { lookedUp } = {}) {
   if (!config?.enabled) return unavailable("DISABLED", "El envío en moto no está disponible por el momento.");
   const parsed = parsePostalCode(postalCode);
   if (!parsed) return unavailable("INVALID_CP", "Ingresá un código postal válido, por ejemplo 1425.");
@@ -345,15 +436,25 @@ function quoteMoto(config, { postalCode, provinceCode, city } = {}, now = new Da
   if (provinceError) return unavailable("PROVINCE", provinceError);
 
   const zones = zonesWithAreas(config);
-  const zone = zones.find((z) => z.areas.some((a) => parsed.cp >= a.from && parsed.cp <= a.to));
-  if (!zone) {
-    return unavailable("OUT_OF_AREA", `La moto no llega al código postal ${parsed.text}. Podés elegir el envío por correo o acordar el envío.`);
-  }
+  const cityName = normalizeName(city).replace(/^(partido|pdo) (de |del )?/, "");
+  const outOfArea = () => unavailable("OUT_OF_AREA", `La moto no llega al código postal ${parsed.text}. Podés elegir el envío por correo o acordar el envío.`);
+  if (ISLANDS.has(cityName)) return unavailable("OUT_OF_AREA", "La moto no llega a esa localidad. Podés elegir el envío por correo o acordar el envío.");
 
-  const cityName = normalizeName(city);
+  let zone = zones.find((z) => z.areas.some((a) => parsed.cp >= a.from && parsed.cp <= a.to));
   let reviewCity = false;
-  if (cityName) {
-    const inZone = zone.areas.some((a) => a.names.includes(cityName));
+  if (!zone) {
+    if (!cpRegions(zones).has(Math.floor(parsed.cp / 100))) return outOfArea();
+    if (!cityName) return unavailable("NEED_CITY", "Completá la localidad para calcular el envío.");
+    const found = zoneByLocality(zones, parsed.cp, cityName, lookedUp);
+    if (!found) return outOfArea();
+    if (found.needsLookup) return { ...outOfArea(), needsLookup: true };
+    zone = found.zone;
+    reviewCity = found.review;
+  } else if (cityName) {
+    const inList = zone.areas.some((a) => a.names.includes(cityName));
+    const inPartido = zonesOfPartidos([zone], OFFICIAL_LOCALITIES.get(cityName) || []).length > 0;
+    const inZone = inList || inPartido;
+    if (inPartido && !inList && RURAL.has(cityName)) reviewCity = true;
     if (!inZone) {
       const other = zones.find((z) => z.id !== zone.id && z.areas.some((a) => a.names.includes(cityName)));
       if (other) {
@@ -397,8 +498,12 @@ function validateMotoConfig(input) {
     }
     // Se comparan contra las zonas ANTERIORES: repetir un CP dentro de la misma zona no molesta.
     usedBy.push(...areas.map((a) => ({ from: a.from, to: a.to, zone: name })));
+    const partidos = String(raw?.partidos ?? "");
+    if (partidos.length > 2000) return { error: `La lista de partidos de ${name} es demasiado larga` };
+    const unknownPartido = partidos.split(/[,\n]/).map((p) => p.trim()).find((p) => p && !KNOWN_PARTIDOS.has(normalizeName(p)));
+    if (unknownPartido) return { error: `${name}: no existe el partido "${unknownPartido.slice(0, 60)}" en la provincia de Buenos Aires.` };
     const id = String(raw?.id ?? "").trim().slice(0, 40) || normalizeName(name).replace(/ /g, "-");
-    zones.push({ id, name, price, postalCodes });
+    zones.push({ id, name, price, partidos, postalCodes });
   }
   if (new Set(zones.map((z) => z.id)).size !== zones.length) return { error: "Hay dos zonas con el mismo nombre" };
 
@@ -441,6 +546,7 @@ module.exports = {
   normalizeName,
   postalCodeProvinceError,
   parseZoneAreas,
+  withDefaultPartidos,
   deliveryPromise,
   quoteMoto,
   validateMotoConfig,

@@ -1,6 +1,6 @@
 const { getRates, importShipping, getTracking } = require("../services/micorreo.service");
-const { loadMotoConfig, saveMotoConfig } = require("../services/shipping.service");
-const { quoteMoto, validateMotoConfig } = require("../utils/motoShipping");
+const { loadMotoConfig, saveMotoConfig, quoteMotoOnline } = require("../services/shipping.service");
+const { validateMotoConfig } = require("../utils/motoShipping");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -9,7 +9,7 @@ const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 async function motoQuote(req, res) {
   try {
     const { postalCode, provinceCode, city } = req.query;
-    const quote = quoteMoto(await loadMotoConfig(), { postalCode, provinceCode, city });
+    const quote = await quoteMotoOnline(await loadMotoConfig(), { postalCode, provinceCode, city });
     // reviewCity es para el panel: al cliente no le dice nada.
     const { reviewCity, ...publicQuote } = quote;
     res.json(publicQuote);

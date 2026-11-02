@@ -390,6 +390,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 186- limpieza (02/11/2026): modifyOrder estaba definida dos veces en ordersApi (frontend/src/services/api.js), con el mismo código. Queda una sola; la tienda funciona igual y el build deja de avisar la clave duplicada. ✅
 
+187- envío en moto: la zona sale de la localidad y su partido, sin cargar códigos postales a mano (02/11/2026). Motivo: la moto le decía "no llega" a clientes de Luján y La Plata que escribían el código nuevo de su calle (CPA): Luján es 6700 pero sus calles usan B6702, y La Plata es 1900 pero usa B1902, B1904 y B1906. Cada zona ahora tiene sus partidos, los del mapa de la mensajería (se ven y se cambian en Configuración → Envíos). Cómo se decide: (1) el CP está en la lista de una zona, que sigue resolviendo las excepciones (La Matanza partida en dos, Nordelta); (2) la localidad está en esa lista o en la base oficial de la provincia (Georef, datos.gob.ar: 135 partidos y unas 2000 localidades, en backend/src/utils/motoLocalidades.js), y sale la zona de su partido, siempre que el CP sea de la región (hay un San Justo en La Matanza y otro en Ayacucho); (3) si nadie la conoce, por ejemplo un barrio, la tienda busca sola de qué partido es en OpenStreetMap, mandando solo el nombre del lugar; (4) si tampoco aparece, un CP casi igual a uno de la lista cuenta como esa zona. Los casos 3 y 4, un CP lejano y los parajes rurales quedan marcados en el panel para revisar zona y precio. Las islas del Delta y Martín García no llegan. También entiende abreviaturas (Gral., Ing., Pte.) y el nombre del partido en vez de la localidad; sin localidad, pide completarla. Funciona igual con lo que ya estaba guardado en el panel. Sin migración. ✅
+
 ##
 
 

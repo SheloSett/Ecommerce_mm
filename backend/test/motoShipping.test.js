@@ -4,13 +4,14 @@
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || "secreto-de-prueba";
 
-const { test, describe, beforeEach } = require("node:test");
+const { test, describe, beforeEach, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
 const {
   DEFAULT_MOTO_CONFIG: config, quoteMoto, deliveryPromise, parsePostalCode, parseZoneAreas, validateMotoConfig,
-  sanitizeShippingAddress, shippingAddressLines, formatDeliveryDate,
+  sanitizeShippingAddress, shippingAddressLines, formatDeliveryDate, withDefaultPartidos, normalizeName,
 } = require("../src/utils/motoShipping");
+const { PARTIDOS } = require("../src/utils/motoLocalidades");
 const { computeOrderTotals } = require("../src/utils/orderTotals");
 
 // Hora argentina (UTC-3). Lunes 2/11/2026 a las 10:00.
@@ -87,6 +88,135 @@ describe("zonas del mapa de la mensajería", () => {
 
   test("Nordelta con el CP de Benavídez frena: son zonas distintas", () => {
     assert.equal(quote("1621", "B", "Nordelta").code, "CITY_CONFLICT");
+  });
+});
+
+describe("códigos nuevos (CPA) de una misma ciudad", () => {
+  const conCiudad = (postalCode, city, cfg = config) => quoteMoto(cfg, { postalCode, provinceCode: "B", city });
+  const guardada = { ...config, zones: [{ id: "zona3", name: "Zona 3", price: 9200, partidos: "Luján, La Plata", postalCodes: "6700 Luján" }] };
+
+  test("Luján y La Plata: los números que usan sus calles", () => {
+    for (const [cp, city] of [["6702", "Lujan"], ["B6702EAA", "Luján"], ["1902", "La Plata"], ["1904", "La Plata"], ["B1906FXB", "Tolosa"]]) {
+      const r = conCiudad(cp, city);
+      assert.deepEqual([r.zoneName, r.price, r.reviewCity], ["Zona 3", 9200, false], cp);
+    }
+  });
+
+  test("un número cercano que no está en la lista se cotiza por la localidad, sin molestar al panel", () => {
+    const r = conCiudad("6702", "Lujan", guardada);
+    assert.deepEqual([r.zoneName, r.price, r.reviewCity], ["Zona 3", 9200, false]);
+  });
+
+  test("un número lejano de la misma región también, pero queda para revisar", () => {
+    const r = conCiudad("6750", "Luján", guardada);
+    assert.deepEqual([r.zoneName, r.reviewCity], ["Zona 3", true]);
+  });
+
+  test("con un CP de otra región no alcanza con el nombre", () => {
+    assert.equal(conCiudad("7600", "Luján", guardada).code, "OUT_OF_AREA");
+  });
+
+  test("sin localidad la pide, si el CP es de la región", () => {
+    const r = conCiudad("6709", "", guardada);
+    assert.equal(r.code, "NEED_CITY");
+    assert.equal(r.available, false);
+  });
+
+  test("escribir Capital Federal con un CP vecino no da el precio de CABA", () => {
+    assert.equal(conCiudad("1500", "Capital Federal").code, "OUT_OF_AREA");
+  });
+});
+
+describe("la zona sale de la localidad y su partido", () => {
+  const conCiudad = (postalCode, city, opts, cfg = config) => quoteMoto(cfg, { postalCode, provinceCode: "B", city }, LUNES_10, opts);
+  // Una lista sin ningún código de estos lugares, para que decida solo el partido
+  const soloPartidos = { ...config, zones: config.zones.map((z) => (z.id === "caba" ? z : { ...z, postalCodes: z.id === "zona1" ? "1708 Morón" : z.id === "zona2" ? "1878 Quilmes" : "1900 La Plata" })) };
+
+  test("todos los partidos del mapa existen en la base oficial", () => {
+    assert.equal(validateMotoConfig(config).error, undefined);
+    for (const z of config.zones) for (const p of (z.partidos || "").split(",").filter(Boolean)) {
+      assert.ok(PARTIDOS.map(normalizeName).includes(normalizeName(p)), p);
+    }
+  });
+
+  test("una localidad oficial que no está en ninguna lista: zona de su partido, sin cargar nada", () => {
+    for (const [cp, city, zona] of [["1684", "El Palomar", "Zona 1"], ["1842", "Monte Grande", "Zona 2"], ["1815", "Uribelarrea", "Zona 3"], ["1885", "Guillermo Enrique Hudson", "Zona 2"]]) {
+      const r = conCiudad(cp, city, undefined, soloPartidos);
+      assert.equal(r.zoneName, zona, city);
+    }
+  });
+
+  test("se puede escribir el partido en vez de la localidad", () => {
+    assert.equal(conCiudad("1680", "Partido de Tres de Febrero", undefined, soloPartidos).zoneName, "Zona 1");
+    assert.equal(conCiudad("1860", "Presidente Perón", undefined, soloPartidos).zoneName, "Zona 3");
+  });
+
+  test("entiende las abreviaturas", () => {
+    assert.equal(conCiudad("1748", "Gral. Rodríguez", undefined, soloPartidos).zoneName, "Zona 3");
+    assert.equal(conCiudad("1773", "Ing. Budge").zoneName, "Zona 1");
+  });
+
+  test("el mismo nombre en otro partido: decide el CP", () => {
+    assert.equal(conCiudad("1754", "San Justo").available, true);
+    assert.equal(conCiudad("7150", "San Justo").code, "OUT_OF_AREA"); // el de Ayacucho
+  });
+
+  test("una localidad de un partido fuera del mapa no llega, aunque el CP sea vecino", () => {
+    assert.equal(conCiudad("2812", "Capilla del Señor").code, "OUT_OF_AREA");
+    assert.equal(conCiudad("6705", "Villa Ruiz").code, "OUT_OF_AREA");
+  });
+
+  test("en dos zonas (La Matanza): decide el CP más cercano de cada lista", () => {
+    const cfg = { ...config, zones: [
+      { id: "zona1", name: "Zona 1", price: 1, partidos: "La Matanza", postalCodes: "1704 Ramos Mejía" },
+      { id: "zona2", name: "Zona 2", price: 2, partidos: "La Matanza", postalCodes: "1759 González Catán" },
+    ] };
+    assert.equal(conCiudad("1758", "Villa Luzuriaga", undefined, cfg).zoneName, "Zona 2");
+    assert.equal(conCiudad("1706", "Villa Luzuriaga", undefined, cfg).zoneName, "Zona 1");
+  });
+
+  test("las excepciones de la lista mandan sobre el partido", () => {
+    assert.equal(conCiudad("1670", "Nordelta").zoneName, "Zona 3"); // Tigre es Zona 2
+  });
+
+  test("un CP de la lista con una localidad oficial de esa zona no pide revisar", () => {
+    assert.equal(conCiudad("1708", "El Palomar", undefined, soloPartidos).reviewCity, false);
+  });
+
+  test("islas del Delta: no llega; paraje rural: cotiza, para revisar", () => {
+    assert.equal(conCiudad("2804", "Isla Talavera").code, "OUT_OF_AREA");
+    assert.equal(conCiudad("1646", "Río Carabelas").code, "OUT_OF_AREA");
+    const r = conCiudad("6703", "Alastuey");
+    assert.deepEqual([r.zoneName, r.reviewCity], ["Zona 3", true]);
+  });
+
+  describe("un barrio que no conoce nadie", () => {
+    const BARRIO = "Barrio Inventado del Sol";
+
+    test("pide buscar el partido", () => {
+      assert.equal(conCiudad("1699", BARRIO).needsLookup, true);
+    });
+
+    test("encontrado en un partido del mapa: esa zona, para revisar", () => {
+      const r = conCiudad("1699", BARRIO, { lookedUp: ["Hurlingham"] });
+      assert.deepEqual([r.zoneName, r.reviewCity], ["Zona 1", true]);
+    });
+
+    test("encontrado en varios: el de la zona con el CP más cercano", () => {
+      assert.equal(conCiudad("1882", BARRIO, { lookedUp: ["La Plata", "Quilmes"] }).zoneName, "Zona 2");
+    });
+
+    test("encontrado afuera del mapa: no llega", () => {
+      assert.equal(conCiudad("1699", BARRIO, { lookedUp: ["Junín"] }).code, "OUT_OF_AREA");
+    });
+
+    test("sin resultado o sin servicio: un CP casi igual a uno de la lista cuenta, para revisar", () => {
+      for (const lookedUp of [[], null]) {
+        const r = conCiudad("1709", BARRIO, { lookedUp }, soloPartidos);
+        assert.deepEqual([r.zoneName, r.reviewCity], ["Zona 1", true]);
+        assert.equal(conCiudad("1730", BARRIO, { lookedUp }, soloPartidos).code, "OUT_OF_AREA");
+      }
+    });
   });
 });
 
@@ -204,6 +334,21 @@ describe("lo que se guarda desde el panel", () => {
 
   test("una configuración válida pasa", () => {
     assert.equal(validateMotoConfig(base).error, undefined);
+  });
+
+  test("guarda los partidos de cada zona, y rechaza uno que no existe", () => {
+    const con = (partidos) => validateMotoConfig({ ...base, zones: [{ ...base.zones[0], partidos }] });
+    assert.equal(con("Morón, La Plata").config.zones[0].partidos, "Morón, La Plata");
+    assert.match(con("Morón, Moroncito").error, /Moroncito/);
+    assert.equal(con(undefined).error, undefined);
+  });
+
+  test("lo guardado antes de que hubiera partidos se completa con los del mapa", () => {
+    const vieja = { ...base, zones: [{ id: "zona1", name: "Zona 1", price: 1, postalCodes: "1708 Morón" }, { id: "otra", name: "Otra", price: 1, postalCodes: "" }] };
+    const [zona1, otra] = withDefaultPartidos(vieja).zones;
+    assert.match(zona1.partidos, /Hurlingham/);
+    assert.equal(otra.partidos, "");
+    assert.equal(withDefaultPartidos({ zones: [{ id: "zona1", partidos: "Tigre" }] }).zones[0].partidos, "Tigre");
   });
 
   test("un precio vacío se rechaza: no es envío gratis", () => {
@@ -428,6 +573,74 @@ describe("el pedido con envío", () => {
     assert.deepEqual([a.shippingMethod, a.shippingCost, a.total, a.shippingAddress], ["RETIRO", 0, 10000, undefined]);
     assert.equal(b.shippingMethod, "ENVIO");
     assert.equal(c.shippingMethod, "RETIRO");
+  });
+});
+
+describe("buscar de qué partido es un barrio", () => {
+  const { lookupPartidos, partidosFromResults, clearPartidoCache } = require("../src/services/partidoLookup.service");
+  const { quoteMotoOnline, resolveOrderShipping } = require("../src/services/shipping.service");
+  const realFetch = global.fetch;
+  const lugar = (county, category = "place", state = "Buenos Aires") => ({ category, address: { county, state } });
+  let calls;
+  const stubFetch = (fn) => { global.fetch = async (url) => { calls.push(String(url)); return fn(url); }; };
+  const ok = (results) => ({ ok: true, json: async () => results });
+
+  beforeEach(() => { resetDb(); calls = []; clearPartidoCache(); process.env.PARTIDO_LOOKUP_GAP_MS = "0"; });
+  after(() => { global.fetch = realFetch; delete process.env.PARTIDO_LOOKUP_GAP_MS; });
+
+  test("toma los partidos de lugares de la provincia, con el nombre oficial", () => {
+    assert.deepEqual(partidosFromResults([
+      lugar("Partido del Pilar"), lugar("Partido de Luján"), lugar("Quilmes", "highway"), lugar("Morón", "shop"),
+      lugar("Cuartel II"), lugar("La Capital", "place", "Santa Fe"),
+    ]), ["Pilar", "Luján"]);
+  });
+
+  test("solo manda el nombre del lugar, y lo ya buscado no se vuelve a pedir", async () => {
+    stubFetch(() => ok([lugar("Tigre")]));
+    assert.deepEqual(await lookupPartidos("Barrio del Sol"), ["Tigre"]);
+    assert.deepEqual(await lookupPartidos("barrio del sol "), ["Tigre"]);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /Barrio\+del\+Sol%2C\+Buenos\+Aires%2C\+Argentina/);
+  });
+
+  test("si el servicio falla devuelve null y no lo guarda", async () => {
+    stubFetch(() => { throw new Error("sin red"); });
+    assert.equal(await lookupPartidos("Barrio Caido"), null);
+    stubFetch(() => ok([lugar("Tigre")]));
+    assert.deepEqual(await lookupPartidos("Barrio Caido"), ["Tigre"]);
+  });
+
+  test("si hay demasiadas consultas en fila, no espera", async () => {
+    let release;
+    stubFetch(() => new Promise((resolve) => { release = () => resolve(ok([])); }));
+    const pendientes = ["Lugar Uno", "Lugar Dos", "Lugar Tres"].map((n) => lookupPartidos(n));
+    assert.equal(await lookupPartidos("Lugar Cuatro"), null);
+    for (let i = 0; i < 3; i++) { await new Promise((r) => setTimeout(r, 5)); release?.(); }
+    await Promise.all(pendientes);
+  });
+
+  test("la cotización completa: un barrio de Hurlingham con un CP que no está en ninguna lista", async () => {
+    stubFetch(() => ok([lugar("Hurlingham")]));
+    const r = await quoteMotoOnline(config, { postalCode: "1699", provinceCode: "B", city: "Barrio Nuevo Sur" }, LUNES_10);
+    assert.deepEqual([r.zoneName, r.price, r.reviewCity], ["Zona 1", 6200, true]);
+  });
+
+  test("una dirección que resuelven las listas o la base oficial no sale a buscar", async () => {
+    stubFetch(() => ok([]));
+    await quoteMotoOnline(config, { postalCode: "1708", provinceCode: "B", city: "Barrio Nuevo Sur" }, LUNES_10);
+    await quoteMotoOnline(config, { postalCode: "1842", provinceCode: "B", city: "Monte Grande" }, LUNES_10);
+    await quoteMotoOnline(config, { postalCode: "7600", provinceCode: "B", city: "Barrio Nuevo Sur" }, LUNES_10);
+    assert.equal(calls.length, 0);
+  });
+
+  test("el pedido usa la misma búsqueda, y queda marcado para revisar", async () => {
+    stubFetch(() => ok([lugar("Hurlingham")]));
+    const r = await resolveOrderShipping({
+      shippingMethod: "MOTO",
+      shippingAddress: { streetName: "Rivadavia", streetNumber: "100", city: "Barrio Nuevo Sur", provinceCode: "B", postalCode: "1699" },
+      now: LUNES_10,
+    });
+    assert.deepEqual([r.cost, r.address.zoneName, r.address.reviewCity], [6200, "Zona 1", true]);
   });
 });
 

@@ -169,7 +169,7 @@ export default function ShippingSectionContent() {
         <div>
           <h2 className="font-bold text-slate-800 text-base">Precios por zona</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Si un código postal no está en ninguna zona, el checkout le dice al cliente que la moto no llega ahí.
+            La zona sale de la localidad y su partido, así que no hace falta cargar códigos postales nuevos. Si la localidad es de un partido que no está en ninguna zona, el checkout le dice al cliente que la moto no llega ahí.
           </p>
         </div>
 
@@ -203,11 +203,28 @@ export default function ShippingSectionContent() {
                 aria-expanded={openZone === zone.id}
                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition-colors"
               >
-                {openZone === zone.id ? "Ocultar códigos postales" : "Ver códigos postales"}
+                {openZone === zone.id ? "Ocultar partidos y códigos" : "Ver partidos y códigos"}
               </button>
             </div>
             {openZone === zone.id && (
-              <div>
+              <div className="space-y-3">
+                {zone.id !== "caba" && (
+                  <div>
+                    <label htmlFor={`zone-partidos-${zone.id}`} className="block text-xs font-semibold text-slate-600 mb-1">Partidos de la zona</label>
+                    <textarea
+                      id={`zone-partidos-${zone.id}`}
+                      value={zone.partidos ?? ""}
+                      onChange={(e) => updateZone(zone.id, { partidos: e.target.value })}
+                      rows={3}
+                      className="input text-sm w-full"
+                      spellCheck={false}
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Separados por coma. Solo hay que tocarlos si la mensajería cambia su mapa.
+                    </p>
+                  </div>
+                )}
+                <div>
                 <label htmlFor={`zone-cps-${zone.id}`} className="block text-xs font-semibold text-slate-600 mb-1">Códigos postales de {zone.name}</label>
                 <textarea
                   id={`zone-cps-${zone.id}`}
@@ -219,7 +236,11 @@ export default function ShippingSectionContent() {
                 />
                 <p className="text-xs text-slate-400 mt-1">
                   Un renglón por código postal: <code>1708 Morón, Haedo</code>. Rangos: <code>1000-1499 CABA</code>. Los renglones con <code>#</code> son títulos.
-                  Las localidades sirven para detectar una dirección que no coincide con el código postal.
+                  Las localidades sirven para detectar una dirección que no coincide con el código postal. Esta lista manda sobre los partidos: sirve para las excepciones del mapa.
+                </p>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Localidades: Georef (datos.gob.ar). Búsqueda de barrios: © OpenStreetMap.
                 </p>
               </div>
             )}
