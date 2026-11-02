@@ -388,6 +388,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 185- errores (01/11/2026): cuando falla la descarga de una pantalla (corte de internet o pestaña vieja después de un deploy) la página se recarga sola. Mientras tanto se muestra el spinner, sin "Algo falló" y sin mandarle al admin un email de error falso. Si la recarga tampoco alcanza, el error real se muestra y se avisa igual. ✅
 
+186- limpieza (02/11/2026): modifyOrder estaba definida dos veces en ordersApi (frontend/src/services/api.js), con el mismo código. Queda una sola; la tienda funciona igual y el build deja de avisar la clave duplicada. ✅
+
 ##
 
 

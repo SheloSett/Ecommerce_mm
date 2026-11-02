@@ -226,6 +226,7 @@ export const ordersApi = {
   updateItem: (orderId, itemId, quantity, price, listPrice) => api.patch(`/orders/${orderId}/items/${itemId}`, { quantity, ...(price !== undefined && { price }), ...(listPrice !== undefined && { listPrice }) }),
   deleteItem: (orderId, itemId) => api.delete(`/orders/${orderId}/items/${itemId}`),
   addItem: (orderId, data) => api.post(`/orders/${orderId}/items`, data),
+  // Admin: modificar un pedido ya aprobado (post-pago)
   // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
   // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
   // extra: { manualDiscountType, manualDiscountValue } — descuento sobre todo el pedido (opcional)
@@ -253,11 +254,6 @@ export const ordersApi = {
   // el de otra cuenta): se deja el parámetro para no romper las llamadas existentes.
   applyCoupon: (orderId, couponCode, customerEmail) =>
     customerAuthApi.patch(`/orders/${orderId}/apply-coupon`, { couponCode, customerEmail }),
-  // Admin: modificar un pedido ya aprobado (post-pago)
-  // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
-  // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
-  modifyOrder: (orderId, items, applyCostToProduct = false, extra = {}) =>
-    api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct, ...extra }),
 };
 
 // ─── Pagos ────────────────────────────────────────────────────────────────────
