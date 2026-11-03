@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import { useLocation } from "react-router-dom";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { cartsApi } from "../services/api";
+import { storageGet } from "../utils/storage";
 
 // Rutas donde sí queremos real-time (SSE): el cliente está mirando o editando el carrito,
 // así que si el admin lo modifica/limpia debe verse al instante. En el resto de la app
@@ -42,6 +43,9 @@ const mapItem = (dbItem) => ({
   previousPrice: dbItem.previousPrice ?? null,
 });
 
+// Los ítems de la respuesta del carrito, o ninguno si la respuesta no tiene la forma esperada.
+const itemsOf = (data) => (Array.isArray(data?.items) ? data.items.map(mapItem) : []);
+
 export function CartProvider({ children }) {
   const { customer } = useCustomerAuth();
   const [items, setItems]     = useState([]);
@@ -67,7 +71,7 @@ export function CartProvider({ children }) {
     if (!customer) { setItems([]); return; }
     try {
       const res = await cartsApi.getMe();
-      setItems(res.data ? res.data.items.map(mapItem) : []);
+      setItems(itemsOf(res.data));
     } catch {
       setItems([]);
     }
@@ -98,7 +102,7 @@ export function CartProvider({ children }) {
   const needsRealtimeCart = REALTIME_CART_PATHS.some((p) => location.pathname.startsWith(p));
   useEffect(() => {
     if (!customer || !needsRealtimeCart) return;
-    const token = localStorage.getItem("customer_token");
+    const token = storageGet("customer_token");
     if (!token) return;
 
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -150,7 +154,7 @@ export function CartProvider({ children }) {
     setLoading(true);
     try {
       const res = await cartsApi.updateMyItem(cartItemId, quantity);
-      setItems(res.data ? res.data.items.map(mapItem) : []);
+      setItems(itemsOf(res.data));
     } catch (err) {
       console.error("Error al actualizar cantidad:", err);
     } finally {
@@ -163,7 +167,7 @@ export function CartProvider({ children }) {
     setLoading(true);
     try {
       const res = await cartsApi.removeMyItem(cartItemId);
-      setItems(res.data ? res.data.items.map(mapItem) : []);
+      setItems(itemsOf(res.data));
     } catch (err) {
       console.error("Error al eliminar item:", err);
     } finally {

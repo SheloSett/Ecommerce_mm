@@ -1,3 +1,5 @@
+import { storageGet } from "../utils/storage";
+
 // ─── Registro de eventos de la tienda (búsquedas, vistas, presencia) ───────────
 // Todo lo que sale de acá es "fire and forget": nunca bloquea la UI ni muestra errores al visitante.
 // Se usa fetch con keepalive para que el evento llegue aunque el usuario cambie de página.
@@ -33,7 +35,7 @@ export function getSessionId() {
 function headers() {
   const h = { "Content-Type": "application/json" };
   try {
-    const token = localStorage.getItem("customer_token");
+    const token = storageGet("customer_token");
     if (token) h.Authorization = `Bearer ${token}`;
   } catch { /* nada */ }
   return h;
@@ -84,6 +86,6 @@ export function setPresenceLabel(label) {
 
 export function pingPresence(path) {
   let isAdmin = false;
-  try { isAdmin = !!localStorage.getItem("admin_token"); } catch { /* nada */ }
+  isAdmin = !!storageGet("admin_token");
   post("/ping", { path: path || window.location.pathname, label: currentLabel, isAdmin });
 }

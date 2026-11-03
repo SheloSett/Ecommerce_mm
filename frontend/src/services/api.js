@@ -1,4 +1,5 @@
 import axios from "axios";
+import { storageGet, storageRemove } from "../utils/storage";
 import { cloudinarySized } from "../utils/imageUrl";
 
 // La URL base de la API viene de la variable de entorno de Vite
@@ -51,7 +52,7 @@ function emailNormalizerInterceptor(config) {
 
 // Interceptor: adjunta el token JWT automáticamente si existe en localStorage
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("admin_token");
+  const token = storageGet("admin_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -64,7 +65,7 @@ const customerAuthApi = axios.create({
   baseURL: `${API_URL}/api`,
 });
 customerAuthApi.interceptors.request.use((config) => {
-  const token = localStorage.getItem("customer_token");
+  const token = storageGet("customer_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -75,8 +76,8 @@ customerAuthApi.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem("customer_token");
-      localStorage.removeItem("customer_user");
+      storageRemove("customer_token");
+      storageRemove("customer_user");
       if (!window.location.pathname.startsWith("/admin")) {
         window.location.href = "/login";
       }
@@ -97,8 +98,8 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem("admin_token");
-      localStorage.removeItem("admin_user");
+      storageRemove("admin_token");
+      storageRemove("admin_user");
       // Usar callback de React (setUser(null)) en lugar de window.location.href.
       // Esto permite que ProtectedRoute use <Navigate> sin full page reload ni loops.
       if (_onAdminUnauthorized) {
@@ -115,8 +116,8 @@ api.interceptors.response.use(
 // si no hay, se manda el del cliente para que el mayorista siga viendo sus precios.
 // Token vencido o inválido no da error: el backend lo trata como visitante.
 function storefrontAuthHeaders() {
-  if (localStorage.getItem("admin_token")) return {}; // lo pone el interceptor de `api`
-  const token = localStorage.getItem("customer_token");
+  if (storageGet("admin_token")) return {}; // lo pone el interceptor de `api`
+  const token = storageGet("customer_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

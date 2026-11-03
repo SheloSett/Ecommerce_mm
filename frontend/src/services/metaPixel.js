@@ -1,3 +1,5 @@
+import { storageGet } from "../utils/storage";
+
 // ─── Meta Pixel (Facebook / Instagram) ───────────────────────────────────────
 // Carga el Pixel de Meta en la tienda y manda los eventos estándar de e-commerce: PageView,
 // ViewContent (ficha de producto), AddToCart, InitiateCheckout, Purchase y Contact (clic en un link
@@ -37,7 +39,7 @@ const state = {
 };
 
 function isAdminBrowser() {
-  try { return !!localStorage.getItem("admin_token"); } catch { return false; }
+  return !!storageGet("admin_token");
 }
 
 function loadScript() {
@@ -226,7 +228,7 @@ export function pixelContact({ href } = {}) {
   try {
     const headers = { "Content-Type": "application/json" };
     try {
-      const token = localStorage.getItem("customer_token");
+      const token = storageGet("customer_token");
       if (token) headers.Authorization = `Bearer ${token}`;
     } catch { /* sin token */ }
     const body = {

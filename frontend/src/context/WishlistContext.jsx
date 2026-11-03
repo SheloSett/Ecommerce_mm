@@ -2,18 +2,14 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import toast from "react-hot-toast";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { wishlistApi } from "../services/api";
+import { storageSet, storageGetJSON } from "../utils/storage";
 
 const WishlistContext = createContext(null);
 const STORAGE_KEY = "igwt_wishlist_guest";
 
 // Lee la wishlist de invitado (localStorage). Si lo guardado no es una lista se descarta: cada tarjeta de
 // producto llama a wishlist.some(), y sin una lista la pantalla entera se rompía con "Algo falló".
-const readGuest = () => {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return Array.isArray(saved) ? saved : [];
-  } catch { return []; }
-};
+const readGuest = () => storageGetJSON(STORAGE_KEY, Array.isArray) || [];
 
 export function WishlistProvider({ children }) {
   const { customer } = useCustomerAuth();
@@ -36,7 +32,7 @@ export function WishlistProvider({ children }) {
   // Cuando el invitado guarda su lista, persistir en localStorage
   useEffect(() => {
     if (!customer) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(wishlist));
+      storageSet(STORAGE_KEY, JSON.stringify(wishlist));
     }
   }, [wishlist, customer]);
 

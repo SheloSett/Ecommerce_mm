@@ -1,12 +1,13 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { settingsApi } from "../services/api";
+import { storageGet, storageSet, storageGetJSON, isPlainObject } from "../utils/storage";
 
 // Última configuración recibida, guardada en el navegador: la tienda se dibuja con esa apenas abre y se
 // actualiza cuando llega la nueva (antes mostraba un spinner hasta que respondía /api/settings, hasta 4 s).
 // Si la nueva trae mantenimiento, PublicRoute redirige igual en cuanto llega.
 const CONFIG_CACHE_KEY = "site-config-cache";
 function readCachedConfig() {
-  try { return JSON.parse(localStorage.getItem(CONFIG_CACHE_KEY)) || null; } catch { return null; }
+  return storageGetJSON(CONFIG_CACHE_KEY, isPlainObject);
 }
 
 const SiteConfigContext = createContext({
@@ -66,9 +67,9 @@ export function SiteConfigProvider({ children }) {
   // Solo se aceptan "clasico" y "oscuro" — si hay un valor inválido se resetea y se limpia el storage
   const VALID_THEMES = ["clasico", "oscuro"];
   const [theme, setThemeState] = useState(() => {
-    const saved = localStorage.getItem("site-theme");
+    const saved = storageGet("site-theme");
     if (!VALID_THEMES.includes(saved)) {
-      localStorage.setItem("site-theme", "clasico");
+      storageSet("site-theme", "clasico");
       return "clasico";
     }
     return saved;
@@ -76,11 +77,12 @@ export function SiteConfigProvider({ children }) {
 
   const setTheme = useCallback((newTheme) => {
     setThemeState(newTheme);
-    localStorage.setItem("site-theme", newTheme);
+    storageSet("site-theme", newTheme);
   }, []);
 
   // Pasa la configuración del backend (res.data de /api/settings) al estado.
   const applyConfig = useCallback((data) => {
+    if (!data || typeof data !== "object") return; // una respuesta que no es la configuración no se aplica
     setMaintenanceRaw(data.maintenance === "true");
     // Parsear la fecha programada (vacío o inválido → null)
     const raw = data.maintenanceScheduledAt;
@@ -95,7 +97,7 @@ export function SiteConfigProvider({ children }) {
     if (data.announcementBanners) {
       try {
         const banners = JSON.parse(data.announcementBanners);
-        setAnnouncement(Array.isArray(banners) ? banners.filter((b) => b.active && b.text) : null);
+        setAnnouncement(Array.isArray(banners) ? banners.filter((b) => b && b.active && b.text) : null);
       } catch { setAnnouncement(null); }
     } else if (data.announcementActive === "true" && data.announcementText) {
       setAnnouncement([{
@@ -146,7 +148,7 @@ export function SiteConfigProvider({ children }) {
       .then((res) => {
         clearTimeout(timeout);
         applyConfig(res.data);
-        try { localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(res.data)); } catch { /* sin espacio: no importa */ }
+        if (res.data && typeof res.data === "object") storageSet(CONFIG_CACHE_KEY, JSON.stringify(res.data));
       })
       .catch(console.error)
       .finally(() => { clearTimeout(timeout); setLoading(false); });

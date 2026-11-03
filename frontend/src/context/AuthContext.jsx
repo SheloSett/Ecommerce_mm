@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import { authApi, setOnAdminUnauthorized } from "../services/api";
+import { storageGet, storageSet, storageRemove, storageGetJSON, isPlainObject } from "../utils/storage";
 
 const AuthContext = createContext(null);
 
@@ -16,11 +17,12 @@ export function AuthProvider({ children }) {
 
   // Al montar, verificar si hay sesión guardada
   useEffect(() => {
-    const token = localStorage.getItem("admin_token");
-    const savedUser = localStorage.getItem("admin_user");
+    const token = storageGet("admin_token");
+    // Un dato guardado roto no tira (antes JSON.parse directo): se vuelve a entrar y listo
+    const savedUser = storageGetJSON("admin_user", isPlainObject);
 
     if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
+      setUser(savedUser);
       // Verificar que el token todavía sea válido
       authApi
         .me()
@@ -32,15 +34,13 @@ export function AuthProvider({ children }) {
           const status = err?.response?.status;
           const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
           if (status === 401) {
-            localStorage.removeItem("admin_token");
-            localStorage.removeItem("admin_user");
+            storageRemove("admin_token");
+            storageRemove("admin_user");
             setUser(null);
           } else {
             // Timeout o error transitorio: mantener sesión con datos del localStorage
             if (isTimeout) console.warn("Auth check timeout — manteniendo sesión local");
-            const cached = localStorage.getItem("admin_user");
-            if (cached) setUser(JSON.parse(cached));
-            else setUser(null);
+            setUser(storageGetJSON("admin_user", isPlainObject));
           }
         })
         .finally(() => setLoading(false));
@@ -52,22 +52,22 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     const res = await authApi.login({ email, password });
     const { token, user: userData } = res.data;
-    localStorage.setItem("admin_token", token);
-    localStorage.setItem("admin_user", JSON.stringify(userData));
+    storageSet("admin_token", token);
+    storageSet("admin_user", JSON.stringify(userData));
     setUser(userData);
     return userData;
   };
 
   const logout = () => {
-    localStorage.removeItem("admin_token");
-    localStorage.removeItem("admin_user");
+    storageRemove("admin_token");
+    storageRemove("admin_user");
     setUser(null);
   };
 
   const updateProfile = async (data) => {
     const res = await authApi.updateProfile(data);
     const updated = res.data;
-    localStorage.setItem("admin_user", JSON.stringify(updated));
+    storageSet("admin_user", JSON.stringify(updated));
     setUser(updated);
     return updated;
   };

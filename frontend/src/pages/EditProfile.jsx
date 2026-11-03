@@ -19,27 +19,40 @@ function WhatsAppIcon({ className = "w-5 h-5" }) {
 }
 
 export default function EditProfile() {
-  const { customer, customerLogout, updateCustomerData, updateCustomerWithToken } = useCustomerAuth();
+  const { customer, loadingCustomer, customerLogout, updateCustomerData, updateCustomerWithToken } = useCustomerAuth();
   const { footerPhone } = useSiteConfig();
   const navigate = useNavigate();
   const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
 
-  // Redirigir si no hay sesión
-  if (!customer) {
-    navigate(withReturnTo("/login", routerLocation));
-    return null;
-  }
+  // Sin sesión se va al login. Antes era un "return null" acá arriba, antes de los useState de abajo: si el
+  // cliente cerraba sesión desde la barra estando en esta página, React corría menos hooks que en el render
+  // anterior ("Rendered fewer hooks than expected") y toda la página moría. Ahora la salida está después
+  // de todos los hooks (ver más abajo) y la redirección va en un efecto.
+  useEffect(() => {
+    if (loadingCustomer) return; // la sesión guardada todavía se está restaurando
+    if (!customer) navigate(withReturnTo("/login", routerLocation));
+  }, [customer, loadingCustomer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Estado formulario datos generales ───────────────────────────────────────
-  const [name, setName]               = useState(customer.name || "");
-  const [phone, setPhone]             = useState(customer.phone || "");
-  const [documentType, setDocumentType] = useState(customer.documentType || "DNI");
-  const [cuit, setCuit]               = useState(customer.cuit || "");
+  const [name, setName]               = useState(customer?.name || "");
+  const [phone, setPhone]             = useState(customer?.phone || "");
+  const [documentType, setDocumentType] = useState(customer?.documentType || "DNI");
+  const [cuit, setCuit]               = useState(customer?.cuit || "");
   const [savingProfile, setSavingProfile] = useState(false);
 
   // ─── Estado suscripción emails de restock (solo MAYORISTA) ───────────────────
-  const [unsubscribeRestock, setUnsubscribeRestock] = useState(customer.unsubscribeRestock ?? false);
+  const [unsubscribeRestock, setUnsubscribeRestock] = useState(customer?.unsubscribeRestock ?? false);
   const [savingRestock, setSavingRestock]           = useState(false);
+
+  // Si la sesión se restaura después del primer render, el formulario toma los datos recién ahí
+  useEffect(() => {
+    if (!customer) return;
+    setName(customer.name || "");
+    setPhone(customer.phone || "");
+    setDocumentType(customer.documentType || "DNI");
+    setCuit(customer.cuit || "");
+    setUnsubscribeRestock(customer.unsubscribeRestock ?? false);
+  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Ofertas y novedades por email (todos los clientes) ─────────────────────
   // Se lee de /customers/me: el cliente guardado en el navegador al iniciar sesión no trae este dato.
@@ -86,11 +99,14 @@ export default function EditProfile() {
 
   // Cargar la solicitud existente al montar (si es MINORISTA)
   useEffect(() => {
-    if (customer.type !== "MINORISTA") return;
+    if (customer?.type !== "MINORISTA") return;
     mayoristaRequestsApi.getMy()
       .then((res) => setMayoristaRequest(res.data))
       .catch(() => {});
-  }, [customer.type]);
+  }, [customer?.type]);
+
+  // Recién acá, después del último hook (ver el efecto de arriba)
+  if (!customer) return null;
 
   const handleChangePassword = async (e) => {
     e.preventDefault();

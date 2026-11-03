@@ -1,9 +1,11 @@
+import { storageSet, storageGetJSON } from "./storage";
+
 const KEY = "igwt_recent";
 const MAX  = 8;
 
 export function saveRecent(product) {
   try {
-    const prev = JSON.parse(localStorage.getItem(KEY)) || [];
+    const prev = storageGetJSON(KEY, Array.isArray) || [];
     const snapshot = {
       id:                 product.id,
       name:               product.name,
@@ -24,13 +26,13 @@ export function saveRecent(product) {
       _count: product._count ?? { variants: product.variants?.length ?? 0 },
     };
     const updated = [snapshot, ...prev.filter((p) => p.id !== product.id)].slice(0, MAX);
-    localStorage.setItem(KEY, JSON.stringify(updated));
+    storageSet(KEY, JSON.stringify(updated));
   } catch {}
 }
 
 export function getRecent() {
   try {
-    return JSON.parse(localStorage.getItem(KEY)) || [];
+    return storageGetJSON(KEY, Array.isArray) || [];
   } catch {
     return [];
   }
@@ -39,7 +41,7 @@ export function getRecent() {
 // Devuelve solo los IDs de los productos visitados recientemente (para re-fetchear desde API)
 export function getRecentIds(max = 8) {
   try {
-    const items = JSON.parse(localStorage.getItem(KEY)) || [];
+    const items = storageGetJSON(KEY, Array.isArray) || [];
     return items.slice(0, max).map((p) => p.id).filter(Boolean);
   } catch {
     return [];

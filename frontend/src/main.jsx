@@ -24,6 +24,13 @@ function reportClientError(error, extra = "") {
   } catch { /* reportar nunca puede romper nada */ }
 }
 
+// Cuando lo que falla es la descarga de un archivo de la tienda (ver vite:preloadError más abajo), el
+// visitante ve un mensaje de conexión en vez de "Algo falló". Al servidor se le avisa igual: él mira si
+// el archivo existe antes de mandar el email. Es la misma expresión que DOWNLOAD_ERROR en el backend
+// (routes/events.routes.js): si se agrega un mensaje nuevo, va en los dos.
+const ERROR_DE_DESCARGA = /dynamically imported module|Importing a module script failed|Unable to preload CSS|ChunkLoadError|Loading chunk/i;
+const esErrorDeDescarga = (error) => ERROR_DE_DESCARGA.test(String(error?.message || error));
+
 // Después de un deploy, una pestaña abierta con la versión anterior pide archivos de pantallas que ya
 // no existen (ver los lazy de App.jsx). Se recarga una vez para traer la versión nueva; la marca en
 // sessionStorage evita recargar en bucle si el problema es otro.
@@ -56,23 +63,30 @@ class AppErrorBoundary extends React.Component {
     super(props);
     this.state = { hasError: false };
   }
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, descarga: esErrorDeDescarga(error) };
   }
   componentDidCatch(error, info) {
     console.error(error);
     if (recargandoPorArchivo) return; // la página ya se está recargando sola: no hay nada que avisar
+    if (navigator.onLine === false) return; // sin internet: el aviso no saldría, y la causa es esa
     reportClientError(error, info?.componentStack);
   }
   render() {
     if (this.state.hasError) {
       if (recargandoPorArchivo) return <PageLoader />; // lo mismo que se ve al cargar cualquier pantalla
+      // No bajó un archivo de la tienda (ver esErrorDeDescarga): casi siempre es la conexión del visitante
+      const descarga = this.state.descarga;
       return (
         <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0f172a", fontFamily: "sans-serif" }}>
           <div style={{ textAlign: "center", padding: "40px", background: "#1e293b", borderRadius: "16px", maxWidth: "400px" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px" }}>⚠️</div>
-            <h2 style={{ color: "#f1f5f9", margin: "0 0 8px" }}>Algo falló</h2>
-            <p style={{ color: "#94a3b8", margin: "0 0 24px", fontSize: "14px" }}>Ya nos llegó el aviso del error. Probá de nuevo; si sigue pasando, escribinos por WhatsApp.</p>
+            <div style={{ fontSize: "32px", marginBottom: "16px" }}>{descarga ? "📶" : "⚠️"}</div>
+            <h2 style={{ color: "#f1f5f9", margin: "0 0 8px" }}>{descarga ? "No se pudo cargar la página" : "Algo falló"}</h2>
+            <p style={{ color: "#94a3b8", margin: "0 0 24px", fontSize: "14px" }}>
+              {descarga
+                ? "Parece un problema de conexión. Revisá tu internet y volvé a intentar."
+                : "Ya nos llegó el aviso del error. Probá de nuevo; si sigue pasando, escribinos por WhatsApp."}
+            </p>
             <button
               onClick={() => window.location.reload()}
               style={{ background: "#22c55e", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 24px", fontSize: "14px", fontWeight: "600", cursor: "pointer" }}

@@ -9,6 +9,7 @@ import ProductCard from "../components/ProductCard";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, offersApi } from "../services/api";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
+import { storageGet, storageSet } from "../utils/storage";
 // La jerarquía de categorías ya no está topeada en dos niveles, así que buscar por slug y recorrer
 // una rama tienen que ser recursivos. Ver utils/categoryTree.js.
 import { findBySlug, slugsInBranch } from "../utils/categoryTree";
@@ -141,12 +142,13 @@ export default function Catalog() {
   const [pagination, setPagination] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem("catalog-view") || "grid");
+  // storageGet: con el almacenamiento bloqueado, localStorage directo tiraba acá y el catálogo entero moría
+  const [viewMode, setViewMode] = useState(() => (storageGet("catalog-view") === "list" ? "list" : "grid"));
   const { customer } = useCustomerAuth();
 
   const handleSetView = (mode) => {
     setViewMode(mode);
-    localStorage.setItem("catalog-view", mode);
+    storageSet("catalog-view", mode);
   };
 
   const currentCategory  = searchParams.get("category") || "";
@@ -220,7 +222,7 @@ export default function Catalog() {
       .getAll(params)
       .then((res) => {
         if (!isCurrent()) return;
-        setProducts(res.data.products);
+        setProducts(Array.isArray(res.data?.products) ? res.data.products : []);
         setPagination(res.data.pagination);
         // Analíticas: una búsqueda por término (la paginación y los filtros no la repiten)
         if (currentSearch && lastTrackedSearch.current !== currentSearch) {
@@ -244,7 +246,7 @@ export default function Catalog() {
 
     productsApi
       .getFacets(params)
-      .then((res) => { if (requestId === facetsRequest.current) setFacets(res.data.facets); })
+      .then((res) => { if (requestId === facetsRequest.current) setFacets(Array.isArray(res.data?.facets) ? res.data.facets : []); })
       .catch(() => { if (requestId === facetsRequest.current) setFacets([]); });
   }, [currentCategory, currentSearch, currentOnSale, currentLowStock, currentOfferId, visibleFor]);
 
@@ -261,7 +263,11 @@ export default function Catalog() {
   // Pasamos visibleFor para que el conteo de cada categoría refleje solo lo que este cliente ve
   // realmente (excluye solo-mayorista/minorista y sin stock), igual que la grilla. Depende de
   // visibleFor para refrescar al iniciar/cerrar sesión o cambiar el tipo de cliente.
-  useEffect(() => { categoriesApi.getAll({ visibleFor }).then((res) => setCategories(res.data)); }, [visibleFor]);
+  useEffect(() => {
+    categoriesApi.getAll({ visibleFor })
+      .then((res) => setCategories(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setCategories([]));
+  }, [visibleFor]);
 
   // Campañas de oferta vigentes: cada una es un filtro propio en el bloque "Ofertas y Stock".
   // Se filtran por público igual que en el Home — una campaña solo mayorista no le sirve de filtro

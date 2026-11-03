@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router-do
 import { useAuth } from "../context/AuthContext";
 import { useBadges } from "../context/BadgeContext";
 import toast from "react-hot-toast";
+import { storageGet, storageSet } from "../utils/storage";
 
 // Layout compartido para todas las páginas del panel de administración
 export default function AdminLayout({ children, title }) {
@@ -10,14 +11,15 @@ export default function AdminLayout({ children, title }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // storageGet: con el almacenamiento bloqueado, localStorage directo tiraba acá y todo el panel moría
   const [darkMode, setDarkMode] = useState(
-    () => localStorage.getItem("adminDark") === "1"
+    () => storageGet("adminDark") === "1"
   );
 
   const toggleDark = () => {
     setDarkMode((prev) => {
       const next = !prev;
-      localStorage.setItem("adminDark", next ? "1" : "0");
+      storageSet("adminDark", next ? "1" : "0");
       return next;
     });
   };

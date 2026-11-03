@@ -14,7 +14,7 @@ export function BadgeProvider({ children }) {
 
   const fetchBadges = useCallback(() => {
     ordersApi.getBadgeCounts()
-      .then((res) => setBadges(res.data))
+      .then((res) => { if (res.data && typeof res.data === "object") setBadges(res.data); })
       .catch(() => {});
   }, []);
 

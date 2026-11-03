@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { useLocation } from "react-router-dom";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { notificationsApi } from "../services/api";
+import { storageGet } from "../utils/storage";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -19,6 +20,15 @@ export function NotificationProvider({ children }) {
   // para mostrar "Mis cotizaciones" a cualquier cliente que tenga alguna (antes: solo mayoristas).
   const [quotesCount, setQuotesCount]     = useState(0);
   const eventSourceRef = useRef(null);
+
+  // Lo que devuelve GET /api/notifications/my. Una respuesta con otra forma (un proxy, un error intermedio)
+  // no se toma: una lista que no era lista rompía el menú en todas las páginas.
+  const applyMine = (data) => {
+    if (!data || typeof data !== "object") return;
+    setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+    setUnreadCount(Number(data.unreadCount) || 0);
+    setQuotesCount(Number(data.quotesCount) || 0);
+  };
 
   // Cierra la conexión SSE activa si hay una
   function closeSSE() {
@@ -42,9 +52,7 @@ export function NotificationProvider({ children }) {
     const doFetch = async () => {
       try {
         const res = await notificationsApi.getMy();
-        setNotifications(res.data.notifications);
-        setUnreadCount(res.data.unreadCount);
-        setQuotesCount(res.data.quotesCount || 0);
+        applyMine(res.data);
       } catch {
         // Falla silenciosa
       }
@@ -70,7 +78,7 @@ export function NotificationProvider({ children }) {
       return;
     }
 
-    const token = localStorage.getItem("customer_token");
+    const token = storageGet("customer_token");
     if (!token) return;
 
     const url = `${API_URL}/api/notifications/stream?token=${encodeURIComponent(token)}`;
@@ -82,9 +90,9 @@ export function NotificationProvider({ children }) {
         const data = JSON.parse(event.data);
 
         if (data.type === "init") {
-          setNotifications(data.notifications);
-          setUnreadCount(data.unreadCount);
-        } else if (data.type === "notification") {
+          setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+          setUnreadCount(Number(data.unreadCount) || 0);
+        } else if (data.type === "notification" && data.notification) {
           setNotifications((prev) => [data.notification, ...prev].slice(0, 50));
           setUnreadCount((prev) => prev + 1);
         }
@@ -118,9 +126,7 @@ export function NotificationProvider({ children }) {
     if (!customer) return;
     try {
       const res = await notificationsApi.getMy();
-      setNotifications(res.data.notifications);
-      setUnreadCount(res.data.unreadCount);
-      setQuotesCount(res.data.quotesCount || 0);
+      applyMine(res.data);
     } catch {
       // Falla silenciosa
     }
