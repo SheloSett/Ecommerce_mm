@@ -2,7 +2,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { sortOrderItems, itemSupplier } from "./orderItemSort.js";
+import { sortOrderItems, itemSupplier, itemSku } from "./orderItemSort.js";
 
 const sup = (name) => ({ id: name.length, name });
 const items = [
@@ -12,6 +12,25 @@ const items = [
   { id: 4, price: 1500, currency: "ARS", product: { name: "Auricular", supplier: sup("emax") } },
 ];
 const ids = (list) => list.map((i) => i.id);
+
+describe("itemSku", () => {
+  test("manda el SKU guardado al venderse, después el de la variante y después el del producto", () => {
+    const product = { sku: "PROD" };
+    assert.equal(itemSku({ variantSku: "VENDIDO", variant: { sku: "VAR" }, product }), "VENDIDO");
+    assert.equal(itemSku({ variantSku: null, variant: { sku: "VAR" }, product }), "VAR");
+    assert.equal(itemSku({ product }), "PROD");
+  });
+
+  test("una variante con SKU vacío usa el del producto", () => {
+    assert.equal(itemSku({ variantSku: "", variant: { sku: "" }, product: { sku: "PROD" } }), "PROD");
+  });
+
+  test("sin SKU en ningún lado (ítem libre o producto borrado): null, para no mostrar la línea", () => {
+    assert.equal(itemSku({ product: { sku: null } }), null);
+    assert.equal(itemSku({ productName: "Borrado", product: { id: null, name: "Borrado" } }), null);
+    assert.equal(itemSku({}), null);
+  });
+});
 
 describe("sortOrderItems", () => {
   test("como se cargó: igual que vino, y no toca el original", () => {

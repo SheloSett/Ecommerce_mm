@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import PrintPricesModal from "../../components/admin/PrintPricesModal";
 import { ordersApi, productsApi, shippingApi, suppliersApi, getImageUrl } from "../../services/api";
-import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
+import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, itemSku, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
@@ -241,6 +241,7 @@ export default function AdminOrderDetail() {
       itemId:       i.id,
       productId:    i.productId,
       name:         i.product?.name || "Producto",
+      sku:          itemSku(i), // solo para mostrarlo: no se envía al guardar
       image:        i.product?.images?.[0] || null,
       // Ítem libre (sin producto en el catálogo): se le puede cargar una foto desde acá
       isFree:       !i.productId,
@@ -374,6 +375,7 @@ export default function AdminOrderDetail() {
       setEditItems((prev) => [...prev, {
         productId:    product.id,
         name:         product.name,
+        sku:          product.sku || null,
         image:        product.images?.[0] || null,
         quantity:     1,
         price:        price,
@@ -948,6 +950,7 @@ export default function AdminOrderDetail() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p>
                         {item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
+                        {item.sku && <p className="text-[11px] text-slate-500 mt-0.5">SKU: {item.sku}</p>}
                       </div>
                       {/* Precio de venta + costo (proveedor) + cantidad editables */}
                       <div className="flex flex-col items-end gap-1">
@@ -1215,6 +1218,7 @@ export default function AdminOrderDetail() {
                           {!showOriginal && item.variantLabel && item.variantLabel.split(" | ").map((v, vi) => (
                             <p key={vi} className="text-xs text-blue-600 font-medium mt-0.5">{v}</p>
                           ))}
+                          {itemSku(item) && <p className="text-[11px] text-slate-500 mt-0.5">SKU: {itemSku(item)}</p>}
                           {/* La moneda sale de la línea (snapshot de la venta). En la vista del pedido
                               original el snapshot viejo puede no tenerla → cae a ARS, que es lo que
                               era antes de que existiera el selector de moneda. */}

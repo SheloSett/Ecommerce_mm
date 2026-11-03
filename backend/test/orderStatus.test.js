@@ -59,7 +59,10 @@ class FakePrismaClient {
         const o = db.orders[where.id];
         return o ? { ...clone(o), items: o.items.map(withProduct) } : null;
       },
-      update: async ({ where, data }) => clone(applyData(db.orders[where.id], data)),
+      update: async ({ where, data, include }) => {
+        if (include) db.lastOrderInclude = include; // lo que pide la respuesta de "Modificar pedido"
+        return clone(applyData(db.orders[where.id], data));
+      },
       findMany: async ({ where }) => Object.values(db.orders).filter((o) =>
         (!where.id?.not || o.id !== where.id.not) &&
         (!where.status?.in || where.status.in.includes(o.status)) &&
@@ -284,6 +287,18 @@ describe("Modificar pedido: el stock se mueve solo si el pedido ya lo descontó 
     const res = await modify(84, [{ itemId: linea.id, productId: 1, quantity: 1, price: 1000 }, { productId: 3, variantId: 41, quantity: 1, price: 500 }]);
     assert.equal(res.code, 400);
     assert.equal(db.variants[41].stock, 30);
+  });
+});
+
+describe("Modificar pedido: la respuesta reemplaza el pedido en pantalla", () => {
+  beforeEach(resetDb);
+
+  test("trae el SKU del producto: sin eso desaparecía del detalle al guardar, hasta recargar", async () => {
+    addOrder(95, { status: "QUOTE_APPROVED", paymentMethod: "TRANSFERENCIA" }, [{ productId: 1, quantity: 1 }]);
+    const [linea] = db.orders[95].items;
+    const res = await modify(95, [{ itemId: linea.id, productId: 1, quantity: 2, price: 1000 }]);
+    assert.equal(res.code, 200);
+    assert.equal(db.lastOrderInclude.items.include.product.select.sku, true);
   });
 });
 

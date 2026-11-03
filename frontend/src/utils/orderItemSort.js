@@ -18,6 +18,10 @@ export const ORDER_ITEM_SORTS = [
 // variante, si no el del producto. Mismo criterio que la orden de compra.
 export const itemSupplier = (item) => item?.supplier ?? item?.variant?.supplier ?? item?.product?.supplier ?? null;
 
+// SKU de una línea: el que se guardó al venderse esa variante, si no el actual de la variante, si no el
+// del producto. Con || porque el panel puede guardar el SKU vacío ("") en vez de null.
+export const itemSku = (item) => item?.variantSku || item?.variant?.sku || item?.product?.sku || null;
+
 const itemName = (item) => (item?.product?.name || item?.productName || item?.name || "").toString();
 const byName = (a, b) => itemName(a).localeCompare(itemName(b), "es", { sensitivity: "base" });
 

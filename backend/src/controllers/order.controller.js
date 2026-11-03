@@ -66,11 +66,12 @@ async function attachVariantDetails(orders) {
     // supplier: proveedor por variante (override del producto) — lo usa la orden de compra
     // para agrupar por el proveedor real de la variante cuando lo tiene.
     // Antes: select: { id: true, module: true, shelf: true, cost: true, images: true },
-    select: { id: true, module: true, shelf: true, cost: true, images: true, supplier: { select: SUPPLIER_SELECT } },
+    // sku: se muestra en el detalle del pedido cuando la línea no lo guardó al venderse (variantSku)
+    select: { id: true, sku: true, module: true, shelf: true, cost: true, images: true, supplier: { select: SUPPLIER_SELECT } },
   });
   const map = {};
   // Antes: map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images };
-  for (const v of variants) map[v.id] = { module: v.module, shelf: v.shelf, cost: v.cost, images: v.images, supplier: v.supplier };
+  for (const v of variants) map[v.id] = { sku: v.sku, module: v.module, shelf: v.shelf, cost: v.cost, images: v.images, supplier: v.supplier };
   for (const o of list) {
     for (const i of (o.items || [])) {
       if (i.variantId && map[i.variantId]) i.variant = map[i.variantId];
@@ -275,7 +276,8 @@ async function getOrder(req, res) {
             // pueda aplicar el mismo criterio que costoMaestroEnMoneda(): el costo maestro solo se
             // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
             // Antes: ... shelf: true, cost: true, supplier: ...
-            product: { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            // sku: se muestra en la lista de productos del detalle.
+            product: { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
             // proveedor elegido para la línea en "Modificar pedido" (null = el de la variante o del producto)
             supplier: { select: SUPPLIER_SELECT },
           },
@@ -3531,7 +3533,7 @@ async function modifyOrder(req, res) {
       include: {
         items: {
           include: {
-            product:  { select: { id: true, name: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            product:  { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
             supplier: { select: SUPPLIER_SELECT },
           },
           orderBy: { id: "asc" },
