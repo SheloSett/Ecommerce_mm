@@ -201,6 +201,7 @@ export default function AdminOffers() {
         // inStock: los productos agotados no se ofrecen. Ponerlos en una campaña no hace nada útil
         // —el descuento se escribe pero el producto no se muestra en la tienda— y encima inflaba el
         // número de "Agregar todos", que es el que el admin usa para saber cuántos entran.
+        // excludePaused: tampoco los que el admin despublicó a mano, aunque tengan stock.
         // Los que YA están en la campaña no se ven afectados: la selección vive en `selected`, que
         // se carga desde la campaña al abrir el modal y no depende de esta búsqueda.
         const res = await productsApi.getAllAdmin({
@@ -208,6 +209,7 @@ export default function AdminOffers() {
           category: pickerCategory || undefined,
           all: true,
           inStock: true,
+          excludePaused: true,
         });
         setPickerProducts(res.data?.products || []);
       } catch {

@@ -357,7 +357,8 @@ export default function AdminOrderDetail() {
     searchTimer.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await productsApi.getAllAdmin({ search: q, limit: 8, active: "true" });
+        // Antes: active: "true", que el backend de /products/admin/all no usa (traía también los pausados)
+        const res = await productsApi.getAllAdmin({ search: q, limit: 8, excludePaused: true });
         setSearchResults(res.data.products || []);
       } catch { /* silent */ } finally {
         setSearching(false);

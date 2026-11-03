@@ -108,7 +108,7 @@ export default function EmailAutomationsSection() {
     searchTimeoutRef.current = setTimeout(async () => {
       setSearchingProducts(true);
       try {
-        const res = await productsApi.getAllAdmin({ search: value, limit: 8 });
+        const res = await productsApi.getAllAdmin({ search: value, limit: 8, excludePaused: true });
         const list = Array.isArray(res.data) ? res.data : (res.data?.products || []);
         setEmailSearchResults(list.filter((p) => p.active && !emailFeatured.some((f) => f.id === p.id)));
       } catch {}

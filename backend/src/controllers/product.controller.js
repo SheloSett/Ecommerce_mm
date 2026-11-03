@@ -486,13 +486,19 @@ async function getProducts(req, res) {
 // GET /api/products/admin - Listar TODOS los productos para el admin (activos e inactivos)
 async function getProductsAdmin(req, res) {
   try {
-    const { category, search, page = 1, limit = 50, lowStock, all, inStock } = req.query;
+    const { category, search, page = 1, limit = 50, lowStock, all, inStock, excludePaused } = req.query;
     // all=true: el admin trae TODOS los productos (sin paginar en el server) para que el "Capital total
     // en stock" y los tabs "Sin stock"/"Quiebre de stock" cuenten sobre el total real, no sobre una página.
     // La paginación visual (50 por página) la hace el cliente. Ver AdminProducts.jsx.
     const noPaginate = all === "true";
 
     const where = {};
+
+    // excludePaused=true: sin los productos que el admin despublicó a mano (hiddenByAdmin). Lo usan los
+    // buscadores de la venta a mano, la cotización, "Modificar pedido", las campañas y los emails: lo que
+    // está pausado no se ofrece. Lo agotado (active=false sin hiddenByAdmin) sigue apareciendo donde no
+    // se filtra por stock: una cotización o una venta a mano puede ser de algo que se compra después.
+    if (excludePaused === "true") where.hiddenByAdmin = false;
 
     // inStock=true: deja afuera lo que no se puede vender por falta de stock.
     //

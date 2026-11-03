@@ -301,8 +301,8 @@ export default function AdminOrders() {
       try {
         // Antes: { limit: 500, active: true } — el tope de 500 dejaba productos afuera del buscador
         // (y "active" el backend de /products/admin/all no lo usa). all=true trae el catálogo completo,
-        // igual que en cotizaciones.
-        const res = await productsApi.getAllAdmin({ all: true });
+        // igual que en cotizaciones. excludePaused: lo que el admin despublicó a mano no se ofrece.
+        const res = await productsApi.getAllAdmin({ all: true, excludePaused: true });
         setAllProducts(res.data.products || res.data || []);
       } catch { /* silencioso */ }
     }
@@ -697,7 +697,7 @@ export default function AdminOrders() {
       suppliersApi.getAll().then((res) => setSuppliers(res.data || [])).catch(() => {});
     }
     if (allProducts.length === 0) {
-      productsApi.getAllAdmin({ all: true })
+      productsApi.getAllAdmin({ all: true, excludePaused: true }) // sin los despublicados a mano
         .then((res) => setAllProducts(res.data.products || res.data || []))
         .catch(() => {});
     }

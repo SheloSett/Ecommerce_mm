@@ -404,6 +404,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 193- detalle del pedido en el panel (03/11/2026): debajo de cada producto se ve su SKU (el que se guardó al venderse esa variante; si no, el actual de la variante; si no, el del producto). Al guardar una modificación del pedido el SKU se mantiene en pantalla: antes desaparecía hasta recargar, porque la respuesta de "Modificar pedido" no lo traía. ✅
 
+194- los productos despublicados a mano ya no se ofrecen en los buscadores del panel (03/11/2026): al cargar una venta a mano, una cotización, agregar un producto en "Modificar pedido", elegir los productos de una campaña o los destacados de un email, aparecían también los que el admin había pausado. El buscador del panel (/products/admin/all) ahora acepta excludePaused y esos cinco lugares lo usan. "Modificar pedido" ya pedía solo publicados, pero el servidor no entendía ese pedido. Los agotados (sin stock) siguen apareciendo en la venta a mano, la cotización y "Modificar pedido", porque se puede vender algo que se compra después; en las campañas ya no aparecían. Lo que ya estaba cargado en una campaña no cambia. ✅
+
 ##
 
 
