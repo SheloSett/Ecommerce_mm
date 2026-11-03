@@ -398,6 +398,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 190- estilos para los banners de anuncio (02/11/2026): cada banner tiene la opción "Estilo" con Black Friday, Cyber Monday, Fuego, Oferta, Nuevo, Premium, Rayo, Neón y Congelado, cada uno con sus colores, ícono y animación. Normal mantiene los colores elegidos y los banners que ya estaban no cambian. La vista previa del panel usa la misma barra que la tienda.
 
+191- favoritos (03/11/2026): si en el navegador del visitante la lista de favoritos no era una lista (un dato guardado roto, o una respuesta rara de la red), la página de productos se rompía con "Algo falló" y al invitado le podía seguir pasando hasta borrar los datos del sitio. Ahora se toma como lista vacía y la página carga igual. ✅
+
 ##
 
 

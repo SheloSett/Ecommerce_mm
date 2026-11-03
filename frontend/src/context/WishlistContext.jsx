@@ -6,10 +6,13 @@ import { wishlistApi } from "../services/api";
 const WishlistContext = createContext(null);
 const STORAGE_KEY = "igwt_wishlist_guest";
 
-// Lee la wishlist de invitado (localStorage)
+// Lee la wishlist de invitado (localStorage). Si lo guardado no es una lista se descarta: cada tarjeta de
+// producto llama a wishlist.some(), y sin una lista la pantalla entera se rompía con "Algo falló".
 const readGuest = () => {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
-  catch { return []; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
 };
 
 export function WishlistProvider({ children }) {
@@ -22,7 +25,7 @@ export function WishlistProvider({ children }) {
     if (customer) {
       setLoading(true);
       wishlistApi.getAll()
-        .then((res) => setWishlist(res.data))
+        .then((res) => setWishlist(Array.isArray(res.data) ? res.data : []))
         .catch(() => setWishlist([]))
         .finally(() => setLoading(false));
     } else {
