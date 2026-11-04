@@ -611,12 +611,19 @@ describe("buscar de qué partido es un barrio", () => {
   });
 
   test("si hay demasiadas consultas en fila, no espera", async () => {
-    let release;
-    stubFetch(() => new Promise((resolve) => { release = () => resolve(ok([])); }));
+    // Cada consulta se libera recién cuando arrancó de verdad. Antes se esperaban 5 ms fijos entre una y
+    // otra: con el procesador ocupado (el build de Docker compila las dos imágenes a la vez) no alcanzaba,
+    // la fila quedaba colgada y el build fallaba de vez en cuando.
+    const releases = [];
+    stubFetch(() => new Promise((resolve) => { releases.push(() => resolve(ok([]))); }));
     const pendientes = ["Lugar Uno", "Lugar Dos", "Lugar Tres"].map((n) => lookupPartidos(n));
     assert.equal(await lookupPartidos("Lugar Cuatro"), null);
-    for (let i = 0; i < 3; i++) { await new Promise((r) => setTimeout(r, 5)); release?.(); }
+    for (let i = 0; i < 3; i++) {
+      while (releases.length <= i) await new Promise((r) => setTimeout(r, 1));
+      releases[i]();
+    }
     await Promise.all(pendientes);
+    assert.equal(releases.length, 3); // la cuarta nunca se consultó
   });
 
   test("la cotización completa: un barrio de Hurlingham con un CP que no está en ninguna lista", async () => {
