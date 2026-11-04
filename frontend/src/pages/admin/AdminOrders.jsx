@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals } from "../../utils/orderTotals";
 import { formatDeliveryDate } from "../../utils/shipping";
+import { priceParts, activeOfferName } from "../../utils/productPrice";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
 import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
@@ -259,7 +260,7 @@ export default function AdminOrders() {
         // Si la línea tiene variante elegida, usar su precio para el nuevo tipo de cliente
         const variant = item.variantId ? (variantOptionsCache[item.productId] || []).find?.((v) => v.id === item.variantId) : null;
         // Antes: return { ...item, price: getPriceForType(prod, cust.type) };
-        return { ...item, price: variant ? getVariantPriceForType(prod, variant, cust.type) : getPriceForType(prod, cust.type) };
+        return { ...item, ...linePrices(prod, variant, cust.type, item.useOffer !== false) };
       });
       return {
         ...prev,
@@ -346,42 +347,32 @@ export default function AdminOrders() {
         variantId:    "",
         variantLabel: "",
         cost:         "",
+        offerPrice:   null,
       };
       return { ...p, items };
     });
   };
 
-  // Devuelve el precio correcto según el tipo de cliente seleccionado en el form
-  const getPriceForType = (product, type) => {
-    if (type === "MAYORISTA" && product.wholesalePrice) return product.wholesalePrice;
-    return product.price;
+  // Precio de lista, de oferta (campaña vigente u oferta cargada a mano) y el que va a la línea, según el
+  // tipo de cliente. Misma regla que el checkout (utils/productPrice.js). Antes la línea tomaba siempre el
+  // de lista: un producto en campaña se vendía a mano al precio normal.
+  // useOffer: la casilla "Precio de campaña" de la línea; destildada, va el de lista.
+  const linePrices = (product, variant, type, useOffer = true) => {
+    const { list, offer } = priceParts(product, variant, type === "MAYORISTA");
+    return { listPrice: list, offerPrice: offer, price: useOffer && offer != null ? offer : list };
   };
-
-  // Precio efectivo de una variante según tipo de cliente (mismo criterio que el checkout:
-  // si la variante define precio base para ese tipo, se usa su grupo completo — su oferta solo
-  // si la define ella; si no define precio, cae al precio del producto padre).
-  const getVariantPriceForType = (product, variant, type) => {
-    if (type === "MAYORISTA") {
-      if (variant?.wholesalePrice != null) {
-        return (variant.wholesaleSalePrice != null && variant.wholesaleSalePrice < variant.wholesalePrice)
-          ? variant.wholesaleSalePrice
-          : variant.wholesalePrice;
-      }
-      return getPriceForType(product, type);
-    }
-    if (variant?.price != null) {
-      return (variant.salePrice != null && variant.salePrice < variant.price)
-        ? variant.salePrice
-        : variant.price;
-    }
-    return getPriceForType(product, type);
-  };
+  const patchManualItem = (idx, patch) =>
+    setManualForm((p) => {
+      const items = [...p.items];
+      items[idx] = { ...items[idx], ...patch };
+      return { ...p, items };
+    });
 
   const selectProduct = (idx, product) => {
     setManualItem(idx, "productId", product.id);
     setManualItem(idx, "productName", product.name);
-    // Usa el precio según el tipo de cliente activo al momento de seleccionar
-    setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+    // Precio según el tipo de cliente activo al momento de seleccionar; si está en campaña, el de campaña
+    patchManualItem(idx, { ...linePrices(product, null, manualForm.customerType), useOffer: true });
     // Autocompletar el costo con el dato real del producto (editable por el admin)
     setManualItem(idx, "cost", product.cost != null ? String(product.cost) : "");
     // Al cambiar de producto se descarta la variante que hubiera elegida antes
@@ -406,14 +397,14 @@ export default function AdminOrders() {
     if (!variant) {
       setManualItem(idx, "variantId", "");
       setManualItem(idx, "variantLabel", "");
-      setManualItem(idx, "price", getPriceForType(product, manualForm.customerType));
+      patchManualItem(idx, linePrices(product, null, manualForm.customerType, manualForm.items[idx]?.useOffer !== false));
       setManualItem(idx, "cost", product.cost != null ? String(product.cost) : "");
       return;
     }
     const combo = Array.isArray(variant.combination) ? variant.combination : [];
     setManualItem(idx, "variantId", variant.id);
     setManualItem(idx, "variantLabel", combo.map((c) => `${c.name}: ${c.value}`).join(" / "));
-    setManualItem(idx, "price", getVariantPriceForType(product, variant, manualForm.customerType));
+    patchManualItem(idx, linePrices(product, variant, manualForm.customerType, manualForm.items[idx]?.useOffer !== false));
     // Costo: el de la variante si tiene uno propio, sino el del producto padre
     const effCost = variant.cost != null ? variant.cost : product.cost;
     setManualItem(idx, "cost", effCost != null ? String(effCost) : "");
@@ -429,7 +420,7 @@ export default function AdminOrders() {
         // Si la línea tiene variante elegida, usar su precio para el nuevo tipo de cliente
         const variant = item.variantId ? (variantOptionsCache[item.productId] || []).find?.((v) => v.id === item.variantId) : null;
         // Antes: return { ...item, price: getPriceForType(prod, newType) };
-        return { ...item, price: variant ? getVariantPriceForType(prod, variant, newType) : getPriceForType(prod, newType) };
+        return { ...item, ...linePrices(prod, variant, newType, item.useOffer !== false) };
       });
       return { ...prev, customerType: newType, items: updatedItems };
     });
@@ -2892,8 +2883,8 @@ ${pagesHtml}
                                 {filtered.length} {filtered.length === 1 ? "resultado" : "resultados"}
                               </div>
                               {filtered.map((p) => {
-                                // Muestra el precio que corresponde al tipo de cliente seleccionado
-                                const displayPrice = getPriceForType(p, manualForm.customerType);
+                                // Muestra el precio que corresponde al tipo de cliente seleccionado (y el de campaña, si hay)
+                                const { listPrice: displayList, offerPrice: displayOffer } = linePrices(p, null, manualForm.customerType);
                                 const isMayorista = manualForm.customerType === "MAYORISTA";
                                 return (
                                   <button
@@ -2920,7 +2911,9 @@ ${pagesHtml}
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isMayorista ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
                                         {isMayorista ? "May." : "Min."}
                                       </span>
-                                      {formatPrice(displayPrice)}
+                                      {displayOffer != null
+                                        ? <><s className="text-slate-400">{formatPrice(displayList)}</s> <span className="text-emerald-700 font-semibold">{formatPrice(displayOffer)}</span></>
+                                        : formatPrice(displayList)}
                                     </span>
                                   </button>
                                 );
@@ -2993,6 +2986,25 @@ ${pagesHtml}
                               className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="0.00"
                             />
+                            {/* Producto en campaña (u oferta cargada a mano): la línea arranca con ese precio; la
+                                casilla destildada vuelve al de lista. Editar el precio a mano no toca la casilla. */}
+                            {item.productId && item.offerPrice != null && (() => {
+                              const offerName = activeOfferName(allProducts.find((p) => p.id === item.productId), manualForm.customerType === "MAYORISTA");
+                              return (
+                                <label className="flex items-start gap-1.5 mt-1.5 text-[11px] leading-tight text-emerald-700 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={item.useOffer !== false}
+                                    onChange={(e) => patchManualItem(idx, { useOffer: e.target.checked, price: e.target.checked ? item.offerPrice : item.listPrice })}
+                                    className="mt-0.5 accent-emerald-600"
+                                  />
+                                  <span>
+                                    {offerName ? `Precio de campaña ${offerName}` : "Precio de oferta"}: {formatPrice(item.offerPrice)}
+                                    <span className="text-slate-400"> (lista {formatPrice(item.listPrice)})</span>
+                                  </span>
+                                </label>
+                              );
+                            })()}
                           </div>
                           <div className="w-24">
                             {/* Descuento de ESTE producto: baja el precio unitario de la línea. El

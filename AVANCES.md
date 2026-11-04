@@ -406,6 +406,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 194- los productos despublicados a mano ya no se ofrecen en los buscadores del panel (03/11/2026): al cargar una venta a mano, una cotización, agregar un producto en "Modificar pedido", elegir los productos de una campaña o los destacados de un email, aparecían también los que el admin había pausado. El buscador del panel (/products/admin/all) ahora acepta excludePaused y esos cinco lugares lo usan. "Modificar pedido" ya pedía solo publicados, pero el servidor no entendía ese pedido. Los agotados (sin stock) siguen apareciendo en la venta a mano, la cotización y "Modificar pedido", porque se puede vender algo que se compra después; en las campañas ya no aparecían. Lo que ya estaba cargado en una campaña no cambia. ✅
 
+195- venta manual y cotización: el precio de campaña se toma solo (04/11/2026): al elegir un producto que está en una campaña vigente (o con una oferta cargada a mano), la línea arranca con ese precio y muestra la casilla "Precio de campaña <nombre>" con el precio de lista al lado; destildada, vuelve al de lista. Vale para minoristas y mayoristas, cada uno con su precio, y al cambiar el tipo de cliente se recalcula. En el buscador, el precio de oferta se ve al lado del de lista tachado. Antes la venta manual tomaba siempre el precio de lista aunque el producto estuviera en campaña. También en "Modificar pedido": al agregar un producto tomaba el precio mayorista aunque el pedido fuera de un minorista; ahora el de lista o el de campaña según el cliente del pedido. Sin migración. ✅
+
 ##
 
 

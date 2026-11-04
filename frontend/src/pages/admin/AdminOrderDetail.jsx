@@ -7,6 +7,7 @@ import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, itemSku, loadOrderItemS
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
+import { priceParts } from "../../utils/productPrice";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -372,7 +373,9 @@ export default function AdminOrderDetail() {
     if (existingIdx >= 0) {
       setEditItems((prev) => prev.map((it, i) => i === existingIdx ? { ...it, quantity: it.quantity + 1 } : it));
     } else {
-      const price = product.wholesalePrice ?? product.salePrice ?? product.price ?? 0;
+      // Antes: product.wholesalePrice ?? product.salePrice ?? product.price — a un minorista le cargaba el precio
+      // mayorista si el producto tenía uno. Ahora el de lista o el de campaña, según el cliente del pedido.
+      const { price } = priceParts(product, null, order?.customerType === "MAYORISTA");
       setEditItems((prev) => [...prev, {
         productId:    product.id,
         name:         product.name,
@@ -1085,7 +1088,7 @@ export default function AdminOrderDetail() {
                           )}
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-slate-800 truncate">{p.name}</p>
-                            <p className="text-xs text-slate-400">{formatPrice(p.salePrice ?? p.price)}</p>
+                            <p className="text-xs text-slate-400">{formatPrice(priceParts(p, null, order?.customerType === "MAYORISTA").price)}</p>
                           </div>
                         </button>
                       ))}

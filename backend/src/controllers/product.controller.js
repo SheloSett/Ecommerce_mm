@@ -615,6 +615,12 @@ async function getProductsAdmin(req, res) {
           categories: {
             include: { parent: { select: { id: true, name: true } } },
           },
+          // offerItems: la campaña vigente que escribió el precio de oferta, para que la venta manual diga
+          // "precio de campaña Cyber Week" (ver utils/productPrice.js del frontend). Una sola consulta más.
+          offerItems: {
+            where: { offer: { active: true, applied: true, startsAt: { lte: new Date() }, endsAt: { gt: new Date() } } },
+            select: { offer: { select: { id: true, name: true } }, appliedSalePrice: true, appliedWholesaleSalePrice: true, appliedVariants: true },
+          },
           // _count.variants: el admin siempre ve todas las variantes activas (sin filtrar por visibility)
           _count: { select: { variants: { where: { active: true } } } },
           attributes: {

@@ -1,6 +1,7 @@
 // Tests del buscador de productos del panel (getProductsAdmin): con excludePaused=true no ofrece lo que el
 // admin despublicó a mano (hiddenByAdmin), que es lo que usan la venta a mano, la cotización, "Modificar
-// pedido", las campañas y los emails. Base simulada. Correr con: npm test
+// pedido", las campañas y los emails; y trae la campaña vigente de cada producto, para que la venta manual
+// diga "precio de campaña ...". Base simulada. Correr con: npm test
 
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
@@ -10,7 +11,7 @@ let captured;
 class FakePrismaClient {
   constructor() {
     this.product = {
-      findMany: async (args) => { captured.push(args.where); return []; },
+      findMany: async (args) => { captured.push(args); return []; },
       count: async () => 0,
     };
   }
@@ -34,20 +35,30 @@ describe("buscador de productos del panel", () => {
   test("excludePaused=true deja afuera lo despublicado a mano", async () => {
     const res = await list({ excludePaused: "true", all: "true" });
     assert.equal(res.code, 200);
-    assert.equal(captured[0].hiddenByAdmin, false);
-    assert.equal(captured[0].active, undefined); // lo agotado sigue: se puede vender algo que se compra después
+    assert.equal(captured[0].where.hiddenByAdmin, false);
+    assert.equal(captured[0].where.active, undefined); // lo agotado sigue: se puede vender algo que se compra después
   });
 
   test("sin el parámetro trae todo, como el listado de productos del panel", async () => {
     await list({ all: "true" });
-    assert.equal("hiddenByAdmin" in captured[0], false);
+    assert.equal("hiddenByAdmin" in captured[0].where, false);
     await list({ excludePaused: "false" });
-    assert.equal("hiddenByAdmin" in captured[1], false);
+    assert.equal("hiddenByAdmin" in captured[1].where, false);
   });
 
   test("se combina con el filtro de stock de las campañas", async () => {
     await list({ excludePaused: "true", inStock: "true", all: "true" });
-    assert.equal(captured[0].hiddenByAdmin, false);
-    assert.ok(Array.isArray(captured[0].AND) && captured[0].AND.length === 1);
+    assert.equal(captured[0].where.hiddenByAdmin, false);
+    assert.ok(Array.isArray(captured[0].where.AND) && captured[0].where.AND.length === 1);
+  });
+
+  test("trae solo la campaña vigente y aplicada de cada producto, con su nombre", async () => {
+    await list({ all: "true" });
+    const offerItems = captured[0].include.offerItems;
+    assert.deepEqual(Object.keys(offerItems.where.offer).sort(), ["active", "applied", "endsAt", "startsAt"]);
+    assert.equal(offerItems.where.offer.active, true);
+    assert.equal(offerItems.where.offer.applied, true);
+    assert.equal(offerItems.select.offer.select.name, true);
+    assert.equal(offerItems.select.appliedSalePrice, true);
   });
 });
