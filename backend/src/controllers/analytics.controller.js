@@ -770,7 +770,7 @@ async function getOfertas(req, res) {
 async function getInteres(req, res) {
   try {
     const { from, to } = parseRange(req.query);
-    const [events, orders] = await Promise.all([
+    const [events, orders, firstEvent] = await Promise.all([
       prisma.storeEvent.findMany({
         where: { createdAt: { gte: from, lte: to } },
         select: { id: true, type: true, sessionId: true, customerId: true, productId: true, term: true, results: true, path: true, device: true, createdAt: true },
@@ -781,6 +781,8 @@ async function getInteres(req, res) {
         where: { status: "APPROVED", createdAt: { gte: from } },
         select: { id: true, sessionId: true, customerId: true, customerName: true, total: true, createdAt: true, items: { select: { productId: true } } },
       }),
+      // La primera vista registrada en toda la historia, para avisar si el período pedido empieza antes
+      prisma.storeEvent.findFirst({ orderBy: { createdAt: "asc" }, select: { createdAt: true } }),
     ]);
 
     // ── Búsquedas ──
@@ -888,9 +890,13 @@ async function getInteres(req, res) {
         vistas: views.length,
         productosVistos: productIds.length,
         visitantes: new Set(events.map((e) => e.sessionId)).size,
+        // recorrieron: visitantes con dos o más acciones. Los que abren una página y se van (y los robots que
+        // se hacen pasar por un navegador) quedan afuera: se parece más a la cantidad de personas interesadas.
+        recorrieron: Object.values(sessMap).filter((s) => s.busquedas + s.vistas + s.paginas >= 2).length,
       },
       topTerms, sinResultados, topProducts,
-      desde: events.length ? events.reduce((m, e) => (e.createdAt < m ? e.createdAt : m), events[0].createdAt) : null,
+      // Antes: la primera vista DEL PERÍODO pedido, así que mirando "hoy" decía "se registra desde hoy".
+      desde: firstEvent?.createdAt || null,
     });
   } catch (err) {
     console.error("analytics.getInteres error:", err);

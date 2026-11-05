@@ -4,8 +4,6 @@ User-agent: *
 Allow: /
 Allow: /catalogo
 Allow: /producto/
-Allow: /login
-Allow: /registro
 
 # Panel admin — bloqueado
 Disallow: /admin
@@ -15,7 +13,19 @@ Disallow: /checkout
 Disallow: /perfil
 Disallow: /pedidos
 Disallow: /cotizaciones
-Disallow: /pagar/
+Disallow: /pagar-cotizacion
 Disallow: /pago/
+Disallow: /carrito
+Disallow: /favoritos
+
+# Entrar y crear cuenta. Antes estaban permitidas, y como cada producto enlaza a /login?volver=... y a
+# /registro?volver=..., para un buscador eran miles de páginas iguales: las recorría una por una en vez de
+# mirar los productos, y cada una contaba como un visitante en las analíticas.
+Disallow: /login
+Disallow: /registro
+Disallow: /olvide-mi-contrasena
+Disallow: /reset-password
+Disallow: /desuscribirse
+Disallow: /unsubscribe
 
 Sitemap: https://igwtstore.com.ar/api/sitemap.xml

@@ -43,6 +43,8 @@ function headers() {
 
 function post(path, body) {
   try {
+    // Un navegador manejado por un programa (pruebas automáticas, rastreadores) no es un visitante
+    if (typeof navigator !== "undefined" && navigator.webdriver) return Promise.resolve();
     return fetch(`${API_URL}/api/events${path}`, {
       method: "POST",
       headers: headers(),

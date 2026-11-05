@@ -16,6 +16,8 @@ const jwt = require("jsonwebtoken");
 const { browserDataFromRequest, sendContactEvent, isContactEventId } = require("../services/meta.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+// Robots (buscadores, verificadores de anuncios, herramientas): no son visitantes. Ver utils/botDetect.js.
+const { isBot } = require("../utils/botDetect");
 
 const PRESENCE_TTL_MS = 75 * 1000;
 const SESSION_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -52,6 +54,8 @@ function cleanStr(v, max) {
 // POST /api/events
 async function track(req, res) {
   try {
+    // Un robot no es un visitante: no se guarda nada (y no es un error para él).
+    if (isBot(req.headers["user-agent"])) return res.status(204).end();
     const { type, sessionId, productId, term, results, path } = req.body || {};
     if (!EVENT_TYPES.has(type)) return res.status(400).json({ error: "Tipo de evento inválido" });
     if (!SESSION_RE.test(sessionId || "")) return res.status(400).json({ error: "sessionId inválido" });
@@ -83,6 +87,7 @@ async function track(req, res) {
 
 // POST /api/events/ping
 function ping(req, res) {
+  if (isBot(req.headers["user-agent"])) return res.json({ ok: true }); // un robot no aparece en "En vivo"
   const { sessionId, path, label, isAdmin } = req.body || {};
   if (!SESSION_RE.test(sessionId || "")) return res.status(400).json({ error: "sessionId inválido" });
   const now = Date.now();
@@ -120,6 +125,7 @@ function contact(req, res) {
     pid = Number(productId);
     if (!Number.isInteger(pid) || pid <= 0) return res.status(400).json({ error: "productId inválido" });
   }
+  if (isBot(req.headers["user-agent"])) return res.status(202).json({ ok: true }); // no es una consulta de un cliente
   const customer = customerFromReq(req);
   const browser = browserDataFromRequest(req, req.body);
   res.status(202).json({ ok: true });

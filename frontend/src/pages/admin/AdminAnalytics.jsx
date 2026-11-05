@@ -536,13 +536,16 @@ function InteresTab({ data }) {
     <>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatTile label="Visitantes" value={fmtNum(r.visitantes)} hint={`${fmtNum(r.paginas || 0)} páginas vistas`} />
+        <StatTile label="Recorrieron la tienda" value={fmtNum(r.recorrieron ?? 0)} hint={r.visitantes ? `${fmtPct(((r.recorrieron ?? 0) / r.visitantes) * 100)} de los visitantes` : undefined} />
         <StatTile label="Búsquedas" value={fmtNum(r.busquedas)} hint={`${fmtNum(r.terminosDistintos)} términos distintos`} />
         <StatTile label="Sin resultados" value={fmtNum(r.busquedasSinResultados)} hint={r.busquedas ? `${fmtPct((r.busquedasSinResultados / r.busquedas) * 100)} de las búsquedas` : undefined} upIsGood={false} />
         <StatTile label="Vistas de producto" value={fmtNum(r.vistas)} hint={`${fmtNum(r.productosVistos)} productos distintos`} />
         <StatTile label="Vistas por visitante" value={r.visitantes ? (r.vistas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
-        <StatTile label="Búsquedas por visitante" value={r.visitantes ? (r.busquedas / r.visitantes).toLocaleString("es-AR", { maximumFractionDigits: 1 }) : "—"} />
       </div>
-      {data.desde && <p className="-mt-4 text-xs text-slate-400">Se registra desde el {fmtDate(data.desde)}. Los períodos anteriores no tienen datos porque el registro es nuevo.</p>}
+      <p className="-mt-4 text-xs text-slate-400">
+        Visitantes cuenta cada navegador que abrió una página, también los que se fueron enseguida. "Recorrieron la tienda" son los que hicieron dos o más cosas (ver otra página, un producto, buscar): se parece más a la cantidad de personas interesadas.
+        {data.desde && data.range?.from && new Date(data.desde) > new Date(data.range.from) && ` Se registra desde el ${fmtDate(data.desde)}: antes de esa fecha no hay datos.`}
+      </p>
 
       <Section title="Productos más vistos" subtitle="Vistas de la ficha del producto y qué porcentaje de los que la vieron terminó comprándolo (pedido aprobado, misma sesión o misma cuenta)">
         <Table rows={topProducts} keyFn={(p) => p.productId} cols={[
