@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
+const rateLimit = require("express-rate-limit");
 const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const { sendAbandonedCartEmail } = require("../services/email.service");
 // Precio efectivo (variante > producto por grupo + tiers), compartido con el checkout.
@@ -45,6 +46,9 @@ const priceDiffers = (a, b) => Math.abs(a - b) >= 0.005;
 // el listado del admin no dispare una consulta por item.
 //
 // Cada cart debe traer `items` y, si se quiere el precio mayorista correcto, `customer.type`.
+//
+// La misma regla de stock y de precio está en buildGuestCart (carrito sin cuenta, más abajo): si cambia
+// acá, hay que cambiarla allá.
 async function enrichCarts(carts) {
   const productIds = [...new Set(carts.flatMap((c) => c.items.map((i) => i.productId)))];
   const variantIds = [...new Set(carts.flatMap((c) => c.items.map((i) => i.variantId).filter(Boolean)))];
@@ -232,6 +236,113 @@ router.put("/sync", authMiddleware, customerMiddleware, async (req, res) => {
   } catch (err) {
     console.error("Error al sincronizar carrito:", err);
     res.status(500).json({ error: "Error al sincronizar carrito" });
+  }
+});
+
+// ── Carrito sin cuenta ─────────────────────────────────────────────────────────
+//
+// Quien todavía no inició sesión guarda su carrito en el navegador (qué producto, qué variante, cuántos y a
+// qué precio lo agregó: ver frontend utils/guestCart.js) y le pide acá lo que hace falta para mostrarlo:
+// nombre, foto, precio de hoy y si se puede comprar. No se guarda nada en la base.
+//
+// Antes, sin cuenta no se podía agregar nada al carrito: el botón mandaba a iniciar sesión. El pedido sin
+// cuenta ya se aceptaba (createOrder le cobra precio minorista y vuelve a validar todo); faltaba el carrito.
+//
+// Sin cuenta siempre es precio minorista, y lo que se vende solo a mayoristas queda marcado como no
+// disponible. La respuesta tiene la misma forma que la del carrito de una cuenta (enrichCarts), así el
+// frontend usa un solo camino; nunca viaja un precio mayorista.
+// Misma regla de stock y de precio que enrichCarts (arriba), más los controles de quien compra sin cuenta: si
+// cambia allá, hay que cambiarla acá. Los topes son los mismos que en frontend utils/guestCart.js.
+const GUEST_MAX_LINES = 60;
+const GUEST_MAX_QUANTITY = 9999;
+const guestCartLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+
+async function buildGuestCart(rawItems) {
+  // Líneas válidas, sin repetidas (mismo producto y variante se suman) y con tope
+  const lines = new Map();
+  for (const raw of Array.isArray(rawItems) ? rawItems : []) {
+    const productId = parseInt(raw?.productId);
+    const variantId = raw?.variantId ? parseInt(raw.variantId) : null;
+    if (!(productId > 0) || (variantId !== null && !(variantId > 0))) continue;
+    const quantity = Math.min(Math.max(parseInt(raw?.quantity) || 1, 1), GUEST_MAX_QUANTITY);
+    const key = `g-${productId}-${variantId || 0}`;
+    const prev = lines.get(key);
+    if (prev) {
+      prev.quantity = Math.min(prev.quantity + quantity, GUEST_MAX_QUANTITY);
+    } else if (lines.size < GUEST_MAX_LINES) {
+      const addedPrice = Number(raw?.price);
+      lines.set(key, { key, productId, variantId, quantity, addedPrice: Number.isFinite(addedPrice) && addedPrice > 0 ? addedPrice : null });
+    }
+  }
+  const list = [...lines.values()];
+  if (list.length === 0) return [];
+
+  const variantIds = list.map((l) => l.variantId).filter(Boolean);
+  const [products, variants] = await Promise.all([
+    prisma.product.findMany({
+      where:  { id: { in: [...new Set(list.map((l) => l.productId))] } },
+      select: { id: true, name: true, images: true, active: true, visibility: true, stock: true, stockUnlimited: true, ivaRate: true, currency: true, ...PRICE_SELECT },
+    }),
+    variantIds.length
+      ? prisma.productVariant.findMany({
+          where:  { id: { in: variantIds } },
+          select: { id: true, productId: true, active: true, visibility: true, combination: true, stock: true, stockUnlimited: true, ...PRICE_SELECT },
+        })
+      : [],
+  ]);
+  const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
+
+  return list.flatMap((line) => {
+    const product = productMap[line.productId];
+    if (!product) return []; // producto borrado: sale del carrito
+    const found = line.variantId ? variantMap[line.variantId] : null;
+    // La variante tiene que ser de ese producto, estar activa y poder vendérsele a un minorista
+    const variant = found && found.productId === product.id && found.active && found.visibility !== "MAYORISTA" ? found : null;
+
+    let outOfStock = !product.active || product.visibility === "MAYORISTA" || (line.variantId !== null && !variant);
+    if (!outOfStock) {
+      outOfStock = variant
+        ? !variant.stockUnlimited && variant.stock <= 0
+        : !product.stockUnlimited && product.stock <= 0;
+    }
+
+    const current = effectiveUnitPrice({ product, variant, isMayorista: false, quantity: line.quantity });
+    const price = current > 0 ? current : (line.addedPrice ?? 0);
+    const previousPrice = line.addedPrice !== null && current > 0 && priceDiffers(current, line.addedPrice) ? line.addedPrice : null;
+    const combo = variant && Array.isArray(variant.combination) ? variant.combination : [];
+
+    return [{
+      id:           line.key,
+      productId:    product.id,
+      variantId:    line.variantId,
+      variantLabel: combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null,
+      name:         product.name,
+      image:        product.images?.[0] || null,
+      quantity:     line.quantity,
+      price,
+      previousPrice,
+      priceChanged: previousPrice !== null,
+      outOfStock,
+      currency:     effectiveCurrency({ product }),
+      product: {
+        stock:          product.stock,
+        stockUnlimited: product.stockUnlimited,
+        active:         product.active,
+        ivaRate:        product.ivaRate,
+        currency:       product.currency,
+      },
+    }];
+  });
+}
+
+// POST /api/carts/guest — pública: datos para mostrar el carrito de quien no inició sesión
+router.post("/guest", guestCartLimiter, async (req, res) => {
+  try {
+    res.json({ items: await buildGuestCart(req.body?.items) });
+  } catch (err) {
+    console.error("Error al armar el carrito sin cuenta:", err);
+    res.status(500).json({ error: "Error al obtener carrito" });
   }
 });
 

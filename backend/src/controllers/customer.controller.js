@@ -87,6 +87,9 @@ async function register(req, res) {
         email: customer.email,
         phone: customer.phone,
         type: customer.type,
+        // El documento que ya cargó al registrarse: el checkout lo pide y antes había que escribirlo de nuevo
+        cuit: customer.cuit,
+        documentType: customer.documentType,
       },
     });
   } catch (err) {
@@ -141,6 +144,10 @@ async function customerLogin(req, res) {
         email: customer.email,
         phone: customer.phone,
         type: customer.type,
+        // El documento de la cuenta: el checkout lo pide y, como no venía acá, el cliente tenía que
+        // escribirlo de nuevo en cada compra.
+        cuit: customer.cuit,
+        documentType: customer.documentType,
       },
     });
   } catch (err) {

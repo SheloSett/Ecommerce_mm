@@ -344,10 +344,8 @@ export default function ProductDetail() {
   const handleAddToCart = async () => {
     // priceHidden: producto solo mayoristas visto por alguien que no lo es (ver el bloque de precio)
     if (!product || product.priceHidden) return;
-    if (!customer) {
-      navigate(withReturnTo("/login", routerLocation));
-      return;
-    }
+    // Sin cuenta también se agrega (el carrito queda en el navegador: ver CartContext). Antes mandaba a
+    // iniciar sesión: if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
     // Si hay variantes visibles para este cliente (sea minorista o mayorista), debe seleccionarlas.
     // Si product.variants viene vacío (todas filtradas por visibility), no se exige selección.
     const hasVisibleVariants = hasVariants && (product.variants?.length || 0) > 0;
@@ -1042,11 +1040,8 @@ export default function ProductDetail() {
                 className="w-full bg-[#00873a] text-white py-4 px-8 rounded-lg font-bold text-base flex items-center justify-center gap-2 transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined">shopping_cart</span>
-                {!customer
-                  ? "Iniciar sesión para comprar"
-                  : outOfStock
-                    ? "Sin stock disponible"
-                    : "Agregar al carrito"}
+                {/* Antes, sin sesión decía "Iniciar sesión para comprar": ahora se compra sin cuenta */}
+                {outOfStock ? "Sin stock disponible" : "Agregar al carrito"}
               </button>
               {/* Botón "Comprar ahora" — comentado por pedido del usuario */}
               {/* {customer && !outOfStock && (

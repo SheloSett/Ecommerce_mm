@@ -318,6 +318,9 @@ export const mayoristaRequestsApi = {
 
 // ─── Carritos ─────────────────────────────────────────────────────────────────
 export const cartsApi = {
+  // Sin cuenta: nombre, foto, precio de hoy y disponibilidad de lo que hay en el carrito del navegador
+  // (utils/guestCart.js). items: [{ productId, variantId, quantity, price }]
+  guest: (items) => api.post("/carts/guest", { items }),
   // Cliente: obtener su propio carrito (con stock del producto)
   getMe: () => customerAuthApi.get("/carts/me"),
   // Cliente: agregar un item al carrito (crea el carrito si no existe)

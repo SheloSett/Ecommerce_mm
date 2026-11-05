@@ -161,7 +161,7 @@ export default function MobileBottomNav({ menuOpen, onMenu, searchOpen, onSearch
     { key: "menu", label: "Menú", icon: "menu", onClick: () => { setSheet(null); onMenu(); } },
     { key: "search", label: "Buscar", icon: "search", onClick: () => { setSheet(null); onSearch(); } },
     { key: "categories", label: "Categorías", icon: "grid_view", onClick: () => toggleSheet("categories") },
-    { key: "cart", label: "Carrito", icon: "shopping_cart", badge: customer ? totalItems : 0, badgeClass: "bg-[#00873a]", onClick: () => { setSheet(null); onCart(); } },
+    { key: "cart", label: "Carrito", icon: "shopping_cart", badge: totalItems, badgeClass: "bg-[#00873a]", onClick: () => { setSheet(null); onCart(); } },
     { key: "account", label: "Cuenta", icon: "person", badge: customer ? unreadCount : 0, badgeClass: "bg-red-500", onClick: () => toggleSheet("account") },
   ];
 

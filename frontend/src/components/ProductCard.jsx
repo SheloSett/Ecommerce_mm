@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useCart } from "../context/CartContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useWishlist } from "../context/WishlistContext";
@@ -9,7 +9,6 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 // Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
 import ProductImage from "./ProductImage";
-import { withReturnTo } from "../utils/returnTo";
 
 // Convierte HTML del editor rico a texto plano para la card.
 // Usar el DOM en vez de regex para decodificar también entidades (&amp; → &, &nbsp; → espacio, etc.)
@@ -24,8 +23,6 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const { addItem, items } = useCart();
   const { customer } = useCustomerAuth();
   const { toggle, isInWishlist } = useWishlist();
-  const navigate = useNavigate();
-  const routerLocation = useLocation(); // para volver acá después del login (utils/returnTo.js)
   const [variantModal, setVariantModal] = useState(false);
   const [fullProduct, setFullProduct] = useState(null);   // datos completos con attributes + variants
   const [loadingProduct, setLoadingProduct] = useState(false);
@@ -281,11 +278,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const handleAddToCart = (e) => {
     e.preventDefault(); // Evitar que navegue al detalle al hacer click en el botón
     if (outOfStock || product.priceHidden) return;
-    // Si no hay usuario logueado, redirigir al login sin mostrar notificación
-    if (!customer) {
-      navigate(withReturnTo("/login", routerLocation)); // antes: navigate("/login")
-      return;
-    }
+    // Sin cuenta también se agrega (el carrito queda en el navegador: ver CartContext). Antes mandaba a
+    // iniciar sesión: if (!customer) { navigate(withReturnTo("/login", routerLocation)); return; }
     // Antes: solo los productos con variantes abrían el modal; sin variantes se agregaba directo:
     // if (hasActiveVariants) {
     //   setVariantModal(true);
@@ -593,19 +587,13 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             <div className="flex-shrink-0">
               {product.priceHidden ? null : outOfStock ? (
                 <span className="text-xs sm:text-sm text-[#565e74] font-medium">Sin stock</span>
-              ) : customer ? (
+              ) : (
+                // Antes, sin sesión este botón decía "Iniciar sesión": ahora se compra sin cuenta
                 <button
                   onClick={handleAddToCart}
                   className="px-3 sm:px-5 py-2 bg-[#00873a] text-white text-xs sm:text-sm font-semibold rounded-[10px] hover:brightness-110 transition-all whitespace-nowrap"
                 >
                   + Agregar
-                </button>
-              ) : (
-                <button
-                  onClick={handleAddToCart}
-                  className="px-3 sm:px-4 py-2 border border-[#bdcaba] text-[#0b1c30] text-xs sm:text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/30 transition-colors whitespace-nowrap"
-                >
-                  Iniciar sesión
                 </button>
               )}
             </div>
@@ -922,7 +910,8 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             )}
           </div>
           {/* Botón ocupa todo el ancho, así nunca compite por espacio con el precio */}
-          {product.priceHidden ? null : customer ? (
+          {/* Antes, sin sesión este botón decía "Iniciar sesión": ahora se compra sin cuenta */}
+          {product.priceHidden ? null : (
             <button
               onClick={handleAddToCart}
               disabled={outOfStock}
@@ -930,13 +919,6 @@ export default function ProductCard({ product, viewMode = "grid" }) {
             >
               <span className="material-symbols-outlined text-[16px]">add_shopping_cart</span>
               Agregar
-            </button>
-          ) : (
-            <button
-              onClick={handleAddToCart}
-              className="w-full py-2 border border-[#bdcaba] text-[#0b1c30] text-xs sm:text-sm font-semibold rounded-[10px] hover:bg-[#dce9ff]/30 transition-colors"
-            >
-              Iniciar sesión
             </button>
           )}
         </div>

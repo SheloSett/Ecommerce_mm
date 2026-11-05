@@ -165,10 +165,9 @@ export default function Navbar() {
   const openCartFromBar = () => {
     setMobileMenuOpen(false);
     setMobileSearchOpen(false);
-    if (customer) { setCartOpen((o) => !o); return; }
-    // Sin sesión no hay carrito (la compra requiere cuenta): se lo manda a iniciar sesión
-    toast("Iniciá sesión para usar el carrito", { icon: "🛒" });
-    navigate(withReturnTo("/login", location)); // antes: navigate("/login")
+    // Con o sin sesión: quien no tiene cuenta también tiene carrito (queda en su navegador). Antes, sin
+    // sesión avisaba "Iniciá sesión para usar el carrito" y mandaba al login.
+    setCartOpen((o) => !o);
   };
   const closeMobileOverlays = () => {
     setMobileMenuOpen(false);
@@ -461,21 +460,20 @@ export default function Navbar() {
               )}
 
               {/* Carrito — abre el CartDrawer lateral (setCartOpen); antes usaba navigate("/carrito")
-                  que mandaba a la página completa pero dejaba el drawer nunca abierto */}
-              {customer && (
-                <button
-                  onClick={() => setCartOpen(true)}
-                  className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all relative"
-                  aria-label="Carrito"
-                >
-                  <span className="material-symbols-outlined">shopping_cart</span>
-                  {totalItems > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-[#00873a] text-[#f7fff2] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                      {totalItems}
-                    </span>
-                  )}
-                </button>
-              )}
+                  que mandaba a la página completa pero dejaba el drawer nunca abierto.
+                  Se muestra también sin sesión (antes: {customer && ...}): se compra sin cuenta. */}
+              <button
+                onClick={() => setCartOpen(true)}
+                className="hidden md:inline-flex text-white opacity-80 hover:opacity-100 active:scale-95 transition-all relative"
+                aria-label="Carrito"
+              >
+                <span className="material-symbols-outlined">shopping_cart</span>
+                {totalItems > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-[#00873a] text-[#f7fff2] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {totalItems}
+                  </span>
+                )}
+              </button>
 
               {/* Menú móvil — abre el panel lateral (drawer). A pedido del cliente queda también acá
                   arriba aunque la barra inferior tenga la pestaña "Menú": las dos abren el mismo menú. */}
@@ -750,8 +748,8 @@ export default function Navbar() {
         </>
       )}
 
-      {/* CartDrawer solo si hay sesión de cliente */}
-      {customer && <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />}
+      {/* CartDrawer con o sin sesión (antes: solo si había sesión de cliente) */}
+      <CartDrawer open={cartOpen} onClose={() => setCartOpen(false)} />
 
       {/* Barra de navegación inferior (solo celular) */}
       <MobileBottomNav
