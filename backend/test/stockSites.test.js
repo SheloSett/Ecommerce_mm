@@ -223,6 +223,23 @@ describe("venta manual", () => {
     await sell([{ productId: 4, quantity: 3, price: 1000 }]);
     assert.equal(stockOf(4), 0);
   });
+
+  test("queda en el historial con el número de la venta", async () => {
+    const res = await sell([{ productId: 1, quantity: 2, price: 1000 }, { productId: 3, variantId: 31, quantity: 1, price: 3000 }]);
+    assert.deepEqual(db.movements.map((m) => [m.productId, m.variantId, m.reason, m.delta, m.refId, m.actor]), [
+      [1, null, "VENTA_MANUAL", -2, String(res.body.id), "Ana"],
+      [3, 31, "VENTA_MANUAL", -1, String(res.body.id), "Ana"],
+    ]);
+  });
+
+  test("arreglo: dos ventas a la vez de la última unidad dejan el stock en 0, no en -1, y anotan el faltante", async () => {
+    await Promise.all([
+      sell([{ productId: 5, quantity: 1, price: 1000 }]),
+      sell([{ productId: 5, quantity: 1, price: 1000 }]),
+    ]);
+    assert.equal(stockOf(5), 0, "antes el decrement sin piso lo dejaba en -1");
+    assert.deepEqual(db.movements.map((m) => [m.delta, m.after, m.requested]), [[-1, 0, -1], [0, 0, -1]]);
+  });
 });
 
 // ── Editar líneas de un pedido ───────────────────────────────────────────────

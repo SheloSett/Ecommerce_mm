@@ -2299,7 +2299,8 @@ async function updateMyQuoteItems(req, res) {
     }
 
     // ── 5. Aplicar todo junto ──
-    await prisma.$transaction(async (tx) => {
+    // stockService.transaction: el mismo prisma.$transaction, más el aviso de que cambió el stock.
+    await stockService.transaction(async (tx) => {
       for (const item of eliminadas) {
         await tx.orderItem.delete({ where: { id: item.id } });
       }
@@ -2313,24 +2314,21 @@ async function updateMyQuoteItems(req, res) {
           data: { orderId, productId: n.product.id, quantity: n.quantity, price: n.price, currency: n.currency },
         });
       }
+      // mov.delta > 0 = descontar, < 0 = devolver. Pasa por el servicio de stock con esta misma
+      // transacción: no baja de 0, no toca ilimitados, y si al devolver el producto vuelve a tener
+      // unidades se republica (salvo que el admin lo haya ocultado a mano, B12); si llega a 0 se
+      // despublica. Antes hacía todo eso acá, leyendo y escribiendo el número.
       for (const mov of movimientos.values()) {
         if (mov.delta === 0) continue;
-        if (mov.tipo === "variante") {
-          const v = await tx.productVariant.findUnique({ where: { id: mov.id } });
-          if (!v || v.stockUnlimited) continue;
-          await tx.productVariant.update({ where: { id: mov.id }, data: { stock: Math.max(0, v.stock - mov.delta) } });
-        } else {
-          const prod = await tx.product.findUnique({ where: { id: mov.id } });
-          if (!prod || prod.stockUnlimited) continue;
-          const nuevoStock = Math.max(0, prod.stock - mov.delta);
-          await tx.product.update({
-            where: { id: mov.id },
-            // Si al devolver stock el producto vuelve a tener unidades, se vuelve a publicar
-            // (mismo criterio que cuando se cancela una cotización), salvo que el admin lo haya ocultado
-            // a mano (B12). Antes: (mov.delta < 0 ? { active: true } : {})
-            data:  { stock: nuevoStock, ...(nuevoStock === 0 ? { active: false } : (mov.delta < 0 && !prod.hiddenByAdmin ? { active: true } : {})) },
-          });
-        }
+        await adjustStock({
+          ...(mov.tipo === "variante" ? { variantId: mov.id } : { productId: mov.id }),
+          delta:  -mov.delta,
+          reason: REASONS.EDICION_PEDIDO,
+          ref:    { type: "order", id: orderId },
+          actor:  actorOf(req.user),
+          note:   "Cotización modificada por el cliente",
+          tx,
+        });
       }
     });
 
@@ -2942,8 +2940,11 @@ async function createManualOrder(req, res) {
       }
     }
 
-    // Crear la orden y descontar stock en una transacción
-    const order = await prisma.$transaction(async (tx) => {
+    // Crear la orden y descontar stock en una transacción (si algo falla, no queda ni la venta ni el
+    // descuento). stockService.transaction es el mismo prisma.$transaction, más el aviso de que cambió
+    // el stock cuando termina bien.
+    const stockActor = actorOf(req.user);
+    const order = await stockService.transaction(async (tx) => {
       // Actualizar el costo maestro de los productos/variantes que el admin confirmó en el cartel
       for (const cu of costUpdates) {
         if (cu.variantId) {
@@ -2953,32 +2954,9 @@ async function createManualOrder(req, res) {
         }
       }
 
-      // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no.
-      // Solo para VENTAS. Una cotización es un presupuesto: no reserva nada hasta que se cobra
-      // (ahí pasa a APPROVED y el stock lo descuenta updateOrderStatus).
-      for (const item of esCotizacion ? [] : orderItems) {
-        // Ítem libre (productId null): no existe en la base, no hay stock que descontar.
-        if (!item.productId) continue;
-        if (item.variantId) {
-          const variant = await tx.productVariant.findUnique({ where: { id: item.variantId } });
-          if (variant && !variant.stockUnlimited) {
-            await tx.productVariant.update({
-              where: { id: item.variantId },
-              data:  { stock: Math.max(0, variant.stock - item.quantity) },
-            });
-          }
-          continue; // con variante NO se toca el stock del producto padre
-        }
-        const product = await tx.product.findUnique({ where: { id: item.productId } });
-        if (!product.stockUnlimited) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data:  { stock: { decrement: item.quantity } },
-          });
-        }
-      }
-
-      return tx.order.create({
+      // La orden se crea antes de descontar para que cada movimiento del historial lleve su número.
+      // Antes se descontaba primero; dentro de la transacción el orden no cambia nada más.
+      const created = await tx.order.create({
         data: {
           customerName,
           // customerEmail es opcional en ventas manuales — si viene vacío se guarda como ""
@@ -3015,6 +2993,33 @@ async function createManualOrder(req, res) {
           items: { include: { product: { select: { id: true, name: true, images: true } } } },
         },
       });
+
+      // Descontar stock: de la VARIANTE si el ítem tiene variantId, del producto padre si no (con
+      // variante NO se toca el stock del producto padre). Ítem libre (productId null): no existe en la
+      // base, no hay stock que descontar.
+      // Solo para VENTAS. Una cotización es un presupuesto: no reserva nada hasta que se cobra
+      // (ahí pasa a APPROVED y el stock lo descuenta updateOrderStatus).
+      // Las líneas se descuentan en el mismo orden siempre (por producto y variante): dos ventas a la vez
+      // con los mismos productos toman las filas en el mismo orden y no se traban entre sí.
+      // Antes, sin variante se hacía un decrement sin piso que podía dejar el stock en negativo si
+      // otra venta se llevaba lo último entre la validación de arriba y acá; ahora queda en 0 y el
+      // faltante se anota en el historial.
+      const lines = (esCotizacion ? [] : orderItems)
+        .filter((i) => i.productId)
+        .sort((a, b) => (a.productId - b.productId) || ((a.variantId ?? 0) - (b.variantId ?? 0)));
+      for (const item of lines) {
+        await adjustStock({
+          ...(item.variantId ? { variantId: item.variantId } : { productId: item.productId }),
+          delta:      -item.quantity,
+          reason:     REASONS.VENTA_MANUAL,
+          ref:        { type: "order", id: created.id },
+          actor:      stockActor,
+          tx,
+          visibility: "none", // se publica/despublica después, con el resto (ver abajo)
+        });
+      }
+
+      return created;
     });
 
     // Sincronizar publicación de los productos afectados (igual que las ventas web):
