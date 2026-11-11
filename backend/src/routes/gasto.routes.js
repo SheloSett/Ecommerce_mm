@@ -4,6 +4,8 @@ const router = express.Router();
 // FIX seguridad: se agrega adminMiddleware. Antes las rutas de gastos solo tenían authMiddleware
 // (token válido) → cualquier cliente logueado podía listar/crear/borrar gastos del negocio.
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
+// Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
+const { adjustStock, actorOf, REASONS } = require("../services/stock.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -58,26 +60,20 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
       },
     });
 
-    // Descontar stock al registrar un RMA
+    // Descontar stock al registrar un RMA: de la variante si viene, si no del producto. Nunca baja de 0
+    // y un producto sin variantes que se queda en 0 se despublica (como antes). Queda en el historial
+    // con el número de este gasto.
     if (validSubtype === "RMA" && quantity > 0) {
       const qty = parseInt(quantity) || 1;
-      if (parsedVariantId) {
-        const variant = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
-        if (variant && !variant.stockUnlimited) {
-          await prisma.productVariant.update({
-            where: { id: parsedVariantId },
-            data:  { stock: Math.max(0, variant.stock - qty) },
-          });
-        }
-      } else if (parsedProductId) {
-        const product = await prisma.product.findUnique({ where: { id: parsedProductId } });
-        if (product && !product.stockUnlimited) {
-          const newStock = Math.max(0, product.stock - qty);
-          await prisma.product.update({
-            where: { id: parsedProductId },
-            data:  { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
-          });
-        }
+      if (parsedVariantId || parsedProductId) {
+        await adjustStock({
+          ...(parsedVariantId ? { variantId: parsedVariantId } : { productId: parsedProductId }),
+          delta:      -qty,
+          reason:     REASONS.RMA,
+          ref:        { type: "gasto", id: gasto.id },
+          actor:      actorOf(req.user),
+          visibility: parsedVariantId ? "none" : "sync",
+        });
       }
     }
 

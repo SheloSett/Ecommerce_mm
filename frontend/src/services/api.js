@@ -141,6 +141,8 @@ export const productsApi = {
   // Edición rápida: actualiza precio, stock, precios especiales y estado sin multipart
   // Soporta: price, salePrice, wholesalePrice, wholesaleSalePrice, stock, stockUnlimited, minQuantity, active
   quickUpdate: (id, data) => api.patch(`/products/${id}/quick`, data),
+  // Historial de stock del producto y sus variantes: { movements, variantLabels }
+  stockMovements: (id, params) => api.get(`/products/${id}/stock-movements`, { params }),
   bulkPriceAdjust: (data) => api.post("/products/bulk-price-adjust", data),
   // force=true permite borrar un producto con ventas (lo desvincula de las órdenes vía SetNull).
   delete: (id, force = false) => api.delete(`/products/${id}${force ? "?force=true" : ""}`),

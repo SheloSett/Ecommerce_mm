@@ -6,6 +6,7 @@ import { productsApi, categoriesApi, suppliersApi, variantsApi, getImageUrl } fr
 import toast from "react-hot-toast";
 import RichTextEditor from "../../components/RichTextEditor";
 import ProductVariantsEditor from "../../components/admin/ProductVariantsEditor";
+import StockHistoryModal from "../../components/admin/StockHistoryModal";
 import TierEditor from "../../components/admin/TierEditor";
 import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
 // Las categorías ya no están topeadas en dos niveles: aplanar el árbol y armar el breadcrumb
@@ -17,6 +18,14 @@ import { formatPrice as formatPriceCurrency } from "../../utils/formatPrice";
 import MultiSelectDropdown from "../../components/admin/MultiSelectDropdown";
 import * as XLSX from "xlsx";
 import { localDay } from "../../utils/localDate";
+
+// El backend aplica el stock como diferencia con lo que la pantalla mostraba (así una venta que entró
+// mientras se editaba no se deshace). Si por eso quedó un número distinto del que se escribió, avisa.
+function toastStockNotice(data) {
+  const n = data?.stockNotice;
+  if (!n) return;
+  toast(`Mientras lo editabas hubo otro movimiento de stock: quedó en ${n.after} (no en ${n.typed}).`, { icon: "ℹ️", duration: 8000 });
+}
 
 // Orden del listado. Va separado en DOS grupos (precio y ventas) porque son criterios distintos y
 // mezclarlos en un solo desplegable de cinco opciones no dejaba ver de qué se estaba ordenando.
@@ -307,6 +316,8 @@ export default function AdminProducts() {
   const [variantSaving, setVariantSaving] = useState(new Set());
   // ID del producto con el menú de tres puntos abierto
   const [openMenuId, setOpenMenuId] = useState(null);
+  // Producto del que se está mirando el historial de stock (null = ventana cerrada)
+  const [historyProduct, setHistoryProduct] = useState(null);
 
   const fileInputRef = useRef();
   const videoInputRef = useRef();
@@ -625,7 +636,18 @@ export default function AdminProducts() {
       formData.append("wholesalePrice", effWholesale);
       formData.append("wholesaleSalePrice", form.wholesaleSalePrice);
       formData.append("minQuantity", form.minQuantity || "1");
-      formData.append("stock", form.stockUnlimited ? "0" : (form.stock || "0"));
+      // Stock: al crear va siempre. Al editar va solo si el admin lo cambió, junto con el número que
+      // mostraba el formulario (stockBase): el backend aplica la diferencia, así una venta que entró
+      // mientras el formulario estaba abierto no se deshace al guardar.
+      // Antes: formData.append("stock", ...) siempre, y guardar cualquier cosa pisaba el stock.
+      const stockToSend = form.stockUnlimited ? "0" : (form.stock || "0");
+      const stockBase = String(editingProduct?.stock ?? 0);
+      if (!editingProduct) {
+        formData.append("stock", stockToSend);
+      } else if (String(parseInt(stockToSend, 10) || 0) !== stockBase) {
+        formData.append("stock", stockToSend);
+        formData.append("stockBase", stockBase);
+      }
       formData.append("stockUnlimited", form.stockUnlimited);
       formData.append("stockBreak", form.stockBreak || "");
       // priceTiers/wholesalePriceTiers se envían como JSON string (FormData no admite arrays de objetos directamente)
@@ -668,6 +690,7 @@ export default function AdminProducts() {
         }
         const res = await productsApi.update(editingProduct.id, formData);
         toast.success("Cambios guardados");
+        toastStockNotice(res.data);
         // Pedido del cliente: al guardar una edición el modal NO se cierra, así se puede seguir
         // editando (fotos, variantes, etc.) sin volver a abrirlo. Se sincroniza el estado de
         // fotos y videos con lo que quedó guardado para que la próxima vez no se vuelvan a subir
@@ -675,6 +698,11 @@ export default function AdminProducts() {
         // Antes: setShowModal(false) en los dos casos.
         const saved = res.data || editingProduct;
         setEditingProduct(saved);
+        // El stock del formulario pasa a ser el que quedó guardado: es la base del próximo guardado
+        // (si no, volver a guardar aplicaría otra vez la misma diferencia).
+        if (saved.stock !== undefined && !form.stockUnlimited) {
+          setForm((f) => ({ ...f, stock: String(saved.stock) }));
+        }
         setNewImages([]);
         setKeepImages(saved.images || []);
         setNewVideos([]);
@@ -844,6 +872,9 @@ export default function AdminProducts() {
             wholesaleSalePrice: product.wholesaleSalePrice?.toString() || "",
             minQuantity: product.minQuantity?.toString() || "1",
             stock: product.stock?.toString() || "0",
+            // stockBase: el número que se mostró al abrir. Se manda junto con el stock (solo si se
+            // cambió) para que el backend aplique la diferencia y no pise una venta del medio.
+            stockBase: product.stock?.toString() || "0",
             stockUnlimited: product.stockUnlimited || false,
             cost: product.cost?.toString() || "",
             sku: product.sku || "",
@@ -859,6 +890,7 @@ export default function AdminProducts() {
             variants.forEach((v) => {
               initVals[v.id] = {
                 stock:              v.stock?.toString() || "0",
+                stockBase:          v.stock?.toString() || "0", // ver stockBase del producto
                 stockUnlimited:     v.stockUnlimited || false,
                 price:              v.price              != null ? v.price.toString()              : "",
                 salePrice:          v.salePrice          != null ? v.salePrice.toString()          : "",
@@ -909,19 +941,29 @@ export default function AdminProducts() {
 
     setQuickEditSaving((prev) => new Set(prev).add(product.id));
     try {
+      // El stock va solo si se cambió, con el número que se mostraba (ver stockBase en toggleQuickEdit).
+      // Antes iba siempre: guardar un precio volvía el stock al de cuando se abrió la edición rápida.
+      const stockToSend = vals.stockUnlimited ? 0 : (parseInt(vals.stock, 10) || 0);
+      const stockChanged = String(stockToSend) !== String(parseInt(vals.stockBase, 10) || 0);
       const updated = await productsApi.quickUpdate(product.id, {
         price: vals.price,
         salePrice: vals.salePrice || null,
         wholesalePrice: vals.wholesalePrice || null,
         wholesaleSalePrice: vals.wholesaleSalePrice || null,
         minQuantity: vals.minQuantity,
-        stock: vals.stockUnlimited ? 0 : vals.stock,
+        ...(stockChanged ? { stock: stockToSend, stockBase: parseInt(vals.stockBase, 10) || 0 } : {}),
         stockUnlimited: vals.stockUnlimited,
         ...(vals.cost !== undefined && vals.cost !== "" ? { cost: vals.cost } : {}),
         ...(vals.sku !== undefined && vals.sku !== "" ? { sku: vals.sku } : {}),
       });
       setProducts((prev) => prev.map((p) => (p.id === product.id ? { ...p, ...updated.data, variantStockTotal: p.variantStockTotal, _count: p._count } : p)));
+      // Lo guardado pasa a ser la nueva base (si no, volver a guardar aplicaría otra vez la diferencia)
+      if (updated.data?.stock !== undefined) {
+        const saved = String(updated.data.stock);
+        setQuickEditValues((all) => ({ ...all, [product.id]: { ...all[product.id], stock: saved, stockBase: saved } }));
+      }
       toast.success("Cambios guardados");
+      toastStockNotice(updated.data);
     } catch (err) {
       toast.error("Error al guardar los cambios");
     } finally {
@@ -969,8 +1011,12 @@ export default function AdminProducts() {
       // El backend de variantes NO usa multer — espera JSON. Antes acá se mandaba FormData multipart
       // y el req.body quedaba vacío, por eso el stock parecía guardarse en la UI pero al refrescar
       // volvía al valor anterior. Ahora mandamos JSON directo con todos los campos relevantes.
+      // El stock va solo si se cambió, con el número que se mostraba (ver stockBase del producto).
+      const stockToSend = vals.stockUnlimited ? 0 : (parseInt(vals.stock, 10) || 0);
+      const stockChanged = String(stockToSend) !== String(parseInt(vals.stockBase, 10) || 0);
       const payload = {
-        stock: vals.stockUnlimited ? 0 : (vals.stock || 0),
+        stock: stockChanged ? stockToSend : undefined,
+        stockBase: stockChanged ? (parseInt(vals.stockBase, 10) || 0) : undefined,
         stockUnlimited: vals.stockUnlimited,
         // Precios mayorista/minorista (vacío → null para limpiar el campo en backend)
         price:              vals.price              !== undefined ? (vals.price              === "" ? null : vals.price)              : undefined,
@@ -991,7 +1037,13 @@ export default function AdminProducts() {
         }
         return updated;
       });
+      // Lo guardado pasa a ser la nueva base del stock de la variante
+      if (res.data?.stock !== undefined) {
+        const saved = String(res.data.stock);
+        setVariantEditValues((prev) => ({ ...prev, [variantId]: { ...prev[variantId], stock: saved, stockBase: saved } }));
+      }
       toast.success("Variante actualizada");
+      toastStockNotice(res.data);
     } catch {
       toast.error("Error al guardar la variante");
     } finally {
@@ -1725,6 +1777,12 @@ export default function AdminProducts() {
                               className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 sm:hidden"
                             >
                               ✏️ Editar producto
+                            </button>
+                            <button
+                              onClick={() => { setHistoryProduct(p); setOpenMenuId(null); }}
+                              className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                            >
+                              📋 Historial de stock
                             </button>
                             <button
                               onClick={() => handleDelete(p)}
@@ -3044,6 +3102,10 @@ export default function AdminProducts() {
             </form>
           </div>
         </div>
+      )}
+
+      {historyProduct && (
+        <StockHistoryModal product={historyProduct} onClose={() => setHistoryProduct(null)} />
       )}
     </AdminLayout>
   );

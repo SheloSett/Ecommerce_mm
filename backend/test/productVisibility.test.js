@@ -4,6 +4,7 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
+const { withStockSupport } = require("./helpers/fakeStock");
 
 const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
 let db;
@@ -15,6 +16,7 @@ function resetDb() {
       // Pendrive que se ocultó solo, por quedarse sin stock
       2: { id: 2, name: "Pendrive", stock: 0, stockUnlimited: false, active: false, hiddenByAdmin: false, price: 500 },
     },
+    movements: [],
   };
 }
 class FakePrismaClient {
@@ -28,6 +30,8 @@ class FakePrismaClient {
       update: async ({ where, data }) => Object.assign(db.products[where.id], clone(data)),
     };
     this.productVariant = { count: async () => 0 };
+    // El stock pasa por services/stock.service.js (transacción + historial)
+    withStockSupport(this, { movements: () => db.movements });
   }
 }
 const root = path.join(__dirname, "..");
@@ -70,7 +74,8 @@ describe("el switch 'Publicado' del admin", () => {
   });
 
   test("cargarle stock a un producto oculto a mano no lo republica", async () => {
-    await quickUpdate(1, { stock: 20 });
+    assert.equal((await quickUpdate(1, { stock: 20 })).code, 200);
+    assert.equal(db.products[1].stock, 20);
     assert.equal(db.products[1].active, false);
   });
 

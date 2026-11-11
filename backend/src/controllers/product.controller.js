@@ -12,7 +12,10 @@ const { resolvePriceViewer, sanitizeProductForViewer, effectiveVisibleFor } = re
 // Orden por relevancia de los resultados de búsqueda. Ver utils/searchRelevance.js.
 const { sortBySearchRelevance } = require("../utils/searchRelevance");
 // Todo cambio de stock pasa por acá (y la publicación automática según el stock vive ahí).
-const { syncProductVisibility, listMovements } = require("../services/stock.service");
+const stockService = require("../services/stock.service");
+const { syncProductVisibility, listMovements, adjustStock, recordInitial, actorOf, REASONS } = stockService;
+// El número que escribe el admin se aplica como diferencia con lo que veía (ver utils/panelStock.js).
+const { panelStockChange, panelStockOptions, stockNotice } = require("../utils/panelStock");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -969,6 +972,12 @@ async function createProduct(req, res) {
       include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
     });
 
+    // Stock con el que nace: queda en el historial. Si el historial falla, el producto igual se creó.
+    if (!product.stockUnlimited && product.stock > 0) {
+      await recordInitial({ productId: product.id, stock: product.stock, actor: actorOf(req.user) })
+        .catch((err) => console.error("createProduct: no se pudo anotar el stock inicial:", err.message));
+    }
+
     res.status(201).json(product);
   } catch (err) {
     console.error("createProduct error:", err);
@@ -1077,7 +1086,15 @@ async function updateProduct(req, res) {
     let slug = existing.slug;
     if (!slug) slug = await generateUniqueProductSlug(name ? name.trim() : existing.name, existing.id);
 
-    const product = await prisma.product.update({
+    // El stock ya no va dentro de este update: pasa por el servicio de stock, como diferencia con lo que
+    // el formulario mostraba (ver utils/panelStock.js). Antes se escribía siempre (el número del
+    // formulario, o el leído al principio de este pedido si no venía) y guardar cualquier cambio del
+    // producto deshacía las ventas que habían entrado mientras el admin lo tenía abierto.
+    // Si tiene variantes activas, el stock es la suma de las variantes — se ignora el del body.
+    const stockChange = productHasActiveVariants ? null : panelStockChange(stock, req.body.stockBase);
+    const stockOp = panelStockOptions(stockChange);
+
+    const productUpdate = {
       where: { id: parseInt(id) },
       data: {
         name: name ? name.trim() : existing.name, // trim: sin espacios al inicio/fin (rompían el orden A→Z)
@@ -1091,8 +1108,7 @@ async function updateProduct(req, res) {
         wholesalePrice: wholesalePrice !== undefined ? (wholesalePrice ? parseFloat(wholesalePrice) : null) : existing.wholesalePrice,
         wholesaleSalePrice: wholesaleSalePrice !== undefined ? (wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null) : existing.wholesaleSalePrice,
         minQuantity: minQuantity !== undefined ? parseInt(minQuantity) : existing.minQuantity,
-        // Si tiene variantes activas, el stock es la suma de las variantes — ignorar el campo stock del body
-        stock: (!productHasActiveVariants && stock !== undefined) ? parseInt(stock) : existing.stock,
+        // Antes: stock: (!productHasActiveVariants && stock !== undefined) ? parseInt(stock) : existing.stock,
         stockUnlimited: (!productHasActiveVariants && stockUnlimited !== undefined) ? (stockUnlimited === "true" || stockUnlimited === true) : existing.stockUnlimited,
         stockBreak: stockBreak !== undefined ? (stockBreak ? parseInt(stockBreak) : null) : existing.stockBreak,
         sku: sku !== undefined ? (sku || null) : existing.sku,
@@ -1144,9 +1160,23 @@ async function updateProduct(req, res) {
         videos,
       },
       include: { categories: { include: { parent: { select: { id: true, name: true } } } }, supplier: { select: { id: true, name: true } } },
+    };
+
+    // Stock y resto del producto juntos: o se guarda todo o nada. La publicación no se toca acá (la
+    // decide el switch "Publicado" del mismo formulario), igual que antes.
+    let stockResult = null;
+    const product = await stockService.transaction(async (tx) => {
+      if (stockOp) {
+        stockResult = await adjustStock({
+          productId: existing.id, ...stockOp, reason: REASONS.AJUSTE, actor: actorOf(req.user),
+          tx, respectUnlimited: false, visibility: "none",
+        });
+      }
+      return tx.product.update(productUpdate);
     });
 
-    res.json(product);
+    const notice = stockNotice(stockChange, stockResult);
+    res.json(notice ? { ...product, stockNotice: notice } : product);
   } catch (err) {
     console.error("updateProduct error:", err);
     res.status(500).json({ error: "Error al actualizar el producto" });
@@ -1205,22 +1235,13 @@ async function quickUpdateProduct(req, res) {
     if (wholesalePrice !== undefined) updateData.wholesalePrice = wholesalePrice ? parseFloat(wholesalePrice) : null;
     if (wholesaleSalePrice !== undefined) updateData.wholesaleSalePrice = wholesaleSalePrice ? parseFloat(wholesaleSalePrice) : null;
     if (minQuantity !== undefined) updateData.minQuantity = parseInt(minQuantity) || 1;
-    // Para productos con variantes, el stock es la suma de las variantes — no se actualiza directamente
-    if (stock !== undefined && !qHasActiveVariants) {
-      const newStock = parseInt(stock) || 0;
-      updateData.stock = newStock;
-      const isUnlimited = stockUnlimited !== undefined ? Boolean(stockUnlimited) : existing.stockUnlimited;
-      if (active === undefined) {
-        if (newStock <= 0 && !isUnlimited) {
-          // Si el admin pone stock en 0 (y no es ilimitado), despublicar automáticamente
-          updateData.active = false;
-        // (salvo que el admin lo haya ocultado a mano: antes también lo republicaba)
-        } else if (newStock > 0 && !existing.active && !existing.hiddenByAdmin) {
-          // Si el admin agrega stock y el producto estaba despublicado, republicar automáticamente
-          updateData.active = true;
-        }
-      }
-    }
+    // Para productos con variantes, el stock es la suma de las variantes — no se actualiza directamente.
+    // El stock pasa por el servicio de stock, como diferencia con lo que mostraba la edición rápida
+    // (ver utils/panelStock.js). Antes iba en este mismo update, junto con publicar o despublicar según
+    // el número nuevo; eso ahora lo hace syncProductVisibility al final, que ya corría siempre después y
+    // decidía lo mismo (sin stock → despublicar; con stock → republicar salvo que lo ocultara el admin).
+    const stockChange = !qHasActiveVariants ? panelStockChange(stock, req.body.stockBase) : null;
+    const stockOp = panelStockOptions(stockChange);
     if (stockUnlimited !== undefined && !qHasActiveVariants) updateData.stockUnlimited = Boolean(stockUnlimited);
     if (active !== undefined) updateData.active = Boolean(active);
     Object.assign(updateData, hiddenByAdminData(existing, active));
@@ -1234,24 +1255,36 @@ async function quickUpdateProduct(req, res) {
       updateData.supplierId = supplierId === "" || supplierId === null ? null : parseInt(supplierId);
     }
 
-    const product = await prisma.product.update({
-      where: { id: parseInt(id) },
-      data: updateData,
-      // Antes: include: { category: { select: { id, name, slug, parent } } }
-      include: {
-        categories: {
-          include: { parent: { select: { id: true, name: true } } },
+    // Stock primero y después el resto, en la misma transacción: así la respuesta (que el panel usa
+    // para refrescar la fila) ya trae el stock nuevo.
+    let stockResult = null;
+    const product = await stockService.transaction(async (tx) => {
+      if (stockOp) {
+        stockResult = await adjustStock({
+          productId: existing.id, ...stockOp, reason: REASONS.AJUSTE, actor: actorOf(req.user),
+          tx, respectUnlimited: false, visibility: "none",
+        });
+      }
+      return tx.product.update({
+        where: { id: parseInt(id) },
+        data: updateData,
+        // Antes: include: { category: { select: { id, name, slug, parent } } }
+        include: {
+          categories: {
+            include: { parent: { select: { id: true, name: true } } },
+          },
+          // supplier: para que el front pueda refrescar el chip de proveedor al vuelo
+          supplier: { select: { id: true, name: true } },
         },
-        // supplier: para que el front pueda refrescar el chip de proveedor al vuelo
-        supplier: { select: { id: true, name: true } },
-      },
+      });
     });
 
     if (stock !== undefined || stockUnlimited !== undefined) {
       await syncProductVisibility(parseInt(id));
     }
 
-    res.json(product);
+    const notice = stockNotice(stockChange, stockResult);
+    res.json(notice ? { ...product, stockNotice: notice } : product);
   } catch (err) {
     console.error("quickUpdateProduct error:", err);
     res.status(500).json({ error: "Error al actualizar el producto" });

@@ -5,7 +5,10 @@ const router  = express.Router();
 // stock y costos de variantes, o borrarlas. GET /product/:id/attributes queda pública.
 // GET /product/:id (variantes) ahora también es solo admin: exponía costos y precios mayoristas.
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
-const { syncProductVisibility } = require("../controllers/product.controller");
+// Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
+const stockService = require("../services/stock.service");
+const { syncProductVisibility, adjustStock, actorOf, REASONS } = stockService;
+const { panelStockChange, panelStockOptions, stockNotice } = require("../utils/panelStock");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -245,7 +248,10 @@ router.put("/:id", authMiddleware, adminMiddleware, requireAnyPermission("produc
     };
 
     const data = {};
-    if (stock          !== undefined) data.stock          = parseInt(stock);
+    // El stock no va en este update: pasa por el servicio de stock, como diferencia con lo que mostraba
+    // el editor (ver utils/panelStock.js). Antes: if (stock !== undefined) data.stock = parseInt(stock);
+    const stockChange = panelStockChange(stock, req.body.stockBase);
+    const stockOp = panelStockOptions(stockChange);
     if (stockUnlimited !== undefined) data.stockUnlimited = stockUnlimited === "true" || stockUnlimited === true;
     if (price              !== undefined) data.price              = price              === "" || price              === null ? null : parseFloat(price);
     if (salePrice          !== undefined) data.salePrice          = salePrice          === "" || salePrice          === null ? null : parseFloat(salePrice);
@@ -283,11 +289,22 @@ router.put("/:id", authMiddleware, adminMiddleware, requireAnyPermission("produc
     const parsedWholesaleTiers = parseTiers(wholesalePriceTiers);
     if (parsedWholesaleTiers !== undefined) data.wholesalePriceTiers = parsedWholesaleTiers;
 
-    const variant = await prisma.productVariant.update({ where: { id }, data });
+    // Stock primero y después el resto, en la misma transacción (la respuesta ya trae el stock nuevo).
+    let stockResult = null;
+    const variant = await stockService.transaction(async (tx) => {
+      if (stockOp) {
+        stockResult = await adjustStock({
+          variantId: id, ...stockOp, reason: REASONS.AJUSTE, actor: actorOf(req.user),
+          tx, respectUnlimited: false, visibility: "none",
+        });
+      }
+      return tx.productVariant.update({ where: { id }, data });
+    });
     if (stock !== undefined || stockUnlimited !== undefined) {
       await syncProductVisibility(variant.productId);
     }
-    res.json(variant);
+    const notice = stockNotice(stockChange, stockResult);
+    res.json(notice ? { ...variant, stockNotice: notice } : variant);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al actualizar variante" });

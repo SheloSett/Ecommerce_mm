@@ -222,6 +222,9 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
       ...prev,
       [v.id]: {
         stock:              String(v.stock ?? 0),
+        // stockBase: el número que se mostró al abrir la fila. Se manda junto con el stock (solo si se
+        // cambió) para que el backend aplique la diferencia y no pise una venta del medio.
+        stockBase:          String(v.stock ?? 0),
         stockUnlimited:     v.stockUnlimited ?? false,
         // Precios: 4 campos. Los minoristas usan price/salePrice, mayoristas wholesalePrice/wholesaleSalePrice
         price:              v.price              != null ? String(v.price)              : "",
@@ -296,8 +299,12 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
     try {
       // Solo enviamos los precios relevantes según visibility para no pisar campos con "".
       // Si visibility es MINORISTA mandamos price/salePrice y null en wholesale*. Y viceversa.
+      // Stock solo si se cambió, con el número que se mostraba (antes iba siempre y guardar un precio
+      // devolvía el stock al de cuando se abrió la fila).
+      const typedStock = parseInt(e.stock) || 0;
+      const baseStock  = parseInt(e.stockBase) || 0;
       const payload = {
-        stock:              parseInt(e.stock) || 0,
+        ...(typedStock !== baseStock ? { stock: typedStock, stockBase: baseStock } : {}),
         stockUnlimited:     e.stockUnlimited,
         price:              isMin ? (e.price              === "" ? "" : parseFloat(e.price)) : null,
         salePrice:          isMin ? (e.salePrice          === "" ? "" : parseFloat(e.salePrice)) : null,
@@ -325,6 +332,11 @@ export default function ProductVariantsEditor({ productId, basePrice, baseWholes
       setVariants((prev) => prev.map((v) => (v.id === id ? res.data : v)));
       cancelEdit(id);
       toast.success("Variante guardada");
+      // Si mientras se editaba hubo otro movimiento de stock, quedó un número distinto del escrito
+      if (res.data?.stockNotice) {
+        const n = res.data.stockNotice;
+        toast(`Mientras la editabas hubo otro movimiento de stock: quedó en ${n.after} (no en ${n.typed}).`, { icon: "ℹ️", duration: 8000 });
+      }
     } catch (err) {
       console.error(err);
       toast.error(err.response?.data?.error || "Error al guardar variante");

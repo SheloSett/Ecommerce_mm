@@ -150,7 +150,7 @@ stub(path.join(root, "src/config/cloudinary.js"), { uploadBuffer: async () => ({
 stub(path.join(root, "src/sse/notificationSSE.js"), { pushToClient: () => {} });
 
 const orders = require("../src/controllers/order.controller");
-const { quickUpdateProduct } = require("../src/controllers/product.controller");
+const { quickUpdateProduct, updateProduct } = require("../src/controllers/product.controller");
 const variantRoutes = require("../src/routes/variant.routes");
 const gastoRoutes = require("../src/routes/gasto.routes");
 
@@ -385,5 +385,78 @@ describe("panel de productos y editor de variantes", () => {
     assert.equal(res.code, 200);
     assert.equal(stockOf(2), 0);
     assert.deepEqual(Object.values(db.variants).filter((v) => v.productId === 2).map((v) => v.stock), [0, 0]);
+  });
+});
+
+// ── El panel ya no pisa ventas ───────────────────────────────────────────────
+// El panel manda el número que escribió el admin (stock) y el que veía al abrir (stockBase). Se aplica
+// la diferencia: si mientras tenía el formulario abierto entró una venta, no se deshace.
+describe("el panel aplica la diferencia con lo que el admin veía", () => {
+  beforeEach(resetDb);
+  // Ana abrió la edición cuando había 10; mientras tanto se vendieron 2 (quedaron 8).
+  const sellTwoMeanwhile = () => { db.products[1].stock = 8; };
+
+  test("edición rápida: escribió 15 donde veía 10 → suma 5 a lo que hay (13), y avisa", async () => {
+    sellTwoMeanwhile();
+    const res = await call(quickUpdateProduct, { params: { id: "1" }, body: { stock: 15, stockBase: 10 } });
+    assert.equal(res.code, 200);
+    assert.equal(stockOf(1), 13);
+    assert.equal(res.body.stock, 13, "la respuesta ya trae el stock nuevo");
+    assert.deepEqual(res.body.stockNotice, { typed: 15, after: 13 });
+    const m = db.movements.at(-1);
+    assert.deepEqual([m.reason, m.delta, m.before, m.after, m.actor], ["AJUSTE", 5, 8, 13, "Ana"]);
+  });
+
+  test("edición rápida sin tocar el stock (solo el precio): no lo pisa", async () => {
+    sellTwoMeanwhile();
+    await call(quickUpdateProduct, { params: { id: "1" }, body: { price: 1200 } });
+    assert.equal(stockOf(1), 8);
+    assert.equal(db.products[1].price, 1200);
+    assert.equal(db.movements.length, 0);
+  });
+
+  test("edición completa sin tocar el stock: antes lo volvía a 10, ahora queda en 8", async () => {
+    sellTwoMeanwhile();
+    db.products[1].slug = "parlante";
+    const res = await call(updateProduct, { params: { id: "1" }, body: { name: "Parlante grande", description: "Nuevo" } });
+    assert.equal(res.code, 200);
+    assert.equal(stockOf(1), 8);
+    assert.equal(db.products[1].name, "Parlante grande");
+  });
+
+  test("edición completa con el stock cambiado: aplica la diferencia", async () => {
+    sellTwoMeanwhile();
+    db.products[1].slug = "parlante";
+    const res = await call(updateProduct, { params: { id: "1" }, body: { stock: "6", stockBase: "10" } });
+    assert.equal(res.code, 200);
+    assert.equal(stockOf(1), 4);
+    assert.deepEqual(res.body.stockNotice, { typed: 6, after: 4 });
+  });
+
+  test("bajar más de lo que hay deja 0, nunca negativo", async () => {
+    sellTwoMeanwhile();
+    await call(quickUpdateProduct, { params: { id: "1" }, body: { stock: 0, stockBase: 10 } });
+    assert.equal(stockOf(1), 0);
+  });
+
+  test("editor de variantes: la diferencia sale de la variante", async () => {
+    db.variants[31].stock = 25; // abrió con 30, se vendieron 5
+    const res = await call(putVariant, { params: { id: "31" }, body: { stock: 40, stockBase: 30 } });
+    assert.equal(res.code, 200);
+    assert.equal(variantStock(31), 35);
+    assert.equal(res.body.stock, 35);
+  });
+
+  test("una pantalla vieja que no manda stockBase: carga el número tal cual, como antes", async () => {
+    sellTwoMeanwhile();
+    await call(quickUpdateProduct, { params: { id: "1" }, body: { stock: 15 } });
+    assert.equal(stockOf(1), 15);
+    assert.equal(db.movements.at(-1).requested, null, "fue una carga a mano, no una suma");
+  });
+
+  test("el RMA queda en el historial con el número de gasto", async () => {
+    const res = await call(createGasto, { body: { amount: 100, description: "Falla", type: "NEGOCIO", subtype: "RMA", productId: 1, quantity: 2 } });
+    const m = db.movements.at(-1);
+    assert.deepEqual([m.reason, m.delta, m.refType, m.refId], ["RMA", -2, "gasto", String(res.body.id)]);
   });
 });
