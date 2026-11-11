@@ -1,7 +1,10 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { pushToClient } = require("../sse/notificationSSE");
-const { syncProductVisibility } = require("./product.controller");
+// Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué). La publicación
+// automática según el stock también vive ahí. Antes: require("./product.controller").
+const stockService = require("../services/stock.service");
+const { syncProductVisibility, adjustStock, actorOf, REASONS } = stockService;
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
@@ -841,36 +844,31 @@ async function updateOrderStatus(req, res) {
       data: updateData,
     });
 
+    // Datos comunes de los movimientos de stock de este cambio de estado (historial)
+    const stockRef   = { type: "order", id: existing.id };
+    const stockActor = actorOf(req.user);
+
     if (willReturnStock) {
       // Recargar items frescos para capturar variantIds asignados en approveCotizacion
       const freshItems = await prisma.orderItem.findMany({ where: { orderId: existing.id } });
+      const note = status === "REJECTED" ? "Pedido rechazado" : null;
       for (const item of freshItems) {
         // Ítem libre o de un producto borrado (productId null): no hay stock que devolver. Antes la
         // consulta con id null tiraba error a mitad del recorrido, con el estado nuevo ya guardado:
         // el pedido quedaba cancelado con parte del stock sin devolver.
         if (!item.productId) continue;
         if (item.variantId) {
-          // Variante asignada en confirmación → devolver stock a la variante
-          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-          if (!variant || variant.stockUnlimited) continue;
-          await prisma.productVariant.update({
-            where: { id: item.variantId },
-            data:  { stock: variant.stock + item.quantity },
-          });
-          await syncProductVisibility(item.productId);
+          // Variante asignada en confirmación → devolver stock a la variante (y republicar el producto
+          // si estaba oculto por falta de stock, como antes)
+          await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref: stockRef, actor: stockActor, note });
           continue;
         }
         // Sin variantId: verificar si el producto tiene variantes
         const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
         if (variantCount > 0) continue; // variante sin asignar — nunca se reservó stock
-        // Producto sin variantes: stock fue reservado al crear → devolver
-        const product = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (!product || product.stockUnlimited) continue;
-        await prisma.product.update({
-          where: { id: item.productId },
-          // Se republica solo si no lo ocultó el admin a mano (B12). Antes: active: true siempre
-          data:  { stock: product.stock + item.quantity, ...(product.hiddenByAdmin ? {} : { active: true }) },
-        });
+        // Producto sin variantes: devolver. Se republica solo si no lo ocultó el admin a mano (B12):
+        // lo decide syncProductVisibility dentro del servicio. Antes: stock + qty y active: true acá.
+        await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref: stockRef, actor: stockActor, note });
       }
     }
 
@@ -887,14 +885,7 @@ async function updateOrderStatus(req, res) {
         if (!item.productId) continue;
         // Si el item tiene variante, descontar stock de la variante; si no, del producto base.
         if (item.variantId) {
-          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-          if (!variant || variant.stockUnlimited) continue;
-          const newVariantStock = Math.max(0, variant.stock - item.quantity);
-          await prisma.productVariant.update({
-            where: { id: item.variantId },
-            data:  { stock: newVariantStock },
-          });
-          await syncProductVisibility(item.productId);
+          await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref: stockRef, actor: stockActor });
           continue;
         }
 
@@ -912,16 +903,13 @@ async function updateOrderStatus(req, res) {
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (!product || product.stockUnlimited) continue;
 
-        const newStock = Math.max(0, product.stock - item.quantity);
-        await prisma.product.update({
-          where: { id: item.productId },
-          data:  {
-            stock: newStock,
-            // Si el stock llega a 0 y no es ilimitado, despublicar automáticamente
-            ...(newStock === 0 && !product.stockUnlimited ? { active: false } : {}),
-          },
-        });
-        await syncProductVisibility(item.productId);
+        // Descontar (nunca baja de 0; si llega a 0 se despublica). newStock es el número que quedó,
+        // leído con la fila bloqueada: con él se reparte lo que queda entre los otros pedidos.
+        // Antes: newStock = Math.max(0, product.stock - qty) con el product leído arriba, y si en el
+        // medio entraba otra venta se pisaba.
+        const moved = await adjustStock({ productId: item.productId, delta: -item.quantity, reason: REASONS.VENTA, ref: stockRef, actor: stockActor });
+        if (!moved.ok) continue;
+        const newStock = moved.after;
 
         // Ajustar otras órdenes PENDING/QUOTE_APPROVED que tengan este producto.
         // Se excluyen las COTIZACIONES porque su stock ya está reservado por separado.
@@ -2418,30 +2406,21 @@ async function cancelByCustomer(req, res) {
     // padre: a un ítem con variante le sumaba stock que nunca se le había restado, y a un producto
     // con variantes sin asignar le inventaba unidades.
     if (order.stockDeducted) {
+      const ref   = { type: "order", id: order.id };
+      const actor = actorOf(req.user);
+      const note  = "La canceló el cliente";
       for (const item of order.items) {
         if (!item.productId) continue; // ítem libre: no existe en el catálogo
         if (item.variantId) {
-          const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-          if (!variant || variant.stockUnlimited) continue;
-          await prisma.productVariant.update({
-            where: { id: item.variantId },
-            data:  { stock: variant.stock + item.quantity },
-          });
-          await syncProductVisibility(item.productId);
+          await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note });
           continue;
         }
         // Sin variante asignada: si el producto tiene variantes, nunca se reservó nada
         const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
         if (variantCount > 0) continue;
-        const product = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (!product || product.stockUnlimited) continue;
-        await prisma.product.update({
-          where: { id: item.productId },
-          data:  {
-            stock:  product.stock + item.quantity,
-            active: true, // re-publicar si estaba sin stock por esta cotización
-          },
-        });
+        // Re-publica si estaba sin stock por esta cotización, salvo que el admin lo haya ocultado a mano
+        // (B12, como en el resto de las devoluciones). Antes: active: true siempre.
+        await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note });
       }
     }
 

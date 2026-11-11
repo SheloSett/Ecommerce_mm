@@ -12,6 +12,7 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
+const { withStockSupport } = require("./helpers/fakeStock");
 const jwt = require("jsonwebtoken");
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret";
@@ -52,6 +53,7 @@ function resetDb() {
       3: { id: 3, code: "UNAVEZ", active: true, discountType: "PERCENTAGE", discountValue: 50, customerId: null, expiresAt: null, minPurchase: null, maxUses: 1, maxUsesPerCustomer: null },
     },
     couponUsages: [],
+    movements: [],
     orders: {},
     nextOrderId: 100,
     nextItemId: 1000,
@@ -124,6 +126,11 @@ class FakePrismaClient {
     this.orderItem = { findMany: async ({ where }) => itemsWithProduct(db.orders[where.orderId]) };
     this.cart = { findUnique: async () => null };
     this.$executeRawUnsafe = async () => 0;
+    // El stock pasa por services/stock.service.js (transacción + historial + variantes del producto)
+    withStockSupport(this, {
+      movements: () => db.movements,
+      variantsOf: (pid) => Object.values(db.variants).filter((v) => v.productId === pid),
+    });
   }
 }
 
@@ -362,6 +369,16 @@ describe("aviso de pago: el monto tiene que coincidir con el pedido", () => {
     await handleWebhook(webhookReq(902), fakeRes());
     assert.equal(db.orders[id].status, "APPROVED");
     assert.equal(db.products[1].stock, 4);
+  });
+
+  test("el descuento queda en el historial de stock, con el pedido y quién lo hizo", async () => {
+    const id = seedOrder({});
+    mp.payments[911] = { id: 911, status: "approved", external_reference: String(id), transaction_amount: 2000000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(911), fakeRes());
+    assert.equal(db.movements.length, 1);
+    const m = db.movements[0];
+    assert.deepEqual([m.productId, m.reason, m.delta, m.before, m.after, m.refType, m.refId, m.actor],
+      [1, "VENTA", -1, 5, 4, "order", String(id), "Mercado Pago"]);
   });
 
   test("con variante, el pago descuenta de la variante y no del producto", async () => {

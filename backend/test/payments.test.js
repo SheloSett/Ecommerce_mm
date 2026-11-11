@@ -8,6 +8,7 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
+const { withStockSupport } = require("./helpers/fakeStock");
 
 delete process.env.MP_WEBHOOK_SECRET; // sin firma: el webhook se procesa sin validarla
 // Firma la clave de los pedidos en el estado del pago (orderAccessKey en payment.controller.js)
@@ -57,6 +58,8 @@ class FakePrismaClient {
         for (const k of Object.keys(db.carts)) if (db.carts[k].id === where.id) delete db.carts[k];
       },
     };
+    // El stock pasa por services/stock.service.js (en estos tests todo es ilimitado: no se mueve nada)
+    withStockSupport(this);
     this.cartItem = {
       deleteMany: async ({ where }) => {
         for (const c of Object.values(db.carts)) c.items = c.items.filter((i) => !where.id.in.includes(i.id));

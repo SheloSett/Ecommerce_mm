@@ -6,6 +6,8 @@ const { customerFromToken } = require("../middleware/auth.middleware");
 const { reportError } = require("../services/errorAlerts.service");
 // Meta (Facebook / Instagram): aviso de compra a la API de conversiones al aprobarse el pago
 const { sendPurchaseEvent } = require("../services/meta.service");
+// Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
+const { adjustStock, REASONS } = require("../services/stock.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -316,6 +318,9 @@ async function applyMpApproval(orderId, paymentId) {
   if (order.stockDeducted) {
     console.log(`[MP] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
   } else {
+    // Cada línea pasa por el servicio de stock: no baja de 0, no toca los ilimitados y queda en el
+    // historial con el número de pedido.
+    const ref = { type: "order", id: orderId };
     for (const item of order.items) {
       // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
       if (!item.productId) continue;
@@ -324,13 +329,7 @@ async function applyMpApproval(orderId, paymentId) {
       // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
       // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
       if (item.variantId) {
-        const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-        if (variant && !variant.stockUnlimited) {
-          await prisma.productVariant.update({
-            where: { id: item.variantId },
-            data: { stock: Math.max(0, variant.stock - item.quantity) },
-          });
-        }
+        await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago", visibility: "none" });
         continue;
       }
 
@@ -341,23 +340,9 @@ async function applyMpApproval(orderId, paymentId) {
       const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
       if (variantCount > 0) continue;
 
-      // Producto sin variante: descontar del stock base (comportamiento original).
-      // Los ilimitados no se tocan: antes se les descontaba igual y el número quedaba
-      // negativo/confuso en el admin aunque no afectara la venta.
-      const baseProduct = await prisma.product.findUnique({ where: { id: item.productId } });
-      if (!baseProduct || baseProduct.stockUnlimited) continue;
-
-      const updated = await prisma.product.update({
-        where: { id: item.productId },
-        data: { stock: { decrement: item.quantity } },
-      });
-      // Si el stock quedó en 0 o menos (y no es ilimitado), despublicar el producto
-      if (!updated.stockUnlimited && updated.stock <= 0) {
-        await prisma.product.update({
-          where: { id: item.productId },
-          data: { stock: 0, active: false },
-        });
-      }
+      // Producto sin variante: descontar del stock base. Si queda en 0 se despublica (como antes).
+      // Antes: decrement (podía quedar negativo un instante) y después stock: 0 + active: false.
+      await adjustStock({ productId: item.productId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago" });
     }
     await prisma.order.update({ where: { id: orderId }, data: { stockDeducted: true } });
   }

@@ -308,6 +308,14 @@ describe("cotización que cancela o cambia el cliente", () => {
     assert.equal(db.orders[600].stockDeducted, false);
   });
 
+  test("arreglo: devolver el stock de una cotización vieja no republica lo que el admin ocultó a mano", async () => {
+    addOrder(604, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 9, stockDeducted: true }, [{ productId: 6, quantity: 2 }]);
+    await call(orders.cancelByCustomer, { params: { id: "604" }, body: {}, user: customer(9) });
+    assert.equal(stockOf(6), 12);
+    assert.equal(db.products[6].active, false, "antes la republicaba siempre (active: true)");
+    assert.equal(db.movements.at(-1).actor, "Cliente #9");
+  });
+
   test("una cotización nueva (no reserva nada) se cancela sin tocar el stock", async () => {
     addOrder(601, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 9 }, [{ productId: 1, quantity: 2 }]);
     await call(orders.cancelByCustomer, { params: { id: "601" }, body: {}, user: customer(9) });

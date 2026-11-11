@@ -11,6 +11,7 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
+const { withStockSupport } = require("./helpers/fakeStock");
 
 const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
 
@@ -31,6 +32,7 @@ function resetDb() {
     },
     orders: {},
     couponUsages: [],
+    movements: [],
     nextItemId: 1000,
   };
 }
@@ -112,6 +114,11 @@ class FakePrismaClient {
     this.couponUsage = { findFirst: async () => null, create: async ({ data }) => { db.couponUsages.push(data); return data; } };
     this.customer = { findUnique: async () => null };
     this.cart = { findUnique: async () => null };
+    // El stock pasa por services/stock.service.js (transacción + historial + variantes del producto)
+    withStockSupport(this, {
+      movements: () => db.movements,
+      variantsOf: (pid) => Object.values(db.variants).filter((v) => v.productId === pid),
+    });
   }
 }
 
@@ -154,6 +161,16 @@ describe("aprobar y cancelar pedidos con ítems libres", () => {
     assert.equal(db.orders[50].status, "CANCELLED");
     assert.equal(db.products[1].stock, 11);
     assert.equal(db.products[2].stock, 12, "los pendrives que estaban después del ítem libre también vuelven");
+  });
+
+  test("aprobar y cancelar quedan en el historial de stock con el número de pedido", async () => {
+    addOrder(52, {}, [{ productId: 1, quantity: 2 }]);
+    await setStatus(52, "APPROVED");
+    await setStatus(52, "CANCELLED");
+    assert.deepEqual(db.movements.map((m) => [m.reason, m.delta, m.after, m.refId]), [
+      ["VENTA", -2, 8, "52"],
+      ["CANCELACION", 2, 10, "52"],
+    ]);
   });
 
   test("aprobar un pedido con un ítem libre descuenta el resto y termina bien", async () => {
