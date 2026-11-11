@@ -42,6 +42,8 @@ class FakePrismaClient {
       updateMany: async ({ where, data }) => {
         const o = db.orders[where.id];
         if (!o || (where.status?.not && o.status === where.status.not)) return { count: 0 };
+        // el resto de las condiciones (stockDeducted: false, por ejemplo) tienen que coincidir
+        if (Object.entries(where).some(([k, v]) => k !== "id" && k !== "status" && o[k] !== v)) return { count: 0 };
         Object.assign(o, data);
         return { count: 1 };
       },

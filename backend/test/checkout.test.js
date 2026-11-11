@@ -110,15 +110,24 @@ class FakePrismaClient {
           items: (items?.create || []).map((i) => ({ id: db.nextItemId++, orderId: id, ...clone(i) })) };
         return { ...clone(db.orders[id]), items: itemsWithProduct(db.orders[id]), coupon: null };
       },
-      findUnique: async ({ where }) => {
+      findUnique: async ({ where, include }) => {
         const o = db.orders[where.id];
-        return o ? { ...clone(o), items: itemsWithProduct(o), coupon: o.couponId ? clone(db.coupons[o.couponId]) || null : null } : null;
+        const out = o ? { ...clone(o), items: itemsWithProduct(o), coupon: o.couponId ? clone(db.coupons[o.couponId]) || null : null } : null;
+        // Para el test de la carrera con el panel: justo después de que applyMpApproval lee el pedido, el
+        // panel lo marca abonado (se queda con el descuento del stock).
+        if (o && include?.items?.include?.product && db.panelClaimsRightAfterRead) {
+          db.panelClaimsRightAfterRead = false;
+          o.stockDeducted = true;
+        }
+        return out;
       },
       update: async ({ where, data }) => clone(applyData(db.orders[where.id], data)),
       // claimApproval: aprueba solo si todavía no estaba aprobado (una sola operación)
       updateMany: async ({ where, data }) => {
         const o = db.orders[where.id];
         if (!o || (where.status?.not && o.status === where.status.not)) return { count: 0 };
+        // el resto de las condiciones (stockDeducted: false, por ejemplo) tienen que coincidir
+        if (Object.entries(where).some(([k, v]) => k !== "id" && k !== "status" && o[k] !== v)) return { count: 0 };
         applyData(o, data);
         return { count: 1 };
       },
@@ -369,6 +378,16 @@ describe("aviso de pago: el monto tiene que coincidir con el pedido", () => {
     await handleWebhook(webhookReq(902), fakeRes());
     assert.equal(db.orders[id].status, "APPROVED");
     assert.equal(db.products[1].stock, 4);
+  });
+
+  test("si el panel marca el pedido abonado justo cuando llega el pago, el stock se descuenta una sola vez", async () => {
+    const id = seedOrder({});
+    db.panelClaimsRightAfterRead = true;
+    mp.payments[913] = { id: 913, status: "approved", external_reference: String(id), transaction_amount: 2000000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(913), fakeRes());
+    assert.equal(db.orders[id].status, "APPROVED");
+    assert.equal(db.products[1].stock, 5, "el descuento lo hace el panel; antes el pago descontaba también");
+    assert.equal(db.movements.length, 0);
   });
 
   test("el descuento queda en el historial de stock, con el pedido y quién lo hizo", async () => {

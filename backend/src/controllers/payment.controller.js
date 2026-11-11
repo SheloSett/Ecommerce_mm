@@ -7,7 +7,8 @@ const { reportError } = require("../services/errorAlerts.service");
 // Meta (Facebook / Instagram): aviso de compra a la API de conversiones al aprobarse el pago
 const { sendPurchaseEvent } = require("../services/meta.service");
 // Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
-const { adjustStock, REASONS } = require("../services/stock.service");
+const stockService = require("../services/stock.service");
+const { adjustStock, syncProductVisibility, sortUnits, REASONS } = stockService;
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -318,35 +319,51 @@ async function applyMpApproval(orderId, paymentId) {
   if (order.stockDeducted) {
     console.log(`[MP] Orden #${orderId}: el stock ya estaba descontado, no se toca`);
   } else {
+    // El descuento se reclama con stockDeducted en UNA operación con condición, igual que el "Abonado"
+    // del panel (updateOrderStatus), y va en la misma transacción que todos los movimientos. Antes se
+    // decidía con la lectura de arriba y la marca se ponía al final: si el admin marcaba el pedido
+    // abonado justo cuando llegaba el pago, los dos descontaban.
     // Cada línea pasa por el servicio de stock: no baja de 0, no toca los ilimitados y queda en el
-    // historial con el número de pedido.
+    // historial con el número de pedido. Siempre en el mismo orden, y la publicación se decide al final.
     const ref = { type: "order", id: orderId };
-    for (const item of order.items) {
-      // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
-      if (!item.productId) continue;
-      // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
-      // producto base. Antes este loop descontaba siempre del producto base, así que en
-      // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
-      // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
-      if (item.variantId) {
-        // Si era la última variante con stock, el producto se despublica (como al marcarlo abonado en el
-        // panel). Antes acá no se miraba la publicación y quedaba publicado sin nada para vender.
-        await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago" });
-        continue;
+    const claimed = await stockService.transaction(async (tx) => {
+      const { count } = await tx.order.updateMany({ where: { id: orderId, stockDeducted: false }, data: { stockDeducted: true } });
+      if (count !== 1) return false;
+
+      const touched = new Set();
+      for (const item of sortUnits(order.items)) {
+        // Ítems libres (productId null): no existen en el catálogo, no hay stock que descontar.
+        if (!item.productId) continue;
+        // FIX variantes: si el ítem tiene variante, el stock vive en la VARIANTE, no en el
+        // producto base. Antes este loop descontaba siempre del producto base, así que en
+        // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
+        // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
+        if (item.variantId) {
+          const r = await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago", tx, visibility: "none" });
+          if (r.ok) touched.add(r.productId);
+          continue;
+        }
+
+        // Línea sin variante de un producto CON variantes (surtido de una cotización, repartido entre
+        // variantes al aprobarla): su stock vive en las variantes y el del producto es 0. Antes se
+        // descontaba igual de ese 0 y el producto se DESPUBLICABA aunque sus variantes tuvieran
+        // unidades. Mismo criterio que updateOrderStatus (order.controller.js).
+        const variantCount = await tx.productVariant.count({ where: { productId: item.productId, active: true } });
+        if (variantCount > 0) continue;
+
+        // Producto sin variante: descontar del stock base (nunca baja de 0).
+        // Antes: decrement (podía quedar negativo un instante) y después stock: 0 + active: false.
+        const r = await adjustStock({ productId: item.productId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago", tx, visibility: "none" });
+        if (r.ok) touched.add(item.productId);
       }
-
-      // Línea sin variante de un producto CON variantes (surtido de una cotización, repartido entre
-      // variantes al aprobarla): su stock vive en las variantes y el del producto es 0. Antes se
-      // descontaba igual de ese 0 y el producto se DESPUBLICABA aunque sus variantes tuvieran
-      // unidades. Mismo criterio que updateOrderStatus (order.controller.js).
-      const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
-      if (variantCount > 0) continue;
-
-      // Producto sin variante: descontar del stock base. Si queda en 0 se despublica (como antes).
-      // Antes: decrement (podía quedar negativo un instante) y después stock: 0 + active: false.
-      await adjustStock({ productId: item.productId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago" });
-    }
-    await prisma.order.update({ where: { id: orderId }, data: { stockDeducted: true } });
+      // Si quedó sin nada para vender (el producto, o su última variante con stock), se despublica.
+      // Antes, con variante, acá no se miraba la publicación y quedaba publicado sin stock.
+      for (const pid of [...touched].sort((a, b) => a - b)) {
+        await syncProductVisibility(pid, tx);
+      }
+      return true;
+    });
+    if (!claimed) console.log(`[MP] Orden #${orderId}: el stock ya lo descontó otro camino (el panel), no se toca`);
   }
 
   // Registrar el uso del cupón AHORA que el pago está confirmado (no al crear la orden).
