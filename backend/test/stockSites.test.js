@@ -115,6 +115,13 @@ class FakePrismaClient {
       findUnique: async ({ where, include }) => orderOut(db.orders[where.id], include),
       findFirst: async ({ where, include }) => orderOut(Object.values(db.orders).find((o) => matchWhere(o, where)), include),
       update: async ({ where, data, include }) => orderOut(applyData(db.orders[where.id], data), include),
+      // Reclamo atómico: cambia solo si el pedido sigue como dice el where
+      updateMany: async ({ where, data }) => {
+        const o = db.orders[where.id];
+        if (!o || !matchWhere(o, where)) return { count: 0 };
+        applyData(o, data);
+        return { count: 1 };
+      },
       create: async ({ data, include }) => {
         const id = db.nextId++;
         const { items, ...rest } = data;
@@ -353,6 +360,23 @@ describe("cotización que cancela o cambia el cliente", () => {
     assert.equal(stockOf(6), 12);
     assert.equal(db.products[6].active, false, "antes la republicaba siempre (active: true)");
     assert.equal(db.movements.at(-1).actor, "Cliente #9");
+  });
+
+  test("seguridad: varios pedidos de cancelación al mismo tiempo devuelven el stock una sola vez", async () => {
+    addOrder(605, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 9, stockDeducted: true }, [{ productId: 1, quantity: 2 }]);
+    const cancel = () => call(orders.cancelByCustomer, { params: { id: "605" }, body: {}, user: customer(9) });
+    const results = await Promise.all([cancel(), cancel(), cancel()]);
+    assert.deepEqual(results.map((r) => r.code).sort(), [200, 409, 409]);
+    assert.equal(stockOf(1), 12, "antes cada pedido devolvía las 2 unidades: quedaban 16");
+    assert.equal(db.orders[605].status, "CANCELLED");
+  });
+
+  test("seguridad: una cotización ya cobrada no la cancela el cliente (ni le devuelve el stock)", async () => {
+    addOrder(606, { status: "APPROVED", paymentMethod: "COTIZACION", customerId: 9, stockDeducted: true }, [{ productId: 1, quantity: 2 }]);
+    const res = await call(orders.cancelByCustomer, { params: { id: "606" }, body: {}, user: customer(9) });
+    assert.equal(res.code, 400);
+    assert.equal(stockOf(1), 10);
+    assert.equal(db.orders[606].status, "APPROVED");
   });
 
   test("una cotización nueva (no reserva nada) se cancela sin tocar el stock", async () => {

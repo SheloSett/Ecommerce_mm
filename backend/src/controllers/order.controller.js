@@ -2387,6 +2387,11 @@ async function getMyQuoteById(req, res) {
   }
 }
 
+// Estados en los que el cliente puede cancelar su cotización: los mismos en los que su pantalla le muestra
+// el botón "Cancelar cotización" (QuotationHistory.jsx). Una cotización ya cobrada (APPROVED) la cancela
+// la tienda, que es donde se decide también si se devuelve la plata.
+const CANCELABLE_BY_CUSTOMER = ["PENDING", "QUOTE_APPROVED", "PAYMENT_REVIEW"];
+
 // POST /api/orders/:id/cancel-by-customer - Cliente: cancela la cotización con motivo
 async function cancelByCustomer(req, res) {
   try {
@@ -2401,34 +2406,58 @@ async function cancelByCustomer(req, res) {
     });
     if (!order) return res.status(404).json({ error: "Cotización no encontrada" });
 
-    // Devolver el stock SOLO si esta cotización lo tenía descontado. Con el circuito nuevo no lo
-    // tiene (una cotización no reserva nada), así que esto solo corre para las viejas, anteriores
-    // al cambio. Antes la condición era "todavía no estaba resuelta" y devolvía siempre al producto
-    // padre: a un ítem con variante le sumaba stock que nunca se le había restado, y a un producto
-    // con variantes sin asignar le inventaba unidades.
-    if (order.stockDeducted) {
-      const ref   = { type: "order", id: order.id };
-      const actor = actorOf(req.user);
-      const note  = "La canceló el cliente";
-      for (const item of order.items) {
-        if (!item.productId) continue; // ítem libre: no existe en el catálogo
-        if (item.variantId) {
-          await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note });
-          continue;
-        }
-        // Sin variante asignada: si el producto tiene variantes, nunca se reservó nada
-        const variantCount = await prisma.productVariant.count({ where: { productId: item.productId, active: true } });
-        if (variantCount > 0) continue;
-        // Re-publica si estaba sin stock por esta cotización, salvo que el admin lo haya ocultado a mano
-        // (B12, como en el resto de las devoluciones). Antes: active: true siempre.
-        await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note });
-      }
+    // Antes no se miraba el estado: por la API se podía cancelar una cotización ya pagada y devolver su
+    // stock (la pantalla no ofrece el botón, pero la ruta lo aceptaba).
+    if (!CANCELABLE_BY_CUSTOMER.includes(order.status)) {
+      return res.status(400).json({ error: "Esta cotización ya no se puede cancelar desde acá. Escribinos y la vemos juntos." });
     }
 
-    const updated = await prisma.order.update({
-      where: { id: orderId },
-      data:  { status: "CANCELLED", cancelReason: reason || null, ...(order.stockDeducted ? { stockDeducted: false } : {}) },
+    const ref   = { type: "order", id: order.id };
+    const actor = actorOf(req.user);
+    const note  = "La canceló el cliente";
+
+    // Cancelar y devolver el stock juntos, y reclamando la cancelación en UNA operación con condición
+    // (como el "Abonado" del panel): solo el pedido que la da vuelta devuelve el stock. Antes la decisión
+    // salía de la lectura de arriba y la marca se limpiaba al final, así que varios pedidos de
+    // cancelación al mismo tiempo devolvían el stock una vez cada uno y lo inflaban.
+    const claimed = await stockService.transaction(async (tx) => {
+      const { count } = await tx.order.updateMany({
+        where: {
+          id: orderId, customerId, paymentMethod: "COTIZACION",
+          status: { in: CANCELABLE_BY_CUSTOMER }, stockDeducted: order.stockDeducted,
+        },
+        data: { status: "CANCELLED", cancelReason: reason || null, stockDeducted: false },
+      });
+      if (count !== 1) return false;
+
+      // Devolver el stock SOLO si esta cotización lo tenía descontado. Con el circuito nuevo no lo
+      // tiene (una cotización no reserva nada) salvo que se haya cobrado; esto corre sobre todo para las
+      // viejas, anteriores al cambio. Antes la condición era "todavía no estaba resuelta" y devolvía
+      // siempre al producto padre: a un ítem con variante le sumaba stock que nunca se le había restado,
+      // y a un producto con variantes sin asignar le inventaba unidades.
+      if (order.stockDeducted) {
+        for (const item of order.items) {
+          if (!item.productId) continue; // ítem libre: no existe en el catálogo
+          if (item.variantId) {
+            await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx });
+            continue;
+          }
+          // Sin variante asignada: si el producto tiene variantes, nunca se reservó nada
+          const variantCount = await tx.productVariant.count({ where: { productId: item.productId, active: true } });
+          if (variantCount > 0) continue;
+          // Re-publica si estaba sin stock por esta cotización, salvo que el admin lo haya ocultado a mano
+          // (B12, como en el resto de las devoluciones). Antes: active: true siempre.
+          await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx });
+        }
+      }
+      return true;
     });
+    if (!claimed) {
+      return res.status(409).json({ error: "La cotización cambió mientras la cancelabas. Recargá la página para ver cómo quedó." });
+    }
+
+    // Antes: prisma.order.update({ data: { status: "CANCELLED", ... } }) después de devolver el stock
+    const updated = await prisma.order.findUnique({ where: { id: orderId } });
 
     res.json(updated);
   } catch (err) {
