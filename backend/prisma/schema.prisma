@@ -846,6 +846,34 @@ model ProductVariant {
   @@map("product_variants")
 }
 
+// Historial de stock: una fila por cada vez que cambió cuántas unidades hay de un producto o de una
+// variante, con el motivo y a qué pedido, compra o gasto corresponde. La escribe SOLO
+// services/stock.service.js, que es la única puerta para cambiar el stock.
+//
+// Sin clave foránea al producto ni a la variante, a propósito: el historial tiene que sobrevivir a que
+// se borre un producto o se regeneren sus variantes. delta es lo que realmente cambió (after - before);
+// requested es lo que se pidió (por ejemplo -3 de una venta), que puede no coincidir si el stock no
+// alcanzaba y quedó en 0 (la diferencia es lo que faltó), o null si se cargó un número a mano.
+model StockMovement {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  variantId Int?
+  requested Int?
+  delta     Int
+  before    Int
+  after     Int
+  reason    String   // VENTA | VENTA_MANUAL | CANCELACION | EDICION_PEDIDO | AJUSTE | ALTA | COMPRA | RMA | VARIANTES
+  refType   String?  // order | purchase | gasto
+  refId     String?
+  actor     String?  // quién: nombre del admin, "Cliente #12", "Mercado Pago"
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([productId, createdAt])
+  @@index([refType, refId])
+  @@map("stock_movements")
+}
+
 // ─── Eventos de la tienda (analíticas) ────────────────────────────────────────
 // Registro liviano de lo que hacen los visitantes: búsquedas y vistas de producto. Lo escribe el
 // storefront vía POST /api/events (público). sessionId es un id anónimo generado en el navegador

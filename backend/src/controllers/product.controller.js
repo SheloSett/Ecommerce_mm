@@ -11,6 +11,8 @@ const { descendantIdsBySlugs } = require("../utils/categoryTree");
 const { resolvePriceViewer, sanitizeProductForViewer, effectiveVisibleFor } = require("../utils/productPrivacy");
 // Orden por relevancia de los resultados de búsqueda. Ver utils/searchRelevance.js.
 const { sortBySearchRelevance } = require("../utils/searchRelevance");
+// Todo cambio de stock pasa por acá (y la publicación automática según el stock vive ahí).
+const { syncProductVisibility, listMovements } = require("../services/stock.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -1559,32 +1561,31 @@ async function getProductFacets(req, res) {
 }
 
 // ── Visibilidad automática según stock ───────────────────────────────────────
-// Para productos con variantes: activa/desactiva el producto según si hay stock en alguna variante.
-// Para productos sin variantes: el active lo gestiona directamente el cambio de product.stock.
-// Ya no toca el campo visibility (MAYORISTA/MINORISTA/AMBOS) — ese lo controla el admin.
-async function syncProductVisibility(productId, tx = prisma) {
-  const product = await tx.product.findUnique({
-    where: { id: productId },
-    include: { variants: { where: { active: true }, select: { stock: true, stockUnlimited: true } } },
-  });
-  if (!product) return;
+// syncProductVisibility se mudó a services/stock.service.js (la usa cada cambio de stock). Se sigue
+// exportando desde acá para no romper a quien la importa de este archivo.
 
-  let hasStock;
-  if (product.variants.length === 0) {
-    // Producto sin variantes: visibilidad basada en su propio stock
-    // Antes se salía con return acá y el producto nunca se ocultaba al quedarse sin stock
-    hasStock = product.stockUnlimited || product.stock > 0;
-  } else {
-    // Producto con variantes: visible si al menos una variante activa tiene stock
-    hasStock = product.variants.some((v) => v.stockUnlimited || v.stock > 0);
-  }
-
-  if (!hasStock && product.active) {
-    await tx.product.update({ where: { id: productId }, data: { active: false } });
-  // Antes: } else if (hasStock && !product.active) { — republicaba también lo que el admin ocultó a mano
-  // (por ejemplo, por un precio mal cargado) en cuanto se aprobaba o cancelaba un pedido viejo.
-  } else if (hasStock && !product.active && !product.hiddenByAdmin) {
-    await tx.product.update({ where: { id: productId }, data: { active: true } });
+// GET /api/products/:id/stock-movements — historial de stock del producto y de sus variantes (admin).
+// Devuelve los movimientos (el más nuevo primero) y el nombre de cada variante que todavía existe; las
+// que se borraron se muestran por su número.
+async function getStockMovements(req, res) {
+  try {
+    const productId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(productId) || productId <= 0) {
+      return res.status(400).json({ error: "Producto inválido" });
+    }
+    const [movements, variants] = await Promise.all([
+      listMovements(productId, { limit: req.query.limit }),
+      prisma.productVariant.findMany({ where: { productId }, select: { id: true, combination: true } }),
+    ]);
+    const variantLabels = {};
+    for (const v of variants) {
+      const combo = Array.isArray(v.combination) ? v.combination : [];
+      variantLabels[v.id] = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || `Variante #${v.id}`;
+    }
+    res.json({ movements, variantLabels });
+  } catch (err) {
+    console.error("getStockMovements error:", err);
+    res.status(500).json({ error: "Error al obtener el historial de stock" });
   }
 }
 
@@ -1607,5 +1608,6 @@ module.exports = {
   deleteProductImages, // helper reutilizado por purchase.controller
   bulkPriceAdjust,
   getProductFacets,
+  getStockMovements,
   syncProductVisibility,
 };

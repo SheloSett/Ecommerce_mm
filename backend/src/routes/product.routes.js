@@ -9,6 +9,7 @@ const {
   deleteProduct,
   bulkPriceAdjust,
   getProductFacets,
+  getStockMovements,
 } = require("../controllers/product.controller");
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const { uploadMedia, verifyMediaBytes } = require("../middleware/upload.middleware");
@@ -35,6 +36,8 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("producto
 router.put("/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos", "ordenes"), productMedia, verifyMediaBytes, updateProduct);
 // Edición rápida: actualiza campos simples sin multipart (precio, stock, estado, precios especiales)
 router.patch("/:id/quick", authMiddleware, adminMiddleware, requireAnyPermission("productos", "ordenes"), quickUpdateProduct);
+// Historial de stock del producto y sus variantes (cada venta, compra, ajuste, con su motivo)
+router.get("/:id/stock-movements", authMiddleware, adminMiddleware, requireAnyPermission("productos"), getStockMovements);
 // Ajuste masivo de precios por porcentaje (suma o resta) para MINORISTA, MAYORISTA o AMBOS
 // Va ANTES de /:id para que Express no confunda "bulk-price-adjust" con un id
 router.post("/bulk-price-adjust", authMiddleware, adminMiddleware, requireAnyPermission("productos"), bulkPriceAdjust);
