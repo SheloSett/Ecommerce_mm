@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <FeCabResp>
+          <Cuit>30000000007</Cuit>
+          <PtoVta>12</PtoVta>
+          <CbteTipo>1</CbteTipo>
+          <FchProceso>20261111103016</FchProceso>
+          <CantReg>1</CantReg>
+          <Resultado>A</Resultado>
+          <Reproceso>N</Reproceso>
+        </FeCabResp>
+        <FeDetResp>
+          <FECAEDetResponse>
+            <Concepto>1</Concepto>
+            <DocTipo>80</DocTipo>
+            <DocNro>20000000001</DocNro>
+            <CbteDesde>2</CbteDesde>
+            <CbteHasta>2</CbteHasta>
+            <CbteFch>20261111</CbteFch>
+            <Resultado>A</Resultado>
+            <CAE>41124599989845</CAE>
+            <CAEFchVto>20261121</CAEFchVto>
+            <Observaciones>
+              <Obs>
+                <Code>10017</Code>
+                <Msg>El campo DocNro para comprobantes tipo A debe ser un valor registrado en el padrón de ARCA, en condición activa.</Msg>
+              </Obs>
+            </Observaciones>
+          </FECAEDetResponse>
+        </FeDetResp>
+        <Events>
+          <Evt>
+            <Code>35</Code>
+            <Msg>Mensaje de prueba &amp; aviso &lt;importante&gt;</Msg>
+          </Evt>
+        </Events>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>

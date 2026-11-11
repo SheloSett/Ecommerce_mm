@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+  <s:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <FeCabResp>
+          <Cuit>30000000007</Cuit>
+          <PtoVta>12</PtoVta>
+          <CbteTipo>6</CbteTipo>
+          <FchProceso>20261111103017</FchProceso>
+          <CantReg>1</CantReg>
+          <Resultado>R</Resultado>
+          <Reproceso>N</Reproceso>
+        </FeCabResp>
+        <FeDetResp>
+          <FECAEDetResponse>
+            <Concepto>1</Concepto>
+            <DocTipo>99</DocTipo>
+            <DocNro>0</DocNro>
+            <CbteDesde>4</CbteDesde>
+            <CbteHasta>4</CbteHasta>
+            <CbteFch>20261111</CbteFch>
+            <Resultado>R</Resultado>
+            <CAE></CAE>
+            <CAEFchVto></CAEFchVto>
+            <Observaciones>
+              <Obs>
+                <Code>10016</Code>
+                <Msg>El numero o fecha del comprobante no se corresponde con el proximo a autorizar.</Msg>
+              </Obs>
+            </Observaciones>
+          </FECAEDetResponse>
+        </FeDetResp>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </s:Body>
+</s:Envelope>

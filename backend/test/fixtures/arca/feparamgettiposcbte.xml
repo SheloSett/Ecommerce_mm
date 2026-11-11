@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FEParamGetTiposCbteResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FEParamGetTiposCbteResult>
+        <ResultGet>
+          <CbteTipo>
+            <Id>1</Id>
+            <Desc>Factura A</Desc>
+            <FchDesde>20100917</FchDesde>
+            <FchHasta>NULL</FchHasta>
+          </CbteTipo>
+          <CbteTipo>
+            <Id>3</Id>
+            <Desc>Nota de Crédito A</Desc>
+            <FchDesde>20100917</FchDesde>
+            <FchHasta>NULL</FchHasta>
+          </CbteTipo>
+          <CbteTipo>
+            <Id>6</Id>
+            <Desc>Factura B</Desc>
+            <FchDesde>20100917</FchDesde>
+            <FchHasta>NULL</FchHasta>
+          </CbteTipo>
+          <CbteTipo>
+            <Id>8</Id>
+            <Desc>Nota de Crédito B</Desc>
+            <FchDesde>20100917</FchDesde>
+            <FchHasta>NULL</FchHasta>
+          </CbteTipo>
+        </ResultGet>
+      </FEParamGetTiposCbteResult>
+    </FEParamGetTiposCbteResponse>
+  </soap:Body>
+</soap:Envelope>

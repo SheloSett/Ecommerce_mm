@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECompConsultarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECompConsultarResult>
+        <ResultGet>
+          <Concepto>1</Concepto>
+          <DocTipo>80</DocTipo>
+          <DocNro>20000000001</DocNro>
+          <CbteDesde>1</CbteDesde>
+          <CbteHasta>1</CbteHasta>
+          <CbteFch>20261111</CbteFch>
+          <ImpTotal>184.05</ImpTotal>
+          <ImpTotConc>0</ImpTotConc>
+          <ImpNeto>150</ImpNeto>
+          <ImpOpEx>0</ImpOpEx>
+          <ImpTrib>7.8</ImpTrib>
+          <ImpIVA>26.25</ImpIVA>
+          <FchServDesde></FchServDesde>
+          <FchServHasta></FchServHasta>
+          <FchVtoPago></FchVtoPago>
+          <MonId>PES</MonId>
+          <MonCotiz>1</MonCotiz>
+          <CondicionIVAReceptorId>1</CondicionIVAReceptorId>
+          <Tributos>
+            <Tributo>
+              <Id>99</Id>
+              <Desc>Impuesto Municipal de prueba</Desc>
+              <BaseImp>150</BaseImp>
+              <Alic>5.2</Alic>
+              <Importe>7.8</Importe>
+            </Tributo>
+          </Tributos>
+          <Iva>
+            <AlicIva>
+              <Id>5</Id>
+              <BaseImp>100</BaseImp>
+              <Importe>21</Importe>
+            </AlicIva>
+            <AlicIva>
+              <Id>4</Id>
+              <BaseImp>50</BaseImp>
+              <Importe>5.25</Importe>
+            </AlicIva>
+          </Iva>
+          <Resultado>A</Resultado>
+          <CodAutorizacion>41124578989845</CodAutorizacion>
+          <EmisionTipo>CAE</EmisionTipo>
+          <FchVto>20261121</FchVto>
+          <FchProceso>20261111</FchProceso>
+          <PtoVta>12</PtoVta>
+          <CbteTipo>1</CbteTipo>
+        </ResultGet>
+      </FECompConsultarResult>
+    </FECompConsultarResponse>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <FECAESolicitarResponse xmlns="http://ar.gov.afip.dif.FEV1/">
+      <FECAESolicitarResult>
+        <Errors>
+          <Err>
+            <Code>600</Code>
+            <Msg>No se corresponden token y firma. Usuario no autorizado a realizar esta operacion</Msg>
+          </Err>
+        </Errors>
+      </FECAESolicitarResult>
+    </FECAESolicitarResponse>
+  </soap:Body>
+</soap:Envelope>
