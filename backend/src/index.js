@@ -248,6 +248,19 @@ prisma
   .then(() => console.log("✅ Extensión unaccent de Postgres verificada (búsqueda sin tildes activa)"))
   .catch((e) => console.warn("⚠️ No se pudo crear/verificar la extensión unaccent (la búsqueda será sensible a tildes):", e.message));
 
+// Todo cambio de stock pasa por services/stock.service.js, que lo anota en la tabla stock_movements en la
+// misma transacción. Si la tabla no existe (se desplegó sin correr
+// backend/scripts/migracion-stock-movimientos.sql), CADA cambio de stock falla: un pago aprobado no
+// descuenta, una venta manual no se registra. Se avisa fuerte al arrancar (log + mail de alerta).
+prisma
+  .$queryRawUnsafe(`SELECT to_regclass('public.stock_movements')::text AS t`)
+  .then((rows) => {
+    if (rows?.[0]?.t) return;
+    reportError("deploy", "Falta la tabla stock_movements: los cambios de stock van a fallar",
+      "Correr backend/scripts/migracion-stock-movimientos.sql (ver DEPLOY.md) y reiniciar el backend.");
+  })
+  .catch((e) => console.warn("⚠️ No se pudo verificar la tabla stock_movements:", e.message));
+
 // Iniciar cron jobs de campañas de email (restock mayoristas + recomendaciones minoristas)
 const { startCronJobs } = require("./services/cron.service");
 startCronJobs();

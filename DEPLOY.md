@@ -436,8 +436,17 @@ npx prisma migrate diff \
 ```bash
 cd ~/Ecommerce_mm
 git pull
+# ¿El pull trajo una migración nueva? Si aparece algún archivo, correrlo ANTES del rebuild (el comando
+# exacto está en su encabezado). El paso 0 no la ve: compara contra el schema del código viejo.
+git diff --name-only HEAD@{1} HEAD -- backend/scripts/ | grep migracion-
 docker compose -f deploy/docker-compose.vps.yml up -d --build
 ```
+
+> **migracion-stock-movimientos.sql (rama stock-central):** crea la tabla del historial de stock. Sin
+> ella, CADA cambio de stock falla (un pago aprobado no descuenta, una venta manual no se registra).
+> Va antes del rebuild:
+> `docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db --single-transaction -v ON_ERROR_STOP=1 < backend/scripts/migracion-stock-movimientos.sql`
+> Si se olvida, el backend lo avisa al arrancar (log "[ERROR deploy]" y mail de alerta).
 
 Eso rebuildea las dos imágenes y recrea los contenedores. No hace falta `npm install` ni
 `prisma generate` en el host: el código y las dependencias van adentro de las imágenes.
