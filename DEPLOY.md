@@ -480,8 +480,8 @@ el modo en Apagado (Configuración → Mercado Libre) o sacando `ML_SYNC_ENABLED
    `docker compose -f deploy/docker-compose.vps.yml up -d backend` (relee el .env).
 2. **Aplicación de Mercado Libre** (la crea el dueño en developers.mercadolibre.com.ar, una nueva para
    la tienda): dirección de vuelta = `ML_REDIRECT_URI`; avisos =
-   `https://igwtstore.com.ar/api/ml/webhook/<ML_WEBHOOK_TOKEN>` con los tópicos `items` y
-   `orders_v2`; permisos de lectura, escritura y acceso sin conexión; PKCE activado.
+   `https://igwtstore.com.ar/api/ml/webhook/<ML_WEBHOOK_TOKEN>` con el tópico `items` (y
+   `stock_locations` si la aplicación lo ofrece); permisos de lectura, escritura y acceso sin conexión; PKCE activado.
    Si Cloudflare frena los avisos, usar `https://igwtstore.82-25-74-242.sslip.io/api/ml/webhook/<clave>`
    (Caddy ya atiende ese nombre sin pasar por Cloudflare).
 3. **Conectar**: Configuración → Mercado Libre → Conectar (solo el dueño). Modo: Apagado.
