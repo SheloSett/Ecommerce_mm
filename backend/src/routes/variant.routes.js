@@ -7,7 +7,7 @@ const router  = express.Router();
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 // Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
 const stockService = require("../services/stock.service");
-const { syncProductVisibility, adjustStock, actorOf, REASONS } = stockService;
+const { syncProductVisibility, adjustStock, recordRemoved, actorOf, REASONS } = stockService;
 const { panelStockChange, panelStockOptions, stockNotice } = require("../utils/panelStock");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
@@ -94,11 +94,30 @@ router.put("/attributes/:id", authMiddleware, adminMiddleware, requireAnyPermiss
       };
     }
 
+    // Nombre anterior, para renombrarlo también en las variantes que ya existen (ver abajo)
+    const before = data.name ? await prisma.productAttribute.findUnique({ where: { id } }) : null;
+
     const attr = await prisma.productAttribute.update({
       where:   { id },
       data,
       include: { values: { orderBy: { position: "asc" } } },
     });
+
+    // Si cambió el nombre del atributo ("Color" → "Colores"), se cambia también dentro de cada variante.
+    // Antes no: al regenerar (el panel regenera solo después de editar un atributo), ninguna variante
+    // coincidía con el nombre nuevo, así que se borraban TODAS y se creaban de nuevo con stock 0: se
+    // perdía el stock, el precio y el SKU de cada una.
+    if (before && before.name !== attr.name) {
+      const variants = await prisma.productVariant.findMany({ where: { productId: attr.productId } });
+      for (const v of variants) {
+        const combo = Array.isArray(v.combination) ? v.combination : [];
+        if (!combo.some((c) => c.name === before.name)) continue;
+        await prisma.productVariant.update({
+          where: { id: v.id },
+          data:  { combination: combo.map((c) => (c.name === before.name ? { ...c, name: attr.name } : c)) },
+        });
+      }
+    }
 
     // Si se cambió visibility, propagar a todas las variantes del producto.
     // Las queries existentes filtran por variant.visibility, así que con esto siguen funcionando.
@@ -183,25 +202,42 @@ router.post("/product/:productId/generate", authMiddleware, adminMiddleware, req
     }
 
     const newKeys = new Set(combos.map(comboKey));
+    const actor = actorOf(req.user);
 
-    // Eliminar las que ya no corresponden
-    const toDelete = existing.filter((v) => !newKeys.has(comboKey(v.combination)));
-    if (toDelete.length > 0) {
-      await prisma.productVariant.deleteMany({ where: { id: { in: toDelete.map((v) => v.id) } } });
-    }
-
-    // Crear las que son nuevas
-    const toCreate = combos.filter((c) => !existingMap[comboKey(c)]);
-    if (toCreate.length > 0) {
-      await prisma.productVariant.createMany({
-        data: toCreate.map((combination) => ({ productId, combination })),
-      });
-      // Primera vez que se generan variantes: resetear product.stock a 0.
-      // A partir de ahora el stock real está por variante — el campo del producto es solo la suma.
-      if (existing.length === 0) {
-        await prisma.product.update({ where: { id: productId }, data: { stock: 0 } });
+    // Todo junto: o se regenera entero o no cambia nada. El stock que desaparece (variantes que se
+    // borran, o el del producto cuando pasa a tener variantes) queda anotado en el historial: antes se
+    // perdía sin rastro.
+    await stockService.transaction(async (tx) => {
+      // Eliminar las que ya no corresponden
+      const toDelete = existing.filter((v) => !newKeys.has(comboKey(v.combination)));
+      if (toDelete.length > 0) {
+        // Releídas dentro de la transacción: el número que se anota es el de este momento
+        const fresh = await tx.productVariant.findMany({ where: { id: { in: toDelete.map((v) => v.id) } } });
+        for (const v of fresh) {
+          if (!v.stockUnlimited && v.stock > 0) {
+            await recordRemoved({ productId, variantId: v.id, stock: v.stock, actor, note: "Variante eliminada al regenerar las variantes", tx });
+          }
+        }
+        await tx.productVariant.deleteMany({ where: { id: { in: toDelete.map((v) => v.id) } } });
       }
-    }
+
+      // Crear las que son nuevas
+      const toCreate = combos.filter((c) => !existingMap[comboKey(c)]);
+      if (toCreate.length > 0) {
+        await tx.productVariant.createMany({
+          data: toCreate.map((combination) => ({ productId, combination })),
+        });
+        // Primera vez que se generan variantes: resetear product.stock a 0.
+        // A partir de ahora el stock real está por variante — el campo del producto es solo la suma.
+        // Antes: prisma.product.update({ data: { stock: 0 } }), sin rastro de lo que había.
+        if (existing.length === 0) {
+          await adjustStock({
+            productId, setTo: 0, reason: REASONS.VARIANTES, actor, tx,
+            note: "El stock pasa a cargarse por variante", respectUnlimited: false, visibility: "none",
+          });
+        }
+      }
+    });
 
     const variants = await prisma.productVariant.findMany({
       where:   { productId },
@@ -349,8 +385,18 @@ router.get("/suggestions", authMiddleware, adminMiddleware, requireAnyPermission
 router.delete("/product/:productId/all", authMiddleware, adminMiddleware, requireAnyPermission("productos"), async (req, res) => {
   try {
     const productId = parseInt(req.params.productId);
-    await prisma.productVariant.deleteMany({ where: { productId } });
-    await prisma.productAttribute.deleteMany({ where: { productId } });
+    const actor = actorOf(req.user);
+    // El stock de las variantes que se borran queda anotado en el historial (antes se perdía sin rastro).
+    await stockService.transaction(async (tx) => {
+      const variants = await tx.productVariant.findMany({ where: { productId } });
+      for (const v of variants) {
+        if (!v.stockUnlimited && v.stock > 0) {
+          await recordRemoved({ productId, variantId: v.id, stock: v.stock, actor, note: "Se borraron todas las variantes", tx });
+        }
+      }
+      await tx.productVariant.deleteMany({ where: { productId } });
+      await tx.productAttribute.deleteMany({ where: { productId } });
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);

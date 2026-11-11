@@ -100,7 +100,17 @@ class FakePrismaClient {
     };
     this.productAttribute = {
       findMany: async ({ where }) => clone(db.attributes.filter((a) => a.productId === where.productId)),
+      findUnique: async ({ where }) => clone(db.attributes.find((a) => a.id === where.id)) || null,
+      update: async ({ where, data }) => {
+        const a = db.attributes.find((x) => x.id === where.id);
+        if (data.name) a.name = data.name;
+        if (data.visibility) a.visibility = data.visibility;
+        if (data.values?.create) a.values = clone(data.values.create);
+        return clone(a);
+      },
+      deleteMany: async ({ where }) => { db.attributes = db.attributes.filter((a) => a.productId !== where.productId); return {}; },
     };
+    this.productAttributeValue = { deleteMany: async () => ({}) };
     this.order = {
       findUnique: async ({ where, include }) => orderOut(db.orders[where.id], include),
       findFirst: async ({ where, include }) => orderOut(Object.values(db.orders).find((o) => matchWhere(o, where)), include),
@@ -161,6 +171,8 @@ function handlerOf(router, method, routePath) {
 }
 const putVariant = handlerOf(variantRoutes, "put", "/:id");
 const generateVariants = handlerOf(variantRoutes, "post", "/product/:productId/generate");
+const putAttribute = handlerOf(variantRoutes, "put", "/attributes/:id");
+const deleteAllVariants = handlerOf(variantRoutes, "delete", "/product/:productId/all");
 const createGasto = handlerOf(gastoRoutes, "post", "/");
 
 const admin = { id: 1, role: "SUPERADMIN", name: "Ana", email: "ana@example.com", permissions: [] };
@@ -428,6 +440,31 @@ describe("panel de productos y editor de variantes", () => {
     assert.equal(res.code, 200);
     assert.equal(stockOf(2), 0);
     assert.deepEqual(Object.values(db.variants).filter((v) => v.productId === 2).map((v) => v.stock), [0, 0]);
+    const m = db.movements.at(-1);
+    assert.deepEqual([m.productId, m.variantId, m.reason, m.delta, m.after], [2, null, "VARIANTES", -10, 0], "las 10 unidades que tenía quedan anotadas");
+  });
+
+  test("regenerar sin uno de los valores borra esa variante y anota el stock que se fue", async () => {
+    db.attributes = [{ id: 1, productId: 3, name: "Color", position: 0, values: [{ value: "Negro", position: 0 }] }];
+    assert.equal((await call(generateVariants, { params: { productId: "3" } })).code, 200);
+    assert.equal(db.variants[32], undefined);
+    const m = db.movements.at(-1);
+    assert.deepEqual([m.variantId, m.reason, m.delta, m.after], [32, "VARIANTES", -30, 0]);
+  });
+
+  test("arreglo: renombrar un atributo y regenerar conserva las variantes con su stock", async () => {
+    db.attributes = [{ id: 1, productId: 3, name: "Color", position: 0, values: [{ value: "Negro", position: 0 }, { value: "Rojo", position: 1 }] }];
+    assert.equal((await call(putAttribute, { params: { id: "1" }, body: { name: "Colores", values: ["Negro", "Rojo"] } })).code, 200);
+    assert.equal((await call(generateVariants, { params: { productId: "3" } })).code, 200);
+    assert.deepEqual([variantStock(31), variantStock(32)], [30, 30], "antes se borraban y volvían a crear con stock 0");
+    assert.equal(db.variants[31].combination[0].name, "Colores");
+    assert.equal(db.movements.length, 0);
+  });
+
+  test("borrar todas las variantes anota el stock que tenían", async () => {
+    assert.equal((await call(deleteAllVariants, { params: { productId: "3" } })).code, 200);
+    assert.equal(Object.values(db.variants).filter((v) => v.productId === 3).length, 0);
+    assert.deepEqual(db.movements.map((m) => [m.variantId, m.delta]), [[31, -30], [32, -30]]);
   });
 });
 
