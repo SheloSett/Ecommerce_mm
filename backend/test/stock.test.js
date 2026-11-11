@@ -201,7 +201,7 @@ describe("adjustStock: transacciones y avisos", () => {
     await stock.adjustStock({ productId: 2, variantId: 21, delta: 3, reason: REASONS.COMPRA });
     off();
     assert.equal(txCalls, 1);
-    assert.deepEqual(seen, [[{ productId: 2, variantId: 21 }]]);
+    assert.deepEqual(seen, [[{ productId: 2, variantId: 21, reasons: [REASONS.COMPRA] }]]);
   });
 
   test("con la transacción de quien llama no abre otra, y avisa recién al terminar transaction()", async () => {
@@ -215,7 +215,10 @@ describe("adjustStock: transacciones y avisos", () => {
     });
     off();
     assert.equal(txCalls, 1, "una sola transacción, la de transaction()");
-    assert.deepEqual(seen, [[{ productId: 1, variantId: null }, { productId: 2, variantId: 21 }]]);
+    assert.deepEqual(seen, [[
+      { productId: 1, variantId: null, reasons: [REASONS.VENTA_MANUAL] },
+      { productId: 2, variantId: 21, reasons: [REASONS.VENTA_MANUAL] },
+    ]]);
   });
 
   test("un cambio que no movió nada no avisa", async () => {

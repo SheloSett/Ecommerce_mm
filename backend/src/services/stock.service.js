@@ -31,6 +31,9 @@ const REASONS = Object.freeze({
   COMPRA:         "COMPRA",         // compra a un proveedor (cargada, editada o borrada)
   RMA:            "RMA",            // unidad dada de baja por falla desde la Caja
   VARIANTES:      "VARIANTES",      // stock que se fue al regenerar o borrar las variantes de un producto
+  VENTA_ML:       "VENTA_ML",       // venta en Mercado Libre (services/ml/mlSync.js)
+  CAMBIO_ML:      "CAMBIO_ML",      // otro cambio hecho en Mercado Libre: carga a mano, cancelación, el publicador
+  VINCULO_ML:     "VINCULO_ML",     // número elegido al activar el vínculo de un producto con Mercado Libre
 });
 const VALID_REASONS = new Set(Object.values(REASONS));
 
@@ -62,9 +65,16 @@ const touchedByTx = new WeakMap();
 function unitKey(u) {
   return `${u.productId}:${u.variantId ?? ""}`;
 }
+// Cada unidad una sola vez, con los motivos de lo que la cambió (el oyente de Mercado Libre ignora lo
+// que vino de Mercado Libre, para no despertarse con sus propios cambios).
 function uniqueUnits(units) {
   const seen = new Map();
-  for (const u of units) seen.set(unitKey(u), { productId: u.productId, variantId: u.variantId ?? null });
+  for (const u of units) {
+    const key = unitKey(u);
+    const entry = seen.get(key) || { productId: u.productId, variantId: u.variantId ?? null, reasons: [] };
+    if (u.reason && !entry.reasons.includes(u.reason)) entry.reasons.push(u.reason);
+    seen.set(key, entry);
+  }
   return [...seen.values()];
 }
 
@@ -286,11 +296,11 @@ async function adjustStock(o) {
   checkOptions(o);
   if (o.tx) {
     const result = await adjustInTx(o.tx, o);
-    if (result.ok && result.applied !== 0) touchedByTx.get(o.tx)?.push(result);
+    if (result.ok && result.applied !== 0) touchedByTx.get(o.tx)?.push({ ...result, reason: o.reason });
     return result;
   }
   const result = await prisma.$transaction((tx) => adjustInTx(tx, o), TX_OPTS);
-  if (result.ok && result.applied !== 0) notifyCommitted([{ productId: result.productId, variantId: result.variantId }]);
+  if (result.ok && result.applied !== 0) notifyCommitted([{ productId: result.productId, variantId: result.variantId, reasons: [o.reason] }]);
   return result;
 }
 
