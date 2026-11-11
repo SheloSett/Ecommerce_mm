@@ -4,7 +4,7 @@ const { pushToClient } = require("../sse/notificationSSE");
 // Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué). La publicación
 // automática según el stock también vive ahí. Antes: require("./product.controller").
 const stockService = require("../services/stock.service");
-const { syncProductVisibility, adjustStock, sortUnits, actorOf, REASONS } = stockService;
+const { syncProductVisibility, adjustStock, sortUnits, lockUnits, actorOf, REASONS } = stockService;
 const { uploadBuffer } = require("../config/cloudinary");
 const { resolvePriceViewer, sanitizeProductForViewer } = require("../utils/productPrivacy");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
@@ -3041,6 +3041,14 @@ async function createManualOrder(req, res) {
     // el stock cuando termina bien.
     const stockActor = actorOf(req.user);
     const order = await stockService.transaction(async (tx) => {
+      // Candados primero, de todo lo que esta venta toca (costo y stock) y en el orden fijo de siempre:
+      // así dos ventas, o una venta y una compra, con los mismos productos no se traban entre sí. Antes
+      // el costo se tocaba en el orden en que el admin cargó las líneas.
+      await lockUnits(tx, [
+        ...costUpdates,
+        ...(esCotizacion ? [] : orderItems.filter((i) => i.productId)),
+      ]);
+
       // Actualizar el costo maestro de los productos/variantes que el admin confirmó en el cartel
       for (const cu of costUpdates) {
         if (cu.variantId) {

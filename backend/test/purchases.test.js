@@ -38,7 +38,13 @@ function createItems(purchaseId, list = []) {
 class FakePrismaClient {
   constructor() {
     this.product = {
-      findFirst: async ({ where }) => clone(Object.values(db.products).find((p) => matches(p, where))) || null,
+      findFirst: async ({ where }) => {
+        const p = clone(Object.values(db.products).find((x) => matches(x, where))) || null;
+        // Para el test del costo: la lectura sin candado devuelve un costo viejo una vez (otra compra lo
+        // cambió mientras esta esperaba el candado de la fila).
+        if (p && db.staleCostOnce != null) { p.cost = db.staleCostOnce; db.staleCostOnce = null; }
+        return p;
+      },
       findUnique: async ({ where }) => clone(db.products[where.id]) || null,
       update: async ({ where, data }) => clone(Object.assign(db.products[where.id], data)),
       create: async ({ data }) => { const id = db.nextId++; db.products[id] = { id, ...clone(data) }; return clone(db.products[id]); },
@@ -191,5 +197,16 @@ describe("historial de stock de las compras", () => {
     const res = await call(createPurchase, { body: { supplier: "Mayorista SA", items: [{ sku: "NUEVO-1", productName: "Lámpara", quantity: 6, cost: 90 }] } });
     const m = db.movements.at(-1);
     assert.deepEqual([m.reason, m.before, m.after, m.refId], ["COMPRA", 0, 6, String(res.body.id)]);
+  });
+});
+
+describe("costo promedio con la fila bloqueada", () => {
+  beforeEach(resetDb);
+
+  test("usa el costo vigente aunque el leído antes del candado fuera viejo", async () => {
+    Object.assign(db.products[1], { stock: 10, cost: 150 }); // otra compra ya lo llevó a 150
+    db.staleCostOnce = 100;                                  // esta lo había leído en 100
+    await buy(10, 200);
+    assert.equal(db.products[1].cost, 175, "(150×10 + 200×10) / 20; con el costo viejo daba 150");
   });
 });

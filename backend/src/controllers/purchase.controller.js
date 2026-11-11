@@ -3,7 +3,7 @@ const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const { deleteProductImages } = require("./product.controller");
 // Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué).
 const stockService = require("../services/stock.service");
-const { adjustStock, recordInitial, actorOf, REASONS } = stockService;
+const { adjustStock, recordInitial, lockUnits, actorOf, REASONS } = stockService;
 
 // Stock de una compra: siempre con la transacción de la compra (tx), sin respetar los ilimitados (las
 // compras siempre sumaron igual) y sin tocar la publicación (una compra nunca publicó un producto: un
@@ -45,8 +45,8 @@ function roundCost(raw) {
 // reusar ese producto (y no crear un duplicado cuando no tiene SKU).
 // `ctx` = { purchaseId, actor }: para el historial de stock.
 // El stock pasa por el servicio de stock con la fila bloqueada: el costo promedio se calcula con el
-// stock que había de verdad en ese momento (before), no con el leído antes, que una venta del medio
-// podía haber cambiado.
+// stock (before) y el costo que había de verdad en ese momento, leídos con la fila bloqueada, no con los
+// leídos antes, que una venta u otra compra del medio podía haber cambiado.
 async function applyItemTx(tx, item, ctx = {}) {
   const { sku, productName, cost: itemCost, quantity: itemQty } = item;
   const hintId = item.productId ? parseInt(item.productId) : null;
@@ -68,13 +68,16 @@ async function applyItemTx(tx, item, ctx = {}) {
     if (existingProduct) {
       // Sumar el stock del producto. before = stock de ANTES (snapshot para poder revertir).
       const moved = await purchaseStock(tx, { productId: existingProduct.id }, itemQty, ctx);
+      // El costo se relee con la fila ya bloqueada: el leído arriba puede ser viejo si otra compra del
+      // mismo producto terminó mientras esta esperaba el candado (y su promedio se perdería).
+      const locked = await tx.product.findUnique({ where: { id: existingProduct.id } });
       prevStock = moved.ok ? moved.before : existingProduct.stock;
-      prevCost  = existingProduct.cost ?? null;
+      prevCost  = locked?.cost ?? null;
 
       // Recalcular costo promedio ponderado
       const oldStock = prevStock;
       const newStock = moved.ok ? moved.after : oldStock + itemQty;
-      const oldCost  = existingProduct.cost || 0;
+      const oldCost  = locked?.cost || 0;
       const rawCost  = newStock > 0 ? (oldCost * oldStock + itemCost * itemQty) / newStock : itemCost;
       const newCost  = roundCost(rawCost);
 
@@ -96,14 +99,17 @@ async function applyItemTx(tx, item, ctx = {}) {
         // Sumar stock a la variante específica. before = stock de ANTES (snapshot para revertir).
         variantId        = existingVariant.id;
         const moved      = await purchaseStock(tx, { variantId: existingVariant.id }, itemQty, ctx);
+        // El costo es del producto padre: se toma su candado y se lee con la fila bloqueada (otra compra
+        // de otra variante del mismo producto puede haberlo cambiado mientras esta esperaba).
+        const parent     = await tx.product.update({ where: { id: existingVariant.product.id }, data: { updatedAt: new Date() } });
         prevVariantStock = moved.ok ? moved.before : existingVariant.stock;
-        prevCost         = existingVariant.product.cost ?? null;
+        prevCost         = parent.cost ?? null;
 
         const oldVariantStock = prevVariantStock;
         const newVariantStock = moved.ok ? moved.after : oldVariantStock + itemQty;
 
         // Actualizar costo promedio ponderado del producto padre
-        const oldCost = existingVariant.product.cost || 0;
+        const oldCost = parent.cost || 0;
         const rawCost = newVariantStock > 0
           ? (oldCost * oldVariantStock + itemCost * itemQty) / newVariantStock
           : itemCost;
@@ -125,12 +131,14 @@ async function applyItemTx(tx, item, ctx = {}) {
     const hinted = await tx.product.findUnique({ where: { id: hintId } });
     if (hinted) {
       const moved = await purchaseStock(tx, { productId: hintId }, itemQty, ctx);
+      // Costo releído con la fila bloqueada (ver el caso del SKU de producto)
+      const locked = await tx.product.findUnique({ where: { id: hintId } });
       prevStock = moved.ok ? moved.before : hinted.stock;
-      prevCost  = hinted.cost ?? null;
+      prevCost  = locked?.cost ?? null;
 
       const oldStock = prevStock;
       const newStock = moved.ok ? moved.after : oldStock + itemQty;
-      const oldCost  = hinted.cost || 0;
+      const oldCost  = locked?.cost || 0;
       const rawCost  = newStock > 0 ? (oldCost * oldStock + itemCost * itemQty) / newStock : itemCost;
 
       // Antes: data: { stock: newStock, cost: ... } (el stock ya lo sumó el servicio)
@@ -363,6 +371,16 @@ const createPurchase = async (req, res) => {
         throw { status: 400, error: "El proveedor es requerido" };
       }
 
+      // Las líneas se aplican en el orden en que se cargaron, así que antes se toman los candados de todos
+      // los productos y variantes que tocan, en el orden fijo de siempre: dos compras (o una compra y una
+      // venta) con los mismos productos no se traban entre sí.
+      const targets = [];
+      for (const it of parsedItems) {
+        const t = await resolveTargetTx(tx, it);
+        if (t) targets.push(t);
+      }
+      await lockUnits(tx, targets);
+
       // La compra se crea primero (sin líneas) para que cada movimiento del historial de stock lleve su
       // número. Antes se creaba al final, junto con las líneas; dentro de la transacción es lo mismo.
       const created = await tx.purchase.create({
@@ -443,12 +461,19 @@ const updatePurchase = async (req, res) => {
       }
       const pairs = []; // [vieja, nueva, destino]
       const added = []; // nuevas sin vieja → se aplican como en una compra nueva
+      const targets = []; // todo lo que esta edición puede tocar, para tomar los candados en orden
       for (const it of parsedItems) {
         const target = await resolveTargetTx(tx, it);
+        if (target) targets.push(target);
         const old = target ? unpaired.get(targetKey(target.productId, target.variantId))?.shift() : null;
         if (old) pairs.push([old, it, target]); else added.push(it);
       }
       for (const rest of unpaired.values()) removed.push(...rest);
+      // Candados de todo lo que se va a tocar, en el orden fijo (ver createPurchase)
+      await lockUnits(tx, [
+        ...targets,
+        ...original.items.filter((it) => it.productId).map((it) => ({ productId: it.productId, variantId: it.variantId })),
+      ]);
 
       // 2. Líneas que siguen: solo la diferencia
       for (const [old, it, target] of pairs) {
@@ -539,6 +564,9 @@ const deletePurchase = async (req, res) => {
 
     const ctx = { purchaseId: id, actor: actorOf(req.user) };
     const result = await stockService.transaction(async (tx) => {
+      // Candados de todo lo que se va a tocar, en el orden fijo (ver createPurchase)
+      await lockUnits(tx, purchase.items.filter((it) => it.productId).map((it) => ({ productId: it.productId, variantId: it.variantId })));
+
       // 1. Revertir cada item (resta stock, restaura costo)
       for (const item of purchase.items) {
         await revertItemTx(tx, item, ctx);
