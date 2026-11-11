@@ -381,6 +381,17 @@ describe("aviso de pago: el monto tiene que coincidir con el pedido", () => {
       [1, "VENTA", -1, 5, 4, "order", String(id), "Mercado Pago"]);
   });
 
+  test("arreglo: si el pago se lleva lo último de la única variante con stock, el producto se despublica", async () => {
+    db.variants[21].stock = 2;
+    db.variants[23].stock = 0;
+    const id = seedOrder({ total: 1000, items: [{ id: 5002, orderId: 0, productId: 2, variantId: 21, quantity: 2, price: 500, currency: "ARS" }] });
+    db.orders[id].items[0].orderId = id;
+    mp.payments[912] = { id: 912, status: "approved", external_reference: String(id), transaction_amount: 1000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(912), fakeRes());
+    assert.equal(db.variants[21].stock, 0);
+    assert.equal(db.products[2].active, false, "antes quedaba publicado sin nada para vender");
+  });
+
   test("con variante, el pago descuenta de la variante y no del producto", async () => {
     const id = seedOrder({ total: 1000, items: [{ id: 5001, orderId: 0, productId: 2, variantId: 21, quantity: 2, price: 500, currency: "ARS" }] });
     db.orders[id].items[0].orderId = id;

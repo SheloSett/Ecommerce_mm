@@ -329,7 +329,9 @@ async function applyMpApproval(orderId, paymentId) {
       // pagos por MercadoPago la variante nunca perdía stock (y el producto base perdía
       // stock que no correspondía). Mismo criterio que updateOrderStatus en order.controller.
       if (item.variantId) {
-        await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago", visibility: "none" });
+        // Si era la última variante con stock, el producto se despublica (como al marcarlo abonado en el
+        // panel). Antes acá no se miraba la publicación y quedaba publicado sin nada para vender.
+        await adjustStock({ variantId: item.variantId, delta: -item.quantity, reason: REASONS.VENTA, ref, actor: "Mercado Pago" });
         continue;
       }
 

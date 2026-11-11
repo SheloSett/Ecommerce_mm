@@ -359,6 +359,14 @@ describe("RMA en la Caja", () => {
     assert.equal(stockOf(3), 0);
   });
 
+  test("arreglo: dar de baja lo último de la única variante con stock despublica el producto", async () => {
+    db.variants[31].stock = 1;
+    db.variants[32].stock = 0;
+    await rma({ productId: 3, variantId: 31, quantity: 1 });
+    assert.equal(variantStock(31), 0);
+    assert.equal(db.products[3].active, false, "antes quedaba publicado sin nada para vender");
+  });
+
   test("un gasto común no toca el stock", async () => {
     await call(createGasto, { body: { amount: 100, description: "Luz", type: "NEGOCIO", productId: 1, quantity: 2 } });
     assert.equal(stockOf(1), 10);

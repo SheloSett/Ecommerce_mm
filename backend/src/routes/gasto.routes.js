@@ -61,18 +61,17 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
     });
 
     // Descontar stock al registrar un RMA: de la variante si viene, si no del producto. Nunca baja de 0
-    // y un producto sin variantes que se queda en 0 se despublica (como antes). Queda en el historial
-    // con el número de este gasto.
+    // y si no queda nada para vender (el producto, o su última variante con stock) se despublica.
+    // Antes, con variante no se miraba la publicación. Queda en el historial con el número de este gasto.
     if (validSubtype === "RMA" && quantity > 0) {
       const qty = parseInt(quantity) || 1;
       if (parsedVariantId || parsedProductId) {
         await adjustStock({
           ...(parsedVariantId ? { variantId: parsedVariantId } : { productId: parsedProductId }),
-          delta:      -qty,
-          reason:     REASONS.RMA,
-          ref:        { type: "gasto", id: gasto.id },
-          actor:      actorOf(req.user),
-          visibility: parsedVariantId ? "none" : "sync",
+          delta:  -qty,
+          reason: REASONS.RMA,
+          ref:    { type: "gasto", id: gasto.id },
+          actor:  actorOf(req.user),
         });
       }
     }
