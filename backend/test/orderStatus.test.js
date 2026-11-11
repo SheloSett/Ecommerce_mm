@@ -65,6 +65,13 @@ class FakePrismaClient {
         if (include) db.lastOrderInclude = include; // lo que pide la respuesta de "Modificar pedido"
         return clone(applyData(db.orders[where.id], data));
       },
+      // Reclamo del movimiento de stock: cambia solo si el pedido sigue como dice el where
+      updateMany: async ({ where, data }) => {
+        const o = db.orders[where.id];
+        if (!o || Object.entries(where).some(([k, v]) => k !== "id" && o[k] !== v)) return { count: 0 };
+        applyData(o, data);
+        return { count: 1 };
+      },
       findMany: async ({ where }) => Object.values(db.orders).filter((o) =>
         (!where.id?.not || o.id !== where.id.not) &&
         (!where.status?.in || where.status.in.includes(o.status)) &&
@@ -161,6 +168,15 @@ describe("aprobar y cancelar pedidos con ítems libres", () => {
     assert.equal(db.orders[50].status, "CANCELLED");
     assert.equal(db.products[1].stock, 11);
     assert.equal(db.products[2].stock, 12, "los pendrives que estaban después del ítem libre también vuelven");
+  });
+
+  test("dos clics seguidos en Abonado descuentan una sola vez; dos en Cancelado devuelven una sola vez", async () => {
+    addOrder(53, {}, [{ productId: 1, quantity: 2 }]);
+    await Promise.all([setStatus(53, "APPROVED"), setStatus(53, "APPROVED")]);
+    assert.equal(db.products[1].stock, 8, "antes quedaba en 6");
+    await Promise.all([setStatus(53, "CANCELLED"), setStatus(53, "CANCELLED")]);
+    assert.equal(db.products[1].stock, 10, "antes quedaba en 12");
+    assert.equal(db.orders[53].stockDeducted, false);
   });
 
   test("aprobar y cancelar quedan en el historial de stock con el número de pedido", async () => {

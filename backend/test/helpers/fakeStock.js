@@ -2,8 +2,11 @@
 //
 // Cada archivo de test arma su propio FakePrismaClient con lo justo para lo que prueba. El servicio de
 // stock necesita tres cosas que no todos tienen:
-//   - $transaction(fn): cada ajuste corre dentro de una transacción. Acá fn corre con el mismo cliente
-//     (en los tests no hay concurrencia real; la de Postgres se prueba aparte, contra una base de verdad).
+//   - $transaction(fn): cada ajuste corre dentro de una transacción. Acá fn corre con el mismo cliente, y
+//     las transacciones corren DE A UNA, como si todas tocaran la misma fila en Postgres (que bloquea la
+//     fila hasta que la transacción termina). Sin eso, dos operaciones "a la vez" en un test se pisan
+//     dentro de la base simulada aunque en la real no lo harían, y un test de doble clic pasa por
+//     casualidad. Ojo: abrir una transacción adentro de otra se queda esperando, igual que en Postgres.
 //   - stockMovement: el historial. Se guarda en la lista que devuelve movements(), así el test puede
 //     mirar qué quedó anotado.
 //   - product.findUnique con include.variants: syncProductVisibility mira las variantes activas para
@@ -15,7 +18,13 @@
 
 function withStockSupport(client, { movements = () => [], variantsOf = () => [] } = {}) {
   if (typeof client.$transaction !== "function") {
-    client.$transaction = async (arg) => (typeof arg === "function" ? arg(client) : Promise.all(arg));
+    let chain = Promise.resolve();
+    client.$transaction = (arg) => {
+      if (typeof arg !== "function") return Promise.all(arg);
+      const run = chain.then(() => arg(client));
+      chain = run.catch(() => {});
+      return run;
+    };
   }
 
   if (!client.stockMovement) {

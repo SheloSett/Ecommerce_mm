@@ -822,22 +822,35 @@ async function updateOrderStatus(req, res) {
     // stockDeducted como fuente de verdad los dos quedan cubiertos y no hay forma de devolver stock
     // que nunca se descontó.
     const wasCotizacion   = existing.paymentMethod === "COTIZACION";
-    const willReturnStock = (status === "CANCELLED" || status === "REJECTED") && existing.stockDeducted;
+    let willReturnStock = (status === "CANCELLED" || status === "REJECTED") && existing.stockDeducted;
     // yaDescontado: esta orden ya tiene su stock descontado por otro camino — una venta manual
     // (descuenta al registrarse) o una cotización vieja, anterior a que dejaran de reservar stock.
     const yaDescontado    = existing.stockDeducted;
-    const willDeductStock = status === "APPROVED" && existing.status !== "APPROVED" && !yaDescontado;
+    let willDeductStock = status === "APPROVED" && existing.status !== "APPROVED" && !yaDescontado;
+
+    // Reclamar el movimiento de stock en UNA operación de la base, como claimApproval con los pagos de
+    // Mercado Pago. Antes la decisión salía solo de la lectura de arriba: dos clics seguidos en
+    // "Abonado" (o dos pestañas) leían los dos "sin descontar" y el stock se descontaba dos veces; lo
+    // mismo al cancelar, que lo devolvía dos veces. Ahora stockDeducted se da vuelta acá con una
+    // condición, y solo el pedido que lo da vuelta mueve el stock.
+    // Se descuenta: queda marcado para que no se descuente dos veces y para que, si después se
+    // cancela, se sepa que ese stock hay que devolverlo. Se devuelve: vuelve a no tener nada descontado.
+    if (willDeductStock) {
+      const { count } = await prisma.order.updateMany({ where: { id: existing.id, stockDeducted: false }, data: { stockDeducted: true } });
+      willDeductStock = count === 1;
+    }
+    if (willReturnStock) {
+      const { count } = await prisma.order.updateMany({ where: { id: existing.id, stockDeducted: true }, data: { stockDeducted: false } });
+      willReturnStock = count === 1;
+    }
 
     const updateData = { status };
     // Al abonar, pasar automáticamente a "En preparación" si estaba en Pendiente
     if (status === "APPROVED" && existing.fulfillmentStatus === "PENDIENTE") {
       updateData.fulfillmentStatus = "EN_PREPARACION";
     }
-    // Se devuelve el stock: la orden vuelve a no tener nada descontado
-    if (willReturnStock) updateData.stockDeducted = false;
-    // Se descuenta acá abajo: queda marcado para que no se descuente dos veces y para que, si
-    // después se cancela, se sepa que ese stock hay que devolverlo.
-    if (willDeductStock)  updateData.stockDeducted = true;
+    // Antes: if (willReturnStock) updateData.stockDeducted = false; / if (willDeductStock) ... = true;
+    // (ahora lo hace el reclamo de arriba)
 
     const order = await prisma.order.update({
       where: { id: parseInt(id) },
