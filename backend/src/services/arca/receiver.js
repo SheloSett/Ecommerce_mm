@@ -32,6 +32,7 @@ const MESSAGES = Object.freeze({
   CONDICION_NO_SOPORTADA: "El sistema no factura a esa condición frente al IVA.",
   NO_CATEGORIZADO_NO_SOPORTADO: "No se puede facturar a un sujeto no categorizado: lleva una percepción de IVA que el sistema no calcula.",
   TIPO_DOCUMENTO_INVALIDO: "El tipo de documento tiene que ser CUIT, CUIL, DNI o sin identificar.",
+  DOCUMENTO_SIN_TIPO: "Hay un número de documento cargado pero falta elegir si es CUIT, CUIL o DNI.",
   DOCUMENTO_DEBE_SER_CUIT: "Para esta factura el cliente tiene que tener CUIT.",
   CUIT_INVALIDO: "El CUIT no es válido: revisá los números.",
   CUIL_INVALIDO: "El CUIL no es válido: revisá los números.",
@@ -131,8 +132,14 @@ function validateReceiver(input = {}, ctx = {}) {
     const dni = cleanDni(input.docNumber);
     if (dni) { docTipo = DOC_TIPO.DNI; docNro = dni; } else errors.push(error("DNI_INVALIDO", "docNumber"));
   } else {
-    docTipo = DOC_TIPO.SIN_IDENTIFICAR;
-    docNro = "0";
+    // Sin identificar. Si igual vino un número, no se descarta en silencio: el admin lo tipeó para algo.
+    const typed = input.docNumber === undefined || input.docNumber === null ? "" : String(input.docNumber).trim();
+    if (typed !== "" && !/^0+$/.test(typed)) {
+      errors.push(error("DOCUMENTO_SIN_TIPO", "docType"));
+    } else {
+      docTipo = DOC_TIPO.SIN_IDENTIFICAR;
+      docNro = "0";
+    }
   }
 
   if (docNro === CUIT_NOT_CATEGORIZED) errors.push(error("NO_CATEGORIZADO_NO_SOPORTADO", "docNumber"));

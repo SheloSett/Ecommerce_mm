@@ -68,6 +68,14 @@ describe("factura B", () => {
     assert.deepEqual(codes(validateReceiver({ cbteClass: "B", ivaConditionId: 5 }, ctx({ totalCents: 5000, cfCapCents: 5000 }))), ["DOCUMENTO_OBLIGATORIO"]);
   });
 
+  test("un número de documento sin tipo no se descarta en silencio", () => {
+    assert.deepEqual(codes(validateReceiver({ cbteClass: "B", ivaConditionId: 5, docNumber: "12345678" }, ctx())), ["DOCUMENTO_SIN_TIPO"]);
+    assert.deepEqual(codes(validateReceiver({ cbteClass: "B", ivaConditionId: 5, docType: "SIN_IDENTIFICAR", docNumber: "12345678" }, ctx())), ["DOCUMENTO_SIN_TIPO"]);
+    // "0" o vacío con "sin identificar" es lo normal.
+    assert.equal(validateReceiver({ cbteClass: "B", ivaConditionId: 5, docType: 99, docNumber: "0" }, ctx()).ok, true);
+    assert.equal(validateReceiver({ cbteClass: "B", ivaConditionId: 5, docType: "", docNumber: " " }, ctx()).ok, true);
+  });
+
   test("sin total no se puede saber si hace falta documento", () => {
     assert.deepEqual(codes(validateReceiver({ cbteClass: "B", ivaConditionId: 5 }, { issuerCuit: EMISOR })), ["TOTAL_INVALIDO"]);
   });
