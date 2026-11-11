@@ -364,6 +364,17 @@ describe("aviso de pago: el monto tiene que coincidir con el pedido", () => {
     assert.equal(db.products[1].stock, 4);
   });
 
+  test("con variante, el pago descuenta de la variante y no del producto", async () => {
+    const id = seedOrder({ total: 1000, items: [{ id: 5001, orderId: 0, productId: 2, variantId: 21, quantity: 2, price: 500, currency: "ARS" }] });
+    db.orders[id].items[0].orderId = id;
+    mp.payments[910] = { id: 910, status: "approved", external_reference: String(id), transaction_amount: 1000, currency_id: "ARS" };
+    await handleWebhook(webhookReq(910), fakeRes());
+    assert.equal(db.orders[id].status, "APPROVED");
+    assert.equal(db.variants[21].stock, 48);
+    assert.equal(db.products[2].stock, 0);
+    assert.equal(db.orders[id].stockDeducted, true);
+  });
+
   test("volver de MP antes que el aviso: igual se registra el cupón y salen los emails", async () => {
     const id = seedOrder({ couponId: 2, total: 1800000 });
     mp.searchResults = [{ id: 906, status: "approved", external_reference: String(id), transaction_amount: 1800000, currency_id: "ARS", date_created: "2026-10-30T10:00:00Z" }];
