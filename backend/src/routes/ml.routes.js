@@ -17,6 +17,7 @@ router.post("/listings/refresh", authMiddleware, adminMiddleware, requireAnyPerm
 router.get("/pools",             authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.listPools);
 router.get("/units",             authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.searchUnits);
 router.get("/pools/:id/cycles",  authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.poolCycles);
+router.get("/pools/:id/peek",    authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.peekPool);
 router.post("/pools/:id/link",       authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.linkPool);
 router.post("/pools/:id/unlink",     authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.unlinkPool);
 router.post("/pools/:id/activate",   authMiddleware, adminMiddleware, requireAnyPermission("productos"), ml.activatePool);

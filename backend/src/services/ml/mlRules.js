@@ -23,6 +23,12 @@
 //     entre W - n y W) o no entró (número = el de antes - n); en los dos casos la página descuenta n.
 //   - Si las cuentas no cierran (por ejemplo, una venta y a la vez una carga a mano allá), el pozo se
 //     frena en REVISAR, la página toma el número más bajo posible y el panel pide elegir el correcto.
+//   - Lecturas viejas: justo después de escribir, Mercado Libre puede seguir mostrando un rato el número
+//     de antes. Una lectura igual a la de antes de escribir (mismo stock y mismos vendidos) dentro de
+//     staleMs se descarta, también después de cerrar las cuentas. Y una escritura sin respuesta no se
+//     da por "no entró" hasta que pase staleMs: antes podría ser una lectura vieja.
+//   - Un producto que se vende muy seguido podría no quedarse nunca quieto: pasado maxWaitMs se cierran
+//     las cuentas igual, con las mismas comprobaciones.
 //
 // Las lecturas traen { qty, sold }: qty es el stock del pozo y sold, los vendidos de cada publicación
 // del pozo ({ "MLA123": 15, "MLA456:789": 2 }). Los vendidos se comparan solo entre publicaciones que
@@ -33,6 +39,7 @@ const DEFAULTS = Object.freeze({
   staleMs:   2 * 60 * 1000, // después de una escritura confirmada, una lectura vieja se descarta hasta acá
   confirmMs: 30 * 1000,     // un cambio grande sin explicar se aplica si otra lectura lo repite después de esto
   bigChange: 10,            // desde cuántas unidades un cambio sin ventas que lo expliquen es "grande"
+  maxWaitMs: 5 * 60 * 1000, // espera máxima a que se quede quieto, para escribir o cerrar las cuentas
 });
 
 function isCount(n) {
@@ -97,6 +104,9 @@ function decide(pool, snap, now, opts = DEFAULTS) {
   if (!isCount(snap.qty)) return { kind: "review", reason: "Mercado Libre devolvió un stock inválido", conservative: 0 };
   if (pool.writeTarget !== null && pool.writeTarget !== undefined) return afterWrite(pool, snap, now, opts);
   if (!isCount(pool.agreed)) return { kind: "baseline" };
+  if (isStaleAfterWrite(pool, snap, now, opts)) {
+    return { kind: "wait", reason: "Lectura vieja: Mercado Libre todavía muestra el número de antes de escribir", retryAt: new Date(now.getTime() + opts.settleMs) };
+  }
 
   const dq = snap.qty - pool.agreed;
   if (dq === 0) return { kind: "same" };
@@ -115,15 +125,24 @@ function decide(pool, snap, now, opts = DEFAULTS) {
   return { kind: "apply", sales, other, afterWrite: false };
 }
 
+// ¿Es la misma lectura de antes de la última escritura, poco después de escribir? (lectura vieja)
+function isStaleAfterWrite(pool, snap, now, opts) {
+  if (!pool.writeBase || !pool.writeStartedAt) return false;
+  if (now - new Date(pool.writeStartedAt) >= opts.staleMs) return false;
+  return snap.qty !== pool.agreed && sameRead(pool.writeBase, snap);
+}
+
 // Cierre de cuentas de una escritura (ver arriba "ESCRIBIR PISA").
 function afterWrite(pool, snap, now, opts) {
   const W = pool.writeTarget;
   const base = pool.writeBase || {};
   const startedAt = pool.writeStartedAt ? new Date(pool.writeStartedAt) : now;
   const sinceWrite = now - startedAt;
+  const waitedTooLong = sinceWrite >= opts.maxWaitMs;
 
-  // Esperar a que el pozo esté quieto y haya pasado un rato desde la escritura.
-  if (sinceWrite < opts.settleMs || !isSettled(pool, snap, now, opts)) {
+  // Esperar a que el pozo esté quieto y haya pasado un rato desde la escritura (salvo que ya se haya
+  // esperado demasiado: un producto que se vende muy seguido no se queda quieto nunca).
+  if (!waitedTooLong && (sinceWrite < opts.settleMs || !isSettled(pool, snap, now, opts))) {
     const lastChange = pool.lastChangeAt && sameRead(pool.lastRead, snap) ? new Date(pool.lastChangeAt) : now;
     const retryAt = new Date(Math.max(startedAt.getTime(), lastChange.getTime()) + opts.settleMs);
     return { kind: "wait", reason: "Esperando a que Mercado Libre termine de aplicar el cambio", retryAt };
@@ -134,12 +153,14 @@ function afterWrite(pool, snap, now, opts) {
   const n = soldDelta(base.sold, snap.sold);
   const applied = pool.writeOutcome === "APLICADA";
 
+  const stillOld = () => ({ kind: "wait", reason: "Mercado Libre todavía muestra el número de antes", retryAt: new Date(now.getTime() + opts.settleMs) });
+
   // Sin contador de vendidos: solo se puede confiar en el número.
   if (n === null) {
     if (M === W) return { kind: "apply", sales: 0, other: 0, afterWrite: true };
-    if (!applied && M0 !== null && M === M0) return { kind: "apply", sales: 0, other: 0, afterWrite: true };
-    if (applied && M0 !== null && M === M0 && sinceWrite < opts.staleMs) {
-      return { kind: "wait", reason: "Mercado Libre todavía muestra el número de antes", retryAt: new Date(now.getTime() + opts.settleMs) };
+    if (M0 !== null && M === M0) {
+      if (sinceWrite < opts.staleMs) return stillOld(); // puede ser una lectura vieja
+      if (!applied) return { kind: "apply", sales: 0, other: 0, afterWrite: true }; // no entró
     }
     return review("Mercado Libre muestra un número que no coincide con lo escrito y no hay contador de ventas para explicarlo", W, M, null);
   }
@@ -148,18 +169,19 @@ function afterWrite(pool, snap, now, opts) {
   const fitsApplied = M <= W && M >= W - n;
   const fitsNotApplied = M0 !== null && M === M0 - n;
 
-  if (applied) {
-    if (fitsApplied) return { kind: "apply", sales: n, other: 0, afterWrite: true };
-    if (fitsNotApplied && sinceWrite < opts.staleMs) {
-      return { kind: "wait", reason: "Mercado Libre todavía muestra el número de antes", retryAt: new Date(now.getTime() + opts.settleMs) };
-    }
-    return review(fitsNotApplied
-      ? "Mercado Libre confirmó el cambio pero sigue mostrando el número de antes"
-      : "Después de escribir, el número de Mercado Libre no cierra con las ventas", W, M, n);
+  // Entró: las n ventas son reales (unas se ven, otras quedaron pisadas).
+  if (fitsApplied) return { kind: "apply", sales: n, other: 0, afterWrite: true };
+  if (fitsNotApplied) {
+    // Muestra el número de antes (menos las ventas): puede ser una lectura vieja de una escritura que
+    // sí entró. Se espera staleMs antes de creerlo.
+    if (sinceWrite < opts.staleMs) return stillOld();
+    // Sin respuesta y sigue así: no entró. La página descuenta las ventas y se vuelve a escribir.
+    if (!applied) return { kind: "apply", sales: n, other: 0, afterWrite: true };
+    return review("Mercado Libre confirmó el cambio pero sigue mostrando el número de antes", W, M, n);
   }
-  // Escritura sin respuesta: entró o no entró; en los dos casos la página descuenta las ventas.
-  if (fitsApplied || fitsNotApplied) return { kind: "apply", sales: n, other: 0, afterWrite: true };
-  return review("No se sabe si entró la última escritura y el número de Mercado Libre no cierra con las ventas", W, M, n);
+  return review(applied
+    ? "Después de escribir, el número de Mercado Libre no cierra con las ventas"
+    : "No se sabe si entró la última escritura y el número de Mercado Libre no cierra con las ventas", W, M, n);
 }
 
 // Para REVISAR: el cambio más bajo posible para la página (que nunca venda de más mientras alguien mira).

@@ -79,7 +79,9 @@ async function runPass(rawCtx = {}) {
 
   await prisma.mlAccount.update({
     where: { id: ACCOUNT_ID },
-    data: { lastPassAt: ctx.now(), ...(stopped === "rate_limit" ? {} : { pauseLevel: 0 }) },
+    // El freno crece con cada 429 seguido (1, 2, 4... minutos): solo vuelve a cero con una pasada que no
+    // fue frenada.
+    data: { lastPassAt: ctx.now(), ...(stopped === "rate_limit" || stopped === "frenada" ? {} : { pauseLevel: 0 }) },
   });
   return { units: units.size, stopped, results };
 }

@@ -7,7 +7,7 @@ const { actorOf } = require("../services/stock.service");
 const { mlConfig, missingForConnect } = require("../services/ml/mlConfig");
 const mlAuth = require("../services/ml/mlAuth");
 const mlPools = require("../services/ml/mlPools");
-const { refreshListings, isRefreshing } = require("../services/ml/mlListings");
+const { refreshListings, isRefreshing, attachItem } = require("../services/ml/mlListings");
 const mlWorker = require("../services/ml/mlWorker");
 
 const MODES = new Set(["APAGADO", "OBSERVAR", "ACTIVO"]);
@@ -128,6 +128,7 @@ const resolvePool  = wrap((req) => mlPools.resolvePool(req.params.id, req.body |
 const deactivate   = wrap((req) => mlPools.deactivatePool(req.params.id));
 const checkPool    = wrap((req) => mlPools.checkPool(req.params.id));
 const poolCycles   = wrap((req) => mlPools.poolCycles(req.params.id));
+const peekPool     = wrap((req) => mlPools.peekPool(req.params.id));
 
 // ─── Avisos de Mercado Libre (público) ──────────────────────────────────────
 // Mercado Libre no firma sus avisos: la dirección lleva una clave (ML_WEBHOOK_TOKEN). Sin la clave
@@ -145,7 +146,7 @@ function tokenMatches(given, expected) {
 const STOCK_TOPICS = new Set(["stock-location", "stock-locations", "stock_locations"]);
 let lastWebhookNoted = 0;
 
-async function handleNotification(body, { cfg = mlConfig(), now = new Date() } = {}) {
+async function handleNotification(body, { cfg = mlConfig(), now = new Date(), ctx = undefined } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ignored: "formato" };
   const topic = typeof body.topic === "string" ? body.topic : "";
   const resource = typeof body.resource === "string" ? body.resource : "";
@@ -155,7 +156,10 @@ async function handleNotification(body, { cfg = mlConfig(), now = new Date() } =
   let m;
   if (topic === "items" && (m = resource.match(/^\/items\/(MLA\d{6,15})$/))) {
     const listings = await prisma.mlListing.findMany({ where: { itemId: m[1] } });
-    const ids = [...new Set(listings.map((l) => l.poolId).filter(Boolean))];
+    let ids = [...new Set(listings.map((l) => l.poolId).filter(Boolean))];
+    // Publicación nueva (todavía no traída): se pide y se suma a su pozo. Si el pozo ya estaba
+    // vinculado, sus ventas se cuentan desde ahora.
+    if (!listings.length) ids = await attachItem(m[1], ctx);
     if (ids.length) where = { id: { in: ids } };
   } else if (STOCK_TOPICS.has(topic) && (m = resource.match(/^\/user-products\/(MLAU\d{3,20})\/stock$/))) {
     where = { userProductId: m[1] };
@@ -193,6 +197,6 @@ function webhook(req, res) {
 
 module.exports = {
   getStatus, startOAuth, exchangeOAuth, disconnect, updateSettings,
-  refresh, listPools, searchUnits, linkPool, unlinkPool, activatePool, resolvePool, deactivate, checkPool, poolCycles,
+  refresh, listPools, searchUnits, linkPool, unlinkPool, activatePool, resolvePool, deactivate, checkPool, poolCycles, peekPool,
   webhook, webhookGate, handleNotification, tokenMatches,
 };

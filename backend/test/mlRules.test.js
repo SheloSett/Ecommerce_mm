@@ -145,10 +145,29 @@ describe("decide: después de escribir", () => {
     assert.equal(decide(quiet(written(), r), r, at(DEFAULTS.staleMs / 1000 + 5)).kind, "review");
   });
 
-  test("escritura sin respuesta que no entró: la página descuenta las ventas y se vuelve a escribir", () => {
+  test("escritura sin respuesta que muestra el número de antes: se espera (puede ser una lectura vieja)", () => {
     const r = read(9, 6);
-    const d = decide(quiet(written({ writeOutcome: "DESCONOCIDA" }), r), r, at(30));
+    assert.equal(decide(quiet(written({ writeOutcome: "DESCONOCIDA" }), r), r, at(30)).kind, "wait");
+  });
+
+  test("escritura sin respuesta que no entró: pasado staleMs, la página descuenta las ventas y se vuelve a escribir", () => {
+    const r = read(9, 6);
+    const d = decide(quiet(written({ writeOutcome: "DESCONOCIDA" }), r), r, at(DEFAULTS.staleMs / 1000 + 5));
     assert.deepEqual(d, { kind: "apply", sales: 1, other: 0, afterWrite: true });
+  });
+
+  test("escritura sin respuesta que sí entró, con una lectura vieja en el medio: no se la cuenta como no entrada", () => {
+    const vieja = read(10);
+    assert.equal(decide(quiet(written({ writeOutcome: "DESCONOCIDA" }), vieja), vieja, at(30)).kind, "wait");
+    const nueva = read(12);
+    assert.deepEqual(decide(quiet(written({ writeOutcome: "DESCONOCIDA" }), nueva), nueva, at(60)), { kind: "apply", sales: 0, other: 0, afterWrite: true });
+  });
+
+  test("producto que no se queda quieto: pasado maxWaitMs se cierran las cuentas igual", () => {
+    const r = read(11, 6);
+    const moving = written({ lastRead: read(12, 5), lastChangeAt: at(299) });
+    assert.equal(decide(moving, r, at(299)).kind, "wait", "antes de los 5 minutos todavía espera");
+    assert.deepEqual(decide(moving, r, at(301)), { kind: "apply", sales: 1, other: 0, afterWrite: true });
   });
 
   test("escritura sin respuesta que sí entró", () => {
@@ -181,6 +200,26 @@ describe("decide: después de escribir", () => {
     assert.deepEqual(decide(quiet(written(base), ok), ok, at(30)), { kind: "apply", sales: 0, other: 0, afterWrite: true });
     const otro = read(11, {});
     assert.equal(decide(quiet(written(base), otro), otro, at(30)).kind, "review");
+  });
+});
+
+describe("decide: lecturas viejas después de cerrar una escritura", () => {
+  // Se escribió 12 a las T0 (antes: 10 con 5 vendidos) y las cuentas ya se cerraron con 12.
+  const closed = (over = {}) => pool({
+    agreed: 12, agreedSold: { MLA1: 5 }, writeTarget: null, writeBase: { qty: 10, sold: { MLA1: 5 } }, writeStartedAt: at(0),
+    lastRead: { qty: 12, sold: { MLA1: 5 } }, lastChangeAt: at(5), ...over,
+  });
+
+  test("una lectura igual a la de antes de escribir, dentro de staleMs, se descarta", () => {
+    assert.equal(decide(closed(), read(10), at(75)).kind, "wait");
+  });
+
+  test("pasado staleMs ya no es vieja: se aplica como un cambio", () => {
+    assert.equal(decide(closed(), read(10), at(DEFAULTS.staleMs / 1000 + 1)).kind, "apply");
+  });
+
+  test("una lectura distinta (venta de verdad) no se descarta", () => {
+    assert.deepEqual(decide(closed(), read(11, 6), at(75)), { kind: "apply", sales: 1, other: 0, afterWrite: false });
   });
 });
 

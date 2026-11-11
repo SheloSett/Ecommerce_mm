@@ -40,8 +40,14 @@ function withLock(fn) {
   return run;
 }
 
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Reserva de la próxima revisión mientras dura una pasada: si la pasada se corta en el medio (token,
+// 429, error, reinicio), el pozo se vuelve a mirar a lo sumo en este tiempo, sin esperar al barrido.
+const LEASE_MS = 2 * 60 * 1000;
+
 function makeCtx(ctx = {}) {
-  return { now: () => new Date(), fetchImpl: undefined, sleep: null, cfg: mlConfig(), opts: rules.DEFAULTS, ...ctx };
+  // sleep: pausa entre pedidos seguidos a Mercado Libre (las ráfagas reciben 429). Los tests pasan null.
+  return { now: () => new Date(), fetchImpl: undefined, sleep: realSleep, cfg: mlConfig(), opts: rules.DEFAULTS, ...ctx };
 }
 
 function backoffMs(attempts) {
@@ -147,8 +153,13 @@ async function syncUnitLocked(unit, ctx) {
   const all = [...syncing, ...observed];
   if (!all.length) return { skipped: "sin_pozos" };
 
-  // Se baja la marca al empezar: un aviso que llegue durante la pasada vuelve a marcar y no se pierde.
-  await prisma.mlPool.updateMany({ where: { id: { in: all.map((p) => p.id) } }, data: { dirty: false } });
+  // Se baja la marca al empezar (un aviso que llegue durante la pasada vuelve a marcar y no se pierde) y
+  // se reserva una revisión dentro de LEASE_MS: si la pasada se corta, el pozo no queda olvidado. Los
+  // caminos que terminan bien la reemplazan por la que corresponda.
+  await prisma.mlPool.updateMany({
+    where: { id: { in: all.map((p) => p.id) } },
+    data:  { dirty: false, nextAttemptAt: new Date(ctx.now().getTime() + LEASE_MS) },
+  });
 
   const t = await getAccessToken({ now: ctx.now, cfg: ctx.cfg, fetchImpl: ctx.fetchImpl });
   if (!t.ok) { await noteAccountError(t.message, ctx); return { skipped: "token" }; }
@@ -231,10 +242,17 @@ async function syncUnitLocked(unit, ctx) {
     const reviews = [];
     for (const p of plans) {
       const { pool, snap, d, book } = p;
-      const data = { ...book, attempts: 0, lastError: web.unlimited ? "Stock ilimitado en la página: no se sincroniza" : null, nextAttemptAt: null, lastSyncAt: now };
+      // Si después hay que escribirle, la reserva de revisión (LEASE_MS) sigue hasta que la escritura se
+      // resuelva: si la relectura o la escritura se cortan, el pozo no queda olvidado.
+      const willWrite = !web.unlimited && current !== snap.qty && ["apply", "same", "baseline"].includes(d.kind);
+      const data = {
+        ...book, attempts: 0, lastError: web.unlimited ? "Stock ilimitado en la página: no se sincroniza" : null,
+        nextAttemptAt: willWrite ? new Date(now.getTime() + LEASE_MS) : null, lastSyncAt: now,
+      };
       if (d.kind === "apply" || d.kind === "same" || d.kind === "baseline") {
         Object.assign(data, { agreed: snap.qty, agreedSold: snap.sold, heldQty: null, heldAt: null });
-        if (d.afterWrite) Object.assign(data, { writeTarget: null, writeBase: DbNull, writeStartedAt: null, writeOutcome: null });
+        // Se cierra la escritura; writeBase y writeStartedAt quedan para descartar lecturas viejas (mlRules).
+        if (d.afterWrite) Object.assign(data, { writeTarget: null, writeOutcome: null });
         if (d.kind === "apply" && (d.sales || d.other || d.afterWrite)) {
           await log(tx, pool.id, "APLICA", {
             readQty: snap.qty, delta: -d.sales + d.other, webBefore: web.qty, webAfter: web.unlimited ? null : current,
@@ -281,50 +299,76 @@ async function syncUnitLocked(unit, ctx) {
   for (const p of plans) {
     if (!["apply", "same", "baseline"].includes(p.d.kind)) { if (p.d.kind === "wait" || p.d.kind === "hold") summary.waiting++; continue; }
     const res = await writeIfNeeded(unit, p, account, tokenBox, ctx);
-    if (res === "stop") break;
-    if (res === "written") summary.written++;
-    if (res === "waiting") summary.waiting++;
+    if (res.stop) return { ...summary, stopped: res.stop };
+    if (res.result === "written") summary.written++;
+    if (res.result === "waiting") summary.waiting++;
   }
   return summary;
 }
 
 // Escribe el número de la página en el pozo, si hace falta y si está quieto.
-// Devuelve "written" | "waiting" | "skip" | "stop".
+// Devuelve { result: "written" | "waiting" | "skip" } o { stop: motivo } si hay que cortar la pasada.
 async function writeIfNeeded(unit, plan, account, tokenBox, ctx) {
   const pool = await prisma.mlPool.findUnique({ where: { id: plan.pool.id } });
-  if (!pool || !pool.active || pool.status !== "OK" || pool.writeTarget !== null) return "skip";
+  if (!pool || !pool.active || pool.status !== "OK" || pool.writeTarget !== null) return { result: "skip" };
   const web = await webStock(unit);
-  if (web.missing || web.unlimited || web.qty === plan.snap.qty) return "skip";
+  if (web.missing || web.unlimited || web.qty === plan.snap.qty) {
+    if (pool.writeWantedAt) await prisma.mlPool.update({ where: { id: pool.id }, data: { writeWantedAt: null } });
+    return { result: "skip" };
+  }
 
+  // Quieto hace settleMs. Si un producto se vende tan seguido que nunca se queda quieto, pasado
+  // maxWaitMs alcanza con que la relectura de abajo coincida (sin ella, se pisaría una venta que la
+  // página todavía no copió).
   const now = ctx.now();
+  const wantedAt = pool.writeWantedAt ? new Date(pool.writeWantedAt) : now;
+  const waitedTooLong = now - wantedAt >= ctx.opts.maxWaitMs;
   const quietSince = pool.lastChangeAt ? now - new Date(pool.lastChangeAt) : Infinity;
-  if (quietSince < ctx.opts.settleMs) {
-    await prisma.mlPool.update({ where: { id: pool.id }, data: { nextAttemptAt: new Date(new Date(pool.lastChangeAt).getTime() + ctx.opts.settleMs) } });
-    return "waiting";
+  if (quietSince < ctx.opts.settleMs && !waitedTooLong) {
+    await prisma.mlPool.update({
+      where: { id: pool.id },
+      data: { writeWantedAt: wantedAt, nextAttemptAt: new Date(new Date(pool.lastChangeAt).getTime() + ctx.opts.settleMs) },
+    });
+    return { result: "waiting" };
   }
 
   // Releer justo antes de escribir: si cambió algo, se deja para la próxima pasada.
   const fresh = await readOne(pool, account, tokenBox, ctx);
-  if (!fresh.ok) return (await readFailed(pool, fresh, ctx)) ? "stop" : "skip";
+  if (!fresh.ok) return (await readFailed(pool, fresh, ctx)) ? { stop: fresh.kind } : { result: "skip" };
   const snap = { qty: fresh.qty, sold: fresh.sold };
   if (!rules.sameRead(pool.lastRead, snap)) {
     await prisma.mlPool.update({
       where: { id: pool.id },
-      data: { ...rules.afterRead(pool, snap, ctx.now()), dirty: true, nextAttemptAt: new Date(ctx.now().getTime() + ctx.opts.settleMs) },
+      data: {
+        ...rules.afterRead(pool, snap, ctx.now()), dirty: true, writeWantedAt: wantedAt,
+        nextAttemptAt: new Date(ctx.now().getTime() + (waitedTooLong ? 0 : ctx.opts.settleMs)),
+      },
     });
-    return "waiting";
+    return { result: "waiting" };
+  }
+
+  // Las variaciones del modelo viejo de Mercado Libre no se escriben: un PUT con la lista de variaciones
+  // borra las que no van en la lista, y la documentación no es clara. Se habilitan recién probándolo con
+  // una publicación de prueba (mlPools.activatePool tampoco deja activarlas).
+  if (fresh.target.variationId) {
+    await prisma.mlPool.update({ where: { id: pool.id }, data: { lastError: "Publicación con variaciones del modelo viejo: no se le escribe el stock" } });
+    return { result: "skip" };
   }
 
   // El número de la página justo ahora (pudo cambiar desde la transacción).
   const latest = await webStock(unit);
-  if (latest.missing || latest.unlimited || latest.qty === snap.qty) return "skip";
+  if (latest.missing || latest.unlimited || latest.qty === snap.qty) return { result: "skip" };
   const W = latest.qty;
 
-  // Anotar ANTES de llamar: si se corta en el medio, la próxima pasada cierra las cuentas igual.
+  // Anotar ANTES de llamar: si se corta en el medio, la próxima pasada cierra las cuentas igual (y se
+  // reserva la revisión por si el proceso se reinicia justo acá).
   const startedAt = ctx.now();
   await prisma.mlPool.update({
     where: { id: pool.id },
-    data: { writeTarget: W, writeBase: snap, writeStartedAt: startedAt, writeOutcome: "DESCONOCIDA" },
+    data: {
+      writeTarget: W, writeBase: snap, writeStartedAt: startedAt, writeOutcome: "DESCONOCIDA", writeWantedAt: null,
+      nextAttemptAt: new Date(startedAt.getTime() + ctx.opts.settleMs + LEASE_MS),
+    },
   });
   const w = await adapter.writePool({ token: tokenBox.token, target: fresh.target, quantity: W, fetchImpl: ctx.fetchImpl });
   const after = ctx.now();
@@ -334,17 +378,17 @@ async function writeIfNeeded(unit, plan, account, tokenBox, ctx) {
     if (w.stored === null || w.stored === W) {
       await prisma.mlPool.update({ where: { id: pool.id }, data: { writeOutcome: "APLICADA", agreed: W, nextAttemptAt: settleAt } });
       await log(prisma, pool.id, "ESCRIBE", { readQty: snap.qty, writeQty: W, storedQty: w.stored, result: "ok", detail: `Mercado Libre: ${snap.qty} → ${W}` });
-      return "written";
+      return { result: "written" };
     }
-    // Guardó otro número (tope de la publicación, por ejemplo): no insistir.
-    const message = `Mercado Libre guardó ${w.stored} en vez de ${W}`;
-    await prisma.mlPool.update({
-      where: { id: pool.id },
-      data: { writeOutcome: "APLICADA", writeTarget: w.stored, agreed: w.stored, status: "ERROR", lastError: message, nextAttemptAt: settleAt },
+    // La respuesta trae otro número. Puede ser un tope de la publicación o una respuesta todavía vieja:
+    // no se sabe, así que queda como escritura sin confirmar y lo decide la lectura de después (si
+    // Mercado Libre de verdad guardó otro número, las cuentas no cierran y el pozo queda para revisar).
+    await prisma.mlPool.update({ where: { id: pool.id }, data: { nextAttemptAt: settleAt } });
+    await log(prisma, pool.id, "ESCRIBE", {
+      readQty: snap.qty, writeQty: W, storedQty: w.stored, result: "respuesta distinta",
+      detail: `Se mandó ${W} y la respuesta dice ${w.stored}: se confirma con la próxima lectura`,
     });
-    await log(prisma, pool.id, "ESCRIBE", { readQty: snap.qty, writeQty: W, storedQty: w.stored, result: "otro número", detail: message });
-    reportError("mercadolibre", `Pozo ${pool.key}: ${message}. No se vuelve a escribir hasta revisarlo en el panel.`);
-    return "written";
+    return { result: "written" };
   }
 
   if (w.kind === "transient" || w.kind === "bad_response") {
@@ -352,7 +396,7 @@ async function writeIfNeeded(unit, plan, account, tokenBox, ctx) {
     const attempts = (pool.attempts || 0) + 1;
     await prisma.mlPool.update({ where: { id: pool.id }, data: { attempts, lastError: clip(w.message), nextAttemptAt: settleAt } });
     await log(prisma, pool.id, "ESCRIBE", { readQty: snap.qty, writeQty: W, result: "sin respuesta", detail: w.message });
-    return "written";
+    return { result: "written" };
   }
 
   // Mercado Libre dijo que no: no se escribió nada.
@@ -360,17 +404,17 @@ async function writeIfNeeded(unit, plan, account, tokenBox, ctx) {
   if (w.kind === "rate_limit") {
     await prisma.mlPool.update({ where: { id: pool.id }, data: { ...clear, dirty: true } });
     await brake(ctx, w.retryAfterMs);
-    return "stop";
+    return { stop: "rate_limit" };
   }
   if (w.kind === "auth") {
     await prisma.mlPool.update({ where: { id: pool.id }, data: { ...clear, dirty: true } });
     await noteAccountError(w.message, ctx);
-    return "stop";
+    return { stop: "auth" };
   }
-  await prisma.mlPool.update({ where: { id: pool.id }, data: { ...clear, status: "ERROR", lastError: clip(`Mercado Libre no aceptó el cambio: ${w.message}`) } });
+  await prisma.mlPool.update({ where: { id: pool.id }, data: { ...clear, status: "ERROR", lastError: clip(`Mercado Libre no aceptó el cambio: ${w.message}`), nextAttemptAt: null } });
   await log(prisma, pool.id, "ESCRIBE", { readQty: snap.qty, writeQty: W, result: "rechazado", detail: w.message });
   reportError("mercadolibre", `Pozo ${pool.key}: Mercado Libre no aceptó el stock ${W}: ${w.message}`);
-  return "skip";
+  return { result: "skip" };
 }
 
 module.exports = { syncUnit, withLock, webStock, readOne, brake, makeCtx, backoffMs, ACTOR, FROZEN };

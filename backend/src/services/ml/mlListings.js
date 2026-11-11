@@ -126,40 +126,77 @@ async function doRefresh(ctx) {
 
   let saved = 0;
   let failed = 0;
+  let cut = false;
   const pools = new Set();
   for (const id of unique) {
     if (ctx.sleep && saved + failed > 0) await ctx.sleep(150);
     const r = await api.getItem(t.token, id, { fetchImpl: ctx.fetchImpl });
     if (!r.ok) {
-      if (r.kind === "rate_limit") { await brake(ctx, r.retryAfterMs); break; }
+      if (r.kind === "rate_limit") { await brake(ctx, r.retryAfterMs); cut = true; break; }
       failed++;
       continue;
     }
     if (String(r.data?.seller_id) !== String(account.mlUserId)) continue;
     for (const row of rowsOf(r.data)) {
-      const pool = await prisma.mlPool.upsert({
-        where:  { key: row.poolKey },
-        update: { userProductId: row.userProductId },
-        create: { key: row.poolKey, userProductId: row.userProductId },
-      });
-      pools.add(pool.id);
-      const existing = await prisma.mlListing.findUnique({ where: { itemId_variationId: { itemId: row.itemId, variationId: row.variationId } } });
-      if (existing && existing.poolId && existing.poolId !== pool.id) await withLock(() => regrouped(existing, pool, row, ctx));
-      const { poolKey, ...data } = row;
-      await prisma.mlListing.upsert({
-        where:  { itemId_variationId: { itemId: row.itemId, variationId: row.variationId } },
-        update: { ...data, poolId: pool.id, lastSeenAt: ctx.now() },
-        create: { ...data, poolId: pool.id, lastSeenAt: ctx.now() },
-      });
+      pools.add(await saveRow(row, ctx));
       saved++;
     }
   }
 
-  // Las que ya no aparecen (cerradas o borradas) quedan como "sin_ver" para el panel.
-  await prisma.mlListing.updateMany({ where: { lastSeenAt: { lt: started }, status: { in: ["active", "paused"] } }, data: { status: "sin_ver" } });
-  const result = `${saved} publicaciones en ${pools.size} pozos${failed ? `, ${failed} no se pudieron leer` : ""}`;
+  // Las que ya no aparecen (cerradas o borradas) quedan como "sin_ver" para el panel. Solo si se
+  // pudieron leer todas: si la lista se cortó, las que faltaron no están cerradas.
+  if (!cut && !failed) {
+    await prisma.mlListing.updateMany({ where: { lastSeenAt: { lt: started }, status: { in: ["active", "paused"] } }, data: { status: "sin_ver" } });
+  }
+  const result = `${saved} publicaciones en ${pools.size} pozos${failed ? `, ${failed} no se pudieron leer` : ""}${cut ? " (se cortó: Mercado Libre pidió bajar el ritmo)" : ""}`;
   await prisma.mlAccount.update({ where: { id: ACCOUNT_ID }, data: { listingsAt: ctx.now(), listingsResult: result } });
   return { ok: true, saved, pools: pools.size, failed, result };
+}
+
+// Guarda una fila (publicación o variación) con su pozo. Devuelve el id del pozo.
+async function saveRow(row, ctx) {
+  const pool = await prisma.mlPool.upsert({
+    where:  { key: row.poolKey },
+    update: { userProductId: row.userProductId },
+    create: { key: row.poolKey, userProductId: row.userProductId },
+  });
+  const existing = await prisma.mlListing.findUnique({ where: { itemId_variationId: { itemId: row.itemId, variationId: row.variationId } } });
+  if (existing && existing.poolId && existing.poolId !== pool.id) await withLock(() => regrouped(existing, pool, row, ctx));
+  const { poolKey, ...data } = row;
+  await prisma.mlListing.upsert({
+    where:  { itemId_variationId: { itemId: row.itemId, variationId: row.variationId } },
+    update: { ...data, poolId: pool.id, lastSeenAt: ctx.now() },
+    create: { ...data, poolId: pool.id, lastSeenAt: ctx.now() },
+  });
+  return pool.id;
+}
+
+// Aviso de una publicación que todavía no está en la base (la creó el dueño o el publicador después de
+// la última vez que se trajeron): se pide y se guarda con su pozo, así sus ventas se cuentan desde ya.
+// Devuelve los ids de los pozos donde quedó, o [] si no corresponde.
+const attaching = new Set();
+async function attachItem(itemId, rawCtx = {}) {
+  if (!api.isId("item", itemId) || attaching.has(itemId)) return [];
+  attaching.add(itemId);
+  try {
+    const ctx = makeCtx(rawCtx);
+    const account = await prisma.mlAccount.findUnique({ where: { id: ACCOUNT_ID } });
+    if (!account || account.status !== "CONECTADA" || account.mode === "APAGADO") return [];
+    if (account.pausedUntil && account.pausedUntil > ctx.now()) return [];
+    const t = await getAccessToken({ now: ctx.now, cfg: ctx.cfg, fetchImpl: ctx.fetchImpl });
+    if (!t.ok) return [];
+    const r = await api.getItem(t.token, itemId, { fetchImpl: ctx.fetchImpl });
+    if (!r.ok) {
+      if (r.kind === "rate_limit") await brake(ctx, r.retryAfterMs);
+      return [];
+    }
+    if (String(r.data?.seller_id) !== String(account.mlUserId)) return [];
+    const ids = [];
+    for (const row of rowsOf(r.data)) ids.push(await saveRow(row, ctx));
+    return [...new Set(ids)];
+  } finally {
+    attaching.delete(itemId);
+  }
 }
 
 // Una publicación cambió de pozo: si el viejo estaba vinculado, se frena y se avisa.
@@ -237,4 +274,4 @@ function suggestionsFor(listings, units) {
   return scored.sort((a, b) => b.score - a.score).slice(0, 3);
 }
 
-module.exports = { refreshListings, isRefreshing, rowsOf, skuOf, linkableUnits, suggestionsFor };
+module.exports = { refreshListings, isRefreshing, attachItem, rowsOf, skuOf, linkableUnits, suggestionsFor };

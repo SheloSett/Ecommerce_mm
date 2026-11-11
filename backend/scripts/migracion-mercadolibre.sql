@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS "ml_pools" (
     "writeBase" JSONB,
     "writeStartedAt" TIMESTAMP(3),
     "writeOutcome" TEXT,
+    "writeWantedAt" TIMESTAMP(3),
     "heldQty" INTEGER,
     "heldAt" TIMESTAMP(3),
     "lastRead" JSONB,

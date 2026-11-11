@@ -16,7 +16,7 @@ const TABLES = {
   },
   mlPool: {
     fields: ["id", "key", "userProductId", "productId", "variantId", "active", "status", "agreed", "agreedSold", "writeTarget", "writeBase",
-      "writeStartedAt", "writeOutcome", "heldQty", "heldAt", "lastRead", "lastReadAt", "lastChangeAt", "dirty", "attempts", "nextAttemptAt",
+      "writeStartedAt", "writeOutcome", "writeWantedAt", "heldQty", "heldAt", "lastRead", "lastReadAt", "lastChangeAt", "dirty", "attempts", "nextAttemptAt",
       "lastSyncAt", "lastError", "review", "linkedAt", "linkedBy", "createdAt", "updatedAt"],
     defaults: () => ({ active: false, status: "OK", dirty: false, attempts: 0 }),
   },

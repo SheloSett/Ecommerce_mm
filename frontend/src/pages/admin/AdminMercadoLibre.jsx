@@ -111,8 +111,20 @@ function NumberModal({ pool, mode, onClose, onDone }) {
   const [choice, setChoice] = useState(null);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
-  const web = pool.unit?.qty;
-  const ml = pool.review?.ml ?? pool.mlQty;
+  const [live, setLive] = useState(null); // números de este momento (null mientras se leen)
+  const [liveError, setLiveError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    mlApi.peek(pool.id)
+      .then((res) => { if (alive) setLive(res.data); })
+      .catch((err) => { if (alive) setLiveError(errorText(err, "No se pudo leer Mercado Libre")); });
+    return () => { alive = false; };
+  }, [pool.id]);
+
+  // Si Mercado Libre vendió mientras el vínculo estaba frenado, "el de la página" ya las descuenta.
+  const web = live ? live.webAfterSales : pool.unit?.qty;
+  const ml = live ? live.ml : null;
 
   const submit = async () => {
     const number = choice === "number" ? parseStockNumber(typed) : null;
@@ -144,9 +156,17 @@ function NumberModal({ pool, mode, onClose, onDone }) {
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">{pool.review?.reason || pool.lastError}</div>
       )}
       <p className="text-sm text-slate-600">¿Qué número queda? Se carga en los dos lados.</p>
+      {liveError && <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{liveError}</div>}
       <div className="space-y-2">
-        <Option id="web">El de la página: <b>{web ?? "?"}</b></Option>
-        <Option id="ml">El de Mercado Libre: <b>{ml ?? "se lee en el momento"}</b></Option>
+        <Option id="web">
+          El de la página: <b>{web ?? "…"}</b>
+          {live?.missedSales > 0 && (
+            <span className="block text-xs text-slate-500">
+              {live.web} menos {live.missedSales === 1 ? "1 venta" : `${live.missedSales} ventas`} en Mercado Libre mientras estaba frenado
+            </span>
+          )}
+        </Option>
+        <Option id="ml">El de Mercado Libre ahora: <b>{ml ?? "…"}</b></Option>
         <Option id="number">
           Otro número (por ejemplo, el que contaste):
           <input type="text" inputMode="numeric" value={typed} onFocus={() => setChoice("number")} onChange={(e) => setTyped(e.target.value)}
@@ -154,7 +174,7 @@ function NumberModal({ pool, mode, onClose, onDone }) {
         </Option>
       </div>
       <p className="text-xs text-slate-500">Ojo: de acá en adelante cada cambio se carga en un solo lado. Si entran 5 unidades y se suman en la página y también en Mercado Libre, el stock sube 10.</p>
-      <button type="button" disabled={!choice || busy} onClick={submit}
+      <button type="button" disabled={!choice || busy || (!live && !liveError)} onClick={submit}
         className="w-full px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
         {busy ? "Guardando…" : "Confirmar"}
       </button>

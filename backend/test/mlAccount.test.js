@@ -236,7 +236,7 @@ describe("publicaciones", () => {
     ml.addUp("MLAU100", 4).addItem("MLA1000001", { up: "MLAU100", sku: "PARL-1" }).addItem("MLA1000002", { up: "MLAU100", status: "paused" });
     ml.addUp("MLAU200", 9).addItem("MLA2000001", { up: "MLAU200" });
     ml.addItem("MLA3000001", { up: "MLAU300", seller: "555555555" }); // de otra cuenta: no aparece en la búsqueda
-    const r = await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch });
+    const r = await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch, sleep: null });
     assert.equal(r.ok, true, r.error);
     assert.equal(db.mlListing.length, 3);
     assert.equal(db.mlPool.length, 2);
@@ -248,11 +248,11 @@ describe("publicaciones", () => {
 
   test("una publicación que cambió de pozo frena el pozo vinculado", async () => {
     ml.addUp("MLAU100", 4).addItem("MLA1000001", { up: "MLAU100" });
-    await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch });
+    await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch, sleep: null });
     db.mlPool[0].productId = 1;
     ml.addUp("MLAU999", 4);
     ml.items.get("MLA1000001").user_product_id = "MLAU999";
-    await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch });
+    await refreshListings({ now: () => clock.now(), cfg, fetchImpl: ml.fetch, sleep: null });
     assert.equal(db.mlPool[0].status, "REVISAR");
   });
 
@@ -310,5 +310,44 @@ describe("cliente de la API", () => {
     await api.getMe("t", { fetchImpl: async (url, init) => { seen = { url, redirect: init.redirect }; return response(200, { id: 1 }); } });
     assert.equal(new URL(seen.url).origin, "https://api.mercadolibre.com");
     assert.equal(seen.redirect, "error");
+  });
+});
+
+describe("revisión: publicaciones nuevas y respuestas grandes", () => {
+  beforeEach(async () => {
+    reset();
+    await connected();
+  });
+
+  test("aviso de una publicación que todavía no se trajo: se suma a su pozo y lo marca", async () => {
+    ml.addUp("MLAU100", 4).addItem("MLA1000009", { up: "MLAU100", title: "Parlante premium" });
+    await fake.mlPool.create({ data: { id: 1, key: "UP:MLAU100", userProductId: "MLAU100", productId: 1, active: true } });
+    const r = await controller.handleNotification(
+      { topic: "items", resource: "/items/MLA1000009", user_id: 123456789 },
+      { cfg, now: clock.now(), ctx: { now: () => clock.now(), cfg, fetchImpl: ml.fetch, sleep: null } },
+    );
+    assert.equal(r.marked, 1);
+    assert.equal(db.mlListing.length, 1);
+    assert.equal(db.mlListing[0].poolId, 1);
+    assert.equal(db.mlPool[0].dirty, true);
+  });
+
+  test("aviso de una publicación de otra cuenta: no se guarda nada", async () => {
+    ml.addUp("MLAU300", 4).addItem("MLA3000009", { up: "MLAU300", seller: "555555555" });
+    await controller.handleNotification(
+      { topic: "items", resource: "/items/MLA3000009", user_id: 123456789 },
+      { cfg, now: clock.now(), ctx: { now: () => clock.now(), cfg, fetchImpl: ml.fetch, sleep: null } },
+    );
+    assert.equal(db.mlListing.length, 0);
+    assert.equal(db.mlPool.length, 0);
+  });
+
+  test("una respuesta enorme se corta mientras llega (sin esperar a tenerla entera)", async () => {
+    let chunksRead = 0;
+    const chunk = new Uint8Array(512 * 1024).fill(32);
+    const body = { getReader: () => ({ read: async () => { chunksRead++; return chunksRead > 100 ? { done: true } : { done: false, value: chunk }; }, cancel: async () => {} }) };
+    const r = await api.getItem("t", "MLA1000001", { fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => null }, body, text: async () => { throw new Error("no debería leer todo"); } }) });
+    assert.equal(r.kind, "bad_response");
+    assert.ok(chunksRead <= 6, `cortó a los ${chunksRead} pedazos de 512 KB`);
   });
 });

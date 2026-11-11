@@ -211,8 +211,10 @@ app.use((err, req, res, next) => {
 // internos (consultas de Prisma, rutas de archivos).
 app.use((err, req, res, next) => {
   const status = err.status || 500;
+  // La dirección de avisos de Mercado Libre lleva una clave: no tiene que llegar a un mail ni al log.
+  const url = String(req.originalUrl || "").replace(/(\/api\/ml\/webhook\/)[^/?#]+/, "$1***");
   if (status >= 500) {
-    reportError("servidor", `${req.method} ${req.originalUrl}: ${err.message}`, err.stack);
+    reportError("servidor", `${req.method} ${url}: ${err.message}`, err.stack);
     // Antes: res.status(err.status || 500).json({ error: err.message || "Error interno del servidor" });
     return res.status(status).json({ error: "Error interno del servidor" });
   }

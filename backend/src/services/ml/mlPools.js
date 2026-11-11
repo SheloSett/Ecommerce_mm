@@ -138,13 +138,21 @@ async function unlinkPoolLocked(id) {
  * número elegido y el motor se encarga de escribirlo en Mercado Libre si hace falta.
  */
 function activatePool(id, body, actor, rawCtx = {}) {
-  return withLock(() => activatePoolLocked(id, body || {}, actor, rawCtx));
+  return withLock(() => activatePoolLocked(id, body || {}, actor, rawCtx, false));
 }
-async function activatePoolLocked(id, { choice, number } = {}, actor, rawCtx = {}) {
+// resolving: es "Resolver" un pozo que ya compartía stock y quedó frenado (REVISAR o ERROR). Ahí, si
+// queda el número de la página, primero se le descuentan las ventas que hizo Mercado Libre desde la
+// última lectura (mientras estuvo frenado la página no las copió). En la primera activación no: hasta
+// ese momento el stock se manejaba a mano en los dos lados y el número de la página ya es el que vale.
+async function activatePoolLocked(id, { choice, number } = {}, actor, rawCtx = {}, resolving = false) {
   const ctx = makeCtx(rawCtx);
   const pool = await getPool(id);
   if (!pool) return fail("No existe ese pozo", 404);
   if (!pool.productId) return fail("Primero vinculá el pozo a un producto de la página");
+  const members = await prisma.mlListing.findMany({ where: { poolId: pool.id } });
+  if (members.some((m) => m.variationId)) {
+    return fail("Esta publicación tiene variaciones del modelo viejo de Mercado Libre: todavía no se puede compartir su stock. Se puede pasar al modelo nuevo desde Mercado Libre.");
+  }
   if (!["web", "ml", "number"].includes(choice)) return fail("Elegí qué número queda");
   const typed = choice === "number" ? parseInt(number, 10) : null;
   if (choice === "number" && (!Number.isInteger(typed) || typed < 0 || typed > 99999 || String(number).trim() !== String(typed))) {
@@ -165,13 +173,24 @@ async function activatePoolLocked(id, { choice, number } = {}, actor, rawCtx = {
   const snap = { qty: r.qty, sold: r.sold };
   const N = choice === "web" ? before.qty : choice === "ml" ? snap.qty : typed;
   const now = ctx.now();
+  const missedSales = resolving ? Math.max(0, rules.soldDelta(pool.lastRead?.sold, snap.sold) ?? 0) : 0;
 
   const result = await stock.transaction(async (tx) => {
     await stock.lockUnits(tx, [unit]);
     const web = await webStock(unit, tx);
     if (web.missing || web.unlimited) return { error: "El producto cambió mientras tanto: probá de nuevo" };
-    // Si se eligió "la página", vale el número de AHORA (pudo entrar una venta en el medio).
-    const target = choice === "web" ? web.qty : N;
+    // Si se eligió "la página", vale el número de AHORA (pudo entrar una venta en el medio), menos las
+    // ventas de Mercado Libre que la página no copió mientras el pozo estuvo frenado.
+    let webNow = web.qty;
+    if (choice === "web" && missedSales > 0) {
+      const sold = await stock.adjustStock({
+        productId: unit.productId, variantId: unit.variantId ?? undefined, delta: -missedSales,
+        reason: stock.REASONS.VENTA_ML, ref: { type: "ml", id: pool.key }, actor: "Mercado Libre",
+        note: `${missedSales === 1 ? "Venta" : `${missedSales} ventas`} en Mercado Libre mientras el vínculo estaba frenado`, tx,
+      });
+      if (sold.ok) webNow = sold.after;
+    }
+    const target = choice === "web" ? webNow : N;
     const adj = await stock.adjustStock({
       productId: unit.productId, variantId: unit.variantId ?? undefined, setTo: target,
       reason: stock.REASONS.VINCULO_ML, ref: { type: "ml", id: pool.key }, actor,
@@ -201,8 +220,33 @@ function resolvePool(id, body, actor, ctx) {
     const pool = await getPool(id);
     if (!pool) return fail("No existe ese pozo", 404);
     if (pool.status !== "REVISAR" && pool.status !== "ERROR") return fail("Ese pozo no está para revisar");
-    return activatePoolLocked(id, body || {}, actor, ctx);
+    return activatePoolLocked(id, body || {}, actor, ctx, pool.active);
   });
+}
+
+/**
+ * Para la ventana de Activar / Resolver: los números de este momento (lee Mercado Libre). Las ventas de
+ * Mercado Libre desde la última lectura solo cuentan para Resolver (ver activatePoolLocked).
+ */
+async function peekPool(id, rawCtx = {}) {
+  const ctx = makeCtx(rawCtx);
+  const pool = await getPool(id);
+  if (!pool) return fail("No existe ese pozo", 404);
+  if (!pool.productId) return fail("El pozo no está vinculado");
+  const account = await prisma.mlAccount.findUnique({ where: { id: ACCOUNT_ID } });
+  if (!account || account.status !== "CONECTADA") return fail("Mercado Libre no está conectado");
+  const web = await webStock({ productId: pool.productId, variantId: pool.variantId ?? null });
+  if (web.missing) return fail(web.reason || "El producto vinculado ya no existe");
+  const t = await getAccessToken({ now: ctx.now, cfg: ctx.cfg, fetchImpl: ctx.fetchImpl });
+  if (!t.ok) return fail(t.message);
+  const r = await readOne(pool, account, { token: t.token }, ctx);
+  if (!r.ok) return fail(`No se pudo leer Mercado Libre: ${r.message}`);
+  const resolving = pool.active && (pool.status === "REVISAR" || pool.status === "ERROR");
+  const missedSales = resolving ? Math.max(0, rules.soldDelta(pool.lastRead?.sold, r.sold) ?? 0) : 0;
+  return {
+    ok: true, ml: r.qty, web: web.unlimited ? null : web.qty, unlimited: !!web.unlimited, missedSales,
+    webAfterSales: web.unlimited ? null : Math.max(0, web.qty - missedSales),
+  };
 }
 
 function deactivatePool(id) {
@@ -211,6 +255,11 @@ function deactivatePool(id) {
 async function deactivatePoolLocked(id) {
   const pool = await getPool(id);
   if (!pool) return fail("No existe ese pozo", 404);
+  // Con una escritura sin cerrar, desactivar perdería la cuenta de una venta que esa escritura pudo
+  // pisar: se espera a que el motor la cierre (tarda menos de un minuto).
+  if (pool.active && pool.status === "OK" && pool.writeTarget !== null) {
+    return fail("Hay un cambio en camino a Mercado Libre: probá de nuevo en un minuto", 409);
+  }
   await prisma.mlPool.update({ where: { id: pool.id }, data: { ...CLEAR_SYNC, active: false, status: pool.productId ? "OK" : pool.status, dirty: true } });
   return { ok: true };
 }
@@ -237,4 +286,4 @@ async function poolCycles(id, take = 50) {
   return { ok: true, cycles };
 }
 
-module.exports = { listPools, searchUnits, linkPool, unlinkPool, activatePool, resolvePool, deactivatePool, checkPool, poolCycles, unitInfo };
+module.exports = { listPools, searchUnits, linkPool, unlinkPool, activatePool, resolvePool, deactivatePool, checkPool, poolCycles, peekPool, unitInfo };

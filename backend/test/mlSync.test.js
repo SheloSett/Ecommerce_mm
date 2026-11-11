@@ -280,15 +280,35 @@ describe("protecciones", () => {
     assert.equal(ml.puts.length, 0);
   });
 
-  test("Mercado Libre guarda otro número que el enviado: ERROR y no insiste", async () => {
+  test("Mercado Libre guarda otro número que el enviado: se confirma leyendo y queda para revisar", async () => {
     await setup();
     await webSale(1);
     ml.storeOnPut(5);
     await sync();
-    assert.equal(pool().status, "ERROR");
-    assert.match(pool().lastError, /guardó 5 en vez de 9/);
+    assert.equal(pool().writeTarget, 9, "queda como escritura sin confirmar");
     await settle();
+    assert.equal(pool().status, "REVISAR");
+    assert.equal(webQty(), 5, "la página toma el número más bajo mientras se revisa");
     assert.equal(ml.puts.length, 1, "no vuelve a escribir");
+  });
+
+  test("una respuesta vieja al escribir (dice el número de antes pero guardó bien) no frena nada", async () => {
+    await setup();
+    await webSale(1);
+    ml.onPut(() => ml.staleReads(ITEM, 0));
+    const original = ml.put.bind(ml);
+    ml.put = async (itemId, payload) => {
+      const r = await original(itemId, payload);
+      const body = JSON.parse(await r.text());
+      body.available_quantity = 10; // la respuesta todavía muestra el número viejo
+      return { ...r, text: async () => JSON.stringify(body) };
+    };
+    await sync();
+    ml.put = original;
+    await settle();
+    assert.equal(pool().status, "OK");
+    assert.equal(webQty(), 9);
+    assert.equal(ml.qty(UP), 9);
   });
 
   test("un cambio grande sin ventas espera una segunda lectura", async () => {
@@ -447,5 +467,157 @@ describe("activar un vínculo", () => {
     assert.equal(r.ok, true);
     assert.equal(pool().variantId, 21);
     assert.equal(pool().active, false, "vincular no activa: hay que elegir el número");
+  });
+});
+
+// ── Casos que encontró la revisión del 11/11/2026 ────────────────────────────
+describe("revisión: escrituras sin respuesta y lecturas viejas", () => {
+  beforeEach(() => setup());
+
+  test("escritura sin respuesta que entró, con una lectura vieja al cerrar: no se descuenta dos veces", async () => {
+    await webSale(1);                                   // página 9
+    ml.failNextPut("timeout-after");                    // entra, pero sin respuesta
+    ml.onPut(() => ml.staleReads(ITEM, 1));              // la próxima lectura todavía muestra 10
+    await sync();
+    await settle(8);
+    assert.equal(webQty(), 9);
+    assert.equal(ml.qty(UP), 9);
+  });
+
+  test("lo mismo con una carga en la página (10 → 15): no aparece un +5 fantasma", async () => {
+    await stock.adjustStock({ productId: 1, setTo: 15, reason: stock.REASONS.AJUSTE });
+    ml.failNextPut("timeout-after");
+    ml.onPut(() => ml.staleReads(ITEM, 1));
+    await sync();
+    await settle(8);
+    assert.equal(webQty(), 15);
+    assert.equal(ml.qty(UP), 15);
+  });
+
+  test("una lectura vieja después de cerrar la escritura no mueve la página", async () => {
+    const before = ml.itemJson(ITEM);
+    await webSale(1);
+    await sync();                                       // escribe 9
+    clock.advance(25); await sync();                    // lee 9: espera
+    clock.advance(25); await sync();                    // quieto: cierra
+    assert.equal(pool().writeTarget, null);
+    ml.stale.set(ITEM, { left: 1, snapshot: before });  // Mercado Libre sirve una vez el número viejo
+    clock.advance(25); await sync();
+    assert.equal(webQty(), 9, "no se copia la lectura vieja");
+    clock.advance(25); await sync();
+    assert.equal(webQty(), 9);
+    assert.deepEqual(reasons(), ["VENTA:-1"]);
+  });
+});
+
+describe("revisión: una pasada cortada no deja el pozo olvidado", () => {
+  beforeEach(() => setup());
+  // Sin barrido: solo lo que pide la cola (dirty / nextAttemptAt).
+  const queued = async () => { db.mlAccount[0].lastSweepAt = clock.now(); return (await mlWorker.runPass(ctx())).units; };
+
+  test("falla al renovar el token", async () => {
+    db.mlAccount[0].tokenExpiresAt = new Date(clock.t + 30 * 1000);
+    const original = ml.oauth.bind(ml);
+    ml.oauth = () => ({ ok: false, status: 503, headers: { get: () => null }, text: async () => "{}" });
+    await webSale(1);
+    pool().dirty = true;
+    await queued();
+    ml.oauth = original;
+    clock.advance(130);
+    assert.equal(await queued(), 1, "sigue en la cola");
+    await settle();
+    assert.equal(ml.qty(UP), 9);
+  });
+
+  test("429 al releer justo antes de escribir", async () => {
+    await webSale(1);
+    pool().dirty = true;
+    ml.readFailures.push(null, 429);                    // la primera lectura anda, la relectura no
+    await queued();
+    clock.advance(130);
+    assert.equal(await queued(), 1);
+  });
+
+  test("429 en la primera lectura", async () => {
+    await webSale(1);
+    pool().dirty = true;
+    ml.failReads(429);
+    await queued();
+    clock.advance(130);
+    assert.equal(await queued(), 1);
+  });
+
+  test("dos 429 seguidos al escribir: el freno crece", async () => {
+    await webSale(1);
+    pool().dirty = true;
+    ml.failNextPut(429);
+    await mlWorker.runPass(ctx());
+    assert.equal(db.mlAccount[0].pauseLevel, 1);
+    clock.advance(61);
+    ml.failNextPut(429);
+    await mlWorker.runPass(ctx());
+    assert.equal(db.mlAccount[0].pauseLevel, 2);
+    assert.ok(db.mlAccount[0].pausedUntil - clock.now() >= 2 * 60 * 1000, "la segunda vez frena 2 minutos");
+  });
+});
+
+describe("revisión: resolver y desactivar no pierden ventas", () => {
+  test("ventas en Mercado Libre mientras el pozo estaba frenado: se descuentan al resolver con el número de la página", async () => {
+    await setup();
+    Object.assign(pool(), { status: "REVISAR", review: { reason: "x", ml: 10, web: 10 } });
+    ml.sell(ITEM, 2);                                   // la publicación sigue vendiendo: 8
+    await sync();                                       // frenado: no pasa nada
+    const peek = await mlPools.peekPool(1, ctx());
+    assert.deepEqual([peek.ml, peek.missedSales, peek.webAfterSales], [8, 2, 8], "la ventana muestra los números de ahora");
+    const r = await mlPools.resolvePool(1, { choice: "web" }, "Dueño", ctx());
+    assert.equal(r.ok, true);
+    assert.equal(r.number, 8);
+    await settle(4);
+    assert.equal(webQty(), 8);
+    assert.equal(ml.qty(UP), 8);
+    assert.deepEqual(reasons(), ["VENTA_ML:-2"]);
+  });
+
+  test("desactivar con una escritura sin cerrar espera, y después no se pierde la venta pisada", async () => {
+    await setup();
+    await webSale(1);                                   // página 9
+    ml.onPut(() => ml.sell(ITEM, 1));                   // una venta en Mercado Libre queda pisada
+    await sync();
+    const r = await mlPools.deactivatePool(1);
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 409);
+    await settle();
+    assert.equal((await mlPools.deactivatePool(1)).ok, true, "ya cerrada, se puede desactivar");
+    assert.equal(webQty(), 8);
+    assert.equal(ml.qty(UP), 8);
+  });
+});
+
+describe("revisión: otros", () => {
+  test("una publicación con variaciones del modelo viejo no se puede activar ni se le escribe", async () => {
+    await setup({ active: false });
+    db.mlListing[0].variationId = "111";
+    const r = await mlPools.activatePool(1, { choice: "web" }, "Dueño", ctx());
+    assert.equal(r.ok, false);
+    assert.match(r.error, /variaciones del modelo viejo/);
+    const api = require("../src/services/ml/mlApi");
+    const put = await api.putItemQuantity("t", ITEM, "111", 5, { fetchImpl: ml.fetch });
+    assert.equal(put.ok, false);
+    assert.equal(ml.puts.length, 0);
+  });
+
+  test("producto que se vende muy seguido: igual se escribe pasado el tiempo máximo", async () => {
+    await setup({ web: 100, mlQty: 100, sold: 0 });
+    await webSale(1);                                   // página 99: hay que escribir
+    let mlSales = 0;
+    for (let i = 0; i < 40 && ml.puts.length === 0; i++) {
+      ml.sell(ITEM, 1); mlSales++;                      // una venta en Mercado Libre cada 10 segundos
+      clock.advance(10);
+      await sync();
+    }
+    assert.ok(ml.puts.length >= 1, "escribió aunque nunca estuvo quieto 20 segundos");
+    await settle(16);                                   // después se calma
+    assert.equal(webQty(), 100 - 1 - mlSales);
+    assert.equal(ml.qty(UP), 100 - 1 - mlSales);
   });
 });

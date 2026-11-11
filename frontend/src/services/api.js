@@ -132,6 +132,8 @@ export const mlApi = {
   pools:       () => api.get("/ml/pools", { timeout: 30000 }),
   units:       (q) => api.get("/ml/units", { params: { q } }),
   cycles:      (id) => api.get(`/ml/pools/${id}/cycles`),
+  // Números de este momento para la ventana de Activar / Resolver (lee Mercado Libre)
+  peek:        (id) => api.get(`/ml/pools/${id}/peek`, { timeout: 30000 }),
   link:        (id, productId, variantId) => api.post(`/ml/pools/${id}/link`, { productId, variantId }),
   unlink:      (id) => api.post(`/ml/pools/${id}/unlink`),
   // activar y resolver leen Mercado Libre en el momento: pueden tardar más de lo normal

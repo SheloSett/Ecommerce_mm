@@ -55,6 +55,30 @@ function retryAfterMs(headers) {
   return Number.isFinite(secs) && secs > 0 ? Math.min(secs, 3600) * 1000 : null;
 }
 
+// Lee el cuerpo contando los bytes a medida que llegan: corta apenas pasa MAX_BYTES (no espera a tener
+// todo en memoria). Sin cuerpo legible por partes (los tests), usa text().
+async function readCapped(res) {
+  const reader = res.body && typeof res.body.getReader === "function" ? res.body.getReader() : null;
+  if (!reader) {
+    const text = await res.text();
+    if (Buffer.byteLength(text, "utf8") > MAX_BYTES) throw Object.assign(new Error("grande"), { code: "TOO_BIG" });
+    return text;
+  }
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BYTES) {
+      try { await reader.cancel(); } catch { /* ya se cortó */ }
+      throw Object.assign(new Error("grande"), { code: "TOO_BIG" });
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /**
  * Una llamada. path empieza con "/" y ya viene armado con identificadores validados.
  * @returns {Promise<{ok:true,status:number,data:any,headers:any}|{ok:false,kind:string,status:number,message:string,retryAfterMs?:number|null,data?:any}>}
@@ -88,12 +112,10 @@ async function call({ method = "GET", path, token, json, form, fetchImpl = globa
   }
   let text = "";
   try {
-    text = await res.text();
-  } catch {
+    text = await readCapped(res);
+  } catch (err) {
+    if (err?.code === "TOO_BIG") return { ok: false, kind: "bad_response", status: res.status, message: "Respuesta demasiado grande" };
     return { ok: false, kind: "transient", status: res.status, message: "Se cortó la respuesta de Mercado Libre" };
-  }
-  if (text.length > MAX_BYTES) {
-    return { ok: false, kind: "bad_response", status: res.status, message: "Respuesta demasiado grande" };
   }
   let data = null;
   if (text.trim()) {
@@ -146,24 +168,19 @@ function searchItemIds(token, userId, { status, offset = 0, scrollId = null } = 
 }
 
 // Cambia el stock. Sin Full ni multi-origen, Mercado Libre pide PUT /items con available_quantity y
-// copia el número a todas las publicaciones del mismo user_product_id. Devuelve además lo que quedó
-// guardado según la respuesta (stored), para comparar con lo que se mandó.
+// copia el número a todas las publicaciones del mismo user_product_id. Devuelve además lo que dice la
+// respuesta (stored), para compararlo con lo que se mandó.
+//
+// Las variaciones del modelo viejo NO se escriben: según la documentación de Mercado Libre, un PUT con
+// "variations" borra de la publicación las variaciones que no van en la lista (y con ellas su historial
+// de ventas). Hasta probarlo con una publicación de prueba, se rechaza acá.
 async function putItemQuantity(token, itemId, variationId, quantity, opts = {}) {
   if (!isId("item", itemId)) return bad("Publicación inválida");
-  if (variationId && !isId("variation", variationId)) return bad("Variación inválida");
+  if (variationId) return bad("Las publicaciones con variaciones del modelo viejo no se escriben");
   if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99999) return bad("Cantidad inválida");
-  const json = variationId
-    ? { variations: [{ id: Number(variationId), available_quantity: quantity }] }
-    : { available_quantity: quantity };
-  const r = await call({ method: "PUT", path: `/items/${itemId}`, token, json, ...opts });
+  const r = await call({ method: "PUT", path: `/items/${itemId}`, token, json: { available_quantity: quantity }, ...opts });
   if (!r.ok) return r;
-  let stored = null;
-  if (variationId) {
-    const v = Array.isArray(r.data?.variations) ? r.data.variations.find((x) => String(x?.id) === String(variationId)) : null;
-    stored = Number.isInteger(v?.available_quantity) ? v.available_quantity : null;
-  } else {
-    stored = Number.isInteger(r.data?.available_quantity) ? r.data.available_quantity : null;
-  }
+  const stored = Number.isInteger(r.data?.available_quantity) ? r.data.available_quantity : null;
   return { ...r, stored };
 }
 

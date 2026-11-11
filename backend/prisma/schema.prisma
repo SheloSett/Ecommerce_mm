@@ -930,6 +930,7 @@ model MlPool {
   writeBase      Json?     // lo que mostraba Mercado Libre justo antes de esa escritura: { qty, sold }
   writeStartedAt DateTime?
   writeOutcome   String?   // APLICADA | DESCONOCIDA (sin respuesta: puede haber entrado)
+  writeWantedAt  DateTime? // desde cuándo hay que escribir y se espera a que el pozo se quede quieto
   heldQty        Int?      // cambio grande sin explicar, esperando que otra lectura lo confirme
   heldAt         DateTime?
   lastRead       Json?     // última lectura: { qty, sold }
