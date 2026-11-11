@@ -862,8 +862,8 @@ model StockMovement {
   delta     Int
   before    Int
   after     Int
-  reason    String   // VENTA | VENTA_MANUAL | CANCELACION | EDICION_PEDIDO | AJUSTE | ALTA | COMPRA | RMA | VARIANTES
-  refType   String?  // order | purchase | gasto
+  reason    String   // VENTA | VENTA_MANUAL | CANCELACION | EDICION_PEDIDO | AJUSTE | ALTA | COMPRA | RMA | VARIANTES | VENTA_ML | CAMBIO_ML | VINCULO_ML
+  refType   String?  // order | purchase | gasto | ml (pozo de Mercado Libre)
   refId     String?
   actor     String?  // quién: nombre del admin, "Cliente #12", "Mercado Pago"
   note      String?
@@ -872,6 +872,128 @@ model StockMovement {
   @@index([productId, createdAt])
   @@index([refType, refId])
   @@map("stock_movements")
+}
+
+// ─── Mercado Libre: stock compartido ──────────────────────────────────────────
+// Ver services/ml/. La página es el centro: las publicaciones de Mercado Libre vinculadas a un producto
+// (o a una variante) comparten su stock. No se guarda ningún dato de compradores.
+
+// La cuenta conectada (una sola fila, id 1). Los tokens van cifrados con utils/secretBox.js y ningún
+// endpoint los devuelve. mode: APAGADO | OBSERVAR (lee y anota lo que haría, sin escribir en ningún
+// lado) | ACTIVO. status: DESCONECTADA | CONECTADA | RECONECTAR (Mercado Libre revocó el acceso).
+model MlAccount {
+  id             Int       @id @default(1)
+  mlUserId       String?
+  nickname       String?
+  accessToken    String?   // cifrado (casillero ml.access_token)
+  refreshToken   String?   // cifrado (casillero ml.refresh_token)
+  tokenExpiresAt DateTime?
+  status         String    @default("DESCONECTADA")
+  mode           String    @default("APAGADO")
+  pausedUntil    DateTime? // freno de toda la cuenta después de un 429 de Mercado Libre
+  pauseLevel     Int       @default(0)
+  oauthState     String?   // hash del state de la conexión en curso (un solo uso)
+  oauthVerifier  String?   // PKCE, cifrado (casillero ml.oauth_verifier)
+  oauthUserId    Int?      // admin que empezó la conexión
+  oauthExpiresAt DateTime?
+  connectedAt    DateTime?
+  connectedBy    String?
+  lastRefreshAt  DateTime?
+  lastWebhookAt  DateTime?
+  lastSweepAt    DateTime?
+  lastPassAt     DateTime?
+  listingsAt     DateTime? // última vez que se trajeron las publicaciones
+  listingsResult String?
+  lastError      String?
+  lastErrorAt    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@map("ml_account")
+}
+
+// Un "pozo" de stock de Mercado Libre: las publicaciones que comparten user_product_id (Mercado Libre
+// ya las mantiene iguales entre sí, así que cuentan como un solo stock). key: "UP:<user_product_id>",
+// o "IT:<publicación>" / "IV:<publicación>:<variación>" para las que no lo tienen. Se vincula a una sola
+// unidad de la página (producto sin variantes, o variante); una unidad puede tener varios pozos. Sin
+// clave foránea: si el producto se borra, el vínculo pasa a ROTO y nunca se manda un 0.
+model MlPool {
+  id             Int       @id @default(autoincrement())
+  key            String    @unique
+  userProductId  String?
+  productId      Int?
+  variantId      Int?
+  active         Boolean   @default(false) // el vínculo comparte stock (si no, solo se observa)
+  status         String    @default("OK")  // OK | ERROR (no se escribe) | REVISAR | ROTO | CERRADO (frenados)
+  agreed         Int?      // último número en que coincidieron los dos lados (el de Mercado Libre)
+  agreedSold     Json?     // vendidos de cada publicación en esa lectura: { "MLA123": 15, "MLA456:789": 2 }
+  writeTarget    Int?      // número que se mandó (o se está mandando) a Mercado Libre, hasta cerrar cuentas
+  writeBase      Json?     // lo que mostraba Mercado Libre justo antes de esa escritura: { qty, sold }
+  writeStartedAt DateTime?
+  writeOutcome   String?   // APLICADA | DESCONOCIDA (sin respuesta: puede haber entrado)
+  heldQty        Int?      // cambio grande sin explicar, esperando que otra lectura lo confirme
+  heldAt         DateTime?
+  lastRead       Json?     // última lectura: { qty, sold }
+  lastReadAt     DateTime?
+  lastChangeAt   DateTime? // última vez que una lectura fue distinta de la anterior (para saber si está quieto)
+  dirty          Boolean   @default(false) // hay que releerlo (aviso de Mercado Libre o cambio en la página)
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime?
+  lastSyncAt     DateTime?
+  lastError      String?
+  review         Json?     // si quedó en REVISAR: los números y el motivo, para el panel
+  linkedAt       DateTime?
+  linkedBy       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([productId, variantId])
+  @@index([dirty])
+  @@map("ml_pools")
+}
+
+// Cada publicación (o variación) de la cuenta, vinculada o no. variationId es "" si no tiene variaciones.
+model MlListing {
+  id            Int      @id @default(autoincrement())
+  itemId        String
+  variationId   String   @default("")
+  userProductId String?
+  poolId        Int?
+  title         String
+  sku           String?
+  permalink     String?
+  thumbnail     String?
+  status        String
+  quantity      Int?
+  sold          Int?
+  lastSeenAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([itemId, variationId])
+  @@index([poolId])
+  @@map("ml_listings")
+}
+
+// Bitácora del motor: cada lectura que cambió algo, cada escritura y cada decisión, con los números. En
+// modo OBSERVAR guarda lo que habría hecho. Se limpia sola a los 90 días (ver mlWorker.js).
+model MlCycle {
+  id        Int      @id @default(autoincrement())
+  poolId    Int
+  kind      String   // OBSERVA | APLICA | ESCRIBE | REVISAR | ERROR | VINCULO
+  readQty   Int?
+  readSold  Int?
+  webBefore Int?
+  webAfter  Int?
+  delta     Int?
+  writeQty  Int?
+  storedQty Int?
+  result    String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([poolId, createdAt])
+  @@index([createdAt])
+  @@map("ml_cycles")
 }
 
 // ─── Eventos de la tienda (analíticas) ────────────────────────────────────────
