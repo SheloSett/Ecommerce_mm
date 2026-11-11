@@ -1,6 +1,7 @@
 // Middleware de validación de inputs
 // Valida formato y longitud antes de llegar a la lógica de negocio.
 // No reemplaza las validaciones de Prisma ni bcrypt, las complementa.
+const { normalizeDocument } = require("../utils/customerDocument");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^[\d\s+\-()]+$/;
@@ -64,7 +65,7 @@ const validateCustomerLogin = validateLogin;
 
 // ── Creación de orden ─────────────────────────────────────────────────────────
 function validateOrder(req, res, next) {
-  const { customerName, customerEmail, customerPhone, customerNote, items } = req.body;
+  const { customerName, customerEmail, customerPhone, customerNote, items, customerDocType, customerDocNumber } = req.body;
 
   if (!customerName || typeof customerName !== "string" || customerName.trim().length < 2 || customerName.length > 100) {
     return res.status(400).json({ error: "Nombre del cliente inválido" });
@@ -81,6 +82,11 @@ function validateOrder(req, res, next) {
   }
   if (customerNote != null && (typeof customerNote !== "string" || customerNote.length > 1000)) {
     return res.status(400).json({ error: "La nota del pedido puede tener hasta 1000 caracteres" });
+  }
+  // Documento (DNI, CUIT o CUIL): opcional para el servidor, pero si viene tiene que ser válido.
+  const doc = normalizeDocument(customerDocType, customerDocNumber);
+  if (!doc.ok) {
+    return res.status(400).json({ error: doc.error });
   }
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "La orden debe tener al menos un producto" });

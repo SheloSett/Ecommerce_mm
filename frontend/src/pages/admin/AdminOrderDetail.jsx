@@ -878,6 +878,7 @@ export default function AdminOrderDetail() {
                 <InfoRow label="Nombre" value={order.customerName} />
                 <InfoRow label="Email" value={order.customerEmail} />
                 <InfoRow label="Teléfono" value={order.customerPhone} />
+                {order.customerDocNumber && <InfoRow label={order.customerDocType || "Documento"} value={order.customerDocNumber} />}
                 <InfoRow label="ID pago MP" value={order.mpPaymentId} />
               </div>
               <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">

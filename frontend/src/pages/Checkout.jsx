@@ -310,6 +310,9 @@ export default function Checkout() {
         customerName:  form.customerName,
         customerEmail: form.customerEmail,
         customerPhone: form.customerPhone,
+        // Documento para facturar. Antes se pedía pero no se mandaba: se perdía.
+        customerDocType:   form.documentType,
+        customerDocNumber: form.customerCuit,
         // customerId vincula la orden a la cuenta del cliente registrado.
         customerId:    customer?.id || null,
         items: items.map((i) => ({

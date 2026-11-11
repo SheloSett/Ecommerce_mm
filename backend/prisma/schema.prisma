@@ -150,6 +150,14 @@ model Order {
   customerName   String
   customerEmail  String        // Email de contacto (para enviar confirmaciones/facturas)
   customerPhone  String?
+  // Documento que el cliente cargó en el checkout (para facturar): tipo DNI | CUIT | CUIL y el número
+  // solo con dígitos. null en los pedidos anteriores y en las ventas cargadas a mano. Lo ven el panel y
+  // el propio cliente; el estado de pago público no lo devuelve. Ver utils/customerDocument.js.
+  customerDocType   String?
+  customerDocNumber String?
+  // Pedido con una factura de ARCA vigente: no se pueden cambiar sus líneas, descuentos ni envío, ni
+  // cancelarlo, hasta anular la factura con una nota de crédito. null = sin factura.
+  arcaLockedAt   DateTime?
   // customerId vincula la orden a la cuenta del cliente registrado.
   // Es opcional para soportar compras de invitados (sin cuenta).
   customerId     Int?

@@ -515,3 +515,36 @@ describe("estado del pago: el detalle solo con la clave del pedido o la sesión 
     assert.deepEqual(await status(id, {}, tokenOf(5)), { id, status: "APPROVED" });
   });
 });
+
+// ── Documento del cliente ────────────────────────────────────────────────────
+describe("checkout: el documento del cliente viaja con el pedido", () => {
+  beforeEach(resetDb);
+
+  test("se guarda normalizado (antes el checkout lo pedía pero no lo mandaba)", async () => {
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }], customerDocType: "CUIT", customerDocNumber: "20-11111111-2" });
+    assert.equal(res.code, 201);
+    const saved = db.orders[res.body.id];
+    assert.equal(saved.customerDocType, "CUIT");
+    assert.equal(saved.customerDocNumber, "20111111112");
+  });
+
+  test("un CUIT con el dígito verificador mal no crea el pedido y dice qué revisar", async () => {
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }], customerDocType: "CUIT", customerDocNumber: "20-11111111-3" });
+    assert.equal(res.code, 400);
+    assert.match(res.body.error, /Revisá el CUIT/);
+    assert.equal(orderCount(), 0);
+  });
+
+  test("sin documento el pedido se crea igual (pedidos de antes, otras pantallas)", async () => {
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    assert.equal(res.code, 201);
+    assert.equal(db.orders[res.body.id].customerDocNumber, undefined);
+  });
+
+  test("el estado de pago público no devuelve el documento", async () => {
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }], customerDocType: "DNI", customerDocNumber: "30123456" });
+    const out = fakeRes();
+    await getOrderPaymentStatus({ params: { orderId: String(res.body.id) }, query: {}, headers: {} }, out);
+    assert.ok(!JSON.stringify(out.body).includes("30123456"));
+  });
+});

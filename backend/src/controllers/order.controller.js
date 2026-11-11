@@ -44,6 +44,7 @@ const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
 const { resolveOrderShipping } = require("../services/shipping.service");
+const { normalizeDocument } = require("../utils/customerDocument");
 
 // Datos del proveedor que viajan en los pedidos del panel (producto y variante). La orden de compra
 // imprime la calle y el teléfono junto al nombre. Antes solo iban id y nombre, y para que la
@@ -309,6 +310,9 @@ async function getOrder(req, res) {
 async function createOrder(req, res) {
   try {
     const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, shippingAddress, shippingCost, sessionId, metaBrowser } = req.body;
+    // Documento para facturar (ya validado en validateOrder; se vuelve a normalizar acá).
+    const doc = normalizeDocument(req.body.customerDocType, req.body.customerDocNumber);
+    if (!doc.ok) return res.status(400).json({ error: doc.error });
     // Meta: cookies del Pixel (_fbp/_fbc) + IP + navegador del cliente al momento de comprar. Se
     // guardan en el pedido para que el Purchase que manda el servidor al aprobarse el pago se pueda
     // atribuir al anuncio. null si el Pixel no está activo o no vino nada. Ver services/meta.service.js.
@@ -654,6 +658,7 @@ async function createOrder(req, res) {
         customerName,
         customerEmail,
         customerPhone: customerPhone || null,
+        ...(doc.empty ? {} : { customerDocType: doc.type, customerDocNumber: doc.number }),
         // La cuenta sale del token (ver registeredCustomer). Antes: customerId ? parseInt(customerId) : null
         customerId:    registeredCustomer ? registeredCustomer.id : null,
         total,
