@@ -35,6 +35,8 @@ const seoRoutes        = require("./routes/seo.routes");
 const analyticsRoutes  = require("./routes/analytics.routes");
 const eventsRoutes     = require("./routes/events.routes");
 const emailRoutes      = require("./routes/email.routes");
+const mlRoutes         = require("./routes/ml.routes");
+const mlWebhookRoutes  = require("./routes/mlWebhook.routes");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -127,6 +129,9 @@ app.use(cors({
   },
   credentials: true,
 }));
+// Avisos de Mercado Libre: antes del límite general (Mercado Libre manda ráfagas desde pocas IPs) y del
+// lector de JSON general. Tiene su propio límite, su tope de tamaño y su clave en la dirección.
+app.use("/api/ml/webhook", mlWebhookRoutes);
 app.use("/api", generalLimiter);
 
 // El webhook de MercadoPago necesita el body en raw, por eso va antes del json parser
@@ -171,6 +176,7 @@ app.use("/api/ai",         aiRoutes);
 app.use("/api/analytics",  analyticsRoutes);
 app.use("/api/events",     eventsRoutes);
 app.use("/api/emails",     emailRoutes);
+app.use("/api/ml",         mlRoutes);
 app.use("/api",            seoRoutes);
 
 // Health check. Antes respondía "ok" sin mirar nada: con la base caída seguía diciendo ok. Ahora hace
@@ -260,6 +266,21 @@ prisma
       "Correr backend/scripts/migracion-stock-movimientos.sql (ver DEPLOY.md) y reiniciar el backend.");
   })
   .catch((e) => console.warn("⚠️ No se pudo verificar la tabla stock_movements:", e.message));
+
+// Mercado Libre: cada cambio de stock de la página marca los pozos vinculados para la próxima pasada.
+// Si ML_SYNC_ENABLED=1 y faltan las tablas (se desplegó sin correr backend/scripts/migracion-mercadolibre.sql),
+// se avisa al arrancar.
+require("./services/ml/mlWorker").install();
+if (require("./services/ml/mlConfig").mlConfig().enabled) {
+  prisma
+    .$queryRawUnsafe(`SELECT to_regclass('public.ml_pools')::text AS t`)
+    .then((rows) => {
+      if (rows?.[0]?.t) return;
+      reportError("deploy", "Falta la tabla ml_pools: la sincronización con Mercado Libre no va a andar",
+        "Correr backend/scripts/migracion-mercadolibre.sql (ver DEPLOY.md) y reiniciar el backend.");
+    })
+    .catch((e) => console.warn("⚠️ No se pudo verificar las tablas de Mercado Libre:", e.message));
+}
 
 // Iniciar cron jobs de campañas de email (restock mayoristas + recomendaciones minoristas)
 const { startCronJobs } = require("./services/cron.service");

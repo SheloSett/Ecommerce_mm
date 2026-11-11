@@ -262,11 +262,29 @@ function startCronJobs() {
   cron.schedule("30 * * * *", () => {
     runAbandonedCartReminders().catch((err) => console.error("[CRON] Error en recordatorios de carrito:", err.message));
   });
+  // Mercado Libre (stock compartido): cada minuto, lo marcado, los reintentos y un barrido de unos pocos
+  // pozos. No hace nada sin ML_SYNC_ENABLED=1, sin cuenta conectada o en modo APAGADO. Todos los días a
+  // las 07:30 UTC (04:30 Argentina) trae las publicaciones nuevas y limpia la bitácora vieja.
+  // Ver services/ml/mlWorker.js.
+  const mlWorker = require("./ml/mlWorker");
+  cron.schedule("* * * * *", () => {
+    mlWorker.tick().catch((err) => console.error("[CRON] Error en Mercado Libre:", err.message));
+  });
+  cron.schedule("30 7 * * *", async () => {
+    try {
+      await mlWorker.cleanup();
+      const { mlConfig } = require("./ml/mlConfig");
+      if (mlConfig().enabled) await require("./ml/mlListings").refreshListings();
+    } catch (err) {
+      console.error("[CRON] Error en el mantenimiento de Mercado Libre:", err.message);
+    }
+  });
+
   // Una pasada al arrancar: si el contenedor estuvo caído justo cuando una campaña tenía que
   // empezar o terminar, se corrige de entrada en vez de esperar al próximo minuto.
   syncOffers();
 
-  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta + emails masivos + carritos abandonados)");
+  console.log("✅ Cron jobs iniciados (restock mayoristas + recomendaciones minoristas + campañas de oferta + emails masivos + carritos abandonados + Mercado Libre)");
 }
 
 // ---------------------------------------------------------------------------
