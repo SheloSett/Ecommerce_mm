@@ -8,6 +8,7 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
+const { withStockSupport } = require("./helpers/fakeStock");
 
 const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
 let db;
@@ -17,6 +18,7 @@ function resetDb() {
     variants: {},
     purchases: {},
     items: {},
+    movements: [],
     nextId: 1,
   };
 }
@@ -79,6 +81,8 @@ class FakePrismaClient {
     this.orderItem = { count: async () => 0 };
     this.supplier = { findUnique: async () => null };
     this.$transaction = (fn) => fn(this);
+    // El stock pasa por services/stock.service.js (historial)
+    withStockSupport(this, { movements: () => db.movements, variantsOf: (pid) => Object.values(db.variants).filter((v) => v.productId === pid) });
   }
 }
 const root = path.join(__dirname, "..");
@@ -163,5 +167,29 @@ describe("borrar una compra", () => {
     await call(deletePurchase, { params: { id: String(first) }, body: {} });
     assert.equal(db.products[1].stock, 10);
     assert.equal(db.products[1].cost, 150, "antes volvía a 80");
+  });
+});
+
+describe("historial de stock de las compras", () => {
+  beforeEach(resetDb);
+
+  test("cargar, corregir y borrar una compra deja cada movimiento con el número de compra", async () => {
+    const id = await buy(10, 100);
+    sell(3);
+    assert.equal((await edit(id, [line(12, 100)])).code, 200);
+    await call(deletePurchase, { params: { id: String(id) }, body: {} });
+    assert.deepEqual(db.movements.map((m) => [m.reason, m.delta, m.after, m.refType, m.refId]), [
+      ["COMPRA", 10, 10, "purchase", String(id)],
+      ["COMPRA", 2, 9, "purchase", String(id)],
+      ["COMPRA", -9, 0, "purchase", String(id)],
+    ]);
+    assert.equal(db.movements[1].note, "Compra editada");
+    assert.equal(db.movements[2].requested, -12, "se pidió sacar 12; había 9 (3 ya se habían vendido)");
+  });
+
+  test("un producto nuevo que crea la compra nace con su stock anotado", async () => {
+    const res = await call(createPurchase, { body: { supplier: "Mayorista SA", items: [{ sku: "NUEVO-1", productName: "Lámpara", quantity: 6, cost: 90 }] } });
+    const m = db.movements.at(-1);
+    assert.deepEqual([m.reason, m.before, m.after, m.refId], ["COMPRA", 0, 6, String(res.body.id)]);
   });
 });
