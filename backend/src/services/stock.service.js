@@ -68,6 +68,34 @@ function uniqueUnits(units) {
   return [...seen.values()];
 }
 
+// ─── Orden de los candados ──────────────────────────────────────────────────
+// Una transacción que mueve varias unidades las tiene que bloquear SIEMPRE en el mismo orden (por
+// producto y después por variante). Si una venta bloquea A y después B, y una compra al mismo tiempo B y
+// después A, cada una espera a la otra y Postgres corta una con error. Regla para toda transacción de
+// varias unidades: primero las filas de stock en este orden (sortUnits / lockUnits), y recién después las
+// filas de producto que se tocan aparte (costo, publicación), también en orden.
+function byUnit(a, b) {
+  return ((a.productId ?? 0) - (b.productId ?? 0)) || ((a.variantId ?? 0) - (b.variantId ?? 0));
+}
+// Copia ordenada de una lista de líneas o unidades ({ productId, variantId, ... }).
+function sortUnits(list) {
+  return [...list].sort(byUnit);
+}
+// Toma el candado de varias unidades de una vez, en el orden de arriba, dentro de la transacción tx.
+// Para los que después las van tocando en otro orden (las líneas de una compra, en el orden en que se
+// cargaron): con las filas ya tomadas, ese orden ya no importa.
+async function lockUnits(tx, units) {
+  const list = uniqueUnits(units.filter((u) => u && (toId(u.productId) || toId(u.variantId)))).sort(byUnit);
+  for (const u of list) {
+    const model = u.variantId ? tx.productVariant : tx.product;
+    try {
+      await model.update({ where: { id: u.variantId || u.productId }, data: { updatedAt: new Date() } });
+    } catch (err) {
+      if (err?.code !== "P2025") throw err; // una fila que ya no existe no se bloquea
+    }
+  }
+}
+
 // Transacción para los que mueven varias unidades juntas (una compra, una venta manual): mismo
 // prisma.$transaction de siempre, más el aviso a los oyentes cuando termina bien.
 async function transaction(fn, opts = TX_OPTS) {
@@ -98,7 +126,23 @@ function actorOf(user) {
 // Ya no toca el campo visibility (MAYORISTA/MINORISTA/AMBOS) — ese lo controla el admin.
 // Vivía en product.controller.js; se mudó acá porque la usa cada cambio de stock (el controller la
 // sigue exportando para no romper a quien la importa de ahí).
-async function syncProductVisibility(productId, tx = prisma) {
+//
+// Primero toma el candado de la fila del producto y recién después mira las variantes. Sin eso, dos
+// ventas al mismo tiempo que dejaban en 0 la última unidad de dos variantes distintas miraban cada una el
+// stock viejo de la otra (todavía sin confirmar) y el producto quedaba publicado sin nada para vender. Con
+// el candado, la segunda espera a que la primera termine y ve las dos en 0. Sin transacción de quien
+// llama, abre la suya (si no, el candado duraría solo esa sentencia). Ojo: adentro de una transacción
+// hay que pasarle esa tx; si no, abre otra que espera el candado que tiene la de afuera.
+async function syncProductVisibility(productId, tx) {
+  if (!tx) {
+    return prisma.$transaction((t) => syncProductVisibility(productId, t), TX_OPTS);
+  }
+  try {
+    await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() } });
+  } catch (err) {
+    if (err?.code === "P2025") return; // el producto ya no existe
+    throw err;
+  }
   const product = await tx.product.findUnique({
     where: { id: productId },
     include: { variants: { where: { active: true }, select: { stock: true, stockUnlimited: true } } },
@@ -310,6 +354,8 @@ module.exports = {
   recordRemoved,
   listMovements,
   syncProductVisibility,
+  sortUnits,
+  lockUnits,
   onCommitted,
   actorOf,
 };
