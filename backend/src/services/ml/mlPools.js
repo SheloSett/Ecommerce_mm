@@ -53,6 +53,7 @@ async function listPools() {
     byPool.get(l.poolId).push(l);
   }
   const unitByKey = new Map(units.map((u) => [`${u.productId}:${u.variantId ?? ""}`, u]));
+  const linkedKeys = new Set(pools.filter((p) => p.productId).map((p) => `${p.productId}:${p.variantId ?? ""}`));
   return pools
     .filter((p) => byPool.has(p.id) || p.productId)
     .map((p) => {
@@ -68,7 +69,10 @@ async function listPools() {
           itemId: l.itemId, variationId: l.variationId || null, title: l.title, sku: l.sku,
           permalink: l.permalink, thumbnail: l.thumbnail, status: l.status, quantity: l.quantity, sold: l.sold,
         })),
-        suggestions: p.productId ? [] : suggestionsFor(ls, units).map((s) => ({ productId: s.productId, variantId: s.variantId, name: s.name, sku: s.sku, qty: s.qty, by: s.by })),
+        suggestions: p.productId ? [] : suggestionsFor(ls, units).map((s) => ({
+          productId: s.productId, variantId: s.variantId, name: s.name, sku: s.sku, qty: s.qty, by: s.by,
+          linked: linkedKeys.has(`${s.productId}:${s.variantId ?? ""}`),
+        })),
       };
     })
     .sort((a, b) => (a.listings[0]?.title || a.key).localeCompare(b.listings[0]?.title || b.key, "es"));
@@ -78,10 +82,12 @@ async function listPools() {
 async function searchUnits(q) {
   const text = String(q || "").trim().toLowerCase();
   const units = await linkableUnits();
-  const found = text
+  const found = (text
     ? units.filter((u) => u.name.toLowerCase().includes(text) || (u.sku && u.sku.toLowerCase().includes(text)))
-    : units;
-  return found.slice(0, 30);
+    : units).slice(0, 30);
+  const linked = await prisma.mlPool.findMany({ where: { productId: { not: null } } });
+  const linkedKeys = new Set(linked.map((p) => `${p.productId}:${p.variantId ?? ""}`));
+  return found.map((u) => ({ ...u, linked: linkedKeys.has(`${u.productId}:${u.variantId ?? ""}`) }));
 }
 
 // ─── Vincular ───────────────────────────────────────────────────────────────

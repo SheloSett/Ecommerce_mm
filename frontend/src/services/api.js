@@ -121,6 +121,26 @@ function storefrontAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Mercado Libre (stock compartido). Ninguna respuesta trae tokens. Ver backend services/ml/.
+export const mlApi = {
+  status:      () => api.get("/ml/status"),
+  startOAuth:  () => api.post("/ml/oauth/start"),
+  exchange:    (code, state) => api.post("/ml/oauth/exchange", { code, state }, { timeout: 30000 }),
+  disconnect:  () => api.post("/ml/disconnect"),
+  setMode:     (mode) => api.put("/ml/settings", { mode }),
+  refresh:     () => api.post("/ml/listings/refresh"),
+  pools:       () => api.get("/ml/pools", { timeout: 30000 }),
+  units:       (q) => api.get("/ml/units", { params: { q } }),
+  cycles:      (id) => api.get(`/ml/pools/${id}/cycles`),
+  link:        (id, productId, variantId) => api.post(`/ml/pools/${id}/link`, { productId, variantId }),
+  unlink:      (id) => api.post(`/ml/pools/${id}/unlink`),
+  // activar y resolver leen Mercado Libre en el momento: pueden tardar más de lo normal
+  activate:    (id, choice, number) => api.post(`/ml/pools/${id}/activate`, { choice, number }, { timeout: 30000 }),
+  resolve:     (id, choice, number) => api.post(`/ml/pools/${id}/resolve`, { choice, number }, { timeout: 30000 }),
+  deactivate:  (id) => api.post(`/ml/pools/${id}/deactivate`),
+  check:       (id) => api.post(`/ml/pools/${id}/check`),
+};
+
 export const productsApi = {
   // Antes: getAll: (params) => api.get("/products", { params }),
   getAll: (params) => api.get("/products", { params, headers: storefrontAuthHeaders() }),

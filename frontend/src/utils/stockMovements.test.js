@@ -6,7 +6,8 @@ import { reasonLabel, changeText, shortfallOf, refOf, unitLabel, movementDate } 
 test("motivos en castellano, y el código tal cual si es uno nuevo", () => {
   assert.equal(reasonLabel("VENTA"), "Venta");
   assert.equal(reasonLabel("AJUSTE"), "Carga a mano");
-  assert.equal(reasonLabel("ML_VENTA"), "ML_VENTA");
+  assert.equal(reasonLabel("VENTA_ML"), "Venta en Mercado Libre");
+  assert.equal(reasonLabel("OTRO_NUEVO"), "OTRO_NUEVO");
   assert.equal(reasonLabel(undefined), "Otro");
 });
 

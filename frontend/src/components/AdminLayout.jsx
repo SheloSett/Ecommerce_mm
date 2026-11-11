@@ -82,6 +82,7 @@ export default function AdminLayout({ children, title }) {
         // { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
         { label: "🏷 Ofertas / Campañas", href: "/admin/productos/ofertas" },
+        { label: "🤝 Mercado Libre",      href: "/admin/productos/mercadolibre" },
         { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },

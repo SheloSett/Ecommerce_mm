@@ -11,6 +11,9 @@ const REASON_LABELS = {
   COMPRA:         "Compra a proveedor",
   RMA:            "RMA (falla)",
   VARIANTES:      "Variantes regeneradas",
+  VENTA_ML:       "Venta en Mercado Libre",
+  CAMBIO_ML:      "Cambio en Mercado Libre",
+  VINCULO_ML:     "Vínculo con Mercado Libre",
 };
 
 export function reasonLabel(reason) {
@@ -37,6 +40,7 @@ export function refOf(movement) {
   if (refType === "order")    return { text: `Pedido #${refId}`, to: `/admin/ordenes/${refId}` };
   if (refType === "purchase") return { text: `Compra #${refId}`, to: null };
   if (refType === "gasto")    return { text: `Caja #${refId}`, to: null };
+  if (refType === "ml")       return { text: "Mercado Libre", to: "/admin/productos/mercadolibre" };
   return { text: `${refType} #${refId}`, to: null };
 }
 

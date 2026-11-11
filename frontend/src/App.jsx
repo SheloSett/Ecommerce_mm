@@ -49,6 +49,8 @@ const AdminCaja = lazy(() => import("./pages/admin/AdminCaja"));
 const AdminFlyer = lazy(() => import("./pages/admin/AdminFlyer"));
 const AdminCoupons = lazy(() => import("./pages/admin/AdminCoupons"));
 const AdminOffers = lazy(() => import("./pages/admin/AdminOffers"));
+const AdminMercadoLibre = lazy(() => import("./pages/admin/AdminMercadoLibre"));
+const AdminMlCallback = lazy(() => import("./pages/admin/AdminMlCallback"));
 const AdminPurchases = lazy(() => import("./pages/admin/AdminPurchases"));
 const AdminSuppliers = lazy(() => import("./pages/admin/AdminSuppliers"));
 // AdminCarousel: movido a CarouselSectionContent embebido en AdminSettings — página standalone descartada
@@ -249,6 +251,24 @@ export default function App() {
           />
 
           {/* Campañas de oferta con vigencia — sub-vista de Productos */}
+          {/* Mercado Libre: publicaciones y vínculos (permiso productos) y la vuelta de la conexión
+              (la usa solo el dueño: el servidor exige superadministrador para canjear el código). */}
+          <Route
+            path="/admin/productos/mercadolibre"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="productos"><AdminMercadoLibre /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/mercadolibre/conectar"
+            element={
+              <ProtectedRoute>
+                <AdminMlCallback />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/admin/productos/ofertas"
             element={
