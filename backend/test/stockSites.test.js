@@ -247,6 +247,16 @@ describe("editar las líneas de un pedido", () => {
     assert.equal(variantStock(31), 26);
   });
 
+  test("cada cambio de línea queda en el historial con el pedido y quién lo hizo", async () => {
+    const o = approved([{ productId: 1, quantity: 2 }]);
+    await editLine(500, o.items[0].id, 3);
+    await removeLine(500, o.items[0].id);
+    assert.deepEqual(db.movements.map((m) => [m.reason, m.delta, m.refId, m.actor]), [
+      ["EDICION_PEDIDO", -1, "500", "Ana"],
+      ["EDICION_PEDIDO", 3, "500", "Ana"],
+    ]);
+  });
+
   test("bajar la cantidad de lo último que había vuelve a publicar el producto", async () => {
     db.products[5] = { ...db.products[5], stock: 0, active: false };
     const o = approved([{ productId: 5, quantity: 2 }]);

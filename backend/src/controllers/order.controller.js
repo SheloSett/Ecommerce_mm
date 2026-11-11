@@ -1410,6 +1410,23 @@ async function saveOriginalAndMarkModified(orderId, order) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Mueve el stock de una línea de pedido: de la variante si la línea tiene una, si no del producto
+// (mismo criterio que tenía cada función que edita líneas). delta > 0 devuelve unidades, < 0 las
+// descuenta. Un ítem libre (sin productId) no tiene stock. Pasa por el servicio de stock: no baja de 0,
+// no toca los ilimitados, publica o despublica según lo que quede y deja el movimiento en el historial.
+async function moveLineStock(line, delta, { orderId, actor, note = null, tx = null }) {
+  if (!delta || !line?.productId) return null;
+  return adjustStock({
+    ...(line.variantId ? { variantId: line.variantId } : { productId: line.productId }),
+    delta,
+    reason: REASONS.EDICION_PEDIDO,
+    ref:    { type: "order", id: orderId },
+    actor,
+    note,
+    ...(tx ? { tx } : {}),
+  });
+}
+
 // PATCH /api/orders/:orderId/items/:itemId - Admin: cambiar cantidad y/o precio de un item
 async function updateOrderItem(req, res) {
   try {
@@ -1434,22 +1451,10 @@ async function updateOrderItem(req, res) {
     // y de las cotizaciones viejas, que descuentan al registrarse: sacarles un producto dejaba esas
     // unidades reservadas para siempre.
     const ajustaStock = order.status === "APPROVED" || order.stockDeducted;
-    // Ajustar stock por el delta de cantidad
+    // Ajustar stock por el delta de cantidad (ítem libre: no hay stock que tocar — antes, con
+    // productId null la consulta tiraba error)
     if (ajustaStock && qtyDiff !== 0) {
-      if (item.variantId) {
-        const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-        if (variant && !variant.stockUnlimited) {
-          await prisma.productVariant.update({ where: { id: item.variantId }, data: { stock: Math.max(0, variant.stock - qtyDiff) } });
-          await syncProductVisibility(variant.productId);
-        }
-      // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
-      } else if (item.productId) {
-        const product = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (product && !product.stockUnlimited) {
-          await prisma.product.update({ where: { id: item.productId }, data: { stock: Math.max(0, product.stock - qtyDiff) } });
-          await syncProductVisibility(item.productId);
-        }
-      }
+      await moveLineStock(item, -qtyDiff, { orderId, actor: actorOf(req.user) });
     }
     // saveOriginalAndMarkModified va aparte del stock: marcar el pedido como "modificado"
     // (y guardar cómo estaba) solo tiene sentido si el cliente ya lo vio aprobado. Una venta manual
@@ -1522,22 +1527,9 @@ async function deleteOrderItem(req, res) {
     // y de las cotizaciones viejas, que descuentan al registrarse: sacarles un producto dejaba esas
     // unidades reservadas para siempre.
     const ajustaStock = order.status === "APPROVED" || order.stockDeducted;
-    // Restaurar el stock del ítem eliminado
+    // Restaurar el stock del ítem eliminado (ítem libre: nada que devolver)
     if (ajustaStock) {
-      if (item.variantId) {
-        const variant = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-        if (variant && !variant.stockUnlimited) {
-          await prisma.productVariant.update({ where: { id: item.variantId }, data: { stock: variant.stock + item.quantity } });
-          await syncProductVisibility(variant.productId);
-        }
-      // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
-      } else if (item.productId) {
-        const product = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (product && !product.stockUnlimited) {
-          await prisma.product.update({ where: { id: item.productId }, data: { stock: product.stock + item.quantity } });
-          await syncProductVisibility(item.productId);
-        }
-      }
+      await moveLineStock(item, item.quantity, { orderId, actor: actorOf(req.user), note: "Línea sacada del pedido" });
     }
     // saveOriginalAndMarkModified va aparte del stock: marcar el pedido como "modificado"
     // (y guardar cómo estaba) solo tiene sentido si el cliente ya lo vio aprobado. Una venta manual
@@ -1616,9 +1608,8 @@ async function addItemToOrder(req, res) {
       if (!variant.stockUnlimited && variant.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${variant.stock}` });
       }
-      if (ajustaStock && !variant.stockUnlimited) {
-        await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, variant.stock - qty) } });
-        await syncProductVisibility(product.id);
+      if (ajustaStock) {
+        await moveLineStock({ productId: product.id, variantId: variant.id }, -qty, { orderId, actor: actorOf(req.user), note: "Producto agregado al pedido" });
       }
       resolvedVariantId = variant.id;
       // Precio de la variante según tipo de cliente, con fallback al del producto
@@ -1633,9 +1624,8 @@ async function addItemToOrder(req, res) {
       if (!product.stockUnlimited && product.stock < qty) {
         return res.status(400).json({ error: `Stock insuficiente. Disponible: ${product.stock}` });
       }
-      if (ajustaStock && !product.stockUnlimited) {
-        await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, product.stock - qty) } });
-        await syncProductVisibility(product.id);
+      if (ajustaStock) {
+        await moveLineStock({ productId: product.id }, -qty, { orderId, actor: actorOf(req.user), note: "Producto agregado al pedido" });
       }
     }
 
@@ -3306,23 +3296,14 @@ async function modifyOrder(req, res) {
       preparedNew.push({ newItem, pid, qty, price, product, variant });
     }
 
+    // Datos de los movimientos de stock de esta modificación (historial)
+    const stockMove = { orderId, actor: actorOf(req.user), note: "Modificar pedido" };
+
     // Devolver stock de los items eliminados
-    // (solo si el pedido lo había descontado: antes lo devolvía siempre)
+    // (solo si el pedido lo había descontado: antes lo devolvía siempre). Un ítem libre no tiene stock
+    // (antes sacarlo del pedido daba error). Se republica solo si no lo ocultó el admin a mano (B12).
     for (const item of toRemove) {
-      if (ajustaStock && item.variantId) {
-        const v = await prisma.productVariant.findUnique({ where: { id: item.variantId } });
-        if (v && !v.stockUnlimited) {
-          await prisma.productVariant.update({ where: { id: v.id }, data: { stock: v.stock + item.quantity } });
-          await syncProductVisibility(item.productId);
-        }
-      // Antes: } else { — sacar un ítem libre (productId null) del pedido daba error
-      } else if (ajustaStock && item.productId) {
-        const p = await prisma.product.findUnique({ where: { id: item.productId } });
-        if (p && !p.stockUnlimited) {
-          // Republicar solo si no lo ocultó el admin a mano (B12). Antes: active: true siempre
-          await prisma.product.update({ where: { id: p.id }, data: { stock: p.stock + item.quantity, ...(p.hiddenByAdmin ? {} : { active: true }) } });
-        }
-      }
+      if (ajustaStock) await moveLineStock(item, item.quantity, stockMove);
       await prisma.orderItem.delete({ where: { id: item.id } });
     }
 
@@ -3336,24 +3317,9 @@ async function modifyOrder(req, res) {
       const qtyDiff  = newQty - existingItem.quantity; // positivo = más unidades (descontar stock); negativo = menos (devolver)
 
       // Antes: if (qtyDiff !== 0) — movía stock aunque el pedido no lo hubiera descontado
+      // (ítems libres, productId null: no hay stock que tocar — antes findUnique con id null tiraba error)
       if (ajustaStock && qtyDiff !== 0) {
-        if (existingItem.variantId) {
-          const v = await prisma.productVariant.findUnique({ where: { id: existingItem.variantId } });
-          if (v && !v.stockUnlimited) {
-            const newStock = Math.max(0, v.stock - qtyDiff);
-            await prisma.productVariant.update({ where: { id: v.id }, data: { stock: newStock } });
-            await syncProductVisibility(existingItem.productId);
-          }
-        } else if (existingItem.productId) {
-          // (ítems libres, productId null: no hay stock que tocar — antes findUnique con id null tiraba error)
-          const p = await prisma.product.findUnique({ where: { id: existingItem.productId } });
-          if (p && !p.stockUnlimited) {
-            const newStock = Math.max(0, p.stock - qtyDiff);
-            await prisma.product.update({ where: { id: p.id }, data: { stock: newStock } });
-            // syncProductVisibility ahora maneja productos sin variantes correctamente
-            await syncProductVisibility(p.id);
-          }
-        }
+        await moveLineStock(existingItem, -qtyDiff, stockMove);
       }
 
       // cost: si viene en el body, se actualiza (vacío → null para volver al fallback del producto)
@@ -3394,19 +3360,10 @@ async function modifyOrder(req, res) {
 
     // Agregar nuevos items (validados arriba) y descontar stock si el pedido ya lo descontó
     for (const { newItem, pid, qty, price, product, variant } of preparedNew) {
-      // El stock se vuelve a leer: sacar o cambiar líneas del mismo producto (arriba) ya lo movió.
-      if (ajustaStock && variant && !variant.stockUnlimited) {
-        const fresh = await prisma.productVariant.findUnique({ where: { id: variant.id } });
-        await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, fresh.stock - qty) } });
-        await syncProductVisibility(pid);
-      } else if (ajustaStock && !variant && !product.stockUnlimited) {
-        const fresh = await prisma.product.findUnique({ where: { id: pid } });
-        const newStock = Math.max(0, fresh.stock - qty);
-        await prisma.product.update({
-          where: { id: pid },
-          data: { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
-        });
-        await syncProductVisibility(pid);
+      // El servicio de stock lee el número vigente con la fila bloqueada: sacar o cambiar líneas del
+      // mismo producto (arriba) ya lo movió. Si llega a 0 se despublica, como antes.
+      if (ajustaStock) {
+        await moveLineStock({ productId: pid, variantId: variant ? variant.id : null }, -qty, stockMove);
       }
 
       // cost del ítem para el pedido (vacío → null = usa el costo del producto en la orden de compra)
