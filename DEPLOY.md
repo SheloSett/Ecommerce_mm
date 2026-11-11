@@ -448,6 +448,11 @@ docker compose -f deploy/docker-compose.vps.yml up -d --build
 > `docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db --single-transaction -v ON_ERROR_STOP=1 < backend/scripts/migracion-stock-movimientos.sql`
 > Si se olvida, el backend lo avisa al arrancar (log "[ERROR deploy]" y mail de alerta).
 
+> **migracion-mercadolibre.sql (rama mercadolibre-stock):** crea las tablas de Mercado Libre. Requiere
+> la de stock-movimientos aplicada antes. Va antes del rebuild, igual que la anterior:
+> `docker exec -i igwtstore_db psql -U ecommerce_user -d ecommerce_db --single-transaction -v ON_ERROR_STOP=1 < backend/scripts/migracion-mercadolibre.sql`
+> Sin las variables de Mercado Libre en `backend/.env` no hace nada; ver [Mercado Libre](#mercado-libre-stock-compartido).
+
 Eso rebuildea las dos imágenes y recrea los contenedores. No hace falta `npm install` ni
 `prisma generate` en el host: el código y las dependencias van adentro de las imágenes.
 
@@ -463,6 +468,32 @@ En el browser, hard refresh con `Ctrl+Shift+R` (si no, te queda el JS viejo cach
 > **Si acabás de crear tablas nuevas, reiniciá el backend.** El motor de Prisma mantiene la conexión
 > abierta y sigue tirando "table does not exist" aunque la tabla ya exista:
 > `docker compose -f deploy/docker-compose.vps.yml restart backend`
+
+### Mercado Libre: stock compartido
+
+Código en `backend/src/services/ml/`. Se enciende por pasos; en cada uno se puede volver atrás poniendo
+el modo en Apagado (Configuración → Mercado Libre) o sacando `ML_SYNC_ENABLED`.
+
+1. **Variables** en `backend/.env` del VPS (plantilla en `backend/.env.production.example`):
+   `SECRETS_KEY`, `ML_SYNC_ENABLED=1`, `ML_APP_ID`, `ML_CLIENT_SECRET`, `ML_REDIRECT_URI`,
+   `ML_WEBHOOK_TOKEN`, `ML_EXPECTED_USER_ID`. Después:
+   `docker compose -f deploy/docker-compose.vps.yml up -d backend` (relee el .env).
+2. **Aplicación de Mercado Libre** (la crea el dueño en developers.mercadolibre.com.ar, una nueva para
+   la tienda): dirección de vuelta = `ML_REDIRECT_URI`; avisos =
+   `https://igwtstore.com.ar/api/ml/webhook/<ML_WEBHOOK_TOKEN>` con los tópicos `items` y
+   `orders_v2`; permisos de lectura, escritura y acceso sin conexión; PKCE activado.
+   Si Cloudflare frena los avisos, usar `https://igwtstore.82-25-74-242.sslip.io/api/ml/webhook/<clave>`
+   (Caddy ya atiende ese nombre sin pasar por Cloudflare).
+3. **Conectar**: Configuración → Mercado Libre → Conectar (solo el dueño). Modo: Apagado.
+4. **Traer publicaciones y vincular**: Productos → Mercado Libre. Vincular no cambia ningún stock.
+5. **Observar** unos días: el modo Observar lee y anota en la bitácora de cada publicación lo que
+   habría hecho, sin tocar ningún stock. Comparar con las ventas reales.
+6. **Activo** con una sola publicación de prueba (Activar eligiendo el número), después con un producto
+   real de poco movimiento, y recién después con el resto.
+
+Problemas: Configuración → Mercado Libre muestra el último error y la última revisión; cada publicación
+tiene su bitácora; los avisos importantes llegan por mail (`reportError`, tipo "mercadolibre").
+Logs: `docker compose -f deploy/docker-compose.vps.yml logs --since 1h backend | grep -i mercadolibre`.
 
 ### Aplicar cambios de schema a mano
 
