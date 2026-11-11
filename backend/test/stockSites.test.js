@@ -41,6 +41,7 @@ function resetDb() {
     gastos: [],
     movements: [],
     nextId: 1000,
+    clock: 0, // updatedAt de los pedidos: sube en cada cambio, como el @updatedAt de Prisma
   };
 }
 
@@ -69,6 +70,7 @@ function addOrder(id, fields, items) {
     customerEmail: "cliente@example.com", couponId: null, total: 0, wantsInvoice: false, manualDiscountType: null,
     manualDiscountValue: null, shippingCost: 0, ivaAmount: 0, originalSnapshot: null, ...fields,
     items: items.map((i) => ({ id: db.nextId++, orderId: id, variantId: null, price: 1000, currency: "ARS", ...i })),
+    updatedAt: ++db.clock,
   };
   return db.orders[id];
 }
@@ -114,12 +116,17 @@ class FakePrismaClient {
     this.order = {
       findUnique: async ({ where, include }) => orderOut(db.orders[where.id], include),
       findFirst: async ({ where, include }) => orderOut(Object.values(db.orders).find((o) => matchWhere(o, where)), include),
-      update: async ({ where, data, include }) => orderOut(applyData(db.orders[where.id], data), include),
+      update: async ({ where, data, include }) => {
+        const o = applyData(db.orders[where.id], data);
+        o.updatedAt = ++db.clock;
+        return orderOut(o, include);
+      },
       // Reclamo atómico: cambia solo si el pedido sigue como dice el where
       updateMany: async ({ where, data }) => {
         const o = db.orders[where.id];
         if (!o || !matchWhere(o, where)) return { count: 0 };
         applyData(o, data);
+        o.updatedAt = ++db.clock;
         return { count: 1 };
       },
       create: async ({ data, include }) => {
@@ -390,6 +397,24 @@ describe("cotización que cancela o cambia el cliente", () => {
     const res = await call(orders.updateMyQuoteItems, { params: { id: "602" }, body: { items: [{ id: o.items[0].id, quantity: 5 }] }, user: customer(9) });
     assert.equal(res.code, 200);
     assert.equal(stockOf(1), 7);
+  });
+
+  test("seguridad: dos ediciones a la vez de una cotización vieja mueven el stock una sola vez", async () => {
+    const o = addOrder(607, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 9, stockDeducted: true }, [{ productId: 1, quantity: 10 }]);
+    const edit = () => call(orders.updateMyQuoteItems, { params: { id: "607" }, body: { items: [{ id: o.items[0].id, quantity: 2 }] }, user: customer(9) });
+    const results = await Promise.all([edit(), edit()]);
+    assert.deepEqual(results.map((r) => r.code).sort(), [200, 409]);
+    assert.equal(stockOf(1), 18, "antes las dos devolvían 8: quedaba en 26");
+  });
+
+  test("seguridad: editar y cancelar a la vez devuelve lo que quedó y no revive la cotización", async () => {
+    const o = addOrder(608, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 9, stockDeducted: true }, [{ productId: 1, quantity: 5 }]);
+    await Promise.all([
+      call(orders.updateMyQuoteItems, { params: { id: "608" }, body: { items: [{ id: o.items[0].id, quantity: 1 }] }, user: customer(9) }),
+      call(orders.cancelByCustomer, { params: { id: "608" }, body: {}, user: customer(9) }),
+    ]);
+    assert.equal(stockOf(1), 15, "se devuelven las 5 reservadas, ni una más");
+    assert.equal(db.orders[608].status, "CANCELLED");
   });
 
   test("en una cotización nueva cambiar cantidades no mueve stock", async () => {

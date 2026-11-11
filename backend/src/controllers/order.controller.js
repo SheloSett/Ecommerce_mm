@@ -2241,11 +2241,12 @@ async function updateMyQuoteItems(req, res) {
     // Nota: si el admin repartió una línea entre VARIAS variantes al aprobar, queda variantId en null
     // y solo el texto en variantLabel, así que no hay forma segura de saber de qué variante devolver:
     // esas líneas no ajustan stock acá y se reacomodan cuando el admin vuelve a aprobar.
+    // productId va también en las de variante: con él se ordenan los movimientos (ver el paso 5).
     const reservaDe = (i) => {
       if (!i.productId) return null;
-      if (i.variantId)  return { tipo: "variante", id: i.variantId };
+      if (i.variantId)  return { tipo: "variante", id: i.variantId, productId: i.productId };
       if (conVariantes[i.productId]) return null;
-      return { tipo: "producto", id: i.productId };
+      return { tipo: "producto", id: i.productId, productId: i.productId };
     };
 
     // ── 3. Movimientos de stock (delta > 0 = descontar, delta < 0 = devolver) ──
@@ -2268,7 +2269,7 @@ async function updateMyQuoteItems(req, res) {
       for (const n of nuevas) {
         // Un producto con variantes que agrega el cliente no reserva stock: la variante la elige el
         // admin al aprobar, y ahí se descuenta.
-        if (!conVariantes[n.product.id]) sumar({ tipo: "producto", id: n.product.id }, n.quantity);
+        if (!conVariantes[n.product.id]) sumar({ tipo: "producto", id: n.product.id, productId: n.product.id }, n.quantity);
       }
     }
 
@@ -2320,7 +2321,22 @@ async function updateMyQuoteItems(req, res) {
 
     // ── 5. Aplicar todo junto ──
     // stockService.transaction: el mismo prisma.$transaction, más el aviso de que cambió el stock.
-    await stockService.transaction(async (tx) => {
+    // Primero se reclama la cotización en UNA operación con condición: sigue siendo editable, sigue con
+    // (o sin) stock reservado como se leyó, y nadie la tocó desde que se leyó (updatedAt). Eso toma además
+    // el candado de la fila del pedido: otra edición o una cancelación al mismo tiempo espera a que esta
+    // termine y después ve que cambió. Antes dos ediciones a la vez aplicaban las dos el mismo movimiento
+    // de stock (lo inflaban), y una edición que terminaba después de una cancelación devolvía el stock de
+    // nuevo y revivía la cotización cancelada.
+    const applied = await stockService.transaction(async (tx) => {
+      const { count } = await tx.order.updateMany({
+        where: {
+          id: orderId, customerId, paymentMethod: "COTIZACION", status: { in: ["PENDING", "QUOTE_APPROVED"] },
+          stockDeducted: order.stockDeducted, updatedAt: order.updatedAt,
+        },
+        data: { customerModifiedAt: new Date(), updatedAt: new Date() },
+      });
+      if (count !== 1) return false;
+
       for (const item of eliminadas) {
         await tx.orderItem.delete({ where: { id: item.id } });
       }
@@ -2338,29 +2354,44 @@ async function updateMyQuoteItems(req, res) {
       // transacción: no baja de 0, no toca ilimitados, y si al devolver el producto vuelve a tener
       // unidades se republica (salvo que el admin lo haya ocultado a mano, B12); si llega a 0 se
       // despublica. Antes hacía todo eso acá, leyendo y escribiendo el número.
-      for (const mov of movimientos.values()) {
-        if (mov.delta === 0) continue;
-        await adjustStock({
+      // Siempre en el mismo orden, y la publicación al final (ver "Orden de los candados" en el servicio).
+      const movs = sortUnits([...movimientos.values()]
+        .filter((m) => m.delta !== 0)
+        .map((m) => ({ ...m, variantId: m.tipo === "variante" ? m.id : null })));
+      const touched = new Set();
+      for (const mov of movs) {
+        const r = await adjustStock({
           ...(mov.tipo === "variante" ? { variantId: mov.id } : { productId: mov.id }),
-          delta:  -mov.delta,
-          reason: REASONS.EDICION_PEDIDO,
-          ref:    { type: "order", id: orderId },
-          actor:  actorOf(req.user),
-          note:   "Cotización modificada por el cliente",
+          delta:      -mov.delta,
+          reason:     REASONS.EDICION_PEDIDO,
+          ref:        { type: "order", id: orderId },
+          actor:      actorOf(req.user),
+          note:       "Cotización modificada por el cliente",
           tx,
+          visibility: "none",
         });
+        if (r.ok) touched.add(r.productId);
       }
+      for (const pid of [...touched].sort((a, b) => a - b)) {
+        await syncProductVisibility(pid, tx);
+      }
+      return true;
     });
+    if (!applied) {
+      return res.status(409).json({ error: "La cotización cambió mientras la editabas. Recargá la página y volvé a intentarlo." });
+    }
 
     for (const pid of productIds) {
       try { await syncProductVisibility(pid); } catch (_) { /* no bloquear por esto */ }
     }
 
     // ── 6. La cotización vuelve a revisión ──
+    // Solo si sigue editable: si mientras tanto se canceló, no se la revive (antes este update sin
+    // condición la volvía a dejar en PENDING).
     const totalsData = await recalcOrderTotals(orderId);
     const snapshot   = await buildSnapshot(orderId);
-    const updated    = await prisma.order.update({
-      where: { id: orderId },
+    const { count: reopened } = await prisma.order.updateMany({
+      where: { id: orderId, status: { in: ["PENDING", "QUOTE_APPROVED"] } },
       data:  {
         ...totalsData,
         clientSnapshot:     snapshot,
@@ -2369,6 +2400,12 @@ async function updateMyQuoteItems(req, res) {
         // seenByAdmin en false: así vuelve a contar en el badge de Cotizaciones del panel.
         seenByAdmin:        false,
       },
+    });
+    if (reopened !== 1) {
+      return res.status(409).json({ error: "La cotización se canceló mientras la editabas. Recargá la página para ver cómo quedó." });
+    }
+    const updated = await prisma.order.findUnique({
+      where:   { id: orderId },
       include: { items: { include: { product: { select: { id: true, name: true, images: true } } } } },
     });
 
@@ -2446,7 +2483,7 @@ async function cancelByCustomer(req, res) {
           id: orderId, customerId, paymentMethod: "COTIZACION",
           status: { in: CANCELABLE_BY_CUSTOMER }, stockDeducted: order.stockDeducted,
         },
-        data: { status: "CANCELLED", cancelReason: reason || null, stockDeducted: false },
+        data: { status: "CANCELLED", cancelReason: reason || null, stockDeducted: false, updatedAt: new Date() },
       });
       if (count !== 1) return false;
 
@@ -2455,11 +2492,17 @@ async function cancelByCustomer(req, res) {
       // viejas, anteriores al cambio. Antes la condición era "todavía no estaba resuelta" y devolvía
       // siempre al producto padre: a un ítem con variante le sumaba stock que nunca se le había restado,
       // y a un producto con variantes sin asignar le inventaba unidades.
+      // Las líneas se leen acá, después del reclamo: si el cliente estaba editando la cotización al mismo
+      // tiempo, la edición terminó antes (el reclamo esperó su candado) y se devuelve lo que quedó, no lo
+      // que había al principio. En orden, y la publicación al final.
       if (order.stockDeducted) {
-        for (const item of order.items) {
+        const lines = await tx.orderItem.findMany({ where: { orderId } });
+        const touched = new Set();
+        for (const item of sortUnits(lines)) {
           if (!item.productId) continue; // ítem libre: no existe en el catálogo
           if (item.variantId) {
-            await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx });
+            const r = await adjustStock({ variantId: item.variantId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx, visibility: "none" });
+            if (r.ok) touched.add(r.productId);
             continue;
           }
           // Sin variante asignada: si el producto tiene variantes, nunca se reservó nada
@@ -2467,7 +2510,11 @@ async function cancelByCustomer(req, res) {
           if (variantCount > 0) continue;
           // Re-publica si estaba sin stock por esta cotización, salvo que el admin lo haya ocultado a mano
           // (B12, como en el resto de las devoluciones). Antes: active: true siempre.
-          await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx });
+          const r = await adjustStock({ productId: item.productId, delta: item.quantity, reason: REASONS.CANCELACION, ref, actor, note, tx, visibility: "none" });
+          if (r.ok) touched.add(item.productId);
+        }
+        for (const pid of [...touched].sort((a, b) => a - b)) {
+          await syncProductVisibility(pid, tx);
         }
       }
       return true;
