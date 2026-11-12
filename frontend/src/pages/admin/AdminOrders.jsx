@@ -435,13 +435,23 @@ export default function AdminOrders() {
 
   // Subtotal a precio de LISTA (sin ningún descuento): es contra este número que se muestra
   // después cuánto se descontó en total.
-  const manualSubtotalLista = manualForm.items.reduce(
-    (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
-  );
+  //
+  // Por moneda: antes se sumaban todas las líneas juntas, así que USD 100 + $50.000 se mostraba como
+  // "Total $50.100" (el servidor ya los guardaba por separado). Moneda de la línea = la del producto;
+  // los productos libres van en pesos, como los guarda el servidor. Mismo criterio que "Modificar pedido".
+  const manualItemCurrency = (it) =>
+    (!it.isCustom && it.productId ? (allProducts || []).find((p) => p.id === it.productId)?.currency : null) || "ARS";
+  const manualPorMoneda = (cur) => {
+    const its = manualForm.items.filter((it) => manualItemCurrency(it) === cur);
+    const lista = its.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0);
+    const desc  = its.reduce((sum, it) => sum + ((parseFloat(it.price) || 0) - precioConDesc(it)) * (parseInt(it.quantity) || 0), 0);
+    return { lista, desc };
+  };
+  const manualHasUsd = manualForm.items.some((it) => manualItemCurrency(it) === "USD");
+  const manualUsd = manualPorMoneda("USD");
+  const manualSubtotalLista = manualPorMoneda("ARS").lista;
   // Lo que se bajó producto por producto
-  const manualDescLineas = manualForm.items.reduce(
-    (sum, it) => sum + ((parseFloat(it.price) || 0) - precioConDesc(it)) * (parseInt(it.quantity) || 0), 0
-  );
+  const manualDescLineas = manualPorMoneda("ARS").desc;
   // Subtotal ya con los descuentos de cada línea: sobre este se aplica el descuento general.
   const manualSubtotal = manualSubtotalLista - manualDescLineas;
 
@@ -457,6 +467,15 @@ export default function AdminOrders() {
   })();
 
   const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
+  // La parte en dólares: el porcentaje general también la baja; el monto fijo está en pesos y no
+  // (mismo criterio que el servidor, utils/orderTotals.js computeOrderTotals).
+  const manualSubtotalUsd = manualUsd.lista - manualUsd.desc;
+  const manualDescGeneralUsd = (() => {
+    const v = parseFloat(manualForm.manualDiscountValue) || 0;
+    if (v <= 0 || manualForm.manualDiscountType !== "PERCENTAGE") return 0;
+    return Math.round(manualSubtotalUsd * Math.min(100, v)) / 100;
+  })();
+  const manualTotalUsd = Math.max(0, manualSubtotalUsd - manualDescGeneralUsd);
 
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
   const resetManualForm = () => {
@@ -519,6 +538,13 @@ export default function AdminOrders() {
     });
     if (missingVariant) {
       toast.error(`Elegí la variante de "${missingVariant.productName}"`);
+      return;
+    }
+    // Mientras las variantes cargan (null) no se sabe si hay que elegir una. Antes la venta pasaba sin
+    // variante y descontaba del producto padre; ahora además el servidor la rechaza.
+    const loadingVariants = manualForm.items.find((it) => !it.isCustom && it.productId && !it.variantId && variantOptionsCache[it.productId] === null);
+    if (loadingVariants) {
+      toast.error(`Esperá que carguen las variantes de "${loadingVariants.productName}"`);
       return;
     }
 
@@ -1801,7 +1827,12 @@ ${pagesHtml}
                                           ? <img src={getImageUrl(p.images[0])} alt="" className="w-9 h-9 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
                                           : <span className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-base flex-shrink-0">📦</span>}
                                         <span className="font-medium text-slate-700 truncate flex-1">{p.name}</span>
-                                        <span className="text-xs text-slate-500 shrink-0">{formatPrice(p.price)}</span>
+                                        {/* Antes: formatPrice(p.price) — el de lista minorista y en pesos, aunque la
+                                            cotización fuera mayorista, hubiera campaña o el producto fuera en dólares.
+                                            Ahora el que va a cobrar el servidor al agregarlo (sin tramos por cantidad). */}
+                                        <span className="text-xs text-slate-500 shrink-0">
+                                          {formatPriceWithCurrency(priceParts(p, null, order.customerType === "MAYORISTA").price, p.currency || "ARS")}
+                                        </span>
                                       </button>
                                     ))}
                                   </div>
@@ -2911,9 +2942,10 @@ ${pagesHtml}
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isMayorista ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
                                         {isMayorista ? "May." : "Min."}
                                       </span>
+                                      {/* En la moneda del producto (antes: siempre "$", aunque fuera en dólares) */}
                                       {displayOffer != null
-                                        ? <><s className="text-slate-400">{formatPrice(displayList)}</s> <span className="text-emerald-700 font-semibold">{formatPrice(displayOffer)}</span></>
-                                        : formatPrice(displayList)}
+                                        ? <><s className="text-slate-400">{formatPriceWithCurrency(displayList, p.currency || "ARS")}</s> <span className="text-emerald-700 font-semibold">{formatPriceWithCurrency(displayOffer, p.currency || "ARS")}</span></>
+                                        : formatPriceWithCurrency(displayList, p.currency || "ARS")}
                                     </span>
                                   </button>
                                 );
@@ -2999,8 +3031,8 @@ ${pagesHtml}
                                     className="mt-0.5 accent-emerald-600"
                                   />
                                   <span>
-                                    {offerName ? `Precio de campaña ${offerName}` : "Precio de oferta"}: {formatPrice(item.offerPrice)}
-                                    <span className="text-slate-400"> (lista {formatPrice(item.listPrice)})</span>
+                                    {offerName ? `Precio de campaña ${offerName}` : "Precio de oferta"}: {formatPriceWithCurrency(item.offerPrice, manualItemCurrency(item))}
+                                    <span className="text-slate-400"> (lista {formatPriceWithCurrency(item.listPrice, manualItemCurrency(item))})</span>
                                   </span>
                                 </label>
                               );
@@ -3056,11 +3088,11 @@ ${pagesHtml}
                           <p className="text-xs text-slate-500 text-right">
                             {parseFloat(item.desc) > 0 && (
                               <span className="text-emerald-600 font-semibold mr-2">
-                                {formatPrice(precioConDesc(item))} c/u
-                                <span className="text-slate-400 line-through ml-1 font-normal">{formatPrice(parseFloat(item.price))}</span>
+                                {formatPriceWithCurrency(precioConDesc(item), manualItemCurrency(item))} c/u
+                                <span className="text-slate-400 line-through ml-1 font-normal">{formatPriceWithCurrency(parseFloat(item.price), manualItemCurrency(item))}</span>
                               </span>
                             )}
-                            Subtotal: {formatPrice(precioConDesc(item) * parseInt(item.quantity))}
+                            Subtotal: {formatPriceWithCurrency(precioConDesc(item) * parseInt(item.quantity), manualItemCurrency(item))}
                           </p>
                         )}
                       </div>
@@ -3233,7 +3265,19 @@ ${pagesHtml}
                       )}
                     </span>
                   )}
-                  Total: <span className="text-blue-600 text-base">{formatPrice(manualTotal)}</span>
+                  {/* Con dólares: su subtotal y descuento aparte, nunca sumados a los pesos */}
+                  {manualHasUsd && (manualUsd.desc > 0 || manualDescGeneralUsd > 0) && (
+                    <span className="block text-xs font-normal text-slate-500">
+                      En dólares: subtotal {formatPriceWithCurrency(manualUsd.lista, "USD")} · Descuento:{" "}
+                      <span className="text-emerald-600 font-semibold">−{formatPriceWithCurrency(manualUsd.desc + manualDescGeneralUsd, "USD")}</span>
+                    </span>
+                  )}
+                  Total:{" "}
+                  <span className="text-blue-600 text-base">
+                    {(!manualHasUsd || manualSubtotalLista > 0) && formatPrice(manualTotal)}
+                    {manualHasUsd && manualSubtotalLista > 0 && " + "}
+                    {manualHasUsd && formatPriceWithCurrency(manualTotalUsd, "USD")}
+                  </span>
                 </div>
                 <div className="flex gap-2">
                   <button
