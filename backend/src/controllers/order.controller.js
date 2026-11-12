@@ -1442,7 +1442,9 @@ async function updateOrderItem(req, res) {
           await syncProductVisibility(variant.productId);
         }
       // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
-      } else if (item.productId) {
+      // Línea sin variante de un producto con variantes (surtido viejo): nunca se descontó del padre,
+      // así que tampoco se le ajusta (mismo criterio que aprobar y cancelar en updateOrderStatus).
+      } else if (item.productId && !(await prisma.productVariant.count({ where: { productId: item.productId, active: true } }))) {
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (product && !product.stockUnlimited) {
           await prisma.product.update({ where: { id: item.productId }, data: { stock: Math.max(0, product.stock - qtyDiff) } });
@@ -1530,7 +1532,8 @@ async function deleteOrderItem(req, res) {
           await syncProductVisibility(variant.productId);
         }
       // Antes: } else { — con un ítem libre (productId null) la consulta tiraba error
-      } else if (item.productId) {
+      // Línea sin variante de un producto con variantes: nunca se descontó del padre, no se le devuelve.
+      } else if (item.productId && !(await prisma.productVariant.count({ where: { productId: item.productId, active: true } }))) {
         const product = await prisma.product.findUnique({ where: { id: item.productId } });
         if (product && !product.stockUnlimited) {
           await prisma.product.update({ where: { id: item.productId }, data: { stock: product.stock + item.quantity } });
@@ -1601,42 +1604,65 @@ async function addItemToOrder(req, res) {
     // Precio por defecto según el tipo de cliente de la orden (una cotización mayorista debe tomar
     // el precio mayorista, no el minorista). Si el admin manda price, ese manda.
     const isMayoristaOrder = order.customerType === "MAYORISTA";
-    const productBasePrice = isMayoristaOrder
-      ? (product.wholesaleSalePrice ?? product.wholesalePrice ?? product.salePrice ?? product.price)
-      : (product.salePrice ?? product.price);
-    let finalPrice        = priceOverride ? parseFloat(priceOverride) : productBasePrice;
-    let variantLabel      = null;
-    let variantSku        = null;
-    let resolvedVariantId = null;
+    // Antes: una fórmula propia (wholesaleSalePrice ?? wholesalePrice ?? salePrice ?? price, y la
+    // variante heredaba la oferta del producto). Un mayorista sin precio mayorista cargado se llevaba
+    // la oferta minorista y no se aplicaban los tramos por cantidad. Ahora, la misma regla que el
+    // checkout y el carrito (utils/pricing.js). Si el admin manda price, ese manda.
+    // const productBasePrice = isMayoristaOrder
+    //   ? (product.wholesaleSalePrice ?? product.wholesalePrice ?? product.salePrice ?? product.price)
+    //   : (product.salePrice ?? product.price);
+    let variant      = null;
+    let variantLabel = null;
 
     if (variantId) {
-      const variant = await prisma.productVariant.findUnique({ where: { id: parseInt(variantId) } });
-      if (!variant) return res.status(404).json({ error: "Variante no encontrada" });
-      if (!variant.stockUnlimited && variant.stock < qty) {
-        return res.status(400).json({ error: `Stock insuficiente. Disponible: ${variant.stock}` });
+      variant = await prisma.productVariant.findUnique({ where: { id: parseInt(variantId) } });
+      // Antes solo se miraba que existiera: se podía cargar la variante de otro producto o una apagada.
+      // Mismo control que la venta a mano y la aprobación de cotizaciones.
+      if (!variant || variant.productId !== product.id || !variant.active) {
+        return res.status(400).json({ error: `Variante inválida para "${product.name}"` });
       }
-      if (ajustaStock && !variant.stockUnlimited) {
-        await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, variant.stock - qty) } });
-        await syncProductVisibility(product.id);
-      }
-      resolvedVariantId = variant.id;
-      // Precio de la variante según tipo de cliente, con fallback al del producto
-      const variantBasePrice = isMayoristaOrder
-        ? (variant.wholesaleSalePrice ?? variant.wholesalePrice ?? null)
-        : (variant.salePrice ?? variant.price ?? null);
-      finalPrice   = priceOverride ? parseFloat(priceOverride) : (variantBasePrice ?? productBasePrice);
       const combo  = Array.isArray(variant.combination) ? variant.combination : JSON.parse(String(variant.combination || "[]"));
-      variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
-      variantSku   = variant.sku || null;
-    } else {
-      if (!product.stockUnlimited && product.stock < qty) {
-        return res.status(400).json({ error: `Stock insuficiente. Disponible: ${product.stock}` });
+      variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null;
+      if (!variant.stockUnlimited && variant.stock < qty) {
+        return res.status(400).json({ error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${variant.stock}` });
       }
-      if (ajustaStock && !product.stockUnlimited) {
-        await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, product.stock - qty) } });
-        await syncProductVisibility(product.id);
+    } else {
+      const activeVariants = await prisma.productVariant.findMany({
+        where:  { productId: product.id, active: true },
+        select: { stock: true, stockUnlimited: true },
+      });
+      if (activeVariants.length > 0) {
+        // Producto con variantes y sin variante elegida. Antes se miraba el stock del producto padre
+        // (que con variantes es 0): "Stock insuficiente. Disponible: 0" y no se podía agregar.
+        // Si el pedido ya descontó stock hay que saber de qué variante sale. Una cotización que todavía
+        // no lo descontó puede ir sin variante, como en el checkout: el admin la asigna al aprobarla,
+        // y el stock que cuenta es la suma de las variantes.
+        if (ajustaStock) {
+          return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
+        }
+        if (!activeVariants.some((v) => v.stockUnlimited)) {
+          const totalVariantStock = activeVariants.reduce((sum, v) => sum + v.stock, 0);
+          if (totalVariantStock < qty) {
+            return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Stock total de sus variantes: ${totalVariantStock}` });
+          }
+        }
+      } else if (!product.stockUnlimited && product.stock < qty) {
+        return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}` });
       }
     }
+
+    // El stock se mueve después de validar todo (antes se descontaba en el medio de las validaciones).
+    if (ajustaStock && variant && !variant.stockUnlimited) {
+      await prisma.productVariant.update({ where: { id: variant.id }, data: { stock: Math.max(0, variant.stock - qty) } });
+      await syncProductVisibility(product.id);
+    } else if (ajustaStock && !variant && !product.stockUnlimited) {
+      await prisma.product.update({ where: { id: product.id }, data: { stock: Math.max(0, product.stock - qty) } });
+      await syncProductVisibility(product.id);
+    }
+
+    const finalPrice        = priceOverride ? parseFloat(priceOverride) : effectiveUnitPrice({ product, variant, isMayorista: isMayoristaOrder, quantity: qty });
+    const resolvedVariantId = variant ? variant.id : null;
+    const variantSku        = variant ? (variant.sku || null) : null;
 
     // Guardar el snapshot ANTES de crear el nuevo item para que refleje el estado previo a la
     // modificación. Solo aplica a pedidos ya aprobados (una cotización PENDING todavía se está
@@ -2398,6 +2424,9 @@ async function getMyQuoteById(req, res) {
   }
 }
 
+// Estados en que el cliente puede cancelar su cotización: los mismos en que ve el botón.
+const CANCELABLE_BY_CUSTOMER = ["PENDING", "QUOTE_APPROVED", "PAYMENT_REVIEW"];
+
 // POST /api/orders/:id/cancel-by-customer - Cliente: cancela la cotización con motivo
 async function cancelByCustomer(req, res) {
   try {
@@ -2411,6 +2440,13 @@ async function cancelByCustomer(req, res) {
       include: { items: true },
     });
     if (!order) return res.status(404).json({ error: "Cotización no encontrada" });
+
+    // Solo mientras está abierta: los mismos estados en que la pantalla muestra "Cancelar cotización"
+    // (QuotationHistory.jsx). Antes no se miraba el estado; la pantalla escondía el botón, pero el
+    // servidor no lo controlaba. Mismo criterio que la rama stock-central.
+    if (!CANCELABLE_BY_CUSTOMER.includes(order.status)) {
+      return res.status(400).json({ error: "Esta cotización ya no se puede cancelar desde acá. Escribinos y la vemos juntos." });
+    }
 
     // Devolver el stock SOLO si esta cotización lo tenía descontado. Con el circuito nuevo no lo
     // tiene (una cotización no reserva nada), así que esto solo corre para las viejas, anteriores
@@ -2439,7 +2475,9 @@ async function cancelByCustomer(req, res) {
           where: { id: item.productId },
           data:  {
             stock:  product.stock + item.quantity,
-            active: true, // re-publicar si estaba sin stock por esta cotización
+            // Re-publicar si estaba sin stock por esta cotización, salvo que el admin lo haya ocultado a
+            // mano (B12, como el resto de las devoluciones). Antes: active: true siempre.
+            ...(product.hiddenByAdmin ? {} : { active: true }),
           },
         });
       }
@@ -2859,6 +2897,11 @@ async function createManualOrder(req, res) {
             error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${selectedVariant.stock}`,
           });
         }
+      } else if (await prisma.productVariant.count({ where: { productId: product.id, active: true } }) > 0) {
+        // Producto con variantes y sin variante: la pantalla lo pide, pero si las variantes todavía no
+        // habían cargado (o fallaron) la venta pasaba igual y descontaba del producto padre. Mismo
+        // criterio que "Modificar pedido" y el checkout.
+        return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
       } else if (!product.stockUnlimited && product.stock < qty) {
         // Verificar stock del producto (solo si no es ilimitado y no se vende una variante)
         return res.status(400).json({
@@ -3303,8 +3346,9 @@ async function modifyOrder(req, res) {
       let variant = null;
       if (newItem.variantId) {
         variant = await prisma.productVariant.findUnique({ where: { id: parseInt(newItem.variantId) } });
-        if (!variant || variant.productId !== pid) {
-          return res.status(400).json({ error: `La variante elegida no es de "${product.name}"` });
+        // Antes no se miraba si estaba activa (la venta a mano y la aprobación de cotizaciones sí).
+        if (!variant || variant.productId !== pid || !variant.active) {
+          return res.status(400).json({ error: `La variante elegida no es de "${product.name}" o ya no está activa` });
         }
       } else if (await prisma.productVariant.count({ where: { productId: pid, active: true } }) > 0) {
         // Producto con variantes y sin variante elegida: antes se miraba el stock del producto padre
@@ -3329,7 +3373,8 @@ async function modifyOrder(req, res) {
           await syncProductVisibility(item.productId);
         }
       // Antes: } else { — sacar un ítem libre (productId null) del pedido daba error
-      } else if (ajustaStock && item.productId) {
+      // Línea sin variante de un producto con variantes: nunca se descontó del padre, no se le devuelve.
+      } else if (ajustaStock && item.productId && !(await prisma.productVariant.count({ where: { productId: item.productId, active: true } }))) {
         const p = await prisma.product.findUnique({ where: { id: item.productId } });
         if (p && !p.stockUnlimited) {
           // Republicar solo si no lo ocultó el admin a mano (B12). Antes: active: true siempre
@@ -3357,7 +3402,8 @@ async function modifyOrder(req, res) {
             await prisma.productVariant.update({ where: { id: v.id }, data: { stock: newStock } });
             await syncProductVisibility(existingItem.productId);
           }
-        } else if (existingItem.productId) {
+        // Sin variante de un producto con variantes: el padre no se toca (ver updateOrderItem).
+        } else if (existingItem.productId && !(await prisma.productVariant.count({ where: { productId: existingItem.productId, active: true } }))) {
           // (ítems libres, productId null: no hay stock que tocar — antes findUnique con id null tiraba error)
           const p = await prisma.product.findUnique({ where: { id: existingItem.productId } });
           if (p && !p.stockUnlimited) {

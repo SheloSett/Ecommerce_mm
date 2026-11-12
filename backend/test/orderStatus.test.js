@@ -64,12 +64,20 @@ class FakePrismaClient {
         if (include) db.lastOrderInclude = include; // lo que pide la respuesta de "Modificar pedido"
         return clone(applyData(db.orders[where.id], data));
       },
+      // cancelByCustomer busca por id + cliente + método de pago
+      findFirst: async ({ where }) => {
+        const o = db.orders[where.id];
+        if (!o || (where.customerId !== undefined && o.customerId !== where.customerId) ||
+          (where.paymentMethod && o.paymentMethod !== where.paymentMethod)) return null;
+        return { ...clone(o), items: o.items.map(clone) };
+      },
       findMany: async ({ where }) => Object.values(db.orders).filter((o) =>
         (!where.id?.not || o.id !== where.id.not) &&
         (!where.status?.in || where.status.in.includes(o.status)) &&
         (!where.items?.none || o.items.length === 0)).map(clone),
     };
     this.orderItem = {
+      findFirst: async ({ where }) => clone(allItems().find((i) => i.id === where.id && (!where.orderId || i.orderId === where.orderId))) || null,
       findMany: async ({ where }) => {
         if (where.orderId) return db.orders[where.orderId].items.map(withProduct);
         // Ítems de OTROS pedidos con este producto (ajuste por falta de stock)
@@ -103,7 +111,9 @@ class FakePrismaClient {
     this.notification = { create: async ({ data }) => ({ id: 1, ...data }) };
     this.productVariant = {
       findUnique: async ({ where }) => clone(db.variants[where.id]) || null,
-      findMany: async ({ where }) => Object.values(db.variants).filter((v) => where.id.in.includes(v.id)).map(clone),
+      findMany: async ({ where }) => Object.values(db.variants).filter((v) => where.id?.in
+        ? where.id.in.includes(v.id)
+        : v.productId === where.productId && (where.active === undefined || v.active === where.active)).map(clone),
       update: async ({ where, data }) => clone(applyData(db.variants[where.id], data)),
       count: async ({ where }) => {
         if (where.productId == null) throw new Error("Prisma: productId null no es válido");
@@ -128,7 +138,10 @@ stub(path.join(root, "src/controllers/product.controller.js"), { syncProductVisi
 stub(path.join(root, "src/config/cloudinary.js"), { uploadBuffer: async () => ({}) });
 stub(path.join(root, "src/sse/notificationSSE.js"), { pushToClient: () => {} });
 
-const { updateOrderStatus, approveCotizacion, modifyOrder } = require("../src/controllers/order.controller");
+const { updateOrderStatus, approveCotizacion, modifyOrder, addItemToOrder, deleteOrderItem, cancelByCustomer } = require("../src/controllers/order.controller");
+
+const fakeRes = () => ({ code: 200, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } });
+async function call(fn, req) { const res = fakeRes(); await fn(req, res); return res; }
 
 async function setStatus(id, status) {
   const res = { code: 200, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
@@ -350,5 +363,100 @@ describe("devolver stock no republica lo que el admin ocultó a mano (B12)", () 
     assert.equal((await modify(91, [{ itemId: pendrive.id, productId: 2, quantity: 1, price: 1000 }])).code, 200);
     assert.equal(db.products[1].stock, 12);
     assert.equal(db.products[1].active, false);
+  });
+});
+
+// ── Revisión del 12/11/2026: caminos hermanos que se habían quedado atrás ─────────────────────────
+
+describe("el cliente cancela su cotización solo mientras está abierta", () => {
+  beforeEach(resetDb);
+
+  test("una cotización ya pagada no se cancela ni devuelve stock", async () => {
+    addOrder(200, { status: "APPROVED", paymentMethod: "COTIZACION", customerId: 7, stockDeducted: true }, [{ productId: 1, quantity: 2 }]);
+    const res = await call(cancelByCustomer, { params: { id: "200" }, user: { id: 7 }, body: { reason: "x" } });
+    assert.equal(res.code, 400);
+    assert.equal(db.orders[200].status, "APPROVED");
+    assert.equal(db.products[1].stock, 10);
+  });
+
+  test("una pendiente sí", async () => {
+    addOrder(201, { status: "PENDING", paymentMethod: "COTIZACION", customerId: 7 }, [{ productId: 1, quantity: 2 }]);
+    const res = await call(cancelByCustomer, { params: { id: "201" }, user: { id: 7 }, body: { reason: "x" } });
+    assert.equal(res.code, 200);
+    assert.equal(db.orders[201].status, "CANCELLED");
+  });
+
+  test("devolver stock no republica lo que el admin ocultó a mano", async () => {
+    db.products[2].active = false;
+    db.products[2].hiddenByAdmin = true;
+    addOrder(202, { status: "QUOTE_APPROVED", paymentMethod: "COTIZACION", customerId: 7, stockDeducted: true }, [{ productId: 2, quantity: 1 }]);
+    assert.equal((await call(cancelByCustomer, { params: { id: "202" }, user: { id: 7 }, body: {} })).code, 200);
+    assert.equal(db.products[2].stock, 11);
+    assert.equal(db.products[2].active, false);
+  });
+});
+
+describe("agregar un producto a un pedido (botón de las cotizaciones)", () => {
+  beforeEach(resetDb);
+  const add = (id, body) => call(addItemToOrder, { params: { id: String(id) }, body });
+
+  test("una cotización acepta un producto con variantes sin elegir cuál (se asigna al aprobarla)", async () => {
+    addOrder(210, { status: "PENDING", paymentMethod: "COTIZACION" }, [{ productId: 1, quantity: 1 }]);
+    const res = await add(210, { productId: 3, quantity: 6 });
+    assert.equal(res.code, 200, "antes: Stock insuficiente. Disponible: 0");
+    const linea = db.orders[210].items.find((i) => i.productId === 3);
+    assert.equal(linea.variantId, null);
+    assert.equal(db.variants[31].stock, 30, "una cotización no descuenta");
+  });
+
+  test("pero no más que la suma de sus variantes", async () => {
+    addOrder(211, { status: "PENDING", paymentMethod: "COTIZACION" }, [{ productId: 1, quantity: 1 }]);
+    const res = await add(211, { productId: 3, quantity: 61 });
+    assert.equal(res.code, 400);
+    assert.match(res.body.error, /variantes: 60/);
+  });
+
+  test("un pedido que ya descontó stock pide la variante", async () => {
+    addOrder(212, { status: "APPROVED", stockDeducted: true }, [{ productId: 1, quantity: 1 }]);
+    const res = await add(212, { productId: 3, quantity: 1 });
+    assert.equal(res.code, 400);
+    assert.equal(res.body.error, 'Elegí la variante de "Funda"');
+  });
+
+  test("con variante: descuenta de ella y guarda etiqueta y SKU", async () => {
+    addOrder(213, { status: "APPROVED", stockDeducted: true }, [{ productId: 1, quantity: 1 }]);
+    const res = await add(213, { productId: 3, variantId: 32, quantity: 2 });
+    assert.equal(res.code, 200);
+    assert.equal(db.variants[32].stock, 28);
+    const linea = db.orders[213].items.find((i) => i.productId === 3);
+    assert.equal(linea.variantLabel, "Color: Rojo");
+    assert.equal(linea.variantSku, "FUN-R");
+  });
+
+  test("la variante de otro producto se rechaza", async () => {
+    addOrder(214, { status: "APPROVED", stockDeducted: true }, [{ productId: 1, quantity: 1 }]);
+    const res = await add(214, { productId: 3, variantId: 41, quantity: 1 });
+    assert.equal(res.code, 400);
+    assert.equal(db.variants[41].stock, 30);
+  });
+});
+
+describe("una línea sin variante de un producto con variantes no mueve el stock del padre", () => {
+  beforeEach(resetDb);
+
+  test("borrarla de un pedido cobrado no le inventa stock al padre", async () => {
+    addOrder(220, { status: "APPROVED", stockDeducted: true }, [{ productId: 1, quantity: 1 }, { productId: 3, quantity: 5 }]);
+    const linea = db.orders[220].items.find((i) => i.productId === 3);
+    const res = await call(deleteOrderItem, { params: { orderId: "220", itemId: String(linea.id) } });
+    assert.equal(res.code, 200);
+    assert.equal(db.products[3].stock, 0, "antes quedaba en 5");
+  });
+
+  test("ni sacarla en Modificar pedido", async () => {
+    addOrder(221, { status: "APPROVED", stockDeducted: true }, [{ productId: 1, quantity: 1 }, { productId: 3, quantity: 5 }]);
+    const [parlante] = db.orders[221].items;
+    const res = await modify(221, [{ itemId: parlante.id, productId: 1, quantity: 1, price: 1000 }]);
+    assert.equal(res.code, 200);
+    assert.equal(db.products[3].stock, 0);
   });
 });
