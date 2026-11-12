@@ -41,9 +41,50 @@ const PRICE_SELECT = {
 // Mismo criterio que sameMoney() en offers.service.js.
 const priceDiffers = (a, b) => Math.abs(a - b) >= 0.005;
 
+// Etiqueta de una variante, con el mismo formato que la tienda y el checkout ("Color: Negro / Talle: M").
+const variantLabelOf = (variant) => {
+  const combo = variant && Array.isArray(variant.combination) ? variant.combination : [];
+  return combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null;
+};
+
+// Puede ver (y comprar) esta variante quien compra: "AMBOS" o su mismo tipo de cliente. Misma regla que
+// el catálogo (visibleFor) y que el carrito sin cuenta.
+const variantVisibleFor = (variant, isMayorista) =>
+  variant.visibility === "AMBOS" || variant.visibility === (isMayorista ? "MAYORISTA" : "MINORISTA");
+
+// Línea SIN variante de un producto que SÍ tiene variantes activas. Pasa a propósito con los mayoristas
+// que no ven ninguna de las variantes (ProductCard la agrega sin variante): el pedido entra como
+// cotización y el admin asigna la variante al aprobarla. El stock del producto padre no sirve para
+// decidir (con variantes queda en 0): se usa la misma regla que createOrder (order.controller.js):
+//  - quien compra directo (minorista o sin cuenta) y PUEDE elegir una variante: el checkout le pide que
+//    la elija, así que la línea, tal como está, no se puede comprar;
+//  - si no, alcanza con que haya stock en la suma de las variantes activas (alguna ilimitada = sin tope).
+// Antes se miraba product.stock, así que la línea quedaba "sin stock" y Checkout.jsx rebotaba al
+// mayorista con "Tenés productos sin stock" aunque el checkout la hubiera aceptado.
+function variantlessLineOutOfStock(activeVariants, isMayorista) {
+  if (!isMayorista && activeVariants.some((v) => variantVisibleFor(v, false))) return true;
+  if (activeVariants.some((v) => v.stockUnlimited)) return false;
+  return activeVariants.reduce((sum, v) => sum + v.stock, 0) <= 0;
+}
+
+// Variantes activas de los productos que tienen alguna línea sin variante: productId → [variantes].
+// Una sola consulta para todas las líneas.
+async function activeVariantsByProduct(productIds) {
+  if (productIds.length === 0) return {};
+  const rows = await prisma.productVariant.findMany({
+    where:  { productId: { in: productIds }, active: true },
+    select: { productId: true, stock: true, stockUnlimited: true, visibility: true },
+  });
+  const byProduct = {};
+  for (const v of rows) (byProduct[v.productId] ||= []).push(v);
+  return byProduct;
+}
+
 // Enriquece los items de una lista de carritos con outOfStock, currency y precio vigente.
-// Hace 2 consultas en total (productos + variantes) sin importar cuántos carritos vengan, para que
-// el listado del admin no dispare una consulta por item.
+// Hace a lo sumo 3 consultas en total (productos + variantes de las líneas + variantes activas de los
+// productos con líneas sin variante) sin importar cuántos carritos vengan, para que el listado del
+// admin no dispare una consulta por item. Antes eran 2: la tercera es para la regla de stock de
+// variantlessLineOutOfStock.
 //
 // Cada cart debe traer `items` y, si se quiere el precio mayorista correcto, `customer.type`.
 //
@@ -74,6 +115,9 @@ async function enrichCarts(carts) {
 
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
+  const variantsOfProduct = await activeVariantsByProduct(
+    [...new Set(carts.flatMap((c) => c.items.filter((i) => !i.variantId).map((i) => i.productId)))]
+  );
 
   return carts.map((cart) => {
     const isMayorista = cart.customer?.type === "MAYORISTA";
@@ -88,6 +132,9 @@ async function enrichCarts(carts) {
       } else if (item.variantId) {
         if (!variant || !variant.active) outOfStock = true;
         else if (!variant.stockUnlimited && variant.stock <= 0) outOfStock = true;
+      } else if (variantsOfProduct[product.id]?.length) {
+        // Sin variante, de un producto con variantes. Antes caía en la rama de abajo (stock del padre).
+        outOfStock = variantlessLineOutOfStock(variantsOfProduct[product.id], isMayorista);
       } else if (!product.stockUnlimited && product.stock <= 0) {
         outOfStock = true;
       }
@@ -278,7 +325,7 @@ async function buildGuestCart(rawItems) {
   if (list.length === 0) return [];
 
   const variantIds = list.map((l) => l.variantId).filter(Boolean);
-  const [products, variants] = await Promise.all([
+  const [products, variants, variantsOfProduct] = await Promise.all([
     prisma.product.findMany({
       where:  { id: { in: [...new Set(list.map((l) => l.productId))] } },
       select: { id: true, name: true, images: true, active: true, visibility: true, stock: true, stockUnlimited: true, ivaRate: true, currency: true, ...PRICE_SELECT },
@@ -289,6 +336,8 @@ async function buildGuestCart(rawItems) {
           select: { id: true, productId: true, active: true, visibility: true, combination: true, stock: true, stockUnlimited: true, ...PRICE_SELECT },
         })
       : [],
+    // Para las líneas sin variante de productos con variantes (ver variantlessLineOutOfStock)
+    activeVariantsByProduct([...new Set(list.filter((l) => l.variantId === null).map((l) => l.productId))]),
   ]);
   const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
   const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
@@ -298,25 +347,26 @@ async function buildGuestCart(rawItems) {
     if (!product) return []; // producto borrado: sale del carrito
     const found = line.variantId ? variantMap[line.variantId] : null;
     // La variante tiene que ser de ese producto, estar activa y poder vendérsele a un minorista
-    const variant = found && found.productId === product.id && found.active && found.visibility !== "MAYORISTA" ? found : null;
+    const variant = found && found.productId === product.id && found.active && variantVisibleFor(found, false) ? found : null;
 
     let outOfStock = !product.active || product.visibility === "MAYORISTA" || (line.variantId !== null && !variant);
     if (!outOfStock) {
-      outOfStock = variant
-        ? !variant.stockUnlimited && variant.stock <= 0
-        : !product.stockUnlimited && product.stock <= 0;
+      // Antes, sin variante siempre se miraba el stock del producto padre (0 si tiene variantes):
+      // outOfStock = variant ? ... : !product.stockUnlimited && product.stock <= 0;
+      if (variant) outOfStock = !variant.stockUnlimited && variant.stock <= 0;
+      else if (variantsOfProduct[product.id]?.length) outOfStock = variantlessLineOutOfStock(variantsOfProduct[product.id], false);
+      else outOfStock = !product.stockUnlimited && product.stock <= 0;
     }
 
     const current = effectiveUnitPrice({ product, variant, isMayorista: false, quantity: line.quantity });
     const price = current > 0 ? current : (line.addedPrice ?? 0);
     const previousPrice = line.addedPrice !== null && current > 0 && priceDiffers(current, line.addedPrice) ? line.addedPrice : null;
-    const combo = variant && Array.isArray(variant.combination) ? variant.combination : [];
 
     return [{
       id:           line.key,
       productId:    product.id,
       variantId:    line.variantId,
-      variantLabel: combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null,
+      variantLabel: variantLabelOf(variant),
       name:         product.name,
       image:        product.images?.[0] || null,
       quantity:     line.quantity,
@@ -366,7 +416,9 @@ router.get("/me", authMiddleware, customerMiddleware, async (req, res) => {
 router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) => {
   try {
     const customerId = req.user.id;
-    const { productId, name, price, image, variantId, variantLabel } = req.body;
+    // variantLabel ya no se lee del body: la etiqueta se arma acá (ver más abajo).
+    // Antes: const { productId, name, price, image, variantId, variantLabel } = req.body;
+    const { productId, name, price, image, variantId } = req.body;
     const quantity = parseInt(req.body.quantity) || 1;
 
     // El producto (y su variante, si aplica) deben seguir activos al momento de agregar.
@@ -379,22 +431,31 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     if (!product || !product.active) {
       return res.status(404).json({ error: "Este producto ya no está disponible" });
     }
+    // Tipo de cliente: decide qué productos y variantes puede comprar y a qué precio. Antes se consultaba
+    // dos veces (acá solo para los productos de mayoristas, y otra vez más abajo para el precio).
+    const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
+    const isMayorista = customer?.type === "MAYORISTA";
     // Un producto que se vende SOLO a mayoristas no entra al carrito de otro cliente: la ficha ya no
     // le muestra el botón, y esto cierra el mismo camino por la API (el checkout también lo valida).
-    if (product.visibility === "MAYORISTA") {
-      const owner = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
-      if (owner?.type !== "MAYORISTA") {
-        return res.status(403).json({ error: "Este producto es exclusivo para clientes mayoristas" });
-      }
+    if (product.visibility === "MAYORISTA" && !isMayorista) {
+      return res.status(403).json({ error: "Este producto es exclusivo para clientes mayoristas" });
     }
+    // La variante tiene que ser de este producto, estar activa y ser visible para este tipo de cliente
+    // (mismo criterio que el carrito sin cuenta y el checkout). La etiqueta se arma acá con su
+    // combinación, igual que en buildGuestCart y createOrder.
+    // Antes: se guardaba el variantLabel que mandaba el navegador (texto libre), no se miraba la
+    // visibilidad (por la API, un minorista cargaba una variante de mayoristas y recién lo frenaba el
+    // checkout) y una variante que no correspondía respondía 404; ahora 400, como el checkout.
+    let serverVariantLabel = null;
     if (variantId) {
       const variant = await prisma.productVariant.findUnique({
         where:  { id: parseInt(variantId) },
-        select: { id: true, active: true, productId: true },
+        select: { id: true, active: true, productId: true, visibility: true, combination: true },
       });
-      if (!variant || !variant.active || variant.productId !== product.id) {
-        return res.status(404).json({ error: "Esta variante ya no está disponible" });
+      if (!variant || !variant.active || variant.productId !== product.id || !variantVisibleFor(variant, isMayorista)) {
+        return res.status(400).json({ error: "Esta variante ya no está disponible" });
       }
+      serverVariantLabel = variantLabelOf(variant);
     }
 
     // Upsert del carrito: crea si no existe, actualiza updatedAt si ya existe
@@ -405,15 +466,12 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
     });
 
     // Deduplicación: mismo producto + misma variante = mismo ítem (incrementar cantidad).
-    // Prioridad: variantId (más preciso) → variantLabel (para órdenes sin variantId guardado) → solo productId.
+    // Antes, sin variantId se buscaba por el variantLabel del navegador ("para órdenes sin variantId
+    // guardado"): esa etiqueta no la valida nadie y el checkout la ignora (sin variante, el pedido sale
+    // sin variante), así que una línea sin variante es una sola, se llame como se llame.
+    // if (variantId) { ... } else if (variantLabel) { dedupWhere.variantLabel = variantLabel; } else { ... }
     const dedupWhere = { cartId: cart.id, productId };
-    if (variantId) {
-      dedupWhere.variantId = parseInt(variantId);
-    } else if (variantLabel) {
-      dedupWhere.variantLabel = variantLabel;
-    } else {
-      dedupWhere.variantId = null;
-    }
+    dedupWhere.variantId = variantId ? parseInt(variantId) : null;
     const existing = await prisma.cartItem.findFirst({ where: dedupWhere });
 
     // Datos para calcular el precio. Antes se traían SOLO dentro de la rama `existing`: el item nuevo
@@ -435,8 +493,7 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
           select: PRICE_SELECT,
         })
       : null;
-    const customer = await prisma.customer.findUnique({ where: { id: customerId }, select: { type: true } });
-    const isMayorista = customer?.type === "MAYORISTA";
+    // customer / isMayorista: se consultan una sola vez, arriba (antes se volvía a pedir acá).
 
     // Precio efectivo con la variante y la cantidad final (variante > producto + tramos por cantidad).
     // null si no da un precio usable — ahí se cae al valor anterior (o al del cliente, si es alta).
@@ -465,7 +522,8 @@ router.post("/my/items", authMiddleware, customerMiddleware, async (req, res) =>
           quantity, name,
           price:        finalPrice,
           image:        image || null,
-          variantLabel: variantLabel || null,
+          // Antes: variantLabel || null (el texto que mandaba el navegador)
+          variantLabel: serverVariantLabel,
         },
       });
     }

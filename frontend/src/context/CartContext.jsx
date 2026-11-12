@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useCustomerAuth } from "./CustomerAuthContext";
 import { cartsApi } from "../services/api";
 import { storageGet } from "../utils/storage";
+import toast from "react-hot-toast";
 import { guestKey, readGuestCart, writeGuestCart, addGuestLine, setGuestQuantity, removeGuestLine, setGuestPrice, restoreGuestLine } from "../utils/guestCart";
 
 // Rutas donde sí queremos real-time (SSE): el cliente está mirando o editando el carrito,
@@ -292,10 +293,19 @@ export function CartProvider({ children }) {
   };
 
   // Carga los items de un pedido anterior al carrito para "Repetir pedido"
-  // Limpia el carrito actual y agrega los items con precios vigentes
+  // Limpia el carrito actual y agrega los items con precios vigentes.
+  //
+  // Antes cortaba en el primer ítem que fallaba (por ejemplo, una variante que se desactivó): el carrito
+  // ya estaba vaciado, quedaba a medio llenar y el cliente solo veía "Error al cargar el pedido", sin saber
+  // qué faltó. Ahora, como mergeGuestCart (más arriba): agrega lo que se puede, saltea lo que no y avisa
+  // qué productos quedaron afuera. Si no se pudo agregar ninguno, vuelve a cargar lo que tenía antes y
+  // falla como siempre (el que llama muestra el error).
   const repeatOrder = async (orderItems) => {
     if (!customer) return;
     setLoading(true);
+    const previousItems = items; // el carrito de antes, por si no entra nada del pedido
+    const skipped = [];          // nombres de lo que no se pudo agregar
+    let added = 0;
     try {
       // 1. Limpiar carrito actual
       await cartsApi.clearMyCart();
@@ -305,8 +315,9 @@ export function CartProvider({ children }) {
       // variantByAdmin del item), pero se deja comentado por si vuelve a hacer falta.
       // const isMayorista = customer?.type === "MAYORISTA";
       for (const item of orderItems) {
-        // Omitir productos que ya no existen o están desactivados
-        if (!item.product?.active) continue;
+        const name = item.product?.name || item.productName || "Producto eliminado";
+        // Productos que ya no existen o están desactivados. Antes se salteaban sin avisar: ahora van a la lista.
+        if (!item.product?.active) { skipped.push(name); continue; }
 
         // Precio efectivo según tipo de cliente; si es null/undefined, usa el precio histórico del pedido
         const effectivePrice = getEffectivePrice(item.product) ?? item.price;
@@ -314,20 +325,53 @@ export function CartProvider({ children }) {
         // Esas variantes las elige el admin al separar el pedido, no el cliente, así que al
         // repetir no deben heredarse. Las variantes que eligió el cliente (variantByAdmin=false)
         // sí se copian, tanto para mayoristas como minoristas.
+        // Revisado (11/2026) y se deja así a propósito: la línea sin variante vuelve a entrar como
+        // cotización para que el admin reparta de nuevo (si la había partido en varias variantes, se
+        // suman en una sola línea, que es lo que pidió el cliente). Además el cliente casi nunca ve esas
+        // variantes y POST /carts/my/items rechaza una variante que no es visible para su tipo de cliente.
         const skipVariant = item.variantByAdmin === true;
-        await cartsApi.addItem({
-          productId:    item.productId,
-          quantity:     item.quantity,
-          name:         item.product.name,
-          price:        effectivePrice,
-          image:        item.product.images?.[0] || null,
-          variantId:    skipVariant ? null : (item.variantId    || null),
-          variantLabel: skipVariant ? null : (item.variantLabel || null),
-        });
+        try {
+          await cartsApi.addItem({
+            productId:    item.productId,
+            quantity:     item.quantity,
+            name:         item.product.name,
+            price:        effectivePrice,
+            image:        item.product.images?.[0] || null,
+            variantId:    skipVariant ? null : (item.variantId    || null),
+            variantLabel: skipVariant ? null : (item.variantLabel || null),
+          });
+          added++;
+        } catch (err) {
+          // Antes el error cortaba el for (y el resto del pedido no se cargaba)
+          console.error(`Repetir pedido: no se pudo agregar "${name}":`, err);
+          skipped.push(name);
+        }
+      }
+
+      // Nada del pedido se pudo agregar: el carrito no queda vacío, vuelve lo que tenía (lo que ya no
+      // se pueda agregar, queda afuera)
+      if (added === 0) {
+        for (const it of previousItems) {
+          try {
+            await cartsApi.addItem({
+              productId: it.id, quantity: it.quantity, name: it.name, price: it.price,
+              image: it.image, variantId: it.variantId, variantLabel: it.variantLabel,
+            });
+          } catch { /* ya no se puede comprar: queda afuera */ }
+        }
       }
 
       // 3. Refrescar el carrito desde el backend
       await fetchCart();
+
+      if (skipped.length > 0) {
+        const unique = [...new Set(skipped)];
+        toast.error(
+          `${unique.length === 1 ? "No se pudo agregar" : "No se pudieron agregar"}: ${unique.join(", ")}. Ya no ${unique.length === 1 ? "está disponible" : "están disponibles"} o cambiaron sus opciones.`,
+          { duration: 8000 }
+        );
+      }
+      if (added === 0) throw new Error("Ningún producto del pedido se pudo agregar al carrito");
     } catch (err) {
       console.error("Error al repetir pedido:", err);
       throw err;

@@ -27,10 +27,15 @@ function resetDb() {
     ],
   };
 }
+// Filtro de la base simulada: { campo: valor } o { campo: { in: [...] } }
+const matches = (row, where) => Object.entries(where).every(([k, cond]) =>
+  (cond && typeof cond === "object" && Array.isArray(cond.in) ? cond.in.includes(row[k]) : row[k] === cond));
 class FakePrismaClient {
   constructor() {
     this.product = { findMany: async ({ where }) => clone(db.products.filter((p) => where.id.in.includes(p.id))) };
-    this.productVariant = { findMany: async ({ where }) => clone(db.variants.filter((v) => where.id.in.includes(v.id))) };
+    // Antes solo entendía { id: { in } }: el carrito ahora también pide las variantes activas de un producto
+    // (líneas sin variante de un producto con variantes)
+    this.productVariant = { findMany: async ({ where }) => clone(db.variants.filter((v) => matches(v, where))) };
   }
 }
 const root = path.join(__dirname, "..");
@@ -90,6 +95,25 @@ describe("carrito sin cuenta", () => {
     assert.deepEqual(res.body.items.map((i) => [i.id, i.outOfStock]), [
       ["g-2-0", true], ["g-4-0", true], ["g-3-0", true], ["g-1-21", true], ["g-2-23", true], ["g-2-24", true],
     ]);
+  });
+
+  test("sin variante, de un producto con variantes: misma regla que el checkout, no el stock del padre", async () => {
+    // Producto con variantes que un minorista no puede elegir (todas de mayoristas): el checkout lo acepta
+    // sin variante si la SUMA de las variantes activas tiene stock. El padre está en 0, como siempre.
+    db.products.push({ ...db.products[1], id: 6, name: "Caja surtida", stock: 0 });
+    db.variants.push(
+      { ...db.variants[2], id: 61, productId: 6, stock: 0 },
+      { ...db.variants[2], id: 62, productId: 6, stock: 4 },
+      { ...db.variants[2], id: 63, productId: 6, stock: 50, active: false }, // desactivada: no cuenta
+    );
+    assert.equal((await only({ productId: 6, quantity: 1 })).outOfStock, false);
+    db.variants.find((v) => v.id === 62).stock = 0;
+    assert.equal((await only({ productId: 6, quantity: 1 })).outOfStock, true, "las activas suman 0");
+    db.variants.find((v) => v.id === 61).stockUnlimited = true;
+    assert.equal((await only({ productId: 6, quantity: 1 })).outOfStock, false, "una ilimitada alcanza");
+    // Si el minorista SÍ puede elegir una variante (Funda: la roja es para todos), el checkout le pide que la
+    // elija: sin variante no se puede comprar aunque haya stock en las variantes.
+    assert.equal((await only({ productId: 2, quantity: 1 })).outOfStock, true);
   });
 
   test("stock ilimitado y dólares: se puede comprar y lleva su moneda; el tramo por cantidad baja el precio", async () => {

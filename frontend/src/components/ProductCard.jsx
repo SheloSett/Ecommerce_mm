@@ -105,9 +105,37 @@ export default function ProductCard({ product, viewMode = "grid" }) {
   const modalHasAttrs = fullProduct?.attributes?.length > 0 && (fullProduct?.variants?.length ?? 0) > 0;
   // Tope de cantidad para productos SIN variantes (lo que queda de stock menos lo ya carriteado)
   const noVariantMax = product.stockUnlimited ? null : Math.max(0, (product.stock || 0) - cartQty);
+  // Tope de cantidad CON variante elegida: su stock menos lo que ya hay de ESA variante en el carrito
+  // (se busca por variantId para no frenar otras variantes del mismo producto). Mismo criterio que
+  // ProductDetail (availableStock): sin tope si la variante es ilimitada o si compra un mayorista (va como
+  // cotización y el checkout mira la suma de las variantes); null también mientras no eligió una variante.
+  // Antes el "+" de este modal no tenía tope: se podían cargar 10 de una variante con 3 y recién lo
+  // frenaba el checkout.
+  const variantCartQty = activeVariant
+    ? items.find((i) => i.id === product.id && i.variantId === activeVariant.id)?.quantity || 0
+    : 0;
+  const variantMax = activeVariant && !activeVariant.stockUnlimited && !isMayorista
+    ? Math.max(0, (activeVariant.stock || 0) - variantCartQty)
+    : null;
+  // Al cambiar de variante, la cantidad elegida se acomoda al tope de la nueva
+  useEffect(() => {
+    if (variantMax != null && variantQty > variantMax) setVariantQty(Math.max(1, variantMax));
+  }, [activeVariant?.id, variantMax]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "+" del selector de cantidad con variantes (las dos vistas). Antes: setVariantQty((q) => q + 1)
+  const incVariantQty = (e) => {
+    e.preventDefault();
+    setVariantQty((q) => (variantMax != null && q >= variantMax ? q : q + 1));
+  };
+  // Stock que queda de la variante elegida (al lado del selector, como en el modal sin variantes)
+  const variantStockHint = variantMax != null && (
+    <span className="text-xs text-slate-400 whitespace-nowrap">
+      {variantMax > 0 ? `Stock: ${variantMax}` : "Ya tenés todo el stock en el carrito"}
+    </span>
+  );
   // Botón "Agregar" del modal deshabilitado: cargando, agregando, o (con variantes) opciones incompletas/sin stock
+  // (o ya está en el carrito todo el stock de la variante elegida: variantMax === 0)
   const modalAddDisabled = addingVariant || loadingProduct || (modalHasAttrs
-    ? (!allAttrsSelected || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0))
+    ? (!allAttrsSelected || (activeVariant && !activeVariant.stockUnlimited && activeVariant.stock === 0) || variantMax === 0)
     : !fullProduct);
 
   // Precio unitario efectivo del producto (según tipo de cliente, con oferta si aplica)
@@ -243,6 +271,12 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       toast.error("Esta variante no tiene stock");
       return;
     }
+    // Nunca más que el tope de la variante (como safeQty en ProductDetail), por si la cantidad quedó de antes
+    const qty = variantMax != null ? Math.min(variantQty, variantMax) : variantQty;
+    if (qty < 1) {
+      toast.error("Ya tenés en el carrito todo el stock de esta opción");
+      return;
+    }
     setAddingVariant(true);
     const variantLabel = activeVariant
       ? activeVariant.combination.map((c) => `${c.name}: ${c.value}`).join(" / ")
@@ -263,8 +297,9 @@ export default function ProductCard({ product, viewMode = "grid" }) {
       return null;
     })();
     try {
-      await addItem(fullProduct, variantQty, variantPrice, activeVariant?.id || null, variantLabel);
-      toast.success(`"${product.name}"${variantLabel ? ` (${variantLabel})` : ""} ×${variantQty} agregado al carrito`);
+      // Antes: addItem(fullProduct, variantQty, ...) — sin tope
+      await addItem(fullProduct, qty, variantPrice, activeVariant?.id || null, variantLabel);
+      toast.success(`"${product.name}"${variantLabel ? ` (${variantLabel})` : ""} ×${qty} agregado al carrito`);
       // No cerramos el modal: el cliente puede seguir eligiendo otra variante
       setSelectedAttrs({});
       setVariantQty(1);
@@ -449,10 +484,11 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                       <span className="px-4 py-1.5 text-sm font-semibold text-slate-800 min-w-[2.5rem] text-center">{variantQty}</span>
                       <button
                         type="button"
-                        onClick={(e) => { e.preventDefault(); setVariantQty((q) => q + 1); }}
+                        onClick={incVariantQty}
                         className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-bold text-base transition-colors"
                       >+</button>
                     </div>
+                    {variantStockHint}
                   </div>
                   {/* Precio de la variante elegida + subtotal según cantidad */}
                   <ModalPriceInfo />
@@ -748,10 +784,11 @@ export default function ProductCard({ product, viewMode = "grid" }) {
                     <span className="px-4 py-1.5 text-sm font-semibold text-slate-800 min-w-[2.5rem] text-center">{variantQty}</span>
                     <button
                       type="button"
-                      onClick={(e) => { e.preventDefault(); setVariantQty((q) => q + 1); }}
+                      onClick={incVariantQty}
                       className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-bold text-base transition-colors"
                     >+</button>
                   </div>
+                  {variantStockHint}
                 </div>
                 {/* Precio de la variante elegida + subtotal según cantidad */}
                 <ModalPriceInfo />
