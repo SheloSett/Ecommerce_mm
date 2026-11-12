@@ -2991,31 +2991,37 @@ ${pagesHtml}
                           );
                         })()}
 
-                        <div className="flex gap-2">
+                        {/* En el celular: dos columnas (Costo | Precio, Descuento | Cantidad). Antes era una
+                            sola fila con anchos fijos y el precio quedaba en una cajita donde no se leía lo
+                            que se escribía. Desde sm (640px) vuelve a ser la fila de siempre.
+                            text-base en el celular: con menos de 16px el iPhone hace zoom al tocar el campo. */}
+                        <div className="grid grid-cols-2 gap-2 sm:flex">
                           {/* Costo: autocompletado con el costo real del producto/variante, editable.
                               Si difiere del de la base, al registrar se pregunta si actualizarlo. */}
-                          <div className="w-28">
+                          <div className="sm:w-28">
                             <label className="block text-xs text-slate-500 mb-1">Costo</label>
                             <input
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="0.01"
                               value={item.cost}
                               onChange={(e) => setManualItem(idx, "cost", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="—"
                             />
                           </div>
-                          <div className="flex-1">
+                          <div className="sm:flex-1">
                             <label className="block text-xs text-slate-500 mb-1">Precio unitario *</label>
                             <input
                               required
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="0.01"
                               value={item.price}
                               onChange={(e) => setManualItem(idx, "price", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="0.00"
                             />
                             {/* Producto en campaña (u oferta cargada a mano): la línea arranca con ese precio; la
@@ -3038,7 +3044,7 @@ ${pagesHtml}
                               );
                             })()}
                           </div>
-                          <div className="w-24">
+                          <div className="sm:w-24">
                             {/* Descuento de ESTE producto: baja el precio unitario de la línea. El
                                 precio de lista se guarda igual, para mostrarlo tachado. Resaltado en
                                 verde para que no se confunda con los otros campos de la fila. */}
@@ -3046,12 +3052,13 @@ ${pagesHtml}
                             <div className="relative">
                               <input
                                 type="number"
+                                inputMode="decimal"
                                 min="0"
                                 max="100"
                                 step="1"
                                 value={item.desc}
                                 onChange={(e) => setManualItem(idx, "desc", e.target.value)}
-                                className={`w-full pl-2 pr-6 py-2 rounded-lg text-sm border-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors ${
+                                className={`w-full pl-2 pr-6 py-2 rounded-lg text-base sm:text-sm border-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors ${
                                   parseFloat(item.desc) > 0
                                     ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
                                     : "border-emerald-200 bg-emerald-50/40"
@@ -3061,25 +3068,27 @@ ${pagesHtml}
                               <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-emerald-600 pointer-events-none">%</span>
                             </div>
                           </div>
-                          <div className="w-24">
+                          <div className="sm:w-24">
                             <label className="block text-xs text-slate-500 mb-1">Cantidad *</label>
                             <input
                               required
                               type="number"
+                              inputMode="numeric"
                               min="1"
                               value={item.quantity}
                               onChange={(e) => setManualItem(idx, "quantity", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           </div>
-                          <div className="flex items-end pb-0.5">
+                          {/* En el celular va en su propio renglón, a la derecha, con texto */}
+                          <div className="col-span-2 flex justify-end sm:col-span-1 sm:items-end sm:pb-0.5">
                             <button
                               type="button"
                               onClick={() => removeManualItem(idx)}
                               disabled={manualForm.items.length === 1}
-                              className="px-3 py-2 text-slate-400 hover:text-red-500 disabled:opacity-30 transition-colors"
+                              className="px-3 py-1 sm:py-2 text-slate-400 hover:text-red-500 disabled:opacity-30 transition-colors text-sm"
                             >
-                              ✕
+                              ✕<span className="sm:hidden ml-1">Quitar línea</span>
                             </button>
                           </div>
                         </div>

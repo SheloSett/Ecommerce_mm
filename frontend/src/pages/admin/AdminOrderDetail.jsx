@@ -983,7 +983,10 @@ export default function AdminOrderDetail() {
                 {/* Items editables */}
                 <div className="space-y-2">
                   {editItems.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+                    // En el celular la fila se parte: arriba foto, nombre y ✕; abajo los campos, cada uno en
+                    // su renglón a todo el ancho. Antes iban en una columna angosta al costado del nombre y
+                    // no se leía lo que se escribía. Desde sm (640px) es la fila de siempre.
+                    <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 p-3 bg-slate-50 rounded-xl">
                       <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 flex-shrink-0">
                         {item.image ? (
                           <img src={getImageUrl(item.image)} alt="" className="w-full h-full object-contain p-0.5" />
@@ -1033,20 +1036,20 @@ export default function AdminOrderDetail() {
                         {item.sku && <p className="text-[11px] text-slate-500 mt-0.5">SKU: {item.sku}</p>}
                       </div>
                       {/* Precio de venta + costo (proveedor) + cantidad editables */}
-                      <div className="flex flex-col items-end gap-1">
+                      <div className="order-last w-full sm:order-none sm:w-auto flex flex-col items-stretch sm:items-end gap-1.5 sm:gap-1">
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Venta $</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Venta $</span>
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={item.price}
                             onChange={(e) => updateEditPrice(idx, e.target.value)}
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Costo $</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Costo $</span>
                           <input
                             type="number"
                             min="0"
@@ -1055,19 +1058,19 @@ export default function AdminOrderDetail() {
                             onChange={(e) => updateEditCost(idx, e.target.value)}
                             placeholder="—"
                             title="Costo del proveedor para este pedido (se usa en la orden de compra)"
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                         {/* Proveedor de este producto para ESTE pedido (como el costo). La primera
                             opción es el de siempre (variante o producto). Los ítems libres no tienen. */}
                         {!item.isFree && (
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-slate-400 w-12 text-right">🏭 Prov.</span>
+                            <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">🏭 Prov.</span>
                             <select
                               value={item.supplierId ?? ""}
                               onChange={(e) => updateEditSupplier(idx, e.target.value)}
                               title="Proveedor de este producto para este pedido (se usa en la orden de compra)"
-                              className={`w-40 border rounded-lg px-1.5 py-1 text-xs bg-white ${
+                              className={`flex-1 sm:flex-none sm:w-40 border rounded-lg px-1.5 py-2 sm:py-1 text-sm sm:text-xs bg-white ${
                                 item.supplierId !== "" && item.supplierId != null ? "border-blue-400 text-blue-800 font-semibold" : "border-slate-300 text-slate-700"
                               }`}
                             >
@@ -1083,10 +1086,10 @@ export default function AdminOrderDetail() {
                             Va resaltado (etiqueta verde + borde propio) porque entre "Venta", "Costo"
                             y "Cantidad" pasaba por un campo más y no se notaba que era el descuento. */}
                         <div className="flex items-center gap-1">
-                          <span className={`text-[10px] font-bold w-12 text-right ${parseFloat(item.desc) > 0 ? "text-emerald-700" : "text-emerald-600"}`}>
+                          <span className={`text-xs sm:text-[10px] font-bold w-16 sm:w-12 sm:text-right ${parseFloat(item.desc) > 0 ? "text-emerald-700" : "text-emerald-600"}`}>
                             🏷 Desc.
                           </span>
-                          <div className="relative w-24">
+                          <div className="relative flex-1 sm:flex-none sm:w-24">
                             <input
                               type="number"
                               min="0"
@@ -1096,7 +1099,7 @@ export default function AdminOrderDetail() {
                               onChange={(e) => updateEditDesc(idx, e.target.value)}
                               placeholder="0"
                               title="Descuento de este producto, en porcentaje"
-                              className={`w-full text-right rounded-lg pl-2 pr-6 py-1 text-sm border-2 transition-colors ${
+                              className={`w-full text-right rounded-lg pl-2 pr-6 py-2 sm:py-1 text-base sm:text-sm border-2 transition-colors ${
                                 parseFloat(item.desc) > 0
                                   ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
                                   : "border-emerald-200 bg-emerald-50/40"
@@ -1111,13 +1114,13 @@ export default function AdminOrderDetail() {
                           </p>
                         )}
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Cant. ×</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Cant. ×</span>
                           <input
                             type="number"
                             min="1"
                             value={item.quantity}
                             onChange={(e) => updateEditQty(idx, e.target.value)}
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                       </div>
