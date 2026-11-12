@@ -359,7 +359,10 @@ export default function AdminOrderDetail() {
       setSearching(true);
       try {
         // Antes: active: "true", que el backend de /products/admin/all no usa (traía también los pausados)
-        const res = await productsApi.getAllAdmin({ search: q, limit: 8, excludePaused: true });
+        // Antes: limit: 8. El servidor ordena alfabético y corta: buscando "mini plug" solo llegaban
+        // los primeros 8 (hasta "CABLE ALARGUE...") y el resto no aparecía nunca. La lista scrollea,
+        // así que se traen todas las coincidencias (con un techo), igual que en la venta a mano.
+        const res = await productsApi.getAllAdmin({ search: q, limit: 100, excludePaused: true });
         setSearchResults(res.data.products || []);
       } catch { /* silent */ } finally {
         setSearching(false);
