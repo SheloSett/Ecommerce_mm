@@ -1,6 +1,6 @@
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 // Helper reutilizado para limpiar imágenes al auto-borrar productos creados por una compra.
-const { deleteProductImages } = require("./product.controller");
+const { deleteProductImages, syncProductVisibility } = require("./product.controller");
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers compartidos para APLICAR / REVERTIR el efecto de un item de compra.
@@ -39,7 +39,7 @@ async function applyItemTx(tx, item) {
     const skuTrim = sku.trim();
 
     // 1. Buscar por SKU de producto
-    const existingProduct = await tx.product.findFirst({ where: { sku: skuTrim } });
+    const existingProduct = await findBySkuTx(tx.product, skuTrim);
 
     if (existingProduct) {
       // Snapshot ANTES de modificar (para poder revertir)
@@ -61,8 +61,7 @@ async function applyItemTx(tx, item) {
       productId = existingProduct.id;
     } else {
       // 2. Buscar por SKU de variante
-      const existingVariant = await tx.productVariant.findFirst({
-        where: { sku: skuTrim },
+      const existingVariant = await findBySkuTx(tx.productVariant, skuTrim, {
         include: { product: { select: { id: true, cost: true } } },
       });
 
@@ -210,14 +209,39 @@ async function revertItemTx(tx, item) {
   }
 }
 
+// Publica u oculta los productos tocados por una compra según el stock que les quedó (sin republicar
+// lo que el admin ocultó a mano). Antes las compras no lo hacían: un producto que se había ocultado
+// solo al quedarse sin stock seguía sin verse en la tienda después de reponerlo. Se llama después de
+// la transacción, como el resto de los movimientos de stock (pedidos, edición rápida, variantes).
+async function syncPurchaseProducts(items) {
+  const ids = [...new Set((items || []).map((it) => it.productId).filter(Boolean))];
+  for (const productId of ids) {
+    try {
+      await syncProductVisibility(productId);
+    } catch (err) {
+      console.error(`[compras] no se pudo sincronizar la visibilidad del producto ${productId}:`, err.message);
+    }
+  }
+}
+
+// Producto o variante por SKU, sin distinguir mayúsculas, como la pantalla de Compras
+// (AdminPurchases.jsx, handleSkuBlur). Antes la búsqueda era exacta: la pantalla mostraba
+// "actualiza stock" para "abc-01" contra "ABC-01", pero al guardar no lo encontraba y creaba un
+// producto nuevo oculto con precio 0 que se quedaba con el stock. Primero el exacto, por si hubiera
+// dos SKU que solo difieren en mayúsculas.
+async function findBySkuTx(model, sku, extra = {}) {
+  return (await model.findFirst({ where: { sku }, ...extra }))
+    || model.findFirst({ where: { sku: { equals: sku, mode: "insensitive" } }, ...extra });
+}
+
 // A qué producto/variante va una línea, SIN tocar nada (la misma búsqueda que applyItemTx: SKU de
 // producto, SKU de variante, pista productId). null = no existe y applyItemTx va a crear uno nuevo.
 async function resolveTargetTx(tx, item) {
   const skuTrim = item.sku?.trim();
   if (skuTrim) {
-    const product = await tx.product.findFirst({ where: { sku: skuTrim } });
+    const product = await findBySkuTx(tx.product, skuTrim);
     if (product) return { productId: product.id, variantId: null };
-    const variant = await tx.productVariant.findFirst({ where: { sku: skuTrim } });
+    const variant = await findBySkuTx(tx.productVariant, skuTrim);
     if (variant) return { productId: variant.productId, variantId: variant.id };
   }
   const hintId = item.productId ? parseInt(item.productId) : null;
@@ -370,6 +394,7 @@ const createPurchase = async (req, res) => {
       });
     }, TX_OPTS);
 
+    await syncPurchaseProducts(purchase.items);
     res.status(201).json(purchase);
   } catch (err) {
     if (err && err.status) return res.status(err.status).json({ error: err.error });
@@ -496,6 +521,8 @@ const updatePurchase = async (req, res) => {
       await deleteProductImages(p.images);
     }
 
+    // Los de antes (por si una línea cambió de producto o bajó la cantidad) y los de ahora
+    await syncPurchaseProducts([...original.items, ...(result.updated?.items || [])]);
     res.json({
       ...result.updated,
       _deletedProducts: result.deleted.map((p) => p.id),
@@ -538,6 +565,9 @@ const deletePurchase = async (req, res) => {
     for (const p of result.deleted) {
       await deleteProductImages(p.images);
     }
+
+    // 5. Publicar u ocultar según el stock que quedó (los borrados ya no existen y se saltean solos)
+    await syncPurchaseProducts(purchase.items);
 
     res.json({
       message: "Compra eliminada",
