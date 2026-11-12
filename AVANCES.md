@@ -414,6 +414,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 198- el buscador de "Modificar pedido" muestra todos los productos (12/11/2026): buscando "mini plug" aparecían solo 8 (hasta "CABLE ALARGUE MINI PLUG AUXILIAR") y el resto no salía nunca, porque le pedía al servidor 8 resultados en orden alfabético. Ahora trae hasta 100 coincidencias en una lista con scroll, como la venta a mano. Lo mismo en el buscador de productos destacados de los emails. Sin migración. ✅
 
+199- "Modificar pedido" con productos que tienen variantes (12/11/2026): al agregar "CABLE MINI PLUG A MINI PLUG AUXILIAR" (5 variantes, 350 unidades entre todas) y guardar, salía "Stock insuficiente… Disponible: 0": la línea se agregaba sin variante y se miraba el stock del producto padre, que con variantes es 0. Ahora la línea muestra un selector "Elegí la variante" con el stock de cada una (las agotadas no se pueden elegir), y al elegirla se cargan su precio, su costo y su SKU, como en la venta a mano. No deja guardar sin elegirla, y el servidor responde "Elegí la variante de…" si llega sin. La etiqueta de la variante la arma el servidor (antes guardaba el texto que mandaba el navegador) y se guarda también su SKU. Cada variante va en su propia línea. Sin probar en el navegador. Sin migración. ✅
+
 ##
 
 

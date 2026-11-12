@@ -3306,6 +3306,11 @@ async function modifyOrder(req, res) {
         if (!variant || variant.productId !== pid) {
           return res.status(400).json({ error: `La variante elegida no es de "${product.name}"` });
         }
+      } else if (await prisma.productVariant.count({ where: { productId: pid, active: true } }) > 0) {
+        // Producto con variantes y sin variante elegida: antes se miraba el stock del producto padre
+        // (que con variantes es 0) y salía "Stock insuficiente… Disponible: 0" aunque las variantes
+        // tuvieran cientos. El panel ahora muestra el selector; esto cubre a quien no lo use.
+        return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
       }
       const stockOf = variant || product;
       if (!stockOf.stockUnlimited && stockOf.stock < qty) {
@@ -3440,7 +3445,13 @@ async function modifyOrder(req, res) {
           // pesos — y ahora que los totales se calculan por moneda, esa línea se sumaba a los pesos.
           currency:     effectiveCurrency({ product }),
           variantId:    newItemVariantId,
-          variantLabel: variant ? (newItem.variantLabel || null) : null,
+          // La etiqueta se arma acá, con el mismo formato que la tienda y la venta a mano
+          // ("Color: Negro / Largo: 1m"). Antes: newItem.variantLabel, el texto que mandara el navegador.
+          variantLabel: variant
+            ? ((Array.isArray(variant.combination) ? variant.combination : []).map((c) => `${c.name}: ${c.value}`).join(" / ") || null)
+            : null,
+          // SKU de la variante al momento de agregarla (como addItemToOrder): el detalle lo muestra.
+          variantSku:   variant ? (variant.sku || null) : null,
         },
       });
 

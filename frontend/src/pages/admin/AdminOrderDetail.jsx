@@ -143,6 +143,8 @@ export default function AdminOrderDetail() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef(null);
+  // Variantes activas de los productos agregados en "Modificar pedido": productId → null (cargando) | [].
+  const [variantCache, setVariantCache] = useState({});
   const [showOriginal, setShowOriginal] = useState(false);
   // Modal "¿con precios o sin precios?" antes de imprimir.
   const [printAsk, setPrintAsk] = useState(false);
@@ -279,6 +281,7 @@ export default function AdminOrderDetail() {
     });
     setProductSearch("");
     setSearchResults([]);
+    setVariantCache({}); // el stock de las variantes pudo cambiar desde la última vez
     setEditMode(true);
   };
 
@@ -370,9 +373,43 @@ export default function AdminOrderDetail() {
     }, 300);
   }, []);
 
+  // Variantes activas de un producto, para el selector de la línea (mismo pedido que la venta a mano).
+  const loadVariants = (productId, productName) => {
+    setVariantCache((prev) => ({ ...prev, [productId]: null }));
+    productsApi.getById(productId)
+      .then((res) => setVariantCache((prev) => ({ ...prev, [productId]: (res.data.variants || []).filter((v) => v.active) })))
+      .catch(() => {
+        setVariantCache((prev) => ({ ...prev, [productId]: [] }));
+        toast.error(`No se pudieron cargar las variantes de "${productName}"`);
+      });
+  };
+
+  // Elegir la variante de una línea agregada: su precio (según el tipo de cliente), su costo y su SKU.
+  const selectEditVariant = (idx, variantIdValue) => {
+    setEditItems((prev) => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const product = it.catalogProduct;
+      const variant = (variantCache[it.productId] || []).find((v) => String(v.id) === String(variantIdValue)) || null;
+      const combo = Array.isArray(variant?.combination) ? variant.combination : [];
+      const cost = variant?.cost ?? product?.cost;
+      return {
+        ...it,
+        variantId:    variant ? variant.id : null,
+        variantLabel: variant ? combo.map((c) => `${c.name}: ${c.value}`).join(" / ") : null,
+        sku:          variant?.sku || product?.sku || null,
+        price:        priceParts(product, variant, order?.customerType === "MAYORISTA").price,
+        cost:         cost ?? "",
+      };
+    }));
+  };
+
   const addEditProduct = (product) => {
+    // Con variantes el stock es de cada variante: hay que elegir una, y cada variante va en su línea.
+    // Antes se agregaba sin variante y al guardar salía "Stock insuficiente… Disponible: 0" (el stock
+    // del producto padre), aunque las variantes tuvieran cientos de unidades.
+    const hasVariants = (product._count?.variants ?? 0) > 0;
     // Si ya está en la lista, solo incrementar cantidad
-    const existingIdx = editItems.findIndex((i) => i.productId === product.id && !i.variantId);
+    const existingIdx = hasVariants ? -1 : editItems.findIndex((i) => i.productId === product.id && !i.variantId);
     if (existingIdx >= 0) {
       setEditItems((prev) => prev.map((it, i) => i === existingIdx ? { ...it, quantity: it.quantity + 1 } : it));
     } else {
@@ -391,7 +428,10 @@ export default function AdminOrderDetail() {
         currency:     product.currency || "ARS",
         variantId:    null,
         variantLabel: null,
+        // Solo en productos con variantes: muestra el selector y sirve para recalcular precio y costo.
+        catalogProduct: hasVariants ? product : null,
       }]);
+      if (hasVariants && variantCache[product.id] === undefined) loadVariants(product.id, product.name);
     }
     setProductSearch("");
     setSearchResults([]);
@@ -423,6 +463,12 @@ export default function AdminOrderDetail() {
   const handleSaveEdit = () => {
     if (editItems.length === 0) {
       toast.error("El pedido debe tener al menos un producto");
+      return;
+    }
+    // Producto con variantes agregado sin elegir cuál (mientras cargan también cuenta como sin elegir).
+    const sinVariante = editItems.find((it) => it.catalogProduct && !it.variantId && (variantCache[it.productId]?.length ?? 1) > 0);
+    if (sinVariante) {
+      toast.error(`Elegí la variante de "${sinVariante.name}"`);
       return;
     }
     // Si cambió algún costo o proveedor, preguntar si se aplica también al producto (próximos pedidos).
@@ -956,7 +1002,34 @@ export default function AdminOrderDetail() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p>
-                        {item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
+                        {item.catalogProduct ? (() => {
+                          // Línea recién agregada de un producto con variantes: elegir cuál
+                          const variants = variantCache[item.productId];
+                          if (!Array.isArray(variants)) return <p className="text-xs text-slate-400 mt-1">Cargando variantes...</p>;
+                          if (variants.length === 0) return null;
+                          return (
+                            <select
+                              value={item.variantId ?? ""}
+                              onChange={(e) => selectEditVariant(idx, e.target.value)}
+                              title="El stock se descuenta de la variante elegida"
+                              className={`mt-1 w-full max-w-xs border rounded-lg px-1.5 py-1 text-xs bg-white ${
+                                item.variantId ? "border-slate-300 text-slate-700" : "border-amber-400 text-amber-800 font-semibold"
+                              }`}
+                            >
+                              <option value="">— Elegí la variante —</option>
+                              {variants.map((v) => {
+                                const combo = Array.isArray(v.combination) ? v.combination : [];
+                                const label = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || v.sku || `#${v.id}`;
+                                const sinStock = !v.stockUnlimited && v.stock <= 0;
+                                return (
+                                  <option key={v.id} value={v.id} disabled={sinStock}>
+                                    {label} (stock: {v.stockUnlimited ? "∞" : v.stock}){sinStock ? " — sin stock" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          );
+                        })() : item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
                         {item.sku && <p className="text-[11px] text-slate-500 mt-0.5">SKU: {item.sku}</p>}
                       </div>
                       {/* Precio de venta + costo (proveedor) + cantidad editables */}

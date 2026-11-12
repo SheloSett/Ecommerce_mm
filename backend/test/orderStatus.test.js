@@ -22,6 +22,7 @@ function resetDb() {
       2: { id: 2, name: "Pendrive", stock: 10, stockUnlimited: false, active: true },
       3: { id: 3, name: "Funda", stock: 0, stockUnlimited: false, active: true }, // con variantes
       4: { id: 4, name: "Cargador", stock: 0, stockUnlimited: false, active: true }, // con variantes
+      5: { id: 5, name: "Mouse", stock: 0, stockUnlimited: false, active: true }, // sin variantes, agotado
     },
     variants: {
       31: { id: 31, productId: 3, active: true, stock: 30, stockUnlimited: false, sku: "FUN-N", combination: [{ name: "Color", value: "Negro" }] },
@@ -265,9 +266,10 @@ describe("Modificar pedido: el stock se mueve solo si el pedido ya lo descontó 
 
   test("un producto nuevo sin stock corta ANTES de tocar el pedido", async () => {
     const items = setUp(82, { status: "APPROVED", stockDeducted: true });
-    db.products[3].stock = 0;
-    const res = await modify(82, [...items, { productId: 3, quantity: 1, price: 500 }]);
+    // Antes: el producto 3, que tiene variantes. Ahora ese corta antes por no traer variante.
+    const res = await modify(82, [...items, { productId: 5, quantity: 1, price: 500 }]);
     assert.equal(res.code, 400);
+    assert.match(res.body.error, /Stock insuficiente/);
     assert.equal(db.orders[82].items.length, 2, "el pendrive sigue en el pedido");
     assert.equal(db.products[2].stock, 10, "y su stock no se devolvió");
     assert.equal(db.products[1].stock, 10);
@@ -287,6 +289,31 @@ describe("Modificar pedido: el stock se mueve solo si el pedido ya lo descontó 
     const res = await modify(84, [{ itemId: linea.id, productId: 1, quantity: 1, price: 1000 }, { productId: 3, variantId: 41, quantity: 1, price: 500 }]);
     assert.equal(res.code, 400);
     assert.equal(db.variants[41].stock, 30);
+  });
+
+  // 12/11/2026: agregar un cable con 5 variantes (350 unidades entre todas) decía
+  // "Stock insuficiente… Disponible: 0", porque miraba el stock del producto padre.
+  test("un producto con variantes agregado sin variante pide elegirla, sin tocar el pedido", async () => {
+    const items = setUp(85, { status: "APPROVED", stockDeducted: true });
+    const res = await modify(85, [...items, { productId: 3, quantity: 6, price: 699 }]);
+    assert.equal(res.code, 400);
+    assert.equal(res.body.error, 'Elegí la variante de "Funda"');
+    assert.equal(db.orders[85].items.length, 2, "el pendrive sigue en el pedido");
+    assert.equal(db.products[1].stock, 10);
+    assert.equal(db.variants[31].stock, 30);
+  });
+
+  test("con la variante elegida descuenta de esa variante y guarda su etiqueta y SKU", async () => {
+    const items = setUp(86, { status: "APPROVED", stockDeducted: true });
+    const res = await modify(86, [...items, { productId: 3, variantId: 32, variantLabel: "texto del navegador", quantity: 6, price: 699 }]);
+    assert.equal(res.code, 200);
+    assert.equal(db.variants[32].stock, 24);
+    assert.equal(db.variants[31].stock, 30);
+    assert.equal(db.products[3].stock, 0, "el padre no se toca");
+    const nueva = db.orders[86].items.find((i) => i.productId === 3);
+    assert.equal(nueva.variantId, 32);
+    assert.equal(nueva.variantLabel, "Color: Rojo", "la etiqueta la arma el servidor");
+    assert.equal(nueva.variantSku, "FUN-R");
   });
 });
 
