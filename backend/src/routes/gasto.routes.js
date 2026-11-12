@@ -6,6 +6,8 @@ const router = express.Router();
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+// Publica/despublica el producto según le quede stock (lo usan todos los que mueven stock)
+const { syncProductVisibility } = require("../controllers/product.controller");
 
 // GET /api/gastos - listar gastos con filtros opcionales: type, dateFrom, dateTo
 router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("finanzas", "caja", "metricas"), async (req, res) => {
@@ -45,6 +47,35 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
     const parsedProductId = validSubtype === "RMA" && productId ? parseInt(productId) : null;
     const parsedVariantId = validSubtype === "RMA" && variantId ? parseInt(variantId) : null;
 
+    // RMA: validar producto y variante ANTES de guardar nada (con un 400 no queda un gasto a medias).
+    // Antes no se validaba: una variante de OTRO producto (o desactivada) descontaba stock de ese otro
+    // producto, y un producto con variantes sin variante elegida guardaba el gasto sin tocar ningún stock.
+    // Misma regla que la venta manual (createManualOrder en order.controller.js).
+    let rmaProduct = null;
+    let rmaVariant = null;
+    if (validSubtype === "RMA") {
+      if (parsedVariantId && !parsedProductId) {
+        return res.status(400).json({ error: "Falta el producto de la variante devuelta" });
+      }
+      if (parsedProductId) {
+        rmaProduct = await prisma.product.findUnique({ where: { id: parsedProductId } });
+        if (!rmaProduct) {
+          return res.status(400).json({ error: `Producto no encontrado: ${parsedProductId}` });
+        }
+        if (parsedVariantId) {
+          rmaVariant = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
+          if (!rmaVariant || rmaVariant.productId !== rmaProduct.id || !rmaVariant.active) {
+            return res.status(400).json({ error: `Variante inválida para "${rmaProduct.name}"` });
+          }
+        } else {
+          const activeVariants = await prisma.productVariant.count({ where: { productId: rmaProduct.id, active: true } });
+          if (activeVariants > 0) {
+            return res.status(400).json({ error: `Elegí la variante de "${rmaProduct.name}" que se devuelve` });
+          }
+        }
+      }
+    }
+
     const gasto = await prisma.gasto.create({
       data: {
         amount:      parseFloat(amount),
@@ -58,26 +89,32 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
       },
     });
 
-    // Descontar stock al registrar un RMA
-    if (validSubtype === "RMA" && quantity > 0) {
+    // Descontar stock al registrar un RMA (producto y variante ya validados arriba)
+    if (validSubtype === "RMA" && quantity > 0 && rmaProduct) {
       const qty = parseInt(quantity) || 1;
-      if (parsedVariantId) {
-        const variant = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
-        if (variant && !variant.stockUnlimited) {
+      let moved = false;
+      if (rmaVariant) {
+        if (!rmaVariant.stockUnlimited) {
           await prisma.productVariant.update({
-            where: { id: parsedVariantId },
-            data:  { stock: Math.max(0, variant.stock - qty) },
+            where: { id: rmaVariant.id },
+            data:  { stock: Math.max(0, rmaVariant.stock - qty) },
           });
+          moved = true;
         }
-      } else if (parsedProductId) {
-        const product = await prisma.product.findUnique({ where: { id: parsedProductId } });
-        if (product && !product.stockUnlimited) {
-          const newStock = Math.max(0, product.stock - qty);
-          await prisma.product.update({
-            where: { id: parsedProductId },
-            data:  { stock: newStock, ...(newStock === 0 ? { active: false } : {}) },
-          });
-        }
+      } else if (!rmaProduct.stockUnlimited) {
+        // Antes: data: { stock: newStock, ...(newStock === 0 ? { active: false } : {}) } — el producto se
+        // despublicaba a mano acá, y si se descontaba de una variante no se despublicaba nunca, aunque fuera
+        // la última con stock. Ahora lo resuelve syncProductVisibility, como en los demás que mueven stock.
+        await prisma.product.update({
+          where: { id: rmaProduct.id },
+          data:  { stock: Math.max(0, rmaProduct.stock - qty) },
+        });
+        moved = true;
+      }
+      if (moved) {
+        // El gasto y el stock ya quedaron guardados: si esto falla, no se responde error (un reintento
+        // registraría el RMA dos veces); la visibilidad se corrige sola con el próximo movimiento de stock.
+        try { await syncProductVisibility(rmaProduct.id); } catch (err) { console.error("RMA: syncProductVisibility:", err); }
       }
     }
 
