@@ -63,7 +63,8 @@ async function generateUniqueProductSlug(name, excludeId = null) {
 function searchWords(term) {
   return (term || "").trim().split(/\s+/).filter(Boolean);
 }
-async function searchProductIds(term, { includeSku = false } = {}) {
+// includeVariantSku: también encuentra el producto por el SKU de una de sus variantes (lo usa el panel).
+async function searchProductIds(term, { includeSku = false, includeVariantSku = false } = {}) {
   const t = (term || "").trim();
   if (!t) return null;
   // Escapar comodines de LIKE para que % y _ del usuario se traten como literales.
@@ -72,8 +73,11 @@ async function searchProductIds(term, { includeSku = false } = {}) {
   const words = searchWords(t).map((w) => `%${esc(w)}%`);
   try {
     const nameCond = Prisma.join(words.map((w) => Prisma.sql`unaccent(name) ILIKE unaccent(${w})`), " AND ");
+    const skuCond = includeVariantSku
+      ? Prisma.sql`sku ILIKE ${like} OR id IN (SELECT "productId" FROM product_variants WHERE sku ILIKE ${like})`
+      : Prisma.sql`sku ILIKE ${like}`;
     const rows = includeSku
-      ? await prisma.$queryRaw`SELECT id FROM products WHERE (${nameCond}) OR sku ILIKE ${like}`
+      ? await prisma.$queryRaw`SELECT id FROM products WHERE (${nameCond}) OR ${skuCond}`
       : await prisma.$queryRaw`SELECT id FROM products WHERE (${nameCond})`;
     return rows.map((r) => r.id);
   } catch (e) {
@@ -577,9 +581,22 @@ async function getProductsAdmin(req, res) {
       //   { description: { contains: search, mode: "insensitive" } },
       // ];
       // Búsqueda insensible a tildes vía unaccent (fallback al filtro por nombre si no está la extensión).
-      const ids = await searchProductIds(search, { includeSku: false });
+      // Antes: includeSku: false. Los buscadores del panel que pasan por acá ("Modificar pedido", la
+      // lista de productos, campañas, emails) no encontraban nada tipeando un SKU, mientras que la venta
+      // a mano y la tienda sí. Ahora el nombre, el SKU del producto o el de una de sus variantes.
+      // (La descripción sigue afuera, por el motivo de arriba.)
+      const ids = await searchProductIds(search, { includeSku: true, includeVariantSku: true });
       if (ids !== null) where.id = { in: ids };
-      else where.AND = searchWords(search).map((w) => ({ name: { contains: w, mode: "insensitive" } }));
+      // Antes: where.AND = [...] — pisaba el filtro de inStock, que también va en where.AND.
+      else where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { AND: searchWords(search).map((w) => ({ name: { contains: w, mode: "insensitive" } })) },
+            { sku: { contains: search.trim(), mode: "insensitive" } },
+          ],
+        },
+      ];
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
