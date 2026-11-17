@@ -123,6 +123,14 @@ class FakePrismaClient {
     this.couponUsage = { findFirst: async () => null, create: async ({ data }) => { db.couponUsages.push(data); return data; } };
     this.customer = { findUnique: async () => null };
     this.cart = { findUnique: async () => null };
+    // Venta a mano: crea el pedido dentro de una transacción (acá, el mismo cliente falso)
+    this.$transaction = (fn) => fn(this);
+    this.order.create = async ({ data }) => {
+      const id = 500 + Object.keys(db.orders).length;
+      const { items, ...rest } = clone(data);
+      db.orders[id] = { id, ...rest, items: (items?.create || []).map((i) => ({ id: db.nextItemId++, orderId: id, ...i })) };
+      return clone(db.orders[id]);
+    };
   }
 }
 
@@ -138,7 +146,7 @@ stub(path.join(root, "src/controllers/product.controller.js"), { syncProductVisi
 stub(path.join(root, "src/config/cloudinary.js"), { uploadBuffer: async () => ({}) });
 stub(path.join(root, "src/sse/notificationSSE.js"), { pushToClient: () => {} });
 
-const { updateOrderStatus, approveCotizacion, modifyOrder, addItemToOrder, deleteOrderItem, cancelByCustomer } = require("../src/controllers/order.controller");
+const { updateOrderStatus, approveCotizacion, modifyOrder, addItemToOrder, deleteOrderItem, cancelByCustomer, createManualOrder } = require("../src/controllers/order.controller");
 
 const fakeRes = () => ({ code: 200, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } });
 async function call(fn, req) { const res = fakeRes(); await fn(req, res); return res; }
@@ -458,5 +466,40 @@ describe("una línea sin variante de un producto con variantes no mueve el stock
     const res = await modify(221, [{ itemId: parlante.id, productId: 1, quantity: 1, price: 1000 }]);
     assert.equal(res.code, 200);
     assert.equal(db.products[3].stock, 0);
+  });
+});
+
+// 17/11/2026: la venta a mano suma el IVA como el checkout (solo mayorista con "Agregar IVA").
+describe("venta a mano con IVA", () => {
+  beforeEach(() => { resetDb(); db.products[1].ivaRate = 10.5; db.products[2].ivaRate = 21; });
+  const venta = (body) => call(createManualOrder, { body: {
+    customerName: "Cliente", paymentMethod: "EFECTIVO", status: "APPROVED", salesChannel: "MOSTRADOR",
+    items: [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }], ...body,
+  } });
+  const creado = () => Object.values(db.orders).find((o) => o.id >= 500);
+
+  test("mayorista con IVA: cada producto con su alícuota, sobre el precio ya descontado", async () => {
+    const res = await venta({ customerType: "MAYORISTA", wantsInvoice: true, manualDiscountType: "PERCENTAGE", manualDiscountValue: 10 });
+    assert.equal(res.code, 201, JSON.stringify(res.body));
+    const o = creado();
+    assert.equal(o.wantsInvoice, true);
+    // base: 2000 y 500, menos 10% → 1800 y 450; IVA 10,5% y 21% → 189 + 94,5
+    assert.equal(o.ivaAmount, 283.5);
+    assert.equal(o.total, 2250 + 283.5);
+  });
+
+  test("minorista: no se suma aunque venga marcado (sus precios ya tienen IVA)", async () => {
+    const res = await venta({ customerType: "MINORISTA", wantsInvoice: true });
+    assert.equal(res.code, 201, JSON.stringify(res.body));
+    const o = creado();
+    assert.equal(o.wantsInvoice, false);
+    assert.equal(o.ivaAmount, 0);
+    assert.equal(o.total, 2500);
+  });
+
+  test("mayorista sin la casilla: sin IVA", async () => {
+    await venta({ customerType: "MAYORISTA" });
+    assert.equal(creado().ivaAmount, 0);
+    assert.equal(creado().total, 2500);
   });
 });

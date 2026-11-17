@@ -212,6 +212,8 @@ export default function AdminOrders() {
     // un monto en pesos). Es aparte del descuento que se le puede poner a cada producto (item.desc).
     manualDiscountType: "PERCENTAGE",
     manualDiscountValue: "",
+    // wantsInvoice: "Agregar IVA (factura)". Solo cuenta si el cliente es MAYORISTA, como en el checkout.
+    wantsInvoice: false,
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
     // desc: % de descuento de ESA línea. El precio unitario sigue siendo el de lista; el precio con
@@ -477,6 +479,24 @@ export default function AdminOrders() {
   })();
   const manualTotalUsd = Math.max(0, manualSubtotalUsd - manualDescGeneralUsd);
 
+  // IVA de la venta a mano (solo MAYORISTA con "Agregar IVA"): la misma cuenta que el servidor
+  // (computeOrderTotals): cada línea con la alícuota de su producto (los libres al 21%), sobre su base
+  // ya bajada en proporción al descuento general, redondeando línea por línea.
+  const manualConIva = manualForm.customerType === "MAYORISTA" && !!manualForm.wantsInvoice;
+  const manualIva = (cur, subtotal, descGeneral) => {
+    if (!manualConIva || subtotal <= 0) return 0;
+    const factor = (subtotal - descGeneral) / subtotal;
+    const sum = manualForm.items
+      .filter((it) => manualItemCurrency(it) === cur)
+      .reduce((s, it) => {
+        const rate = (!it.isCustom && it.productId ? (allProducts || []).find((p) => p.id === it.productId)?.ivaRate : null) ?? 21;
+        return s + Math.round(precioConDesc(it) * (parseInt(it.quantity) || 0) * factor * rate) / 100;
+      }, 0);
+    return Math.round(sum * 100) / 100;
+  };
+  const manualIvaArs = manualIva("ARS", manualSubtotal, manualDescGeneral);
+  const manualIvaUsd = manualIva("USD", manualSubtotalUsd, manualDescGeneralUsd);
+
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
   const resetManualForm = () => {
     setManualKind("SALE");
@@ -494,6 +514,7 @@ export default function AdminOrders() {
       paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
       crearCuenta: true, cuentaPassword: "",
       manualDiscountType: "PERCENTAGE", manualDiscountValue: "",
+      wantsInvoice: false,
       items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", desc: "", isCustom: false }],
     });
   };
@@ -618,6 +639,8 @@ export default function AdminOrders() {
         cuentaPassword: manualForm.cuentaPassword || undefined,
         manualDiscountType:  manualForm.manualDiscountValue ? manualForm.manualDiscountType : undefined,
         manualDiscountValue: manualForm.manualDiscountValue || undefined,
+        // IVA: solo mayorista (el servidor vuelve a controlarlo)
+        wantsInvoice:  manualForm.customerType === "MAYORISTA" && !!manualForm.wantsInvoice,
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
@@ -3262,6 +3285,25 @@ ${pagesHtml}
                 </p>
               </div>
 
+              {/* IVA, como en el checkout: solo para mayoristas (sus precios son sin IVA; los minoristas
+                  ya lo tienen incluido). Para un minorista no se muestra. */}
+              {manualForm.customerType === "MAYORISTA" && (
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!manualForm.wantsInvoice}
+                    onChange={(e) => setManualForm((p) => ({ ...p, wantsInvoice: e.target.checked }))}
+                    className="mt-0.5 w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm">
+                    <span className="font-bold text-slate-800">🧾 Agregar IVA (factura)</span>
+                    <span className="block text-xs text-slate-400">
+                      Como en el checkout: se suma el IVA de cada producto (21% o 10,5%) sobre el precio ya descontado.
+                    </span>
+                  </span>
+                </label>
+              )}
+
               {/* Total y acciones */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div className="text-sm font-bold text-slate-800">
@@ -3281,11 +3323,17 @@ ${pagesHtml}
                       <span className="text-emerald-600 font-semibold">−{formatPriceWithCurrency(manualUsd.desc + manualDescGeneralUsd, "USD")}</span>
                     </span>
                   )}
-                  Total:{" "}
+                  {manualConIva && (manualIvaArs > 0 || manualIvaUsd > 0) && (
+                    <span className="block text-xs font-normal text-slate-500">
+                      IVA: <span className="font-semibold text-slate-700">+{formatPrice(manualIvaArs)}</span>
+                      {manualIvaUsd > 0 && <span className="font-semibold text-slate-700"> / +{formatPriceWithCurrency(manualIvaUsd, "USD")}</span>}
+                    </span>
+                  )}
+                  Total{manualConIva ? " con IVA" : ""}:{" "}
                   <span className="text-blue-600 text-base">
-                    {(!manualHasUsd || manualSubtotalLista > 0) && formatPrice(manualTotal)}
+                    {(!manualHasUsd || manualSubtotalLista > 0) && formatPrice(manualTotal + manualIvaArs)}
                     {manualHasUsd && manualSubtotalLista > 0 && " + "}
-                    {manualHasUsd && formatPriceWithCurrency(manualTotalUsd, "USD")}
+                    {manualHasUsd && formatPriceWithCurrency(manualTotalUsd + manualIvaUsd, "USD")}
                   </span>
                 </div>
                 <div className="flex gap-2">

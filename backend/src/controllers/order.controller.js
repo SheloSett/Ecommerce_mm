@@ -2791,7 +2791,7 @@ async function applyCouponToOrder(req, res) {
 async function createManualOrder(req, res) {
   try {
     const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta, cuentaPassword,
-            manualDiscountType, manualDiscountValue } = req.body;
+            manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
 
     // Email es opcional en ventas manuales — solo el nombre es obligatorio
     if (!customerName) {
@@ -2944,11 +2944,25 @@ async function createManualOrder(req, res) {
       });
     }
 
-    // Totales por moneda. La venta manual no lleva cupón ni factura con IVA, así que acá
-    // computeOrderTotals solo separa pesos de dólares — pero se usa la misma función que el resto
-    // para que el criterio sea uno solo. Los ítems libres (sin productId) van en pesos.
+    // Totales por moneda, con la misma función que el checkout. Los ítems libres (sin productId) van
+    // en pesos. La venta manual no lleva cupón.
+    //
+    // IVA: antes la venta manual nunca lo sumaba. Ahora, igual que el checkout, se suma si la venta es
+    // para un MAYORISTA y el vendedor marcó "Agregar IVA (factura)": los precios mayoristas son sin
+    // IVA y los minoristas ya lo tienen incluido. Cada producto con su alícuota (21% o 10,5%), sobre
+    // la base ya descontada; los ítems libres al 21% (computeOrderTotals usa 21 si no hay alícuota).
+    // Antes: computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null, manualDiscount: descuentoManual })
+    const applyIva = wantsInvoice === true && customerType === "MAYORISTA";
+    let ivaRates = null;
+    if (applyIva) {
+      const prods = await prisma.product.findMany({
+        where:  { id: { in: [...new Set(orderItems.map((i) => i.productId).filter(Boolean))] } },
+        select: { id: true, ivaRate: true },
+      });
+      ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
+    }
     const descuentoManual = parseManualDiscount(manualDiscountType, manualDiscountValue);
-    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null, manualDiscount: descuentoManual });
+    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual });
     // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
     total = totalesManual.totalArs;
 
@@ -3070,6 +3084,11 @@ async function createManualOrder(req, res) {
           manualDiscountValue: descuentoManual?.value ?? null,
           manualDiscount:      totalesManual.manualDiscountArs || null,
           ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd, manualDiscountUsd: totalesManual.manualDiscountUsd || null } : {}),
+          // IVA (ver applyIva arriba). wantsInvoice queda guardado: si después se modifica el pedido,
+          // recalcOrderTotals vuelve a calcular el IVA con las líneas nuevas.
+          wantsInvoice: applyIva,
+          ivaAmount:    totalesManual.ivaAmountArs,
+          ...(totalesManual.hasUsd ? { ivaAmountUsd: totalesManual.ivaAmountUsd } : {}),
           items: { create: orderItems },
         },
         include: {
