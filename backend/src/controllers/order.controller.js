@@ -277,7 +277,7 @@ async function getOrder(req, res) {
             // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
             // Antes: ... shelf: true, cost: true, supplier: ...
             // sku: se muestra en la lista de productos del detalle.
-            product: { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            product: { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, ivaRate: true, supplier: { select: SUPPLIER_SELECT } } },
             // proveedor elegido para la línea en "Modificar pedido" (null = el de la variante o del producto)
             supplier: { select: SUPPLIER_SELECT },
           },
@@ -1861,7 +1861,9 @@ async function getMyCotizaciones(req, res) {
 // la edición del pedido, donde el vendedor puede cambiarlo en el mismo guardado).
 // overrideShipping: costo de envío nuevo, si es lo que se está cambiando (si no, el que ya tenía el pedido).
 // Antes no miraba el envío: modificar un pedido se lo sacaba del total.
-async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined) {
+// overrideInvoice: true/false si en este guardado se prende o se apaga el IVA ("Agregar IVA" de
+// "Modificar pedido"); si no viene, el que ya tenía el pedido. Devuelve también wantsInvoice.
+async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -1876,10 +1878,13 @@ async function recalcOrderTotals(orderId, overrideManual = undefined, overrideSh
     : parseManualDiscount(order.manualDiscountType, order.manualDiscountValue);
 
   // Las alícuotas solo se consultan si la orden lleva factura.
+  const conIva = overrideInvoice !== undefined ? overrideInvoice : !!order.wantsInvoice;
   let ivaRates = null;
-  if (order.wantsInvoice) {
+  if (conIva) {
     const prods = await prisma.product.findMany({
-      where:  { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+      // filter(Boolean): los ítems libres no tienen producto (van al 21%). Antes se mandaba el null
+      // en la lista; no pasaba porque solo el checkout llevaba IVA, y ahora también la venta a mano.
+      where:  { id: { in: [...new Set(order.items.map((i) => i.productId).filter(Boolean))] } },
       select: { id: true, ivaRate: true },
     });
     ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
@@ -1890,18 +1895,20 @@ async function recalcOrderTotals(orderId, overrideManual = undefined, overrideSh
 
   return {
     total:     t.totalArs,
+    ...(overrideInvoice !== undefined ? { wantsInvoice: conIva } : {}),
     // Descuento manual: se recalcula siempre (si es un %, el monto cambia cuando cambian los ítems).
     ...(overrideManual !== undefined ? { manualDiscountType: manual?.type ?? null, manualDiscountValue: manual?.value ?? null } : {}),
     manualDiscount:    t.manualDiscountArs || null,
     manualDiscountUsd: t.hasUsd ? (t.manualDiscountUsd || null) : null,
-    ivaAmount: order.wantsInvoice ? t.ivaAmountArs : (order.ivaAmount || 0),
+    // Sin IVA: si se acaba de apagar, queda en 0; si nunca tuvo, se deja lo que había (como siempre).
+    ivaAmount: conIva ? t.ivaAmountArs : (overrideInvoice === false ? 0 : (order.ivaAmount || 0)),
     // El descuento solo se toca si la orden tiene un cupón aplicado.
     ...(order.couponId ? { couponDiscount: t.couponDiscountArs } : {}),
     // Los campos en dólares solo se escriben si el pedido tiene ítems en dólares. Un pedido 100%
     // en pesos los deja en null y se comporta exactamente como antes.
     ...(t.hasUsd ? {
       totalUsd:     t.totalUsd,
-      ivaAmountUsd: order.wantsInvoice ? t.ivaAmountUsd : 0,
+      ivaAmountUsd: conIva ? t.ivaAmountUsd : 0,
       ...(order.couponId ? { couponDiscountUsd: t.couponDiscountUsd } : {}),
     } : {}),
   };
@@ -2734,7 +2741,8 @@ async function applyCouponToOrder(req, res) {
     let ivaRatesQuote = null;
     if (order.wantsInvoice) {
       const prods = await prisma.product.findMany({
-        where: { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+        // filter(Boolean): los ítems libres (sin producto) van al 21%; antes se mandaba el null en la lista.
+        where: { id: { in: [...new Set(order.items.map((i) => i.productId).filter(Boolean))] } },
         select: { id: true, ivaRate: true },
       });
       ivaRatesQuote = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
@@ -3272,7 +3280,8 @@ async function modifyOrder(req, res) {
     // manualDiscountType/Value: descuento sobre TODO el pedido, editable desde el mismo modal.
     // Si no vienen en el body, se deja el que ya tenía la orden.
     // applySupplierToProduct: ídem para el proveedor de la línea (misma respuesta del modal).
-    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue } = req.body;
+    // wantsInvoice: la casilla "Agregar IVA (factura)" del panel (true/false; si no viene, no se toca).
+    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
@@ -3590,7 +3599,12 @@ async function modifyOrder(req, res) {
     const overrideManual = manualDiscountType !== undefined || manualDiscountValue !== undefined
       ? parseManualDiscount(manualDiscountType, manualDiscountValue)
       : undefined;
-    const totalsData = await recalcOrderTotals(orderId, overrideManual);
+    // IVA: como en el checkout y la venta a mano, solo para un pedido MAYORISTA (sus precios son sin
+    // IVA). Si el panel no lo manda, queda como estaba.
+    const overrideInvoice = typeof wantsInvoice === "boolean"
+      ? (wantsInvoice && order.customerType === "MAYORISTA")
+      : undefined;
+    const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice);
 
     const updated = await prisma.order.update({
       where: { id: orderId },
@@ -3609,7 +3623,7 @@ async function modifyOrder(req, res) {
       include: {
         items: {
           include: {
-            product:  { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            product:  { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, ivaRate: true, supplier: { select: SUPPLIER_SELECT } } },
             supplier: { select: SUPPLIER_SELECT },
           },
           orderBy: { id: "asc" },

@@ -420,6 +420,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 201- IVA en la venta a mano (17/11/2026): pedido del negocio. Como en el checkout, si el tipo de cliente es Mayorista aparece la casilla "🧾 Agregar IVA (factura)": suma el IVA de cada producto con su alícuota (21% o 10,5%; los productos libres al 21%) sobre el precio ya descontado, y el total de la pantalla lo muestra aparte. Para un minorista no aparece (sus precios ya tienen IVA) y el servidor lo ignora aunque llegue. El pedido queda con wantsInvoice, así que si después se modifica, el IVA se recalcula solo. Misma cuenta que el checkout (computeOrderTotals). Tests nuevos en orderStatus. Sin probar en el navegador. Sin migración. ✅
 
+202- IVA también en "Modificar pedido" (17/11/2026): en un pedido mayorista aparece la misma casilla "🧾 Agregar IVA (factura)" debajo del descuento general; arranca tildada si el pedido ya tenía IVA, y al guardar se suma o se saca (con IVA en 0). El "Total estimado" muestra el IVA con la misma cuenta que el servidor. En un pedido minorista no aparece y el servidor no lo prende. De paso: el cálculo del IVA ya no le pasa a la base el id vacío de los productos libres (no pasaba porque antes solo el checkout llevaba IVA), al recalcular un pedido ni al aprobar una cotización. Tests nuevos en orderStatus. Sin probar en el navegador. Sin migración. ✅
+
 ##
 
 

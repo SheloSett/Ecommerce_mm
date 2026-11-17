@@ -503,3 +503,41 @@ describe("venta a mano con IVA", () => {
     assert.equal(creado().total, 2500);
   });
 });
+
+// 17/11/2026: "Modificar pedido" también puede prender o apagar el IVA (solo pedidos mayoristas).
+describe("Modificar pedido con IVA", () => {
+  beforeEach(() => { resetDb(); db.products[1].ivaRate = 10.5; db.products[2].ivaRate = 21; });
+  const lineas = (id) => db.orders[id].items.map((i) => ({ itemId: i.id, productId: i.productId, quantity: i.quantity, price: i.price }));
+
+  test("prenderlo en un pedido mayorista suma el IVA de cada producto", async () => {
+    addOrder(300, { status: "PENDING", customerType: "MAYORISTA" }, [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const res = await call(modifyOrder, { params: { id: "300" }, body: { items: lineas(300), wantsInvoice: true } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[300].wantsInvoice, true);
+    assert.equal(db.orders[300].ivaAmount, 210 + 105); // 2000 × 10,5% + 500 × 21%
+    assert.equal(db.orders[300].total, 2500 + 315);
+  });
+
+  test("apagarlo lo saca del total y deja el IVA en 0", async () => {
+    addOrder(301, { status: "PENDING", customerType: "MAYORISTA", wantsInvoice: true, ivaAmount: 315, total: 2815 }, [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const res = await call(modifyOrder, { params: { id: "301" }, body: { items: lineas(301), wantsInvoice: false } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[301].wantsInvoice, false);
+    assert.equal(db.orders[301].ivaAmount, 0);
+    assert.equal(db.orders[301].total, 2500);
+  });
+
+  test("en un pedido minorista no se prende aunque llegue marcado", async () => {
+    addOrder(302, { status: "PENDING", customerType: "MINORISTA" }, [{ productId: 1, quantity: 1, price: 1000 }]);
+    await call(modifyOrder, { params: { id: "302" }, body: { items: lineas(302), wantsInvoice: true } });
+    assert.equal(db.orders[302].wantsInvoice, false);
+    assert.equal(db.orders[302].total, 1000);
+  });
+
+  test("un ítem libre en un pedido con IVA no rompe el cálculo (va al 21%)", async () => {
+    addOrder(303, { status: "PENDING", customerType: "MAYORISTA" }, [{ productId: 1, quantity: 1, price: 1000 }, { productId: null, productName: "Libre", quantity: 1, price: 100 }]);
+    const res = await call(modifyOrder, { params: { id: "303" }, body: { items: lineas(303), wantsInvoice: true } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[303].ivaAmount, 105 + 21);
+  });
+});

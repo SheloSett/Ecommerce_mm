@@ -115,6 +115,8 @@ export default function AdminOrderDetail() {
   // editDiscount: descuento sobre TODO el pedido, editable junto con los productos.
   // type "PERCENTAGE" (%) | "FIXED" (monto en pesos); value vacío = sin descuento.
   const [editDiscount, setEditDiscount] = useState({ type: "PERCENTAGE", value: "" });
+  // "Agregar IVA (factura)" mientras se modifica el pedido (solo pedidos mayoristas, como el checkout)
+  const [editInvoice, setEditInvoice] = useState(false);
   const [uploadingItemImg, setUploadingItemImg] = useState({}); // { [idx]: bool }
 
   // Foto para un ítem libre sin imagen (modo edición): se sube a Cloudinary y queda en el ítem al guardar
@@ -268,6 +270,8 @@ export default function AdminOrderDetail() {
       supplierId:      i.supplierId ?? "",
       lineSupplier:    i.supplier ?? null,
       productSupplier: i.variant?.supplier ?? i.product?.supplier ?? null,
+      // ivaRate: alícuota del producto, para mostrar el IVA en el "Total estimado" (los libres, 21%)
+      ivaRate:         i.product?.ivaRate ?? null,
     })));
     // Mismo orden que se estaba viendo. Se ordena acá y al cambiar el criterio, no en cada render:
     // si no, una fila se movería de lugar mientras se escribe su precio o se elige su proveedor.
@@ -275,6 +279,7 @@ export default function AdminOrderDetail() {
     if (suppliers.length === 0) {
       suppliersApi.getAll().then((r) => setSuppliers(r.data || [])).catch(() => {});
     }
+    setEditInvoice(!!order.wantsInvoice);
     setEditDiscount({
       type:  order.manualDiscountType || "PERCENTAGE",
       value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
@@ -426,6 +431,7 @@ export default function AdminOrderDetail() {
         cost:         product.cost ?? "",
         // La moneda la define el producto (la variante hereda la del padre)
         currency:     product.currency || "ARS",
+        ivaRate:      product.ivaRate ?? null,
         variantId:    null,
         variantLabel: null,
         // Solo en productos con variantes: muestra el selector y sirve para recalcular precio y costo.
@@ -516,6 +522,8 @@ export default function AdminOrderDetail() {
         manualDiscountValue: editDiscount.value ? parseFloat(editDiscount.value) : null,
         // Misma respuesta del modal para el proveedor: también al producto, o solo este pedido.
         applySupplierToProduct: applyCostToProduct,
+        // IVA: solo se manda en un pedido mayorista (en uno minorista no se toca lo que tenga)
+        ...(order.customerType === "MAYORISTA" ? { wantsInvoice: editInvoice } : {}),
       });
       setOrder(res.data);
       setEditMode(false);
@@ -1200,6 +1208,25 @@ export default function AdminOrderDetail() {
                   <p className="text-xs text-slate-400 pb-2.5">Además del descuento de cada producto. Vacío = sin descuento.</p>
                 </div>
 
+                {/* IVA, como en el checkout y la venta a mano: solo en pedidos mayoristas (sus precios son
+                    sin IVA). Arranca tildada si el pedido ya tenía IVA; destildarla lo saca. */}
+                {order.customerType === "MAYORISTA" && (
+                  <label className="flex items-start gap-2 mt-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editInvoice}
+                      onChange={(e) => setEditInvoice(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-blue-600"
+                    />
+                    <span className="text-sm">
+                      <span className="font-bold text-slate-800">🧾 Agregar IVA (factura)</span>
+                      <span className="block text-xs text-slate-400">
+                        Se suma el IVA de cada producto (21% o 10,5%) sobre el precio ya descontado.
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 {/* Total estimado + botón guardar */}
                 <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
                   <div className="text-sm text-slate-500">
@@ -1228,6 +1255,19 @@ export default function AdminOrderDetail() {
                       const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
                       const dUsd = v > 0 && esPct ? Math.round(usd * Math.min(100, v)) / 100 : 0;
                       // Descuento total = lo de cada producto + el general
+                      // IVA (casilla "Agregar IVA"): misma cuenta que el servidor — cada línea con la alícuota
+                      // de su producto (los libres al 21%) sobre su base bajada por el descuento general.
+                      const conIva = order.customerType === "MAYORISTA" && editInvoice;
+                      const ivaDe = (cur, sub, desc) => {
+                        if (!conIva || sub <= 0) return 0;
+                        const factor = (sub - desc) / sub;
+                        const sumIva = editItems
+                          .filter((i) => (i.currency || "ARS") === cur)
+                          .reduce((s, i) => s + Math.round(precioLineaConDesc(i) * parseInt(i.quantity || 0) * factor * (i.ivaRate ?? 21)) / 100, 0);
+                        return Math.round(sumIva * 100) / 100;
+                      };
+                      const ivaArs = ivaDe("ARS", ars, dArs);
+                      const ivaUsd = ivaDe("USD", usd, dUsd);
                       const descTotalArs = (listaArs - ars) + dArs;
                       const descTotalUsd = (listaUsd - usd) + dUsd;
                       return (
@@ -1238,10 +1278,15 @@ export default function AdminOrderDetail() {
                               <span className="text-emerald-600 font-semibold"> −{formatPrice(descTotalArs)}{descTotalUsd > 0 && ` / −${formatPriceWithCurrency(descTotalUsd, "USD")}`}</span>
                             </span>
                           ) : null}
+                          {conIva && (ivaArs > 0 || ivaUsd > 0) && (
+                            <span className="block text-[11px] font-normal text-slate-500">
+                              IVA +{formatPrice(ivaArs)}{ivaUsd > 0 && ` / +${formatPriceWithCurrency(ivaUsd, "USD")}`}
+                            </span>
+                          )}
                           {/* El envío se mantiene al modificar el pedido: va en el total */}
-                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - dArs) + (order.shippingCost || 0))}
+                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - dArs) + ivaArs + (order.shippingCost || 0))}
                           {(!anyUsd || ars > 0 || order.shippingCost > 0) && anyUsd && " + "}
-                          {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd), "USD")}
+                          {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd) + ivaUsd, "USD")}
                         </span>
                       );
                     })()}
