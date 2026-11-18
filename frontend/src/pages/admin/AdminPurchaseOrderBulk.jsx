@@ -199,7 +199,7 @@ export default function AdminPurchaseOrderBulk() {
       // Con recorrido: número de parada delante del nombre y metros desde la parada anterior.
       const contact = [supplierContact(g), stopWalk(route, g.key)].filter(Boolean).join(" · ");
       return `
-      <section class="${g.items.length <= OC_KEEP_TOGETHER ? "oc-entera" : ""}" style="margin-bottom:12px">
+      <section class="${g.lines.length <= OC_KEEP_TOGETHER ? "oc-entera" : ""}" style="margin-bottom:12px">
         <div class="oc-titulo" style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
           <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">${stopPrefix(route, g.key)}🏭 ${esc(g.name)}</span>
           ${contact ? `<span style="font-size:11px;font-weight:600">${esc(contact)}</span>` : ""}
