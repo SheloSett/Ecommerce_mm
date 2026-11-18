@@ -193,15 +193,19 @@ export const suppliersApi = {
 
 // ─── Etiquetas de envío (ex BarTender) ───────────────────────────────────────
 export const shippingLabelsApi = {
-  // params: { search?, customerId? } → { labels, defaultSender }
+  // params: { search?, customerId?, pending?: true, includePending?: true }
+  //   → { labels, pendingCount, defaultSender }. Con pending: cada una trae suggestions y newerFile.
   list: (params) => api.get("/shipping-labels", { params }),
   create: (data) => api.post("/shipping-labels", data),
-  update: (id, data) => api.put(`/shipping-labels/${id}`, data),
+  update: (id, data) => api.put(`/shipping-labels/${id}`, data), // guardar una pendiente la confirma
   remove: (id) => api.delete(`/shipping-labels/${id}`),
-  // formData: files[] (.btw) + lastModified (JSON) → { results, defaultSender }. No guarda nada.
-  parseImport: (formData) => api.post("/shipping-labels/import/parse", formData, { headers: { "Content-Type": "multipart/form-data" } }),
-  // labels: las confirmadas → { created, skipped }
-  importLabels: (labels) => api.post("/shipping-labels/import", { labels }),
+  // formData: files[] (.btw) + lastModified (JSON). Las de envío quedan como pendientes de revisar.
+  //   → { created, repeated, notShipping, unreadable: [nombres] }
+  upload: (formData) => api.post("/shipping-labels/import/upload", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  // items: [{ id, customerId }] → { confirmed }
+  confirm: (items) => api.post("/shipping-labels/confirm", { items }),
+  // ids → { discarded } (solo pendientes)
+  discard: (ids) => api.post("/shipping-labels/discard", { ids }),
 };
 
 // ─── Órdenes ──────────────────────────────────────────────────────────────────

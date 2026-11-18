@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { shippingLabelsApi } from "../../services/api";
+import { customersApi, shippingLabelsApi } from "../../services/api";
 import { storageGet, storageSet } from "../../utils/storage";
 import {
   DEFAULT_SENDER, SENDER_PRESETS, TRANSPORT_SUGGESTIONS, labelDocumentHtml, printShippingLabel,
@@ -16,6 +16,7 @@ import {
 //   fromOrder — los datos del pedido abierto (destinatario y entrega): con una etiqueta guardada, un
 //               botón los pasa a la etiqueta, por si el cliente cambió de dirección
 //   onClose(), onSaved(label)
+// Una etiqueta pendiente de revisar (importada de BarTender) queda confirmada al guardarla.
 const ROTATE_KEY = "etiquetaEnvioGirada";
 const PREVIEW_W = 567; // 150 mm a 96 dpi
 const PREVIEW_H = 378; // 100 mm
@@ -39,10 +40,37 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
   const [previewHtml, setPreviewHtml] = useState("");
   const boxRef = useRef(null);
   const [scale, setScale] = useState(0.8);
+  const [pending, setPending] = useState(!!initial?.pending);
+  // Cliente vinculado: el nombre se guarda aparte (el form solo lleva el id)
+  const [customerName, setCustomerName] = useState(initial?.customer?.name || null);
+  const [picking, setPicking] = useState(false);
+  const [custQuery, setCustQuery] = useState("");
+  const [custResults, setCustResults] = useState([]);
+  const custTimer = useRef(null);
 
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
-  // Una etiqueta nueva (armada con los datos del pedido) se puede guardar aunque no se haya tocado
-  const canSave = !form.id || dirty;
+  // Una etiqueta nueva (armada con los datos del pedido) o una pendiente se puede guardar sin tocarla
+  const canSave = !form.id || pending || dirty;
+
+  const searchCustomers = (q) => {
+    setCustQuery(q);
+    clearTimeout(custTimer.current);
+    if (q.trim().length < 2) { setCustResults([]); return; }
+    custTimer.current = setTimeout(async () => {
+      try {
+        const res = await customersApi.getAll({ search: q.trim() });
+        const list = Array.isArray(res.data) ? res.data : (res.data?.customers || []);
+        setCustResults(list.slice(0, 8));
+      } catch { setCustResults([]); }
+    }, 300);
+  };
+  const linkCustomer = (c) => {
+    setForm((f) => ({ ...f, customerId: c ? c.id : null }));
+    setCustomerName(c ? c.name : null);
+    setPicking(false);
+    setCustQuery("");
+    setCustResults([]);
+  };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   // Vista previa: la misma hoja que se imprime (siempre horizontal), con un respiro al tipear
@@ -76,6 +104,8 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
     if (dirty && !window.confirm("Hay cambios sin guardar. ¿Cambiar de etiqueta igual?")) return;
     setForm(pick(next));
     setSaved(pick(next));
+    setPending(!!next.pending);
+    setCustomerName(next.customer?.name || null);
   };
 
   const save = async () => {
@@ -87,6 +117,8 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
       const next = pick(res.data);
       setForm(next);
       setSaved(next);
+      setPending(false);
+      if (res.data.customer) setCustomerName(res.data.customer.name);
       toast.success("Etiqueta guardada");
       onSaved?.(res.data);
       return res.data;
@@ -113,7 +145,11 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-4">
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100">
           <div>
-            <h2 className="text-lg font-bold text-slate-800">🏷 Etiqueta de envío {form.id ? "" : <span className="text-xs font-semibold text-amber-600 align-middle ml-1">nueva</span>}</h2>
+            <h2 className="text-lg font-bold text-slate-800">
+              🏷 Etiqueta de envío{" "}
+              {!form.id && <span className="text-xs font-semibold text-amber-600 align-middle ml-1">nueva</span>}
+              {pending && <span className="text-xs font-semibold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5 align-middle ml-1">pendiente de revisar · se confirma al guardar</span>}
+            </h2>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
           </div>
           <button onClick={close} className="text-slate-400 hover:text-slate-700 text-xl leading-none px-2" title="Cerrar">✕</button>
@@ -145,6 +181,43 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
                 ↺ Usar el nombre y la dirección de este pedido
               </button>
             )}
+            {/* Cliente de la tienda al que pertenece la etiqueta (opcional) */}
+            <div>
+              <label className={label}>Cliente de la tienda</label>
+              {!picking ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  {form.customerId ? (
+                    <>
+                      <span className="font-semibold text-slate-800">{customerName || `Cliente #${form.customerId}`}</span>
+                      <button type="button" onClick={() => setPicking(true)} className="text-xs text-blue-600 hover:underline">Cambiar</button>
+                      <button type="button" onClick={() => linkCustomer(null)} className="text-xs text-slate-500 hover:underline">Desvincular</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-slate-400">Sin cliente vinculado</span>
+                      <button type="button" onClick={() => setPicking(true)} className="text-xs text-blue-600 hover:underline">+ Vincular a un cliente</button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div className="flex gap-2">
+                    <input autoFocus value={custQuery} onChange={(e) => searchCustomers(e.target.value)} placeholder="Buscar cliente por nombre o email…" className={input} />
+                    <button type="button" onClick={() => { setPicking(false); setCustResults([]); }} className="px-3 text-sm text-slate-500">Cancelar</button>
+                  </div>
+                  {custResults.length > 0 && (
+                    <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                      {custResults.map((c) => (
+                        <button key={c.id} type="button" onClick={() => linkCustomer(c)} className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50">
+                          <span className="font-medium text-slate-800">{c.name}</span>
+                          <span className="text-xs text-slate-400 ml-2">{c.email}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div>
               <label className={label}>Destinatario *</label>
               <input value={form.recipientName} onChange={set("recipientName")} className={input} placeholder="Nombre y apellido" />

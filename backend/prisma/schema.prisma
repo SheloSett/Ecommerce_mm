@@ -930,9 +930,15 @@ model ShippingLabel {
   sender           String // Remitente (varios renglones)
   sourceFile       String? // Nombre del .btw del que se importó (null = creada en el panel)
   sourceSize       String? // Tamaño original del .btw: "10x10", "10x15"
+  sourceDate       DateTime? // Fecha del .btw (para saber cuál es la más nueva de una persona)
+  // Revisión de las importadas de BarTender: "PENDING" (sin revisar, pestaña "Pendientes"), "CONFIRMED"
+  // (en uso; las creadas en el panel nacen así) o "DISCARDED" (descartada: no se muestra, pero se recuerda
+  // para no volver a importarla si se sube la carpeta de nuevo).
+  status           String    @default("CONFIRMED")
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@index([customerId])
+  @@index([status])
   @@map("shipping_labels")
 }

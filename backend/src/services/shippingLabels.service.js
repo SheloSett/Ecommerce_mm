@@ -40,6 +40,18 @@ function phonesIn(text) {
   return [...found];
 }
 
+// Lo que se compara de cada cliente, calculado una sola vez (la lista de pendientes compara cientos de
+// etiquetas contra todos los clientes en el mismo pedido).
+function prep(c) {
+  if (!c.__p) {
+    Object.defineProperty(c, "__p", {
+      value: { cuit: digits(c.cuit), phone: digits(c.phone).slice(-8), name: norm(c.name), tokens: new Set(nameTokens(c.name)) },
+      enumerable: false,
+    });
+  }
+  return c.__p;
+}
+
 // label: { recipientName, recipientDetails }. customers: [{ id, name, phone, cuit, email }].
 // Devuelve hasta 3 sugerencias [{ customerId, name, score, reason }], la mejor primero.
 function suggestCustomers(label, customers) {
@@ -51,16 +63,17 @@ function suggestCustomers(label, customers) {
   for (const c of customers) {
     let score = 0;
     let reason = null;
-    const cuit = digits(c.cuit);
+    const p = prep(c);
+    const cuit = p.cuit;
     if (cuit && dnis.some((d) => cuit === d || (cuit.length === 11 && cuit.slice(2, 10).replace(/^0/, "") === d.replace(/^0/, "")))) {
       score = 1; reason = "mismo DNI";
     }
-    const cPhone = digits(c.phone).slice(-8);
+    const cPhone = p.phone;
     if (score < 0.9 && cPhone.length === 8 && phones.includes(cPhone)) { score = 0.9; reason = "mismo teléfono"; }
-    const cName = norm(c.name);
+    const cName = p.name;
     if (score < 0.85 && cName && cName === lName) { score = 0.85; reason = "mismo nombre"; }
     if (score < 0.6 && lTokens.length >= 2) {
-      const cTokens = new Set(nameTokens(c.name));
+      const cTokens = p.tokens;
       const common = lTokens.filter((w) => cTokens.has(w)).length;
       if (common >= 2) { score = 0.6 + Math.min(0.2, (common - 2) * 0.1); reason = "nombre parecido"; }
     }

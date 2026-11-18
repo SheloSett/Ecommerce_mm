@@ -258,8 +258,12 @@ export default function AdminOrderDetail() {
         found = (await shippingLabelsApi.list({ customerId: order.customerId })).data.labels || [];
       }
       if (found.length === 0 && order.customerName) {
-        const byName = (await shippingLabelsApi.list({ search: order.customerName })).data.labels || [];
-        found = byName.filter((l) => sameName(l.recipientName, order.customerName) && (!l.customerId || l.customerId === order.customerId));
+        // También las pendientes de revisar (importadas de BarTender): al guardarla queda confirmada y
+        // vinculada a este cliente. Primero las confirmadas.
+        const byName = (await shippingLabelsApi.list({ search: order.customerName, includePending: true })).data.labels || [];
+        found = byName
+          .filter((l) => sameName(l.recipientName, order.customerName) && (!l.customerId || l.customerId === order.customerId))
+          .sort((a, b) => Number(a.pending) - Number(b.pending));
       }
       const fromOrder = labelFromOrder(order, shippingAddressLines(deliveryAddressOf(order)));
       if (found.length > 0) {
