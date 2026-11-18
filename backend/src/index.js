@@ -30,6 +30,7 @@ const adminUsersRoutes = require("./routes/adminUsers.routes");
 const shippingRoutes   = require("./routes/shipping.routes");
 const adminTestRoutes  = require("./routes/admin-test.routes");
 const supplierRoutes   = require("./routes/supplier.routes");
+const shippingLabelRoutes = require("./routes/shippingLabel.routes"); // etiquetas de envío (ex BarTender)
 const aiRoutes         = require("./routes/ai.routes");
 const seoRoutes        = require("./routes/seo.routes");
 const analyticsRoutes  = require("./routes/analytics.routes");
@@ -167,6 +168,7 @@ app.use("/api/admin-users", adminUsersRoutes);
 app.use("/api/shipping",   shippingRoutes);
 app.use("/api/admin-test", adminTestRoutes);
 app.use("/api/suppliers",  supplierRoutes);
+app.use("/api/shipping-labels", shippingLabelRoutes);
 app.use("/api/ai",         aiRoutes);
 app.use("/api/analytics",  analyticsRoutes);
 app.use("/api/events",     eventsRoutes);

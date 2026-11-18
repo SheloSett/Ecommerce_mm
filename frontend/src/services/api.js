@@ -191,6 +191,19 @@ export const suppliersApi = {
   geocode: (addresses) => api.post("/suppliers/geocode", { addresses }),
 };
 
+// ─── Etiquetas de envío (ex BarTender) ───────────────────────────────────────
+export const shippingLabelsApi = {
+  // params: { search?, customerId? } → { labels, defaultSender }
+  list: (params) => api.get("/shipping-labels", { params }),
+  create: (data) => api.post("/shipping-labels", data),
+  update: (id, data) => api.put(`/shipping-labels/${id}`, data),
+  remove: (id) => api.delete(`/shipping-labels/${id}`),
+  // formData: files[] (.btw) + lastModified (JSON) → { results, defaultSender }. No guarda nada.
+  parseImport: (formData) => api.post("/shipping-labels/import/parse", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  // labels: las confirmadas → { created, skipped }
+  importLabels: (labels) => api.post("/shipping-labels/import", { labels }),
+};
+
 // ─── Órdenes ──────────────────────────────────────────────────────────────────
 export const ordersApi = {
   // Con el token del CLIENTE: el servidor saca de ahí quién compra y a qué precio (ya no confía en el

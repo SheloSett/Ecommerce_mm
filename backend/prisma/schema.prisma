@@ -381,6 +381,7 @@ model Customer {
   notifications     Notification[]     // Notificaciones de cotizaciones
   coupons           Coupon[]           // Cupones personales asignados a este cliente
   returnRequests    ReturnRequest[]    // Solicitudes de arrepentimiento del cliente
+  shippingLabels    ShippingLabel[]    // Etiquetas de envío guardadas (las que antes eran .btw de BarTender)
   seenByAdmin       Boolean            @default(false) // true = el admin abrió el detalle del cliente
   resetToken        String?            // Token de un solo uso para reset de contraseña (64 chars hex)
   resetTokenExpiry  DateTime?          // Expiración del token (1 hora desde la solicitud)
@@ -912,4 +913,26 @@ model EmailRecipient {
   @@index([status, broadcastId])
   @@index([sentAt])
   @@map("email_recipients")
+}
+
+// Etiqueta de envío de un cliente: lo que antes era un archivo .btw de BarTender por cliente (nombre,
+// datos de entrega, transporte, seguro y remitente). Se edita e imprime desde el panel en 10×15.
+// customerId es opcional: muchos destinatarios no tienen cuenta en la tienda (ventas por Mercado Libre,
+// clientes de mostrador). La cantidad de bultos no se guarda: es de cada envío y se elige al imprimir.
+model ShippingLabel {
+  id               Int       @id @default(autoincrement())
+  customerId       Int?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  recipientName    String // Destinatario (el renglón grande de arriba)
+  recipientDetails String    @default("") // DNI, dirección, CP, localidad, teléfono, indicaciones (varios renglones)
+  transport        String? // Transporte: Vía Cargo, Cruz del Sur, moto...
+  insurance        String? // Seguro declarado: "$ 100.000", "MINIMO"...
+  sender           String // Remitente (varios renglones)
+  sourceFile       String? // Nombre del .btw del que se importó (null = creada en el panel)
+  sourceSize       String? // Tamaño original del .btw: "10x10", "10x15"
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([customerId])
+  @@map("shipping_labels")
 }

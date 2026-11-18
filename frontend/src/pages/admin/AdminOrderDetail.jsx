@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import PrintPricesModal from "../../components/admin/PrintPricesModal";
-import { ordersApi, productsApi, shippingApi, suppliersApi, getImageUrl } from "../../services/api";
+import ShippingLabelModal from "../../components/admin/ShippingLabelModal";
+import { labelFromOrder } from "../../utils/shippingLabel";
+import { ordersApi, productsApi, shippingApi, suppliersApi, shippingLabelsApi, getImageUrl } from "../../services/api";
 import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, itemSku, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
 import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
@@ -117,6 +119,9 @@ export default function AdminOrderDetail() {
   const [editDiscount, setEditDiscount] = useState({ type: "PERCENTAGE", value: "" });
   // "Agregar IVA (factura)" mientras se modifica el pedido (solo pedidos mayoristas, como el checkout)
   const [editInvoice, setEditInvoice] = useState(false);
+  // Etiqueta de envío abierta: { initial, others, fromOrder } (ver openShippingLabel)
+  const [labelModal, setLabelModal] = useState(null);
+  const [loadingLabel, setLoadingLabel] = useState(false);
   const [uploadingItemImg, setUploadingItemImg] = useState({}); // { [idx]: bool }
 
   // Foto para un ítem libre sin imagen (modo edición): se sube a Cloudinary y queda en el ítem al guardar
@@ -238,6 +243,36 @@ export default function AdminOrderDetail() {
       toast.error("Error al guardar el tracking");
     } finally {
       setSavingTracking(false);
+    }
+  };
+
+  // Etiqueta de envío del cliente del pedido: la guardada más reciente (por cuenta, o si el pedido no
+  // tiene cuenta, la de nombre idéntico sin cuenta). Si no hay, una nueva con los datos del pedido.
+  const openShippingLabel = async () => {
+    setLoadingLabel(true);
+    try {
+      const normName = (v) => (v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ");
+      const sameName = (a, b) => normName(a) === normName(b);
+      let found = [];
+      if (order.customerId) {
+        found = (await shippingLabelsApi.list({ customerId: order.customerId })).data.labels || [];
+      }
+      if (found.length === 0 && order.customerName) {
+        const byName = (await shippingLabelsApi.list({ search: order.customerName })).data.labels || [];
+        found = byName.filter((l) => sameName(l.recipientName, order.customerName) && (!l.customerId || l.customerId === order.customerId));
+      }
+      const fromOrder = labelFromOrder(order, shippingAddressLines(deliveryAddressOf(order)));
+      if (found.length > 0) {
+        // Una etiqueta sin cuenta que es de este cliente: al guardarla queda vinculada
+        const first = { ...found[0], customerId: found[0].customerId ?? order.customerId ?? null };
+        setLabelModal({ initial: first, others: found, fromOrder });
+      } else {
+        setLabelModal({ initial: fromOrder, others: [], fromOrder: null });
+      }
+    } catch {
+      toast.error("No se pudo abrir la etiqueta de envío");
+    } finally {
+      setLoadingLabel(false);
     }
   };
 
@@ -908,6 +943,15 @@ export default function AdminOrderDetail() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               Orden de compra
+            </button>
+            {/* Etiqueta de envío de 10×15 del cliente (la que antes se hacía en BarTender) */}
+            <button
+              onClick={openShippingLabel}
+              disabled={loadingLabel}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 rounded-xl transition-colors disabled:opacity-50"
+              title="Abrir, editar e imprimir la etiqueta de envío del cliente"
+            >
+              🏷 {loadingLabel ? "Abriendo…" : "Etiqueta de envío"}
             </button>
             {!editMode && (
               <button
@@ -1789,6 +1833,15 @@ export default function AdminOrderDetail() {
           title={`Imprimir ${order.paymentMethod === "COTIZACION" ? "cotización" : "orden"} #${order.id}`}
           onCancel={() => setPrintAsk(false)}
           onChoose={(withPrices) => { printOrder(withPrices); setPrintAsk(false); }}
+        />
+      )}
+      {labelModal && (
+        <ShippingLabelModal
+          initial={labelModal.initial}
+          others={labelModal.others}
+          fromOrder={labelModal.fromOrder}
+          subtitle={`Pedido #${order.id} · ${order.customerName || ""}`}
+          onClose={() => setLabelModal(null)}
         />
       )}
     </AdminLayout>

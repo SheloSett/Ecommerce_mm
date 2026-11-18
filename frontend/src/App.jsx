@@ -63,6 +63,7 @@ const AdminEmails = lazy(() => import("./pages/admin/AdminEmails"));
 const AdminOrderDetail = lazy(() => import("./pages/admin/AdminOrderDetail"));
 const AdminPurchaseOrder = lazy(() => import("./pages/admin/AdminPurchaseOrder"));
 const AdminPurchaseOrderBulk = lazy(() => import("./pages/admin/AdminPurchaseOrderBulk"));
+const AdminShippingLabels = lazy(() => import("./pages/admin/AdminShippingLabels"));
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
@@ -187,6 +188,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="ordenes"><AdminPurchaseOrderBulk /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          {/* Etiquetas de envío (ex BarTender). Como "oc-multiple", va antes de "/admin/ordenes/:id". */}
+          <Route
+            path="/admin/ordenes/etiquetas"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="ordenes"><AdminShippingLabels /></RequirePermission>
               </ProtectedRoute>
             }
           />

@@ -54,6 +54,7 @@ export default function AdminLayout({ children, title }) {
       subItems: [
         { label: "Todos los pedidos", tab: "",             badge: badges.ordenesPendientes },
         { label: "Cotizaciones",      tab: "cotizaciones", badge: badges.cotizaciones },
+        { label: "Etiquetas de envío", href: "/admin/ordenes/etiquetas" },
       ],
     },
     {
@@ -231,7 +232,11 @@ export default function AdminLayout({ children, title }) {
                     const to = sub.href
                       ? sub.href
                       : sub.tab ? `${item.path}?tab=${sub.tab}` : item.path;
-                    const subActive = !sub.href && currentTab === sub.tab;
+                    // Con ruta propia (sub.href): activo en esa ruta. Por ?tab=: activo salvo que se esté en
+                    // la ruta propia de otro subítem (en "Etiquetas de envío" no se marca "Todos los pedidos").
+                    // Antes: const subActive = !sub.href && currentTab === sub.tab;
+                    const enOtraRuta = item.subItems.some((o) => o.href && location.pathname.startsWith(o.href));
+                    const subActive = sub.href ? location.pathname.startsWith(sub.href) : (!enOtraRuta && currentTab === sub.tab);
                     return (
                       <Link
                         key={sub.href || sub.tab}
