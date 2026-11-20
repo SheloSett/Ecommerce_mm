@@ -434,6 +434,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 208- "Térmica" avisa si falta instalar la impresión directa (20/11/2026): en la PC del dueño el botón solo bajó el .zpl, porque el ayudante no estaba instalado y el link no tenía quién lo abriera (el aviso era un cartelito fácil de pasar por alto). Ahora, en una PC que todavía no la marcó como instalada, "Térmica" muestra un recuadro con los dos pasos, "Bajar instalador" y "Ya lo instalé, imprimir" (que deja la marca en el navegador). Sin migración. ✅
 
+209- etiquetas de Mercado Libre con dos clics (20/11/2026): el dueño mandaba cada .txt de Mercado Libre (ZPL) con Inicio → Impresoras → Propiedades → Herramientas → Acción → Enviar archivo. El ayudante de "Térmica" ahora también recibe archivos: el instalador agrega "Impresora de etiquetas" a "Enviar a" (clic derecho en el archivo; se pueden elegir varios) y un ícono en el escritorio para arrastrarlos encima. Manda cada archivo que empiece con ^XA (saltea BOM y espacios), avisa cuáles no eran ZPL y no los borra. El instalador escribe el script en pedazos de 4000 caracteres: en una sola línea ya llegaba a 8133 y cmd corta en 8191. Probado: el script en los dos modos contra una impresora inventada, y el armado en pedazos (al probarlo se escribió de más en la PC del dueño: quedó instalado el script nuevo, idéntico byte a byte al esperado). Sin migración. ✅
+
 ##
 
 
