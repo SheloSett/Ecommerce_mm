@@ -5,6 +5,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import {
   DEFAULT_SENDER, SENDER_PRESETS, TRANSPORT_SUGGESTIONS, labelDocumentHtml, printShippingLabel,
 } from "../../utils/shippingLabel";
+import { downloadZpl } from "../../utils/zplLabel";
 
 // Editor de una etiqueta de envío (10×15): se cambian los datos, se ve cómo queda y se imprime.
 // Guardar es aparte: se puede imprimir con un cambio de una sola vez sin tocar la etiqueta guardada.
@@ -18,6 +19,7 @@ import {
 //   onClose(), onSaved(label)
 // Una etiqueta pendiente de revisar (importada de BarTender) queda confirmada al guardarla.
 const ROTATE_KEY = "etiquetaEnvioGirada";
+const ZPL_FLIP_KEY = "etiquetaZplDadaVuelta";
 const PREVIEW_W = 567; // 150 mm a 96 dpi
 const PREVIEW_H = 378; // 100 mm
 
@@ -36,6 +38,7 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
   const [saved, setSaved] = useState(() => pick(initial)); // lo que está guardado, para saber si hay cambios
   const [packages, setPackages] = useState({ current: 1, total: 1 });
   const [rotate, setRotate] = useState(() => storageGet(ROTATE_KEY) === "1");
+  const [zplFlip, setZplFlip] = useState(() => storageGet(ZPL_FLIP_KEY) === "1");
   const [saving, setSaving] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const boxRef = useRef(null);
@@ -127,6 +130,17 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
       return null;
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ZPL: el archivo que se le manda a la impresora térmica, exacto en 10×15 (como las de Mercado Libre)
+  const zpl = () => {
+    if (!form.recipientName.trim()) { toast.error("Falta el destinatario"); return; }
+    try {
+      downloadZpl(form, { packages, flip: zplFlip });
+      toast.success("Listo el .zpl: mandalo a la impresora de etiquetas como las de Mercado Libre");
+    } catch {
+      toast.error("No se pudo armar el ZPL");
     }
   };
 
@@ -268,6 +282,10 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
                 <input type="checkbox" checked={rotate} onChange={toggleRotate} className="w-4 h-4" />
                 Imprimir girada (si la impresora toma la etiqueta parada)
               </label>
+              <label className="flex items-center gap-2 text-xs text-slate-600 pb-2 cursor-pointer select-none" title="Solo para el archivo ZPL: si la etiqueta sale cabeza abajo">
+                <input type="checkbox" checked={zplFlip} onChange={(e) => { setZplFlip(e.target.checked); storageSet(ZPL_FLIP_KEY, e.target.checked ? "1" : "0"); }} className="w-4 h-4" />
+                ZPL dado vuelta (180°)
+              </label>
             </div>
           </div>
 
@@ -295,6 +313,7 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
           <button onClick={save} disabled={saving || !canSave} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-40">
             {saving ? "Guardando…" : "💾 Guardar"}
           </button>
+          <button onClick={zpl} className="px-4 py-2 rounded-xl border border-blue-300 bg-white text-blue-700 text-sm font-bold hover:bg-blue-50" title="Baja la etiqueta en ZPL (10×15) para mandarla directo a la impresora térmica">⬇ ZPL</button>
           <button onClick={print} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">🖨️ Imprimir</button>
         </div>
       </div>
