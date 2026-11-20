@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import AdminLayout from "../../components/AdminLayout";
 import ShippingLabelModal from "../../components/admin/ShippingLabelModal";
+import CustomerPicker from "../../components/admin/CustomerPicker";
 import { shippingLabelsApi } from "../../services/api";
 import { DEFAULT_SENDER } from "../../utils/shippingLabel";
 
@@ -54,7 +55,8 @@ export default function AdminShippingLabels() {
       const res = await shippingLabelsApi.list({ pending: true });
       setPending((res.data.labels || []).map((l) => {
         const top = l.suggestions?.[0];
-        return { ...l, checked: false, chosenCustomerId: top && top.score >= STRONG ? top.customerId : "" };
+        const strong = top && top.score >= STRONG;
+        return { ...l, checked: false, chosenCustomerId: strong ? top.customerId : "", chosenCustomerName: strong ? top.name : null };
       }));
       setPendingCount(res.data.pendingCount || 0);
     } catch {
@@ -160,7 +162,7 @@ export default function AdminShippingLabels() {
   };
 
   // Una pendiente abierta en el editor: se lleva el cliente elegido en la fila
-  const openPending = (r) => setEditing({ ...r, customerId: r.chosenCustomerId || r.customerId || null, customer: r.chosenCustomerId ? { name: r.suggestions.find((s) => s.customerId === r.chosenCustomerId)?.name } : r.customer });
+  const openPending = (r) => setEditing({ ...r, customerId: r.chosenCustomerId || r.customerId || null, customer: r.chosenCustomerId ? { name: r.chosenCustomerName } : r.customer });
 
   const tabBtn = (key, text) => (
     <button onClick={() => setTab(key)} className={`px-4 py-2 rounded-xl text-sm font-semibold ${tab === key ? "bg-slate-800 text-white" : "bg-white border border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
@@ -249,12 +251,13 @@ export default function AdminShippingLabels() {
                           {r.newerFile && <p className="text-[11px] font-semibold text-amber-700 mt-0.5">hay una más nueva: {r.newerFile}</p>}
                         </td>
                         <td className="p-2 min-w-[14rem]">
-                          <select value={r.chosenCustomerId ?? ""} onChange={(e) => setRow(r.id, { chosenCustomerId: e.target.value ? Number(e.target.value) : "" })}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white">
-                            <option value="">Sin cliente vinculado</option>
-                            {(r.suggestions || []).map((s) => <option key={s.customerId} value={s.customerId}>{s.name} — {s.reason}</option>)}
-                          </select>
-                          {(r.suggestions || []).length === 0 && <p className="text-[11px] text-slate-400 mt-0.5">Sin sugerencias (se puede vincular abriéndola)</p>}
+                          <CustomerPicker
+                            value={r.chosenCustomerId}
+                            valueName={r.chosenCustomerName}
+                            suggestions={r.suggestions || []}
+                            onChange={(id, name) => setRow(r.id, { chosenCustomerId: id, chosenCustomerName: name })}
+                          />
+                          {(r.suggestions || []).length === 0 && !r.chosenCustomerId && <p className="text-[11px] text-slate-400 mt-0.5">Sin sugerencias: usá “Buscar otro cliente…”</p>}
                         </td>
                         <td className="p-2 text-xs text-slate-500">
                           <p className="break-all">{r.sourceFile}</p>

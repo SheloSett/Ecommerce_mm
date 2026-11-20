@@ -428,6 +428,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 205- etiqueta de envío en ZPL (20/11/2026): pedido del dueño, para que salga exacta en 10×15 en la impresora térmica (TSC ME240, 203 dpi) sin depender del tamaño de hoja de Chrome. En el editor, botón "⬇ ZPL": baja un .zpl (el formato de las etiquetas Flex de Mercado Libre) con la etiqueta dibujada igual que la vista previa, girada para el rollo de 10×15 parado (800 × 1200 puntos) y como imagen en blanco y negro (^GFA con la compresión de Zebra), así las tildes y los textos largos salen igual que en pantalla. Casilla "ZPL dado vuelta (180°)" por si sale cabeza abajo (^POI), recordada en el navegador. frontend/src/utils/zplLabel.js con tests (el ZPL se decodifica con el lector de las etiquetas de Mercado Libre y vuelve idéntico). Verificado con Labelary (intérprete ZPL de Zebra) con datos de prueba: sale completa y en tamaño. Sin probar en la impresora. Sin migración. ✅
 
+206- buscar el cliente de una etiqueta pendiente (20/11/2026): en "Pendientes de revisar" solo se podía elegir entre las sugerencias; una etiqueta sin sugerencias no se podía vincular sin abrirla. Ahora la lista del cliente termina en "🔍 Buscar otro cliente…", que abre un buscador por nombre o email en la misma fila (components/admin/CustomerPicker.jsx); el elegido queda como "elegido a mano" y se confirma igual. Probado con el servidor simulado. Sin migración. ✅
+
 ##
 
 
