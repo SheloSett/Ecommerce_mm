@@ -21,6 +21,9 @@ import { printOnThermal, downloadInstaller, DEFAULT_PRINTER } from "../../utils/
 // Una etiqueta pendiente de revisar (importada de BarTender) queda confirmada al guardarla.
 const ROTATE_KEY = "etiquetaEnvioGirada";
 const ZPL_FLIP_KEY = "etiquetaZplDadaVuelta";
+// Esta PC ya tiene la impresión directa instalada (lo marca quien la instala). Sin esto, "Térmica" solo
+// bajaba el archivo y no avisaba nada: el link no tiene a quién abrir si el ayudante no está.
+const DIRECT_KEY = "impresionDirectaInstalada";
 const PREVIEW_W = 567; // 150 mm a 96 dpi
 const PREVIEW_H = 378; // 100 mm
 
@@ -40,6 +43,7 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
   const [packages, setPackages] = useState({ current: 1, total: 1 });
   const [rotate, setRotate] = useState(() => storageGet(ROTATE_KEY) === "1");
   const [zplFlip, setZplFlip] = useState(() => storageGet(ZPL_FLIP_KEY) === "1");
+  const [needInstall, setNeedInstall] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const boxRef = useRef(null);
@@ -147,11 +151,13 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
 
   // Térmica: baja el .zpl y el ayudante de la PC se lo manda a la impresora (como "Enviar archivo a
   // impresora", que es lo que sale bien: letra negra y con corte). Ver utils/thermalPrint.js.
-  const thermal = () => {
+  const thermal = (confirmedInstall = false) => {
     if (!form.recipientName.trim()) { toast.error("Falta el destinatario"); return; }
+    if (!confirmedInstall && storageGet(DIRECT_KEY) !== "1") { setNeedInstall(true); return; }
+    if (confirmedInstall) { storageSet(DIRECT_KEY, "1"); setNeedInstall(false); }
     try {
       printOnThermal(form, { packages, flip: zplFlip });
-      toast.success(`Mandando a "${DEFAULT_PRINTER}"… Si no sale, instalá la impresión directa en esta PC (abajo).`, { duration: 7000 });
+      toast.success(`Mandando a "${DEFAULT_PRINTER}"…`, { duration: 4000 });
     } catch {
       toast.error("No se pudo armar la etiqueta");
     }
@@ -324,6 +330,20 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
           </div>
         </div>
 
+        {needInstall && (
+          <div className="mx-5 mb-4 rounded-xl border-2 border-blue-300 bg-blue-50 p-4 text-sm text-slate-700 space-y-2">
+            <p className="font-bold text-blue-900">Para que “Térmica” imprima sola, esta PC necesita la impresión directa (se instala una vez)</p>
+            <ol className="list-decimal pl-5 space-y-1 text-xs">
+              <li>Bajá el instalador y abrilo con doble clic. Si Windows avisa: “Más información” → “Ejecutar de todas formas”. No pide clave de administrador.</li>
+              <li>Volvé acá y apretá “Ya lo instalé, imprimir”. La primera vez Chrome pregunta si abrir el link: tildá “Permitir siempre” y aceptá.</li>
+            </ol>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button type="button" onClick={downloadInstaller} className="px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-100">⬇ Bajar instalador</button>
+              <button type="button" onClick={() => thermal(true)} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">Ya lo instalé, imprimir</button>
+              <button type="button" onClick={() => setNeedInstall(false)} className="px-3 py-1.5 rounded-lg text-slate-500 text-xs hover:text-slate-800">Cancelar</button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
           {dirty && <span className="text-xs text-amber-700 mr-auto">● Cambios sin guardar</span>}
           {!dirty && !form.id && <span className="text-xs text-slate-500 mr-auto">Todavía no está guardada para este cliente</span>}
@@ -333,7 +353,7 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
           </button>
           <button onClick={print} className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm font-semibold hover:bg-slate-50" title="Imprimir desde Chrome (sale más clara y la impresora no la corta)">Imprimir (navegador)</button>
           <button onClick={zpl} className="px-3 py-2 rounded-xl border border-blue-300 bg-white text-blue-700 text-sm font-bold hover:bg-blue-50" title="Solo baja el .zpl (para mandarlo a mano con Enviar archivo a impresora)">⬇ ZPL</button>
-          <button onClick={thermal} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700" title={`Manda la etiqueta en ZPL a "${DEFAULT_PRINTER}"`}>🖨️ Térmica</button>
+          <button onClick={() => thermal()} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700" title={`Manda la etiqueta en ZPL a "${DEFAULT_PRINTER}"`}>🖨️ Térmica</button>
         </div>
       </div>
     </div>
