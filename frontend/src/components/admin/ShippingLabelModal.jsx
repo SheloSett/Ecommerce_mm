@@ -6,6 +6,7 @@ import {
   DEFAULT_SENDER, SENDER_PRESETS, TRANSPORT_SUGGESTIONS, labelDocumentHtml, printShippingLabel,
 } from "../../utils/shippingLabel";
 import { downloadZpl } from "../../utils/zplLabel";
+import { printOnThermal, downloadInstaller, DEFAULT_PRINTER } from "../../utils/thermalPrint";
 
 // Editor de una etiqueta de envío (10×15): se cambian los datos, se ve cómo queda y se imprime.
 // Guardar es aparte: se puede imprimir con un cambio de una sola vez sin tocar la etiqueta guardada.
@@ -141,6 +142,18 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
       toast.success("Listo el .zpl: mandalo a la impresora de etiquetas como las de Mercado Libre");
     } catch {
       toast.error("No se pudo armar el ZPL");
+    }
+  };
+
+  // Térmica: baja el .zpl y el ayudante de la PC se lo manda a la impresora (como "Enviar archivo a
+  // impresora", que es lo que sale bien: letra negra y con corte). Ver utils/thermalPrint.js.
+  const thermal = () => {
+    if (!form.recipientName.trim()) { toast.error("Falta el destinatario"); return; }
+    try {
+      printOnThermal(form, { packages, flip: zplFlip });
+      toast.success(`Mandando a "${DEFAULT_PRINTER}"… Si no sale, instalá la impresión directa en esta PC (abajo).`, { duration: 7000 });
+    } catch {
+      toast.error("No se pudo armar la etiqueta");
     }
   };
 
@@ -301,7 +314,12 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
               />
             </div>
             <p className="text-[11px] text-slate-400 mt-2">
-              Al imprimir, elegí la impresora de etiquetas de 10 × 15 y escala 100 %. Los cambios se imprimen aunque no los guardes.
+              <b>Térmica</b> manda la etiqueta en ZPL directo a "{DEFAULT_PRINTER}": letra negra y con corte. Los cambios se imprimen aunque no los guardes.
+            </p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              ¿Primera vez en esta PC?{" "}
+              <button type="button" onClick={downloadInstaller} className="text-blue-600 font-semibold hover:underline">Instalar impresión directa</button>
+              {" "}— bajá el archivo, abrilo con doble clic (si Windows avisa, “Más información” → “Ejecutar de todas formas”) y listo. La primera vez que uses Térmica, Chrome pregunta si abrir el link: tildá “Permitir siempre”.
             </p>
           </div>
         </div>
@@ -313,8 +331,9 @@ export default function ShippingLabelModal({ initial, others = [], subtitle, fro
           <button onClick={save} disabled={saving || !canSave} className="px-4 py-2 rounded-xl bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-40">
             {saving ? "Guardando…" : "💾 Guardar"}
           </button>
-          <button onClick={zpl} className="px-4 py-2 rounded-xl border border-blue-300 bg-white text-blue-700 text-sm font-bold hover:bg-blue-50" title="Baja la etiqueta en ZPL (10×15) para mandarla directo a la impresora térmica">⬇ ZPL</button>
-          <button onClick={print} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">🖨️ Imprimir</button>
+          <button onClick={print} className="px-3 py-2 rounded-xl border border-slate-300 bg-white text-slate-600 text-sm font-semibold hover:bg-slate-50" title="Imprimir desde Chrome (sale más clara y la impresora no la corta)">Imprimir (navegador)</button>
+          <button onClick={zpl} className="px-3 py-2 rounded-xl border border-blue-300 bg-white text-blue-700 text-sm font-bold hover:bg-blue-50" title="Solo baja el .zpl (para mandarlo a mano con Enviar archivo a impresora)">⬇ ZPL</button>
+          <button onClick={thermal} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700" title={`Manda la etiqueta en ZPL a "${DEFAULT_PRINTER}"`}>🖨️ Térmica</button>
         </div>
       </div>
     </div>
