@@ -595,7 +595,9 @@ export default function CarouselSectionContent() {
                   title={editing ? "Arrastrá la imagen o hacé clic para cambiarla"
                     : imagePreviews.length > 0 ? `${imagePreviews.length} imagen${imagePreviews.length !== 1 ? "es" : ""} · arrastrá o hacé clic para agregar más`
                     : "Arrastrá las imágenes o hacé clic para elegirlas"}
-                  hint="JPG, PNG, WEBP · recomendado 1920×600px"
+                  // Antes: hint="JPG, PNG, WEBP · recomendado 1920×600px". El carrusel ahora es 3:1 (los flyers
+                  // se diseñan en 1920×640) y al doble se ve nítido también en pantallas de alta densidad.
+                  hint="PNG recomendado · 3840×1280 px (o 1920×640) · hasta 5 MB"
                 />
               </div>
 

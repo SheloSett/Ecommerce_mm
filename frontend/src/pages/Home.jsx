@@ -9,6 +9,8 @@ import { badgeFor } from "../utils/campaignCard";
 import { getCategoryIcon } from "../utils/categoryIcon";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
+// Flyers del carrusel en la mejor calidad, desde el original (ver utils/imageUrl.js)
+import { cloudinaryBanner } from "../utils/imageUrl";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { getRecentIds } from "../utils/recentlyViewed";
 
@@ -359,10 +361,13 @@ export default function Home() {
         <div>
         {/* Antes: style={{ aspectRatio: "1920 / 600", minHeight: "220px" }} en todos los tamaños.
             Ahora: en el teléfono la proporción de la versión de celular (o 3:1), con tope de 70% del alto
-            de la pantalla (celular acostado); en md+ la de siempre. */}
+            de la pantalla (celular acostado); en md+ 3:1.
+            Antes en md+: md:aspect-[1920/600]. Los flyers se diseñan en 1920×640 (3:1): con 1920/600 se
+            cortaban ~20 px arriba y abajo (en el de Cyber Week, la franja de arriba salía cortada a la
+            mitad). Con 3:1 entran enteros. */}
         <section
           ref={heroRef}
-          className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/600] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
+          className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/640] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
           style={{ "--hero-m": heroMobileRatio }}
           onTouchStart={onHeroTouchStart}
           onTouchEnd={onHeroTouchEnd}
@@ -380,21 +385,32 @@ export default function Home() {
                   <picture>: en el teléfono usa la versión de celular si el slide la tiene. */}
               {/* Las fotos solo se piden si el banner está en loadedSlides (el actual o el siguiente):
                   sin src el navegador no baja nada. Antes: src={getImageUrl(slide.image)} siempre. */}
+              {/* Antes las dos <picture> usaban getImageUrl(slide.image) / getImageUrl(slide.mobileImage): la
+                  versión guardada al subir, achicada y muy comprimida (ver cloudinaryBanner). Ahora salen del
+                  original con la mejor calidad. El fondo desenfocado lleva el mismo srcSet que la imagen
+                  principal: el navegador elige el mismo archivo y lo baja una sola vez. */}
               <picture>
-                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={cloudinaryBanner(getImageUrl(slide.mobileImage), 1080)} />}
                 <img
-                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
+                  src={loadedSlides.has(idx) ? cloudinaryBanner(getImageUrl(slide.image), 1920) : undefined}
+                  srcSet={loadedSlides.has(idx) ? `${cloudinaryBanner(getImageUrl(slide.image), 1920)} 1920w, ${cloudinaryBanner(getImageUrl(slide.image), 3840)} 3840w` : undefined}
+                  sizes="100vw"
                   alt=""
                   aria-hidden="true"
                   className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
                 />
               </picture>
               {/* Imagen principal. En el teléfono "contain": nunca se corta (si la proporción no coincide,
-                  el fondo desenfocado rellena). En md+ "cover" como siempre. */}
+                  el fondo desenfocado rellena). En md+ "cover" como siempre.
+                  srcSet: en pantallas de alta densidad (notebooks con escala de Windows, Mac, 4K) pide hasta
+                  3840 de ancho. Solo se nota si el flyer se subió a ese tamaño; si mide 1920, Cloudinary
+                  devuelve el de 1920 (c_limit nunca agranda). */}
               <picture>
-                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={cloudinaryBanner(getImageUrl(slide.mobileImage), 1080)} />}
                 <img
-                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
+                  src={loadedSlides.has(idx) ? cloudinaryBanner(getImageUrl(slide.image), 1920) : undefined}
+                  srcSet={loadedSlides.has(idx) ? `${cloudinaryBanner(getImageUrl(slide.image), 1920)} 1920w, ${cloudinaryBanner(getImageUrl(slide.image), 3840)} 3840w` : undefined}
+                  sizes="100vw"
                   alt={slide.title || ""}
                   className="absolute inset-0 w-full h-full object-contain md:object-cover z-10"
                 />

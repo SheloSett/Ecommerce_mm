@@ -11,19 +11,26 @@ const VISIBILITIES = ["AMBOS", "MINORISTA", "MAYORISTA"];
 // Transformación panorámica para banners del hero (1920x600 recomendado).
 // crop "limit": solo achica si excede el tamaño, nunca recorta ni rellena —
 // a diferencia de la transformación cuadrada usada para fotos de producto.
+// Antes: { width: 1920, height: 600, crop: "limit", quality: "auto", fetch_format: "webp" }.
+// Los flyers se diseñan en 1920×640: el tope de 600 de alto los achicaba a 1800×600 (en la pantalla se
+// volvían a estirar) y q_auto los comprimía tanto que las letras y los degradés se veían ruidosos
+// (23/11/2026). Ahora solo tope de ancho, hasta 3840 (un flyer exportado al doble para pantallas de alta
+// densidad), y la mejor calidad automática. El inicio igual arma su URL desde el original
+// (frontend/src/utils/imageUrl.js → cloudinaryBanner), así que esto es la versión que queda guardada.
 const SLIDE_EAGER = {
-  width: 1920, height: 600,
+  width: 3840,
   crop: "limit",
-  quality: "auto",
+  quality: "auto:best",
   fetch_format: "webp",
 };
 
 // Versión para celular: vertical o cuadrada (1080×1350 o 1080×1080 recomendado). "limit" solo achica
 // si se pasa de ese tamaño; nunca recorta, así se conserva la proporción que eligió quien la diseñó.
+// Antes: quality: "auto" — misma compresión de más que la versión ancha (ver SLIDE_EAGER)
 const SLIDE_MOBILE_EAGER = {
   width: 1080, height: 1350,
   crop: "limit",
-  quality: "auto",
+  quality: "auto:best",
   fetch_format: "webp",
 };
 
