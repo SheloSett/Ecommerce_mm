@@ -238,6 +238,20 @@ model Order {
   manualDiscountValue Float?
   manualDiscount      Float?
   manualDiscountUsd   Float?
+  // ── Descuento por monto de compra (ej. Black Friday: desde $X, Y% off) ──
+  // Ver model CartPromo y utils/cartPromo.js. Solo descuenta la parte EN PESOS.
+  //   promoId       → la promo que se aplicó (null si se borró la promo; el pedido conserva el resto)
+  //   promoRule     → copia de la promo al aplicarla: { name, tiers: [{ minAmount, percent }] }. Si
+  //                   después se modifica el pedido, el % se recalcula con ESTOS escalones (no con los
+  //                   de hoy), así el pedido sigue con las reglas de cuando se compró aunque la promo
+  //                   ya haya terminado o se haya cambiado.
+  //   promoPercent / promoDiscount → el % del escalón alcanzado y el monto ya calculado, para que las
+  //                   pantallas muestren el desglose sin recalcular (igual que couponDiscount).
+  promoId             Int?
+  promo               CartPromo?    @relation(fields: [promoId], references: [id], onDelete: SetNull)
+  promoRule           Json?
+  promoPercent        Float?
+  promoDiscount       Float?
   // customerModifiedAt: última vez que el CLIENTE modificó su cotización desde su perfil (cantidades,
   // productos que sacó o agregó). Al modificar, la cotización vuelve a PENDING para que el admin la
   // revise y la apruebe de nuevo. null = nunca la tocó el cliente.
@@ -505,6 +519,28 @@ model CouponUsage {
 enum DiscountType {
   PERCENTAGE // % del total
   FIXED      // monto fijo en ARS
+}
+
+// Descuento por monto de compra, con vigencia (pedido para Black Friday, 23/11/2026): a partir de cierto
+// total del carrito, un % de descuento; a partir de otro total, otro %. Se arma en Admin → Descuento por
+// monto. A diferencia de Offer (que escribe precios en los productos), esto no toca ningún producto: se
+// calcula sobre el total del pedido, en el checkout y en la venta manual (casilla "Aplicar promo").
+// Las reglas del cálculo están en utils/cartPromo.js.
+model CartPromo {
+  id        Int                @id @default(autoincrement())
+  name      String             // Lo que ve el cliente en el carrito y en el pedido (ej: "Black Friday")
+  // Escalones: [{ minAmount, percent }] ordenados por minAmount. minAmount en pesos, sobre el subtotal
+  // de productos en pesos (sin envío). Aplica el escalón más alto alcanzado.
+  tiers     Json
+  appliesTo CustomerVisibility @default(AMBOS) // MINORISTA, MAYORISTA o los dos
+  startsAt  DateTime
+  endsAt    DateTime
+  active    Boolean            @default(true)  // Interruptor manual (pausar sin borrar)
+  orders    Order[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@map("cart_promos")
 }
 
 // Campañas de oferta con vigencia: el admin elige un conjunto de productos y un rango de fechas, y el

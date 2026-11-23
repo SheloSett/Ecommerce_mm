@@ -7,7 +7,9 @@ import { ordersApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
-import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml } from "../utils/orderTotals";
+import { getOrderTotals, breakdownRowsAoa, breakdownRowsHtml, promoLabel } from "../utils/orderTotals";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../utils/shipping";
 // Datos del pedido en la hoja de impresión: escapados (nombre, teléfono, nota y dirección son texto libre)
 import { escapeHtml as esc } from "../utils/escapeHtml";
@@ -262,7 +264,10 @@ export default function OrderDetail() {
   //        const totalArs = order.items.filter(...).reduce(...);  ← precio de lista, sin cupón
   //        const totalUsd = order.items.filter(...).reduce(...);
   const subtotalItems  = T.ars.subtotal;
-  const couponDiscount = T.ars.discount;
+  // El descuento por monto (Black Friday) va en su propio renglón, con su nombre; acá queda el resto.
+  // Antes: const couponDiscount = T.ars.discount;
+  const promoDiscount  = T.ars.promo;
+  const couponDiscount = T.ars.discount - promoDiscount;
   const ivaAmount      = T.ars.iva;
   const hasUsd   = T.hasUsd;
   const totalArs = T.ars.total;
@@ -273,7 +278,9 @@ export default function OrderDetail() {
   const isSnapObj        = rawSnap && !Array.isArray(rawSnap);
   const originalItems    = isSnapObj ? (rawSnap.items || []) : (rawSnap || []);
   const subtotalOriginal = originalItems.reduce((s, i) => s + i.price * i.quantity, 0);
-  const originalDiscount = isSnapObj ? (rawSnap.couponDiscount || 0) : couponDiscount;
+  // Antes: isSnapObj ? (rawSnap.couponDiscount || 0) : couponDiscount — ahora suma también el descuento
+  // por monto del pedido original (los snapshots viejos no lo tienen: da 0)
+  const originalDiscount = isSnapObj ? (rawSnap.couponDiscount || 0) + (rawSnap.promoDiscount || 0) : couponDiscount + promoDiscount;
 
   // IVA original: si el snapshot nuevo lo tiene guardado lo usamos; si no, lo estimamos
   // proporcionalmente (mismo porcentaje que el IVA actual sobre el subtotal actual).
@@ -464,6 +471,12 @@ export default function OrderDetail() {
                     {T.usd.subtotal > 0 && <div>{formatPriceWithCurrency(T.usd.subtotal, "USD")}</div>}
                   </span>
                 </div>
+                {promoDiscount > 0 && (
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>{promoLabel(order)}</span>
+                    <span>−{formatPrice(promoDiscount)}</span>
+                  </div>
+                )}
                 {(couponDiscount > 0 || T.usd.discount > 0) && (
                   <div className="flex justify-between items-start text-sm text-green-600">
                     <span>Descuento {order.coupon?.code ? `(${order.coupon.code})` : ""}</span>

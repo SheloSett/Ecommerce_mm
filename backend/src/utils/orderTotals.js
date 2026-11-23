@@ -17,6 +17,12 @@
 // - MONTO FIJO: `Coupon.discountValue` está expresado EN PESOS (ver schema.prisma), así que se
 //   descuenta solo de la parte en pesos. La parte en dólares queda sin descuento: aplicarle un
 //   número en pesos exigiría una conversión que el sistema no hace.
+//
+// DESCUENTO POR MONTO (promo, ej. Black Friday — ver utils/cartPromo.js): va PRIMERO, sobre el subtotal
+// en pesos, y el cupón y el descuento del vendedor se aplican después sobre lo que quedó. Solo la parte
+// en pesos: los escalones están en pesos.
+
+const { promoTierFor } = require("./cartPromo");
 
 // Redondeo a 2 decimales, igual que el resto del código de precios.
 function round2(n) {
@@ -49,23 +55,38 @@ function sumItems(items, currency) {
  *                            cupón (sobre lo que queda) y con las mismas reglas de moneda.
  * @param {number} shippingCost - costo de envío, siempre en pesos. Se suma al total en pesos después
  *                            de todo: ni el cupón ni los descuentos lo bajan, y no lleva IVA.
+ * @param {Object} promo    - descuento por monto que le toca al pedido: { tiers: [{ minAmount, percent }] }
+ *                            (Order.promoRule) o null. El % sale del escalón que alcanza el subtotal en
+ *                            pesos, así que si cambian los ítems el % se recalcula solo.
  * @returns {Object} subtotal / descuentos / IVA / total, por moneda.
  */
-function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null, shippingCost = 0 }) {
+// Antes: function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null, shippingCost = 0 }) {
+function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDiscount = null, shippingCost = 0, promo = null }) {
   const subtotalArs = sumItems(items, "ARS");
   const subtotalUsd = sumItems(items, "USD");
+
+  // ── Descuento por monto (promo) ────────────────────────────────────────────
+  // El escalón se mide contra el subtotal de productos en pesos (sin envío, antes del IVA).
+  const promoTier = promo ? promoTierFor(promo.tiers, subtotalArs) : null;
+  const promoPercent = promoTier ? promoTier.percent : 0;
+  const promoDiscountArs = round2((subtotalArs * promoPercent) / 100);
+  // Lo que queda en pesos después de la promo: sobre esto van el cupón y el descuento del vendedor.
+  const despuesPromoArs = Math.max(0, subtotalArs - promoDiscountArs);
 
   // ── Cupón ──────────────────────────────────────────────────────────────────
   let couponDiscountArs = 0;
   let couponDiscountUsd = 0;
   if (coupon) {
     if (coupon.discountType === "PERCENTAGE") {
-      couponDiscountArs = round2((subtotalArs * coupon.discountValue) / 100);
+      // Antes: couponDiscountArs = round2((subtotalArs * coupon.discountValue) / 100);
+      // Ahora sobre lo que dejó la promo (sin promo es lo mismo que antes: despuesPromoArs = subtotalArs).
+      couponDiscountArs = round2((despuesPromoArs * coupon.discountValue) / 100);
       couponDiscountUsd = round2((subtotalUsd * coupon.discountValue) / 100);
     } else {
       // Monto fijo: el valor está en pesos → solo afecta la parte en pesos.
       // Nunca puede descontar más de lo que suma esa parte (no deja el total en negativo).
-      couponDiscountArs = round2(Math.min(coupon.discountValue, subtotalArs));
+      // Antes: couponDiscountArs = round2(Math.min(coupon.discountValue, subtotalArs));
+      couponDiscountArs = round2(Math.min(coupon.discountValue, despuesPromoArs));
       couponDiscountUsd = 0;
     }
   }
@@ -75,7 +96,9 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDisco
   let manualDiscountArs = 0;
   let manualDiscountUsd = 0;
   if (manualDiscount && manualDiscount.value > 0) {
-    const restanteArs = Math.max(0, subtotalArs - couponDiscountArs);
+    // Antes: const restanteArs = Math.max(0, subtotalArs - couponDiscountArs);
+    // Ahora también descuenta la promo, que va primero.
+    const restanteArs = Math.max(0, despuesPromoArs - couponDiscountArs);
     const restanteUsd = Math.max(0, subtotalUsd - couponDiscountUsd);
     if (manualDiscount.type === "PERCENTAGE") {
       const pct = Math.min(100, manualDiscount.value);
@@ -102,7 +125,9 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDisco
   // prorratear (y no aplicar el % suelto) porque cada producto puede tener su propia alícuota
   // (21% o 10,5%): la base de cada línea tiene que bajar en la misma proporción que el total.
   // Los dos descuentos (cupón y el manual del vendedor) bajan la base imponible.
-  const factorArs = subtotalArs > 0 ? (subtotalArs - couponDiscountArs - manualDiscountArs) / subtotalArs : 1;
+  // La promo también: es un descuento más sobre la parte en pesos.
+  // Antes: const factorArs = subtotalArs > 0 ? (subtotalArs - couponDiscountArs - manualDiscountArs) / subtotalArs : 1;
+  const factorArs = subtotalArs > 0 ? (subtotalArs - promoDiscountArs - couponDiscountArs - manualDiscountArs) / subtotalArs : 1;
   const factorUsd = subtotalUsd > 0 ? (subtotalUsd - couponDiscountUsd - manualDiscountUsd) / subtotalUsd : 1;
 
   let ivaAmountArs = 0;
@@ -126,11 +151,13 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDisco
   // Math.max(0, ...) por las dudas: un cupón nunca puede dejar un total negativo.
   // El envío va afuera del Math.max: un cupón del 100% deja en 0 los productos, no el envío.
   // Antes: round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs))
-  const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs) + (shippingCost || 0));
+  // Antes (sin la promo): const totalArs = round2(Math.max(0, subtotalArs - couponDiscountArs - manualDiscountArs + ivaAmountArs) + (shippingCost || 0));
+  const totalArs = round2(Math.max(0, subtotalArs - promoDiscountArs - couponDiscountArs - manualDiscountArs + ivaAmountArs) + (shippingCost || 0));
   const totalUsd = round2(Math.max(0, subtotalUsd - couponDiscountUsd - manualDiscountUsd + ivaAmountUsd));
 
   return {
     subtotalArs, subtotalUsd,
+    promoPercent, promoDiscountArs,
     couponDiscountArs, couponDiscountUsd,
     manualDiscountArs, manualDiscountUsd,
     ivaAmountArs, ivaAmountUsd,

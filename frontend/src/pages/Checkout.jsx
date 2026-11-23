@@ -12,6 +12,10 @@ import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 // Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
 import ProductImage from "../components/ProductImage";
+// Descuento por monto (Black Friday): el descuento y el "Sumá $X y llevás 10% off"
+import { useCartPromos } from "../hooks/useCartPromos";
+import { cartPromoSummary } from "../utils/cartPromo";
+import CartPromoNotice from "../components/CartPromoNotice";
 import { PROVINCES, formatDeliveryDate, motoDeliveryText, shippingAddressLines } from "../utils/shipping";
 
 // Íconos de métodos de pago como SVG inline para no depender de librerías externas
@@ -142,18 +146,27 @@ export default function Checkout() {
 
   const subtotal       = items.reduce((s, i) => s + i.price * i.quantity, 0);
 
+  // Descuento por monto (Black Friday): mismo orden que el backend (computeOrderTotals) → primero la
+  // promo sobre los pesos, después el cupón sobre lo que quedó. Acá solo se MUESTRA: el total que se
+  // cobra lo calcula el servidor al crear el pedido.
+  const promoInfo     = cartPromoSummary(useCartPromos(), subtotalArs, isMayorista ? "MAYORISTA" : "MINORISTA");
+  const promoDiscount = promoInfo.discount;
+  const despuesPromo  = Math.max(0, subtotalArs - promoDiscount);
+
   // Descuento del cupón separado por moneda, con las MISMAS reglas que el backend
   // (backend/src/utils/orderTotals.js): el porcentaje se aplica a cada moneda por su lado, y el
   // cupón de monto fijo —que está expresado en pesos— solo descuenta de la parte en pesos.
   // Antes se usaba couponResult.discountAmount, un único número calculado sobre el total mezclado.
   const cuponTipo  = couponResult?.coupon?.discountType;
   const cuponValor = couponResult?.coupon?.discountValue || 0;
+  // Antes (sin la promo): : (cuponTipo === "PERCENTAGE" ? (subtotalArs * cuponValor) / 100 : Math.min(cuponValor, subtotalArs));
   const couponDiscount = !couponResult ? 0
-    : (cuponTipo === "PERCENTAGE" ? (subtotalArs * cuponValor) / 100 : Math.min(cuponValor, subtotalArs));
+    : (cuponTipo === "PERCENTAGE" ? (despuesPromo * cuponValor) / 100 : Math.min(cuponValor, despuesPromo));
   const couponDiscountUsd = !couponResult ? 0
     : (cuponTipo === "PERCENTAGE" ? (subtotalUsd * cuponValor) / 100 : 0);
 
-  const baseTotal      = Math.max(0, subtotalArs - couponDiscount);
+  // Antes: const baseTotal = Math.max(0, subtotalArs - couponDiscount);
+  const baseTotal      = Math.max(0, despuesPromo - couponDiscount);
 
   // IVA calculado por producto según su campo ivaRate (10.5% o 21%).
   // Antes: acc + item.price * item.quantity * rate  ← sobre el precio de LISTA.
@@ -433,6 +446,14 @@ export default function Checkout() {
                   <span className="font-semibold text-[#0b1c30] shrink-0">{formatPriceWithCurrency(item.price * item.quantity, item.currency)}</span>
                 </div>
               ))}
+              {/* Descuento por monto: el que guardó el servidor en el pedido (puede diferir del que se
+                  mostró antes si la promo terminó justo mientras compraba) */}
+              {successOrder.promoDiscount > 0 && (
+                <div className="flex justify-between text-sm text-[#006b2c] font-medium border-t border-[#bdcaba]/30 pt-2">
+                  <span>{successOrder.promoRule?.name || "Promo"}{successOrder.promoPercent ? ` (${successOrder.promoPercent}%)` : ""}</span>
+                  <span>−{formatPrice(successOrder.promoDiscount)}</span>
+                </div>
+              )}
               {/* Cupón aplicado */}
               {couponResult && (
                 <div className="flex justify-between text-sm text-[#006b2c] font-medium border-t border-[#bdcaba]/30 pt-2">
@@ -442,7 +463,10 @@ export default function Checkout() {
                       {couponResult.coupon.code}
                     </span>
                   </span>
-                  <span>−{formatPrice(couponResult.discountAmount)}</span>
+                  {/* Antes: −{formatPrice(couponResult.discountAmount)}. Ese monto lo calcula la validación
+                      del cupón sobre el subtotal entero; con la promo por monto el cupón va sobre lo que
+                      quedó, así que se muestra el que guardó el pedido. */}
+                  <span>−{formatPrice(successOrder.couponDiscount ?? couponResult.discountAmount)}</span>
                 </div>
               )}
               {/* IVA si solicitó factura — usar el valor real guardado en la orden */}
@@ -1256,6 +1280,15 @@ export default function Checkout() {
                         <span>{formatPrice(subtotal)}</span>
                       </div>
                     )}
+
+                    {/* Descuento por monto (Black Friday): va antes del cupón porque se aplica primero */}
+                    {promoDiscount > 0 && (
+                      <div className="flex justify-between items-start text-sm text-[#006b2c] font-semibold">
+                        <span>{promoInfo.promo.name} ({promoInfo.percent}%)</span>
+                        <span>−{formatPrice(promoDiscount)}</span>
+                      </div>
+                    )}
+                    <CartPromoNotice summary={promoInfo} />
 
                     {(couponDiscount > 0 || couponDiscountUsd > 0) && (
                       <div className="flex justify-between items-start text-sm text-[#006b2c] font-semibold">

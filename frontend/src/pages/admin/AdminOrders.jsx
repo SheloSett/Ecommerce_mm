@@ -6,12 +6,17 @@ import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from 
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
-import { getOrderTotals } from "../../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals } from "../../utils/orderTotals";
+import { getOrderTotals, promoLabel } from "../../utils/orderTotals";
 import { formatDeliveryDate } from "../../utils/shipping";
 import { priceParts, activeOfferName } from "../../utils/productPrice";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
 import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
+// Descuento por monto (Black Friday): casilla "Aplicar promo" de la venta manual
+import { useCartPromos } from "../../hooks/useCartPromos";
+import { cartPromoSummary } from "../../utils/cartPromo";
 // Datos del pedido en la hoja de impresión: escapados (el cliente escribe nombre, teléfono y nota)
 import { escapeHtml as esc } from "../../utils/escapeHtml";
 
@@ -196,6 +201,8 @@ export default function AdminOrders() {
   // ── Modal Nueva Venta Manual ─────────────────────────────────────────────────
   const [manualModal, setManualModal] = useState(false);
   const [allProducts, setAllProducts] = useState([]);  // cache de productos para el selector
+  // Promos de descuento por monto vigentes (desde el panel llegan las de los dos tipos de cliente)
+  const livePromos = useCartPromos();
   const [manualForm, setManualForm] = useState({
     customerId: null,
     customerName: "", customerEmail: "", customerPhone: "",
@@ -214,6 +221,9 @@ export default function AdminOrders() {
     manualDiscountValue: "",
     // wantsInvoice: "Agregar IVA (factura)". Solo cuenta si el cliente es MAYORISTA, como en el checkout.
     wantsInvoice: false,
+    // applyPromo: "Aplicar promo" (descuento por monto, ej. Black Friday) para los clientes que compran
+    // por WhatsApp y no pasan por el checkout. Solo se ve si hay una promo vigente para ese tipo de cliente.
+    applyPromo: false,
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
     // desc: % de descuento de ESA línea. El precio unitario sigue siendo el de lista; el precio con
@@ -457,18 +467,29 @@ export default function AdminOrders() {
   // Subtotal ya con los descuentos de cada línea: sobre este se aplica el descuento general.
   const manualSubtotal = manualSubtotalLista - manualDescLineas;
 
+  // Promo por monto (casilla "Aplicar promo"): va primero, sobre los pesos, como en el servidor
+  // (computeOrderTotals). manualPromo dice si hay una vigente para este tipo de cliente y a qué escalón
+  // llega la venta; el descuento solo cuenta si la casilla está tildada.
+  const manualPromo = cartPromoSummary(livePromos, manualSubtotal, manualForm.customerType);
+  const manualPromoDesc = manualForm.applyPromo ? manualPromo.discount : 0;
+  const manualTrasPromo = Math.max(0, manualSubtotal - manualPromoDesc);
+
   // Descuento sobre toda la venta (el de cada producto ya está dentro del subtotal).
   // Mismo criterio que el backend: el porcentaje se aplica al subtotal, el monto fijo se topea.
+  // Con la promo, sobre lo que dejó la promo (manualTrasPromo; sin promo es igual a manualSubtotal).
   const manualDescGeneral = (() => {
     const v = parseFloat(manualForm.manualDiscountValue) || 0;
     if (v <= 0) return 0;
     if (manualForm.manualDiscountType === "PERCENTAGE") {
-      return Math.round(manualSubtotal * Math.min(100, v)) / 100;
+      // Antes: return Math.round(manualSubtotal * Math.min(100, v)) / 100;
+      return Math.round(manualTrasPromo * Math.min(100, v)) / 100;
     }
-    return Math.min(v, manualSubtotal);
+    // Antes: return Math.min(v, manualSubtotal);
+    return Math.min(v, manualTrasPromo);
   })();
 
-  const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
+  // Antes: const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
+  const manualTotal = Math.max(0, manualTrasPromo - manualDescGeneral);
   // La parte en dólares: el porcentaje general también la baja; el monto fijo está en pesos y no
   // (mismo criterio que el servidor, utils/orderTotals.js computeOrderTotals).
   const manualSubtotalUsd = manualUsd.lista - manualUsd.desc;
@@ -494,7 +515,8 @@ export default function AdminOrders() {
       }, 0);
     return Math.round(sum * 100) / 100;
   };
-  const manualIvaArs = manualIva("ARS", manualSubtotal, manualDescGeneral);
+  // Antes: manualIva("ARS", manualSubtotal, manualDescGeneral) — la promo también baja la base del IVA
+  const manualIvaArs = manualIva("ARS", manualSubtotal, manualPromoDesc + manualDescGeneral);
   const manualIvaUsd = manualIva("USD", manualSubtotalUsd, manualDescGeneralUsd);
 
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
@@ -515,6 +537,7 @@ export default function AdminOrders() {
       crearCuenta: true, cuentaPassword: "",
       manualDiscountType: "PERCENTAGE", manualDiscountValue: "",
       wantsInvoice: false,
+      applyPromo: false,
       items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", desc: "", isCustom: false }],
     });
   };
@@ -641,6 +664,9 @@ export default function AdminOrders() {
         manualDiscountValue: manualForm.manualDiscountValue || undefined,
         // IVA: solo mayorista (el servidor vuelve a controlarlo)
         wantsInvoice:  manualForm.customerType === "MAYORISTA" && !!manualForm.wantsInvoice,
+        // Promo por monto: solo si está tildada y hay una vigente para este tipo de cliente (la casilla
+        // queda tildada aunque se cambie a un tipo de cliente sin promo; ahí no se manda)
+        applyPromo:    !!manualForm.applyPromo && manualPromo.available,
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
@@ -1287,6 +1313,7 @@ ${pagesHtml}
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
       ${Tp.ars.line > 0 || Tp.usd.line > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Descuento en productos</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.line)}${Tp.usd.line > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.line, "USD")}` : ""}</td></tr>` : ""}
+      ${Tp.ars.promo > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🎉 ${esc(promoLabel(order))}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.promo)}</td></tr>` : ""}
       ${Tp.ars.coupon > 0 || Tp.usd.coupon > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.coupon)}${Tp.usd.coupon > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.coupon, "USD")}` : ""}</td></tr>` : ""}
       ${Tp.ars.manual > 0 || Tp.usd.manual > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Descuento general${order.manualDiscountType === "PERCENTAGE" && order.manualDiscountValue ? ` (${order.manualDiscountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.manual)}${Tp.usd.manual > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.manual, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
@@ -1938,6 +1965,13 @@ ${pagesHtml}
                                     <div className="flex justify-between gap-4 text-emerald-700">
                                       <span>Descuento en productos</span>
                                       <span className="font-semibold">−{par(T.ars.line, T.usd.line)}</span>
+                                    </div>
+                                  )}
+                                  {/* Descuento por monto (Black Friday): solo en pesos */}
+                                  {T.ars.promo > 0 && (
+                                    <div className="flex justify-between gap-4 text-emerald-700">
+                                      <span>🎉 {promoLabel(order)}</span>
+                                      <span className="font-semibold">−{formatPrice(T.ars.promo)}</span>
                                     </div>
                                   )}
                                   {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
@@ -3304,15 +3338,44 @@ ${pagesHtml}
                 </label>
               )}
 
+              {/* Promo por monto (Black Friday): para los clientes de WhatsApp, que no pasan por el checkout.
+                  Solo aparece si hay una promo vigente para este tipo de cliente. */}
+              {manualPromo.available && (
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!manualForm.applyPromo}
+                    onChange={(e) => setManualForm((p) => ({ ...p, applyPromo: e.target.checked }))}
+                    className="mt-0.5 w-4 h-4 accent-emerald-600"
+                  />
+                  <span className="text-sm">
+                    <span className="font-bold text-slate-800">
+                      🎉 Aplicar promo {manualPromo.promo?.name || manualPromo.next?.promo?.name}
+                    </span>
+                    <span className="block text-xs text-slate-400">
+                      {manualPromo.percent > 0
+                        ? `Esta venta llega al ${manualPromo.percent}% (−${formatPrice(manualPromo.discount)}).`
+                        : `Todavía no llega al mínimo: faltan ${formatPrice(manualPromo.next?.missing || 0)} para el ${manualPromo.next?.percent}%.`}
+                      {manualPromo.percent > 0 && manualPromo.next && ` Con ${formatPrice(manualPromo.next.missing)} más llega al ${manualPromo.next.percent}%.`}
+                      {" "}Se calcula sobre los productos en pesos, sin envío.
+                    </span>
+                  </span>
+                </label>
+              )}
+
               {/* Total y acciones */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div className="text-sm font-bold text-slate-800">
-                  {(manualDescGeneral > 0 || manualDescLineas > 0) && (
+                  {/* Antes: (manualDescGeneral > 0 || manualDescLineas > 0) y el descuento sin la promo */}
+                  {(manualDescGeneral > 0 || manualDescLineas > 0 || manualPromoDesc > 0) && (
                     <span className="block text-xs font-normal text-slate-500">
                       Subtotal: {formatPrice(manualSubtotalLista)} · Descuento:{" "}
-                      <span className="text-emerald-600 font-semibold">−{formatPrice(manualDescLineas + manualDescGeneral)}</span>
+                      <span className="text-emerald-600 font-semibold">−{formatPrice(manualDescLineas + manualPromoDesc + manualDescGeneral)}</span>
                       {manualDescLineas > 0 && manualDescGeneral > 0 && (
                         <span className="text-slate-400"> ({formatPrice(manualDescLineas)} en productos + {formatPrice(manualDescGeneral)} general)</span>
+                      )}
+                      {manualPromoDesc > 0 && (
+                        <span className="text-slate-400"> · {manualPromo.promo?.name} {manualPromo.percent}%: −{formatPrice(manualPromoDesc)}</span>
                       )}
                     </span>
                   )}

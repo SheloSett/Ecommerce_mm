@@ -48,6 +48,8 @@ const AdminProductCreate = lazy(() => import("./pages/admin/AdminProductCreate")
 const AdminCaja = lazy(() => import("./pages/admin/AdminCaja"));
 const AdminFlyer = lazy(() => import("./pages/admin/AdminFlyer"));
 const AdminCoupons = lazy(() => import("./pages/admin/AdminCoupons"));
+// Descuento por monto de compra (Black Friday): "desde $X, Y% off"
+const AdminCartPromos = lazy(() => import("./pages/admin/AdminCartPromos"));
 const AdminOffers = lazy(() => import("./pages/admin/AdminOffers"));
 const AdminPurchases = lazy(() => import("./pages/admin/AdminPurchases"));
 const AdminSuppliers = lazy(() => import("./pages/admin/AdminSuppliers"));
@@ -309,6 +311,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <RequirePermission permission="cupones"><AdminCoupons /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Mismo permiso que los cupones: también es un descuento sobre el total del pedido */}
+          <Route
+            path="/admin/descuento-por-monto"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="cupones"><AdminCartPromos /></RequirePermission>
               </ProtectedRoute>
             }
           />

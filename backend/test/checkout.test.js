@@ -52,6 +52,7 @@ function resetDb() {
       3: { id: 3, code: "UNAVEZ", active: true, discountType: "PERCENTAGE", discountValue: 50, customerId: null, expiresAt: null, minPurchase: null, maxUses: 1, maxUsesPerCustomer: null },
     },
     couponUsages: [],
+    cartPromos: [], // descuento por monto (Black Friday)
     orders: {},
     nextOrderId: 100,
     nextItemId: 1000,
@@ -123,6 +124,11 @@ class FakePrismaClient {
     };
     this.orderItem = { findMany: async ({ where }) => itemsWithProduct(db.orders[where.orderId]) };
     this.cart = { findUnique: async () => null };
+    // Promos vigentes (services/cartPromo.service.js): prendidas y con la fecha dentro del rango
+    this.cartPromo = {
+      findMany: async ({ where }) => db.cartPromos.filter((p) =>
+        p.active === where.active && p.startsAt <= where.startsAt.lte && p.endsAt > where.endsAt.gt).map((p) => ({ ...p })),
+    };
     this.$executeRawUnsafe = async () => 0;
   }
 }
@@ -455,5 +461,78 @@ describe("estado del pago: el detalle solo con la clave del pedido o la sesión 
     const id = seedOrder({ status: "APPROVED", customerId: 7 });
     assert.equal((await status(id, {}, tokenOf(7))).customerName, "Ana Test");
     assert.deepEqual(await status(id, {}, tokenOf(5)), { id, status: "APPROVED" });
+  });
+});
+
+// ── Descuento por monto (Black Friday, 23/11/2026) ───────────────────────────
+describe("checkout: descuento por monto de compra", () => {
+  const ahora = Date.now();
+  const promo = (fields) => ({
+    id: 1, name: "Black Friday", active: true, appliesTo: "AMBOS",
+    startsAt: new Date(ahora - 86400000), endsAt: new Date(ahora + 86400000),
+    tiers: [{ minAmount: 1000, percent: 5 }, { minAmount: 2000000, percent: 10 }], ...fields,
+  });
+  beforeEach(() => { resetDb(); mp.preferences = []; db.cartPromos = [promo()]; });
+
+  test("lo decide el servidor: el escalón más alto alcanzado, guardado en el pedido", async () => {
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    assert.equal(res.code, 201);
+    const o = db.orders[res.body.id];
+    assert.deepEqual([o.promoId, o.promoPercent, o.promoDiscount, o.total], [1, 10, 200000, 1800000]);
+    assert.deepEqual(o.promoRule.tiers.map((t) => t.percent), [5, 10]);
+  });
+
+  test("sin llegar al primer escalón el pedido no queda marcado con la promo", async () => {
+    const res = await placeOrder({ items: [{ productId: 2, variantId: 21, quantity: 1 }] }); // $500
+    assert.equal(db.orders[res.body.id].promoId, undefined);
+    assert.equal(db.orders[res.body.id].total, 500);
+  });
+
+  test("el envío no cuenta para llegar al escalón ni se descuenta", async () => {
+    db.cartPromos = [promo({ tiers: [{ minAmount: 5000, percent: 10 }] })];
+    // 2 cables = $1.000 de productos + $6.200 de moto: con el envío pasaría los $5.000, sin él no.
+    const res = await placeOrder({
+      items: [{ productId: 2, variantId: 21, quantity: 2 }],
+      shippingMethod: "MOTO",
+      shippingAddress: { streetName: "Rivadavia", streetNumber: "100", city: "Morón", provinceCode: "B", postalCode: "1708" },
+    });
+    assert.equal(res.code, 201);
+    assert.equal(db.orders[res.body.id].promoId, undefined);
+    assert.equal(db.orders[res.body.id].total, 7200);
+  });
+
+  test("una promo para mayoristas no se le aplica a un minorista", async () => {
+    db.cartPromos = [promo({ appliesTo: "MAYORISTA" })];
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    assert.equal(db.orders[res.body.id].promoId, undefined);
+    assert.equal(db.orders[res.body.id].total, 2000000);
+  });
+
+  test("con dos promos vigentes, la que más descuento da con ese carrito", async () => {
+    db.cartPromos = [promo(), promo({ id: 2, name: "Cyber", tiers: [{ minAmount: 1000, percent: 15 }] })];
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    assert.equal(db.orders[res.body.id].promoId, 2);
+    assert.equal(db.orders[res.body.id].total, 1700000);
+  });
+
+  test("con cupón: primero la promo y el cupón sobre lo que quedó (pendiente de confirmar con la clienta)", async () => {
+    const res = await placeOrder({ couponCode: "TODOS10", items: [{ productId: 1, quantity: 1 }] });
+    const o = db.orders[res.body.id];
+    assert.equal(o.promoDiscount, 200000);
+    assert.equal(o.couponDiscount, 180000);
+    assert.equal(o.total, 1620000);
+  });
+
+  test("Mercado Pago cobra el total ya descontado", async () => {
+    const order = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    await createPreference({ body: { orderId: order.body.id } }, fakeRes());
+    assert.equal(mp.preferences[0].items.reduce((s, i) => s + i.unit_price * i.quantity, 0), 1800000);
+  });
+
+  test("si la tabla de promos falla, la venta sale igual sin el descuento", async () => {
+    db.cartPromos = null; // .filter de null → error en la consulta
+    const res = await placeOrder({ items: [{ productId: 1, quantity: 1 }] });
+    assert.equal(res.code, 201);
+    assert.equal(db.orders[res.body.id].total, 2000000);
   });
 });

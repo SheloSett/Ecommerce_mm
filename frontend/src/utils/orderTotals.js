@@ -16,7 +16,9 @@
 //     mezcla las dos monedas y no sirve para ninguna. Se reconstruye desde las líneas, que es
 //     exactamente lo que hacía el panel hasta ahora. No se toca ningún dato histórico.
 
-import { formatPrice as formatPriceCurrency } from "./formatPrice";
+// Antes: from "./formatPrice" — sin la extensión Vite lo resuelve, pero Node no, así que este archivo no
+// se podía testear con `npm test` (ver orderTotals.test.js). Con ".js" funciona en los dos.
+import { formatPrice as formatPriceCurrency } from "./formatPrice.js";
 
 const isUsdItem = (i) => (i?.currency || "ARS") === "USD";
 
@@ -59,14 +61,20 @@ export function getOrderTotals(order) {
     const line     = lineDiscount(items, "ARS");
     const coupon   = order?.couponDiscount || 0;
     const manual   = order?.manualDiscount || 0;
-    const discount = coupon + manual + line;
+    // promo: descuento por monto (Black Friday, Order.promoDiscount). Solo existe en pesos.
+    const promo    = order?.promoDiscount || 0;
+    // Antes: const discount = coupon + manual + line;
+    const discount = coupon + manual + line + promo;
     const iva      = order?.ivaAmount || 0;
     const total    = order?.total || 0;
+    // Antes (sin `promo`, en los dos objetos):
+    //   ars: { subtotal: total + discount - iva - shipping, discount, line, coupon, manual, iva, shipping, total },
+    //   usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: 0 },
     return {
       hasUsd:  false,
       legacy:  false,
-      ars: { subtotal: total + discount - iva - shipping, discount, line, coupon, manual, iva, shipping, total },
-      usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: 0 },
+      ars: { subtotal: total + discount - iva - shipping, discount, line, coupon, manual, promo, iva, shipping, total },
+      usd: { subtotal: 0, discount: 0, line: 0, coupon: 0, manual: 0, promo: 0, iva: 0, shipping: 0, total: 0 },
     };
   }
 
@@ -77,11 +85,12 @@ export function getOrderTotals(order) {
   if (order?.totalUsd == null) {
     const subtotalArs = sumLines(items, "ARS");
     const subtotalUsd = sumLines(items, "USD");
+    // Antes (sin `promo`): ars/usd con { subtotal, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total }
     return {
       hasUsd: true,
       legacy: true,
-      ars: { subtotal: subtotalArs, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: subtotalArs },
-      usd: { subtotal: subtotalUsd, discount: 0, line: 0, coupon: 0, manual: 0, iva: 0, shipping: 0, total: subtotalUsd },
+      ars: { subtotal: subtotalArs, discount: 0, line: 0, coupon: 0, manual: 0, promo: 0, iva: 0, shipping: 0, total: subtotalArs },
+      usd: { subtotal: subtotalUsd, discount: 0, line: 0, coupon: 0, manual: 0, promo: 0, iva: 0, shipping: 0, total: subtotalUsd },
     };
   }
 
@@ -89,19 +98,32 @@ export function getOrderTotals(order) {
   const lArs = lineDiscount(items, "ARS");
   const cArs = order.couponDiscount || 0;
   const mArs = order.manualDiscount || 0;
-  const dArs = cArs + mArs + lArs;
+  const pArs = order.promoDiscount || 0; // descuento por monto: solo en pesos
+  // Antes: const dArs = cArs + mArs + lArs;
+  const dArs = cArs + mArs + lArs + pArs;
   const iArs = order.ivaAmount || 0;
   const lUsd = lineDiscount(items, "USD");
   const cUsd = order.couponDiscountUsd || 0;
   const mUsd = order.manualDiscountUsd || 0;
   const dUsd = cUsd + mUsd + lUsd;
   const iUsd = order.ivaAmountUsd || 0;
+  // Antes (sin `promo`):
+  //   ars: { subtotal: (order.total || 0) + dArs - iArs - shipping, discount: dArs, line: lArs, coupon: cArs, manual: mArs, iva: iArs, shipping, total: order.total || 0 },
+  //   usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, iva: iUsd, shipping: 0, total: order.totalUsd || 0 },
   return {
     hasUsd: true,
     legacy: false,
-    ars: { subtotal: (order.total || 0) + dArs - iArs - shipping, discount: dArs, line: lArs, coupon: cArs, manual: mArs, iva: iArs, shipping, total: order.total || 0 },
-    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, iva: iUsd, shipping: 0, total: order.totalUsd || 0 },
+    ars: { subtotal: (order.total || 0) + dArs - iArs - shipping, discount: dArs, line: lArs, coupon: cArs, manual: mArs, promo: pArs, iva: iArs, shipping, total: order.total || 0 },
+    usd: { subtotal: (order.totalUsd || 0) + dUsd - iUsd, discount: dUsd, line: lUsd, coupon: cUsd, manual: mUsd, promo: 0, iva: iUsd, shipping: 0, total: order.totalUsd || 0 },
   };
+}
+
+// Nombre del descuento por monto de un pedido para mostrar en el desglose: "Black Friday (10%)".
+// Sale de la copia que guardó el pedido (Order.promoRule), así se ve igual aunque la promo se haya
+// cambiado o borrado después.
+export function promoLabel(order) {
+  const name = order?.promoRule?.name || "Promo";
+  return order?.promoPercent ? `${name} (${order.promoPercent}%)` : name;
 }
 
 // Desglose listo para imprimir (Excel, PDF, impresión): un bloque por moneda, cada uno con

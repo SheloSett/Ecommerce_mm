@@ -7,9 +7,14 @@ import { labelFromOrder } from "../../utils/shippingLabel";
 import { ordersApi, productsApi, shippingApi, suppliersApi, shippingLabelsApi, getImageUrl } from "../../services/api";
 import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, itemSku, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
-import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
+import { getOrderTotals, profitFromTotals, promoLabel } from "../../utils/orderTotals";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
 import { priceParts } from "../../utils/productPrice";
+// Descuento por monto (Black Friday): casilla "Aplicar promo" de "Modificar pedido"
+import { useCartPromos } from "../../hooks/useCartPromos";
+import { promoAppliesTo, promoTierFor } from "../../utils/cartPromo";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -119,6 +124,10 @@ export default function AdminOrderDetail() {
   const [editDiscount, setEditDiscount] = useState({ type: "PERCENTAGE", value: "" });
   // "Agregar IVA (factura)" mientras se modifica el pedido (solo pedidos mayoristas, como el checkout)
   const [editInvoice, setEditInvoice] = useState(false);
+  // "Aplicar promo" (descuento por monto) mientras se modifica el pedido. Arranca tildada si el pedido
+  // ya la tiene. livePromos: las vigentes, para poder agregársela a un pedido que no la tenía.
+  const [editPromo, setEditPromo] = useState(false);
+  const livePromos = useCartPromos();
   // Etiqueta de envío abierta: { initial, others, fromOrder } (ver openShippingLabel)
   const [labelModal, setLabelModal] = useState(null);
   const [loadingLabel, setLoadingLabel] = useState(false);
@@ -319,6 +328,7 @@ export default function AdminOrderDetail() {
       suppliersApi.getAll().then((r) => setSuppliers(r.data || [])).catch(() => {});
     }
     setEditInvoice(!!order.wantsInvoice);
+    setEditPromo(!!order.promoRule);
     setEditDiscount({
       type:  order.manualDiscountType || "PERCENTAGE",
       value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
@@ -563,6 +573,8 @@ export default function AdminOrderDetail() {
         applySupplierToProduct: applyCostToProduct,
         // IVA: solo se manda en un pedido mayorista (en uno minorista no se toca lo que tenga)
         ...(order.customerType === "MAYORISTA" ? { wantsInvoice: editInvoice } : {}),
+        // Promo por monto: solo si se tildó o destildó (si no, el pedido sigue con la que tenía)
+        ...(editPromo !== !!order.promoRule ? { applyPromo: editPromo } : {}),
       });
       setOrder(res.data);
       setEditMode(false);
@@ -655,7 +667,9 @@ export default function AdminOrderDetail() {
 
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
+      ${Tp.ars.promo > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🎉 ${esc(promoLabel(order))}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.promo)}</td></tr>` : ""}
+      <!-- Antes: \${hasDiscount ? ... − \${formatPrice(Tp.ars.discount)} ...}: el descuento por monto ahora va en su renglón de arriba y acá queda el resto -->
+      ${(Tp.ars.discount - Tp.ars.promo > 0 || Tp.usd.discount > 0) ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount - Tp.ars.promo)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
       ${Tp.ars.shipping > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Envío</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.shipping)}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
@@ -1275,6 +1289,29 @@ export default function AdminOrderDetail() {
                   </label>
                 )}
 
+                {/* Promo por monto (Black Friday): se ve si el pedido ya la tiene (para poder sacarla) o si
+                    hay una vigente para este tipo de cliente (para agregarla, ej. una venta por WhatsApp). */}
+                {(order.promoRule || livePromos.some((p) => promoAppliesTo(p, order.customerType))) && (
+                  <label className="flex items-start gap-2 mt-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editPromo}
+                      onChange={(e) => setEditPromo(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-emerald-600"
+                    />
+                    <span className="text-sm">
+                      <span className="font-bold text-slate-800">
+                        🎉 Aplicar promo {order.promoRule?.name || livePromos.find((p) => promoAppliesTo(p, order.customerType))?.name}
+                      </span>
+                      <span className="block text-xs text-slate-400">
+                        {order.promoRule
+                          ? "El pedido sigue con los escalones de cuando se aplicó; el % se recalcula con el total nuevo."
+                          : "Se aplica el escalón que alcance el total de productos (sin envío)."}
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 {/* Total estimado + botón guardar */}
                 <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
                   <div className="text-sm text-slate-500">
@@ -1296,11 +1333,21 @@ export default function AdminOrderDetail() {
                       const listaArs = sumLista("ARS");
                       const listaUsd = sumLista("USD");
                       const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
+                      // Promo por monto: va primero, sobre los pesos (mismo orden que el servidor). Con los
+                      // escalones que ya tenía el pedido o, si se le agrega, la vigente que más da.
+                      let pPct = 0;
+                      if (editPromo) {
+                        const reglas = order.promoRule ? [order.promoRule] : livePromos.filter((p) => promoAppliesTo(p, order.customerType));
+                        for (const r of reglas) pPct = Math.max(pPct, promoTierFor(r.tiers, ars)?.percent || 0);
+                      }
+                      const pArs = Math.round(ars * pPct) / 100;
+                      const arsTrasPromo = Math.max(0, ars - pArs);
                       // Descuento general sobre lo que quedó (mismo criterio que el backend: el % va
                       // a las dos monedas, el monto fijo está en pesos y solo baja los pesos).
                       const v = parseFloat(editDiscount.value) || 0;
                       const esPct = editDiscount.type === "PERCENTAGE";
-                      const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
+                      // Antes (sin la promo): const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
+                      const dArs = v > 0 ? (esPct ? Math.round(arsTrasPromo * Math.min(100, v)) / 100 : Math.min(v, arsTrasPromo)) : 0;
                       const dUsd = v > 0 && esPct ? Math.round(usd * Math.min(100, v)) / 100 : 0;
                       // Descuento total = lo de cada producto + el general
                       // IVA (casilla "Agregar IVA"): misma cuenta que el servidor — cada línea con la alícuota
@@ -1314,9 +1361,11 @@ export default function AdminOrderDetail() {
                           .reduce((s, i) => s + Math.round(precioLineaConDesc(i) * parseInt(i.quantity || 0) * factor * (i.ivaRate ?? 21)) / 100, 0);
                         return Math.round(sumIva * 100) / 100;
                       };
-                      const ivaArs = ivaDe("ARS", ars, dArs);
+                      // Antes: const ivaArs = ivaDe("ARS", ars, dArs); — la promo también baja la base del IVA
+                      const ivaArs = ivaDe("ARS", ars, pArs + dArs);
                       const ivaUsd = ivaDe("USD", usd, dUsd);
-                      const descTotalArs = (listaArs - ars) + dArs;
+                      // Antes: const descTotalArs = (listaArs - ars) + dArs;
+                      const descTotalArs = (listaArs - ars) + pArs + dArs;
                       const descTotalUsd = (listaUsd - usd) + dUsd;
                       return (
                         <span className="font-bold text-slate-800">
@@ -1332,7 +1381,8 @@ export default function AdminOrderDetail() {
                             </span>
                           )}
                           {/* El envío se mantiene al modificar el pedido: va en el total */}
-                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - dArs) + ivaArs + (order.shippingCost || 0))}
+                          {/* Antes: formatPrice(Math.max(0, ars - dArs) + ivaArs + ...) — ahora también sin la promo */}
+                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - pArs - dArs) + ivaArs + (order.shippingCost || 0))}
                           {(!anyUsd || ars > 0 || order.shippingCost > 0) && anyUsd && " + "}
                           {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd) + ivaUsd, "USD")}
                         </span>
@@ -1481,6 +1531,13 @@ export default function AdminOrderDetail() {
                       <div className="flex justify-between items-start text-sm text-green-700 font-medium">
                         <span>Descuento en productos</span>
                         {moneyPair(T.ars.line, T.usd.line, { prefix: "−" })}
+                      </div>
+                    )}
+                    {/* Descuento por monto (Black Friday): solo en pesos */}
+                    {T.ars.promo > 0 && (
+                      <div className="flex justify-between items-start text-sm text-green-700 font-medium">
+                        <span>🎉 {promoLabel(order)}</span>
+                        <span>−{formatPrice(T.ars.promo)}</span>
                       </div>
                     )}
                     {(T.ars.manual > 0 || T.usd.manual > 0) && (

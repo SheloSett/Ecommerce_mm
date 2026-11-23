@@ -6,7 +6,9 @@ import { ordersApi, paymentsApi, getImageUrl } from "../services/api";
 import Navbar from "../components/Navbar";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
-import { getOrderTotals } from "../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals } from "../utils/orderTotals";
+import { getOrderTotals, promoLabel } from "../utils/orderTotals";
 import { withReturnTo } from "../utils/returnTo";
 
 function formatPrice(price) {
@@ -301,6 +303,13 @@ export default function PayQuotation() {
                         {T.ars.line > 0 && <div>−{formatPrice(T.ars.line)}</div>}
                         {T.usd.line > 0 && <div>−{formatPriceWithCurrency(T.usd.line, "USD")}</div>}
                       </span>
+                    </div>
+                  )}
+                  {/* Descuento por monto (Black Friday): solo en pesos, va antes del cupón */}
+                  {T.ars.promo > 0 && (
+                    <div className="flex justify-between text-[#006b2c]">
+                      <span>{promoLabel(quote)}</span>
+                      <span className="text-right">−{formatPrice(T.ars.promo)}</span>
                     </div>
                   )}
                   {(T.ars.coupon > 0 || T.usd.coupon > 0) && (

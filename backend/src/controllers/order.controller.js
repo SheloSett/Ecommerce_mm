@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
+// Prisma.DbNull: para vaciar una columna Json (Order.promoRule) al sacarle la promo a un pedido
+const { Prisma } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 const { syncProductVisibility } = require("./product.controller");
 const { uploadBuffer } = require("../config/cloudinary");
@@ -41,6 +43,8 @@ const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
 const { resolveOrderShipping } = require("../services/shipping.service");
+// Descuento por monto de compra (Black Friday): qué promo vigente le toca a un pedido
+const { promoForOrder } = require("../services/cartPromo.service");
 
 // Datos del proveedor que viajan en los pedidos del panel (producto y variante). La orden de compra
 // imprime la calle y el teléfono junto al nombre. Antes solo iban id y nombre, y para que la
@@ -631,11 +635,17 @@ async function createOrder(req, res) {
     });
     if (shipping.error) return res.status(shipping.status).json({ error: shipping.error });
 
+    // Descuento por monto (ej. Black Friday): la promo vigente para este tipo de cliente que más
+    // descuento da con este carrito. Como los precios, la decide SIEMPRE el servidor: el navegador solo
+    // la muestra. null si no hay promo o el carrito no llega al primer escalón.
+    const promoAplicada = await promoForOrder({ customerType: isMayorista ? "MAYORISTA" : "MINORISTA", items: orderItems });
+
     const totales = computeOrderTotals({
       items:  orderItems,
       coupon: appliedCoupon,
       ivaRates,
       shippingCost: shipping.cost,
+      promo:  promoAplicada?.rule || null,
     });
 
     // Nombres viejos mantenidos para no tocar el resto de la función: ahora son SOLO la parte
@@ -683,6 +693,13 @@ async function createOrder(req, res) {
           couponDiscount,
           // Los cupones de monto fijo dejan esto en 0 (el valor del cupón está en pesos).
           ...(totales.hasUsd ? { couponDiscountUsd: totales.couponDiscountUsd } : {}),
+        } : {}),
+        // Descuento por monto (ver promoAplicada arriba y Order.promoRule en el schema)
+        ...(promoAplicada ? {
+          promoId:       promoAplicada.id,
+          promoRule:     promoAplicada.rule,
+          promoPercent:  totales.promoPercent,
+          promoDiscount: totales.promoDiscountArs,
         } : {}),
         items: {
           create: orderItems,
@@ -1398,6 +1415,9 @@ async function saveOriginalAndMarkModified(orderId, order) {
       total:          order.total,
       ivaAmount:      order.ivaAmount      || 0,
       couponDiscount: order.couponDiscount || 0,
+      // promoDiscount: descuento por monto del pedido original, para que el "pedido original" que ve el
+      // cliente muestre todo lo que se le descontó (ver OrderDetail.jsx)
+      promoDiscount:  order.promoDiscount  || 0,
       shippingCost:   order.shippingCost   || 0,
     };
     await prisma.order.update({
@@ -1863,7 +1883,11 @@ async function getMyCotizaciones(req, res) {
 // Antes no miraba el envío: modificar un pedido se lo sacaba del total.
 // overrideInvoice: true/false si en este guardado se prende o se apaga el IVA ("Agregar IVA" de
 // "Modificar pedido"); si no viene, el que ya tenía el pedido. Devuelve también wantsInvoice.
-async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined) {
+// overridePromo: { id, rule } para agregarle la promo al pedido, null para sacársela ("Aplicar promo" de
+// "Modificar pedido"). Si no viene, se mantiene la que tenía, con SUS escalones (Order.promoRule): el %
+// se recalcula con el subtotal nuevo, aunque la promo ya haya terminado.
+// Antes: async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined) {
+async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined, overridePromo = undefined) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -1891,9 +1915,23 @@ async function recalcOrderTotals(orderId, overrideManual = undefined, overrideSh
   }
 
   const shippingCost = overrideShipping !== undefined ? overrideShipping : (order.shippingCost || 0);
-  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost });
+  const promoRule = overridePromo !== undefined ? (overridePromo?.rule || null) : (order.promoRule || null);
+  // Antes: const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost });
+  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost, promo: promoRule });
+
+  // Campos de la promo: se escriben si el pedido la tiene, o si en este guardado se agrega o se saca.
+  // Un pedido sin promo no los toca (quedan en null, como siempre).
+  let promoData = {};
+  if (overridePromo) {
+    promoData = { promoId: overridePromo.id, promoRule: overridePromo.rule, promoPercent: t.promoPercent, promoDiscount: t.promoDiscountArs };
+  } else if (overridePromo === null) {
+    promoData = { promoId: null, promoRule: Prisma.DbNull, promoPercent: null, promoDiscount: null };
+  } else if (order.promoRule) {
+    promoData = { promoPercent: t.promoPercent, promoDiscount: t.promoDiscountArs };
+  }
 
   return {
+    ...promoData,
     total:     t.totalArs,
     ...(overrideInvoice !== undefined ? { wantsInvoice: conIva } : {}),
     // Descuento manual: se recalcula siempre (si es un %, el monto cambia cuando cambian los ítems).
@@ -2752,6 +2790,9 @@ async function applyCouponToOrder(req, res) {
       // Si el vendedor ya le había puesto un descuento a mano, se mantiene además del cupón.
       manualDiscount: parseManualDiscount(order.manualDiscountType, order.manualDiscountValue),
       shippingCost: order.shippingCost || 0,
+      // La promo por monto que ya tenía la cotización se mantiene (va antes del cupón). Sin esto, aplicar
+      // un cupón le sacaba la promo del total.
+      promo: order.promoRule || null,
     });
     const discount = totalesQuote.couponDiscountArs;
     const newTotal = totalesQuote.totalArs;
@@ -2764,6 +2805,7 @@ async function applyCouponToOrder(req, res) {
           total: newTotal,
           couponId: coupon.id,
           couponDiscount: discount,
+          ...(order.promoRule ? { promoPercent: totalesQuote.promoPercent, promoDiscount: totalesQuote.promoDiscountArs } : {}),
           ...(totalesQuote.hasUsd ? {
             totalUsd:          totalesQuote.totalUsd,
             couponDiscountUsd: totalesQuote.couponDiscountUsd,
@@ -2798,8 +2840,11 @@ async function applyCouponToOrder(req, res) {
 // El stock se descuenta igual que en una venta normal.
 async function createManualOrder(req, res) {
   try {
+    // applyPromo: la casilla "Aplicar promo" del panel. Los clientes que compran por WhatsApp no pasan
+    // por el checkout, así que la promo por monto (Black Friday) se la aplica el vendedor desde acá.
+    // Antes: ... manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
     const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta, cuentaPassword,
-            manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
+            manualDiscountType, manualDiscountValue, wantsInvoice, applyPromo } = req.body;
 
     // Email es opcional en ventas manuales — solo el nombre es obligatorio
     if (!customerName) {
@@ -2970,7 +3015,18 @@ async function createManualOrder(req, res) {
       ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
     }
     const descuentoManual = parseManualDiscount(manualDiscountType, manualDiscountValue);
-    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual });
+    // Promo por monto: solo si el vendedor la tildó. Se elige igual que en el checkout (la vigente para
+    // el tipo de cliente de la venta que más da con este total). Si tildó la casilla pero ya no hay
+    // ninguna vigente (terminó mientras armaba la venta), se avisa en vez de registrar la venta sin ella.
+    let promoManual = null;
+    if (applyPromo === true) {
+      promoManual = await promoForOrder({ customerType: customerType === "MAYORISTA" ? "MAYORISTA" : "MINORISTA", items: orderItems });
+      if (!promoManual) {
+        return res.status(400).json({ error: "La venta no llega al monto de ninguna promo vigente. Destildá \"Aplicar promo\" para registrarla igual." });
+      }
+    }
+    // Antes: const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual });
+    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual, promo: promoManual?.rule || null });
     // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
     total = totalesManual.totalArs;
 
@@ -3092,6 +3148,13 @@ async function createManualOrder(req, res) {
           manualDiscountValue: descuentoManual?.value ?? null,
           manualDiscount:      totalesManual.manualDiscountArs || null,
           ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd, manualDiscountUsd: totalesManual.manualDiscountUsd || null } : {}),
+          // Promo por monto (casilla "Aplicar promo", ver promoManual arriba)
+          ...(promoManual ? {
+            promoId:       promoManual.id,
+            promoRule:     promoManual.rule,
+            promoPercent:  totalesManual.promoPercent,
+            promoDiscount: totalesManual.promoDiscountArs,
+          } : {}),
           // IVA (ver applyIva arriba). wantsInvoice queda guardado: si después se modifica el pedido,
           // recalcOrderTotals vuelve a calcular el IVA con las líneas nuevas.
           wantsInvoice: applyIva,
@@ -3281,7 +3344,10 @@ async function modifyOrder(req, res) {
     // Si no vienen en el body, se deja el que ya tenía la orden.
     // applySupplierToProduct: ídem para el proveedor de la línea (misma respuesta del modal).
     // wantsInvoice: la casilla "Agregar IVA (factura)" del panel (true/false; si no viene, no se toca).
-    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
+    // applyPromo: la casilla "Aplicar promo" (true/false; si no viene, no se toca). Sacarla siempre se
+    // puede; agregarla solo si hay una promo vigente a la que llegue el pedido modificado.
+    // Antes: const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
+    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice, applyPromo } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
@@ -3337,6 +3403,7 @@ async function modifyOrder(req, res) {
           total:          order.total,
           ivaAmount:      order.ivaAmount      || 0,
           couponDiscount: order.couponDiscount || 0,
+          promoDiscount:  order.promoDiscount  || 0, // descuento por monto del pedido original
         };
 
     // Separar items entrantes: los que tienen itemId (existentes) vs los nuevos
@@ -3389,6 +3456,28 @@ async function modifyOrder(req, res) {
         return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Disponible: ${stockOf.stock}` });
       }
       preparedNew.push({ newItem, pid, qty, price, product, variant });
+    }
+
+    // Promo por monto: agregarla también se resuelve ANTES de tocar nada (mismo motivo que los ítems
+    // nuevos de arriba). Se mide con las líneas como van a quedar: las que siguen, con su precio nuevo,
+    // más las agregadas. Si el pedido ya la tenía, se mantiene con sus escalones (ver recalcOrderTotals).
+    let overridePromo;
+    if (applyPromo === false && order.promoRule) {
+      overridePromo = null;
+    } else if (applyPromo === true && !order.promoRule) {
+      const lineasFinales = [
+        ...order.items.filter((i) => incomingMap[i.id]).map((i) => {
+          const inc = incomingMap[i.id];
+          const precio = parseFloat(inc.price);
+          const cant   = parseInt(inc.quantity);
+          return { price: isNaN(precio) ? i.price : precio, quantity: isNaN(cant) ? i.quantity : cant, currency: i.currency };
+        }),
+        ...preparedNew.map((p) => ({ price: p.price, quantity: p.qty, currency: effectiveCurrency({ product: p.product }) })),
+      ];
+      overridePromo = await promoForOrder({ customerType: order.customerType, items: lineasFinales });
+      if (!overridePromo) {
+        return res.status(400).json({ error: "El pedido no llega al monto de ninguna promo vigente. Destildá \"Aplicar promo\" para guardarlo igual." });
+      }
     }
 
     // Devolver stock de los items eliminados
@@ -3604,7 +3693,8 @@ async function modifyOrder(req, res) {
     const overrideInvoice = typeof wantsInvoice === "boolean"
       ? (wantsInvoice && order.customerType === "MAYORISTA")
       : undefined;
-    const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice);
+    // Antes: const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice);
+    const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice, overridePromo);
 
     const updated = await prisma.order.update({
       where: { id: orderId },

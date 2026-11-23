@@ -369,6 +369,23 @@ async function buildOrderPdf(order, type = "Pedido", showBankDetails = false) {
       rowY += rowH;
     });
 
+    // Fila del descuento por monto (Black Friday, etc.). Va antes del cupón porque se aplica primero.
+    if (order.promoDiscount > 0) {
+      doc.rect(tableX, rowY, tableW, 22).fill("#f0fdf4");
+      doc.fillColor("#16a34a").fontSize(9).font("Helvetica-Bold")
+        .text(
+          `${order.promoRule?.name || "Promo"}${order.promoPercent ? ` (${order.promoPercent}%)` : ""}`,
+          tableX + 8, rowY + 6,
+          { width: tableW - cols.subtotal - 8 }
+        );
+      doc.text(
+        `- ${formatARS(order.promoDiscount)}`,
+        tableX + tableW - cols.subtotal - 4, rowY + 6,
+        { width: cols.subtotal - 4, align: "right" }
+      );
+      rowY += 22;
+    }
+
     // Fila de cupón (si aplica)
     if (order.couponDiscount > 0) {
       doc.rect(tableX, rowY, tableW, 22).fill("#f0fdf4");
@@ -611,6 +628,15 @@ function buildOrderHtml(order, { title, subtitle, footer, type = "Pedido", showB
               <tbody>${rowsHtml}</tbody>
               <!-- Cupón de descuento (si aplica) -->
               <tfoot>
+                ${order.promoDiscount > 0 ? `
+                <tr style="background:#f0fdf4;">
+                  <td colspan="5" style="padding:10px 16px;color:#16a34a;font-size:13px;font-weight:600;">
+                    🎉 ${esc(order.promoRule?.name || "Promo")}${order.promoPercent ? ` (${order.promoPercent}% off)` : ""}
+                  </td>
+                  <td style="padding:10px 16px;color:#16a34a;font-weight:700;font-size:13px;text-align:right;">
+                    - ${formatARS(order.promoDiscount)}
+                  </td>
+                </tr>` : ""}
                 ${order.couponDiscount > 0 ? `
                 <tr style="background:#f0fdf4;">
                   <td colspan="5" style="padding:10px 16px;color:#16a34a;font-size:13px;font-weight:600;">

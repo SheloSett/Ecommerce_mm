@@ -117,6 +117,8 @@ export default function AdminLayout({ children, title }) {
       ],
     },
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
+    // Descuento por monto de compra (Black Friday): "desde $X, Y% off" — mismo permiso que los cupones
+    { path: "/admin/descuento-por-monto", label: "Descuento por monto", icon: "🎉", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
     {

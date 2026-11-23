@@ -5,7 +5,9 @@ import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, productsApi, getImageUrl } from "../services/api";
 // getOrderTotals: mismo criterio que el resto del sistema para separar subtotal, descuentos e IVA
 // (contempla el cupón y el descuento que le puso el vendedor a mano).
-import { getOrderTotals } from "../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals } from "../utils/orderTotals";
+import { getOrderTotals, promoLabel } from "../utils/orderTotals";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
@@ -388,6 +390,12 @@ export default function QuotationHistory() {
                             <p className="text-[#006b2c]">
                               Descuento en productos: −{formatPrice(T.ars.line)}
                               {T.usd.line > 0 && ` / −${formatPriceWithCurrency(T.usd.line, "USD")}`}
+                            </p>
+                          )}
+                          {/* Descuento por monto (Black Friday): solo en pesos, va antes del cupón */}
+                          {T.ars.promo > 0 && (
+                            <p className="text-[#006b2c]">
+                              {promoLabel(quote)}: −{formatPrice(T.ars.promo)}
                             </p>
                           )}
                           {(T.ars.coupon > 0 || T.usd.coupon > 0) && (

@@ -32,6 +32,7 @@ function resetDb() {
     },
     orders: {},
     couponUsages: [],
+    cartPromos: [], // descuento por monto (Black Friday)
     nextItemId: 1000,
   };
 }
@@ -123,6 +124,11 @@ class FakePrismaClient {
     this.couponUsage = { findFirst: async () => null, create: async ({ data }) => { db.couponUsages.push(data); return data; } };
     this.customer = { findUnique: async () => null };
     this.cart = { findUnique: async () => null };
+    // Promos vigentes (services/cartPromo.service.js): prendidas y con la fecha dentro del rango
+    this.cartPromo = {
+      findMany: async ({ where }) => db.cartPromos.filter((p) =>
+        p.active === where.active && p.startsAt <= where.startsAt.lte && p.endsAt > where.endsAt.gt).map((p) => ({ ...p })),
+    };
     // Venta a mano: crea el pedido dentro de una transacción (acá, el mismo cliente falso)
     this.$transaction = (fn) => fn(this);
     this.order.create = async ({ data }) => {
@@ -539,5 +545,120 @@ describe("Modificar pedido con IVA", () => {
     const res = await call(modifyOrder, { params: { id: "303" }, body: { items: lineas(303), wantsInvoice: true } });
     assert.equal(res.code, 200, JSON.stringify(res.body));
     assert.equal(db.orders[303].ivaAmount, 105 + 21);
+  });
+});
+
+// 23/11/2026: descuento por monto (Black Friday). Los clientes de WhatsApp no pasan por el checkout:
+// el vendedor se lo aplica con la casilla "Aplicar promo" de la venta a mano y de "Modificar pedido".
+describe("descuento por monto en la venta a mano y en Modificar pedido", () => {
+  const ahora = Date.now();
+  const promo = (fields) => ({
+    id: 1, name: "Black Friday", active: true, appliesTo: "AMBOS",
+    startsAt: new Date(ahora - 86400000), endsAt: new Date(ahora + 86400000),
+    tiers: [{ minAmount: 2000, percent: 5 }, { minAmount: 5000, percent: 10 }], ...fields,
+  });
+  beforeEach(() => { resetDb(); db.cartPromos = [promo()]; });
+  const venta = (body) => call(createManualOrder, { body: {
+    customerName: "Cliente WhatsApp", paymentMethod: "TRANSFERENCIA", status: "APPROVED", salesChannel: "WHATSAPP",
+    customerType: "MINORISTA", items: [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }], ...body,
+  } });
+  const creado = () => Object.values(db.orders).find((o) => o.id >= 500);
+  const lineas = (id) => db.orders[id].items.map((i) => ({ itemId: i.id, productId: i.productId, quantity: i.quantity, price: i.price }));
+
+  test("con la casilla: se aplica el escalón que alcanza y queda guardada la promo", async () => {
+    const res = await venta({ applyPromo: true });
+    assert.equal(res.code, 201, JSON.stringify(res.body));
+    const o = creado();
+    assert.equal(o.promoId, 1);
+    assert.equal(o.promoPercent, 5);       // 2.500 llega al escalón de $2.000
+    assert.equal(o.promoDiscount, 125);
+    assert.equal(o.total, 2375);
+    assert.equal(o.promoRule.name, "Black Friday");
+  });
+
+  test("sin la casilla: no se aplica aunque haya una promo vigente", async () => {
+    await venta({});
+    assert.equal(creado().promoId, undefined);
+    assert.equal(creado().total, 2500);
+  });
+
+  test("con la casilla pero sin llegar al mínimo: avisa y no registra nada", async () => {
+    const res = await venta({ applyPromo: true, items: [{ productId: 1, quantity: 1, price: 1000 }] });
+    assert.equal(res.code, 400);
+    assert.equal(creado(), undefined);
+  });
+
+  test("una promo solo para mayoristas no se le aplica a una venta minorista", async () => {
+    db.cartPromos = [promo({ appliesTo: "MAYORISTA" })];
+    const res = await venta({ applyPromo: true });
+    assert.equal(res.code, 400);
+    const res2 = await venta({ applyPromo: true, customerType: "MAYORISTA" });
+    assert.equal(res2.code, 201, JSON.stringify(res2.body));
+    assert.equal(creado().promoPercent, 5);
+  });
+
+  test("una promo pausada o terminada no se aplica", async () => {
+    db.cartPromos = [promo({ active: false }), promo({ id: 2, endsAt: new Date(ahora - 1000) })];
+    assert.equal((await venta({ applyPromo: true })).code, 400);
+  });
+
+  test("con descuento del vendedor: la promo va primero y el descuento sobre lo que quedó", async () => {
+    await venta({ applyPromo: true, manualDiscountType: "FIXED", manualDiscountValue: 375 });
+    assert.equal(creado().total, 2500 - 125 - 375);
+  });
+
+  test("Modificar pedido: si sube el total, el % sube al escalón siguiente con los escalones del pedido", async () => {
+    // El pedido guardó sus escalones al comprar; la promo de hoy ya ni existe.
+    db.cartPromos = [];
+    addOrder(400, { status: "PENDING", customerType: "MINORISTA", promoId: 1, promoPercent: 5, promoDiscount: 125, total: 2375,
+      promoRule: { name: "Black Friday", tiers: [{ minAmount: 2000, percent: 5 }, { minAmount: 5000, percent: 10 }] } },
+      [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const items = lineas(400);
+    items[0].quantity = 5; // 5.000 + 500
+    const res = await call(modifyOrder, { params: { id: "400" }, body: { items } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[400].promoPercent, 10);
+    assert.equal(db.orders[400].promoDiscount, 550);
+    assert.equal(db.orders[400].total, 4950);
+  });
+
+  test("Modificar pedido: si baja del mínimo, el descuento queda en 0 (y vuelve si se agrega algo)", async () => {
+    addOrder(401, { status: "PENDING", customerType: "MINORISTA", promoId: 1, promoPercent: 5, promoDiscount: 125, total: 2375,
+      promoRule: { name: "Black Friday", tiers: [{ minAmount: 2000, percent: 5 }] } },
+      [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const [parlante] = lineas(401);
+    await call(modifyOrder, { params: { id: "401" }, body: { items: [{ ...parlante, quantity: 1 }] } });
+    assert.equal(db.orders[401].promoDiscount, 0);
+    assert.equal(db.orders[401].total, 1000);
+  });
+
+  test("Modificar pedido: destildar la promo la saca del total", async () => {
+    addOrder(402, { status: "PENDING", customerType: "MINORISTA", promoId: 1, promoPercent: 5, promoDiscount: 125, total: 2375,
+      promoRule: { name: "Black Friday", tiers: [{ minAmount: 2000, percent: 5 }] } },
+      [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const res = await call(modifyOrder, { params: { id: "402" }, body: { items: lineas(402), applyPromo: false } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[402].promoId, null);
+    assert.equal(db.orders[402].promoDiscount, null);
+    assert.equal(db.orders[402].total, 2500);
+  });
+
+  test("Modificar pedido: tildarla en un pedido que no la tenía aplica la vigente", async () => {
+    addOrder(403, { status: "PENDING", customerType: "MINORISTA", total: 2500 },
+      [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const res = await call(modifyOrder, { params: { id: "403" }, body: { items: lineas(403), applyPromo: true } });
+    assert.equal(res.code, 200, JSON.stringify(res.body));
+    assert.equal(db.orders[403].promoId, 1);
+    assert.equal(db.orders[403].total, 2375);
+  });
+
+  test("Modificar pedido: tildarla sin llegar al mínimo avisa ANTES de tocar el pedido", async () => {
+    addOrder(404, { status: "APPROVED", stockDeducted: true, customerType: "MINORISTA", total: 2500 },
+      [{ productId: 1, quantity: 2, price: 1000 }, { productId: 2, quantity: 1, price: 500 }]);
+    const [parlante] = lineas(404);
+    const res = await call(modifyOrder, { params: { id: "404" }, body: { items: [{ ...parlante, quantity: 1 }], applyPromo: true } });
+    assert.equal(res.code, 400);
+    assert.equal(db.orders[404].items.length, 2, "no se sacó la línea del pendrive");
+    assert.equal(db.products[2].stock, 10, "no se devolvió stock");
   });
 });
