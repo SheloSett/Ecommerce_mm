@@ -315,15 +315,19 @@ export default function App() {
             }
           />
 
-          {/* Mismo permiso que los cupones: también es un descuento sobre el total del pedido */}
+          {/* Antes: path="/admin/descuento-por-monto" con permission="cupones", como ítem suelto del menú.
+              Pedido de la clienta (23/11/2026): va dentro de Productos, al lado de Ofertas / Campañas, así
+              que lleva la ruta y el permiso de esa sección (el menú abre Productos según la ruta). */}
           <Route
-            path="/admin/descuento-por-monto"
+            path="/admin/productos/descuento-por-monto"
             element={
               <ProtectedRoute>
-                <RequirePermission permission="cupones"><AdminCartPromos /></RequirePermission>
+                <RequirePermission permission="productos"><AdminCartPromos /></RequirePermission>
               </ProtectedRoute>
             }
           />
+          {/* La dirección vieja estuvo publicada un rato: lleva a la nueva */}
+          <Route path="/admin/descuento-por-monto" element={<Navigate to="/admin/productos/descuento-por-monto" replace />} />
 
           {/* /admin/carrusel — descartada: funcionalidad movida a CarouselSectionContent en /admin/configuracion */}
           {/* <Route

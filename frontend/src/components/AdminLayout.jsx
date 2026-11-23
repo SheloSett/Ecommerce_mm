@@ -83,6 +83,8 @@ export default function AdminLayout({ children, title }) {
         // { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
         { label: "🏷 Ofertas / Campañas", href: "/admin/productos/ofertas" },
+        // Descuento por monto de compra (Black Friday): "desde $X, Y% off" sobre el total del carrito
+        { label: "🎉 Descuento por monto", href: "/admin/productos/descuento-por-monto" },
         { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },
@@ -117,8 +119,9 @@ export default function AdminLayout({ children, title }) {
       ],
     },
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
-    // Descuento por monto de compra (Black Friday): "desde $X, Y% off" — mismo permiso que los cupones
-    { path: "/admin/descuento-por-monto", label: "Descuento por monto", icon: "🎉", permission: "cupones" },
+    // Comentado: "Descuento por monto" se movió adentro de Productos (al lado de Ofertas / Campañas), pedido
+    // de la clienta el 23/11/2026. Antes era un ítem suelto con el permiso de los cupones:
+    // { path: "/admin/descuento-por-monto", label: "Descuento por monto", icon: "🎉", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
     {

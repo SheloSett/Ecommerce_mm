@@ -8,10 +8,11 @@ const router = express.Router();
 // Va ANTES de /:id para que Express no lea "active" como un id.
 router.get("/active", getActivePromos);
 
-// Admin: mismo permiso que los cupones (es un descuento sobre el total del pedido, como un cupón).
-router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("cupones"), getPromos);
-router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("cupones"), createPromo);
-router.patch("/:id", authMiddleware, adminMiddleware, requireAnyPermission("cupones"), updatePromo);
-router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("cupones"), deletePromo);
+// Admin. Antes solo con el permiso de los cupones: requireAnyPermission("cupones"). La pantalla se movió
+// adentro de Productos (al lado de Ofertas / Campañas), así que ahora alcanza con cualquiera de los dos.
+router.get("/", authMiddleware, adminMiddleware, requireAnyPermission("productos", "cupones"), getPromos);
+router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("productos", "cupones"), createPromo);
+router.patch("/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos", "cupones"), updatePromo);
+router.delete("/:id", authMiddleware, adminMiddleware, requireAnyPermission("productos", "cupones"), deletePromo);
 
 module.exports = router;
