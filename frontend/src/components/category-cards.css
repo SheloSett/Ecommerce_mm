@@ -204,6 +204,31 @@
 .cc-campaign .cc-name { font-size: 26px; font-weight: 800; line-height: 1.1; text-shadow: 0 2px 10px rgba(0,0,0,0.35); overflow-wrap: anywhere; }
 .cc-camp-desc { margin: 6px 0 0; font-size: 14px; line-height: 1.35; opacity: 0.88; }
 .cc-camp-meta { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; margin-top: 12px; }
+/* Escalones de la promo por monto (CampaignCard con `tiers`): una pastilla por escalón, con los colores
+   de cc-hint de cada estilo (amarilla en Black Friday, cian en Cyber Monday, etc.) */
+.cc-camp-tiers { position: relative; z-index: 2; list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-campaign .cc-camp-tiers .cc-hint { margin-top: 0; font-size: 13px; font-weight: 600; padding: 4px 11px; }
+.cc-camp-tiers b { font-weight: 900; }
+.cc-camp-tiers .cc-hint span, .cc-camp-tiers b { white-space: nowrap; }
+@media (max-width: 640px) {
+  .cc-campaign .cc-camp-tiers .cc-hint { font-size: 12px; padding: 3px 9px; }
+}
+
+/* ── Aviso del descuento por monto en el carrito y el checkout (CartPromoNotice.jsx) ──
+   Una franja chica con el estilo de la promo: se apoya en .cc-bar (la versión finita de los estilos, la
+   misma de los banners de anuncio) y le agrega bordes redondeados, la barra de avance y su color. */
+.cc-promo-note { display: block; border-radius: 10px; padding: 8px 12px 10px; font-size: 12px; line-height: 1.35; background-color: #0b1c30; }
+.cc-promo-note .cc-bar-text { display: block; }
+.cc-promo-note .cc-pn-track { position: relative; z-index: 2; height: 6px; margin-top: 7px; border-radius: 999px; background: rgba(255,255,255,0.18); overflow: hidden; }
+.cc-promo-note .cc-pn-fill { height: 100%; border-radius: 999px; background: currentColor; transition: width .5s; }
+.cc-promo-note.cc-sale .cc-pn-fill { background: #ffd300; }
+.cc-promo-note.cc-cybermonday .cc-pn-fill, .cc-promo-note.cc-neon .cc-pn-fill { background: linear-gradient(90deg, #22d3ee, #a855f7, #ff2bd6); }
+.cc-promo-note.cc-fire .cc-pn-fill { background: linear-gradient(90deg, #ffc046, #ff6a00); }
+.cc-promo-note.cc-premium .cc-pn-fill { background: #d6b25e; }
+.cc-promo-note.cc-color .cc-pn-track { background: color-mix(in srgb, var(--cc-fg) 22%, transparent); }
+.cc-promo-note.cc-color::before, .cc-promo-note.cc-color::after,
+.cc-promo-note.cc-premium::before, .cc-promo-note.cc-premium::after { display: none; }
+.cc-promo-note.cc-neon::after { border-radius: 8px; }
 .cc-campaign .cc-hint { margin-top: 0; font-size: 12px; }
 .cc-camp-cta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; opacity: 0.92; }
 .cc-camp-cta .material-symbols-outlined { font-size: 18px; transition: transform .2s; }

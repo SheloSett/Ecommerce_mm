@@ -10,6 +10,10 @@ const { livePromos } = require("../services/cartPromo.service");
 
 const APPLIES_TO = ["MINORISTA", "MAYORISTA", "AMBOS"];
 const MAX_TIERS = 10;
+// Estilos de la tarjeta y del aviso del carrito: los mismos que las campañas (misma lista que
+// CARD_STYLE_KEYS en offer.controller.js; se dibujan con CampaignCard.jsx / category-cards.css).
+const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "blackfriday", "cybermonday", "color"];
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 // Estado para el listado del panel, calculado con la fecha de hoy (no se guarda).
 function withState(promo, now = new Date()) {
@@ -51,7 +55,30 @@ function parsePromoBody(body, existing = null) {
   if (startsAt >= endsAt)        return { error: "La fecha de fin tiene que ser posterior a la de inicio" };
 
   const active = pick("active");
-  return { data: { name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active } };
+
+  // Cómo se ve (tarjeta del inicio y aviso del carrito)
+  const description = String(pick("description") ?? "").trim();
+  if (description.length > 140) return { error: "El subtítulo puede tener hasta 140 letras" };
+  const cardStyle = pick("cardStyle") || "blackfriday";
+  if (!CARD_STYLE_KEYS.includes(cardStyle)) return { error: "Estilo inválido" };
+  const rawColor = pick("cardColor");
+  const cardColor = rawColor ? String(rawColor).trim().toLowerCase() : null;
+  if (cardColor && !HEX_COLOR.test(cardColor)) return { error: "El color tiene que ser del tipo #d81b60" };
+  if (cardStyle === "color" && !cardColor) return { error: "Elegí el color de la promo" };
+  const showCard = pick("showCard");
+  const showCountdown = pick("showCountdown");
+
+  // Antes: return { data: { name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active } };
+  return {
+    data: {
+      name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active,
+      description: description || null,
+      cardStyle,
+      cardColor,
+      showCard: showCard === undefined ? true : !!showCard,
+      showCountdown: showCountdown === undefined ? true : !!showCountdown,
+    },
+  };
 }
 
 // ── GET /api/cart-promos/active — pública ─────────────────────────────────────
@@ -63,8 +90,12 @@ async function getActivePromos(req, res) {
     const [promos, viewer] = await Promise.all([livePromos(), resolvePriceViewer(req, prisma)]);
     const tipo = viewer.isMayorista ? "MAYORISTA" : "MINORISTA";
     const visibles = viewer.isAdmin ? promos : promos.filter((p) => p.appliesTo === "AMBOS" || p.appliesTo === tipo);
+    // Antes: { id, name, tiers, appliesTo, endsAt }. Ahora también cómo se ve, para la tarjeta del inicio y
+    // el aviso del carrito.
     res.json(visibles.map((p) => ({
       id: p.id, name: p.name, tiers: normalizePromoTiers(p.tiers), appliesTo: p.appliesTo, endsAt: p.endsAt,
+      description: p.description, showCard: p.showCard, cardStyle: p.cardStyle, cardColor: p.cardColor,
+      showCountdown: p.showCountdown,
     })));
   } catch (err) {
     console.error("getActivePromos error:", err);

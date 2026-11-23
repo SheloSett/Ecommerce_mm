@@ -536,6 +536,14 @@ model CartPromo {
   startsAt  DateTime
   endsAt    DateTime
   active    Boolean            @default(true)  // Interruptor manual (pausar sin borrar)
+  // Cómo se ve (pedido de la clienta, 23/11/2026: "algo como lo tenemos con las campañas"). Mismos
+  // estilos que la tarjeta de campaña (ver Offer.cardStyle y CampaignCard.jsx): los usa la tarjeta del
+  // inicio con los escalones y el aviso "sumá $X y llevás Y%" del carrito.
+  description   String?                      // Subtítulo de la tarjeta del inicio (opcional)
+  showCard      Boolean @default(true)       // Tarjeta grande en el inicio, arriba de las categorías
+  cardStyle     String  @default("blackfriday")
+  cardColor     String?                      // "#rrggbb" para el estilo "color"
+  showCountdown Boolean @default(true)       // Cuenta regresiva en la tarjeta
   orders    Order[]
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt

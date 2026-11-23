@@ -125,3 +125,34 @@ describe("validación del panel", () => {
     assert.equal(withState({ ...base, endsAt: "2026-11-24T03:00:00Z" }, now).state, "TERMINADA");
   });
 });
+
+// 23/11/2026: cómo se ve la promo (tarjeta del inicio y aviso del carrito), como las campañas
+describe("estilo de la promo", () => {
+  const ok = { name: "Black Friday", appliesTo: "AMBOS", startsAt: "2026-11-23T03:00:00Z", endsAt: "2026-11-30T03:00:00Z", tiers: TIERS };
+
+  test("sin elegir nada: Black Friday, con tarjeta y cuenta regresiva", () => {
+    const { data } = parsePromoBody(ok);
+    assert.deepEqual([data.cardStyle, data.cardColor, data.showCard, data.showCountdown, data.description], ["blackfriday", null, true, true, null]);
+  });
+
+  test("color propio: se guarda en minúscula y es obligatorio con ese estilo", () => {
+    assert.equal(parsePromoBody({ ...ok, cardStyle: "color", cardColor: "#D81B60" }).data.cardColor, "#d81b60");
+    assert.ok(parsePromoBody({ ...ok, cardStyle: "color" }).error);
+    assert.ok(parsePromoBody({ ...ok, cardColor: "rojo" }).error);
+  });
+
+  test("un estilo que no existe se rechaza", () => {
+    assert.ok(parsePromoBody({ ...ok, cardStyle: "<script>" }).error);
+  });
+
+  test("apagar la tarjeta o la cuenta regresiva, y el subtítulo", () => {
+    const { data } = parsePromoBody({ ...ok, showCard: false, showCountdown: false, description: "  Envíos a todo el país  " });
+    assert.deepEqual([data.showCard, data.showCountdown, data.description], [false, false, "Envíos a todo el país"]);
+    assert.ok(parsePromoBody({ ...ok, description: "x".repeat(141) }).error);
+  });
+
+  test("editar solo el interruptor conserva el estilo guardado", () => {
+    const { data } = parsePromoBody({ active: false }, { ...ok, cardStyle: "cybermonday", showCard: false, description: "Hasta el lunes" });
+    assert.deepEqual([data.cardStyle, data.showCard, data.description, data.active], ["cybermonday", false, "Hasta el lunes", false]);
+  });
+});

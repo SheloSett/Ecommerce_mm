@@ -5,7 +5,12 @@ import { formatPrice } from "../../utils/formatPrice";
 // Aplanado recursivo del árbol de categorías para el filtro del picker de productos.
 import { flattenTree, indentedLabel } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
-import CampaignCard, { EVENT_STYLES } from "../../components/CampaignCard";
+// Antes: import CampaignCard, { EVENT_STYLES } from "../../components/CampaignCard";
+// EVENT_STYLES y CARD_STYLES quedan importados por si se vuelven a usar acá (hoy solo los usa la lista
+// CAMPAIGN_CARD_STYLES, que ahora viene armada desde CampaignCard.jsx).
+// eslint-disable-next-line no-unused-vars
+import CampaignCard, { EVENT_STYLES, CAMPAIGN_CARD_STYLES } from "../../components/CampaignCard";
+// eslint-disable-next-line no-unused-vars
 import { CARD_STYLES } from "../../components/CategoryCard";
 
 // Campañas de oferta con vigencia: un conjunto de productos con descuento entre dos fechas.
@@ -37,14 +42,16 @@ const EMPTY_FORM = {
 
 // Estilos de la tarjeta de campaña: los de las categorías (con la explicación adaptada donde hace
 // falta), los de fecha especial (Black Friday, Cyber Monday) y "Color propio".
-const CAMPAIGN_CARD_STYLES = [
-  ...CARD_STYLES.map((s) =>
-    s.key === "sale"  ? { ...s, hint: "Rojo con el descuento en amarillo" } :
-    s.key === "fresh" ? { ...s, hint: "Verde con un brillo que cruza" } : s
-  ),
-  ...EVENT_STYLES,
-  { key: "color", label: "Color propio", hint: "El color que elijas; el texto sale blanco o negro según el fondo" },
-];
+// COMENTADO (23/11/2026): la lista se pasó a CampaignCard.jsx (CAMPAIGN_CARD_STYLES, importada arriba)
+// para que la promo por monto (Productos → Descuento por monto) use exactamente la misma.
+// const CAMPAIGN_CARD_STYLES = [
+//   ...CARD_STYLES.map((s) =>
+//     s.key === "sale"  ? { ...s, hint: "Rojo con el descuento en amarillo" } :
+//     s.key === "fresh" ? { ...s, hint: "Verde con un brillo que cruza" } : s
+//   ),
+//   ...EVENT_STYLES,
+//   { key: "color", label: "Color propio", hint: "El color que elijas; el texto sale blanco o negro según el fondo" },
+// ];
 // Atajos para el color propio
 const CARD_COLOR_PRESETS = ["#d81b60", "#8e24aa", "#e53935", "#ef6c00", "#f9a825", "#2e7d32", "#0288d1", "#1a237e", "#111827"];
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;

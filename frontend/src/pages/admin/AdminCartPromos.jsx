@@ -7,7 +7,15 @@ import AdminLayout from "../../components/AdminLayout";
 import { cartPromosApi } from "../../services/api";
 import toast from "react-hot-toast";
 import { localDay, localTime } from "../../utils/localDate";
-import { normalizePromoTiers } from "../../utils/cartPromo";
+// Antes: import { normalizePromoTiers } from "../../utils/cartPromo";
+import { normalizePromoTiers, cartPromoSummary } from "../../utils/cartPromo";
+// Cómo se ve la promo: mismos estilos y tarjeta que las campañas (pedido del 23/11/2026)
+import CampaignCard, { CampaignChip, CAMPAIGN_CARD_STYLES } from "../../components/CampaignCard";
+import CartPromoNotice from "../../components/CartPromoNotice";
+
+// Atajos para el color propio (los mismos que en Ofertas / Campañas)
+const CARD_COLOR_PRESETS = ["#d81b60", "#8e24aa", "#e53935", "#ef6c00", "#f9a825", "#2e7d32", "#0288d1", "#1a237e", "#111827"];
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const formatPrice = (n) =>
   new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
@@ -36,6 +44,12 @@ function emptyForm() {
     endDay: localDay(fin), endTime: "23:59",
     tiers: [{ minAmount: "", percent: "" }],
     active: true,
+    // Cómo se ve: tarjeta en el inicio y aviso del carrito (mismos estilos que las campañas)
+    description: "",
+    showCard: true,
+    cardStyle: "blackfriday",
+    cardColor: "#d81b60",
+    showCountdown: true,
   };
 }
 
@@ -80,6 +94,11 @@ export default function AdminCartPromos() {
       endDay: localDay(fin), endTime: localTime(fin),
       tiers: normalizePromoTiers(promo.tiers).map((t) => ({ minAmount: String(t.minAmount), percent: String(t.percent) })),
       active: promo.active,
+      description: promo.description || "",
+      showCard: promo.showCard !== false,
+      cardStyle: promo.cardStyle || "blackfriday",
+      cardColor: promo.cardColor || "#d81b60",
+      showCountdown: promo.showCountdown !== false,
     });
     setShowModal(true);
   }
@@ -99,6 +118,7 @@ export default function AdminCartPromos() {
     const endsAt   = new Date(`${form.endDay}T${form.endTime || "23:59"}:00`);
     if (isNaN(startsAt) || isNaN(endsAt)) return toast.error("Revisá las fechas");
     if (startsAt >= endsAt) return toast.error("La fecha de fin tiene que ser posterior a la de inicio");
+    if (form.cardStyle === "color" && !HEX_COLOR.test(form.cardColor)) return toast.error("Elegí un color válido (ej: #d81b60)");
 
     setSaving(true);
     try {
@@ -110,6 +130,12 @@ export default function AdminCartPromos() {
         endsAt: endsAt.toISOString(),
         tiers,
         active: form.active,
+        // Cómo se ve
+        description: form.description.trim() || null,
+        showCard: form.showCard,
+        cardStyle: form.cardStyle,
+        cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
+        showCountdown: form.showCountdown,
       };
       if (editing) {
         await cartPromosApi.update(editing, payload);
@@ -155,6 +181,18 @@ export default function AdminCartPromos() {
   const previewTiers = normalizePromoTiers(
     form.tiers.map((t) => ({ minAmount: parseFloat(t.minAmount), percent: parseFloat(t.percent) }))
   );
+  // Vista previa de cómo se ve: la tarjeta del inicio y el aviso del carrito con un carrito de ejemplo
+  // (el 60% del primer escalón, para que se vea el "sumá $X y llevás...")
+  const previewEndsAt = new Date(`${form.endDay}T${form.endTime || "23:59"}:00`);
+  const previewPromo = {
+    id: 0, name: form.name.trim() || "Black Friday", description: form.description.trim(),
+    endsAt: isNaN(previewEndsAt) ? null : previewEndsAt, appliesTo: "AMBOS", tiers: previewTiers,
+    cardStyle: form.cardStyle, cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
+    showCountdown: form.showCountdown,
+  };
+  const previewSummary = previewTiers.length > 0
+    ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), "MINORISTA")
+    : null;
 
   return (
     <AdminLayout title="Descuento por monto de compra">
@@ -200,8 +238,12 @@ export default function AdminCartPromos() {
                     return (
                       <tr key={promo.id} className={`border-b border-slate-100 ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
                         <td className="px-4 py-3">
-                          <p className="font-bold text-slate-800">{promo.name}</p>
-                          <p className="text-xs text-slate-400">{APPLIES_LABEL[promo.appliesTo]}</p>
+                          {/* Antes: <p className="font-bold text-slate-800">{promo.name}</p>. Ahora con su estilo,
+                              como se ve en la tienda (igual que el filtro de campañas del catálogo) */}
+                          <CampaignChip offer={promo} />
+                          <p className="text-xs text-slate-400 mt-1">
+                            {APPLIES_LABEL[promo.appliesTo]}{promo.showCard !== false ? " · tarjeta en el inicio" : ""}
+                          </p>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
@@ -252,7 +294,8 @@ export default function AdminCartPromos() {
       {/* ── Modal crear/editar ────────────────────────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          {/* Antes: max-w-lg. Más ancho para la vista previa de la tarjeta del inicio. */}
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">{editing ? "Editar promo" : "Nueva promo"}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
@@ -284,20 +327,23 @@ export default function AdminCartPromos() {
                 </select>
               </div>
 
-              {/* Vigencia */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Vigencia. Antes: grid-cols-1 sm:grid-cols-2 (empieza y termina lado a lado) con la hora en
+                  w-24: en la ventana de max-w-lg no entraban y se cortaban ("23/11/202", "00:0"). Ahora
+                  una debajo de la otra, con la fecha a todo el ancho y la hora en w-36. En el celular la
+                  hora va debajo de la fecha (en la misma fila tampoco entraban). */}
+              <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Empieza *</label>
-                  <div className="flex gap-2">
-                    <input type="date" value={form.startDay} onChange={(e) => setForm({ ...form, startDay: e.target.value })} className="input flex-1 min-w-0" required />
-                    <input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} className="input w-24" />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="date" value={form.startDay} onChange={(e) => setForm({ ...form, startDay: e.target.value })} className="input sm:flex-1 min-w-0" required />
+                    <input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} className="input sm:w-36 sm:shrink-0" />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Termina *</label>
-                  <div className="flex gap-2">
-                    <input type="date" value={form.endDay} onChange={(e) => setForm({ ...form, endDay: e.target.value })} className="input flex-1 min-w-0" required />
-                    <input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} className="input w-24" />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="date" value={form.endDay} onChange={(e) => setForm({ ...form, endDay: e.target.value })} className="input sm:flex-1 min-w-0" required />
+                    <input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} className="input sm:w-36 sm:shrink-0" />
                   </div>
                 </div>
               </div>
@@ -307,8 +353,11 @@ export default function AdminCartPromos() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">Escalones *</label>
                 <div className="space-y-2">
                   {form.tiers.map((t, idx) => (
+                    // En el celular el monto se cortaba ("100000" no entraba): ahí "Desde $" queda en "$" y "% off"
+                    // en "%". Antes: "Desde $" y "% off" siempre. (Se probó el % en w-16 en el celular: "12,5" no
+                    // entraba, así que queda en w-20.)
                     <div key={idx} className="flex items-center gap-2">
-                      <span className="text-sm text-slate-500 shrink-0">Desde $</span>
+                      <span className="text-sm text-slate-500 shrink-0"><span className="hidden sm:inline">Desde </span>$</span>
                       <input
                         type="number" min="0" step="1"
                         value={t.minAmount}
@@ -323,7 +372,7 @@ export default function AdminCartPromos() {
                         placeholder="5"
                         className="input w-20"
                       />
-                      <span className="text-sm text-slate-500 shrink-0">% off</span>
+                      <span className="text-sm text-slate-500 shrink-0">%<span className="hidden sm:inline"> off</span></span>
                       {form.tiers.length > 1 && (
                         <button type="button" onClick={() => removeTier(idx)} className="text-slate-400 hover:text-red-600 text-sm" title="Sacar escalón">✕</button>
                       )}
@@ -344,6 +393,143 @@ export default function AdminCartPromos() {
                   Se mide sobre el total de productos en pesos, sin el envío. Cuentan también los productos
                   que ya tienen oferta, y se puede usar junto con un cupón.
                 </p>
+              </div>
+
+              {/* ── Cómo se ve ── (pedido del 23/11/2026: "algo como lo tenemos con las campañas")
+                  El estilo pinta la tarjeta del inicio y el aviso del carrito. Mismos estilos que las campañas. */}
+              <div className="p-4 rounded-xl border-2 border-slate-200 space-y-4">
+                <p className="text-sm font-bold text-slate-800">🎨 Cómo se ve</p>
+
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 mb-2">Estilo</p>
+                  <div className="flex flex-wrap gap-2">
+                    {CAMPAIGN_CARD_STYLES.map((s) => (
+                      <button
+                        key={s.key}
+                        type="button"
+                        onClick={() => setForm({ ...form, cardStyle: s.key })}
+                        className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                          form.cardStyle === s.key
+                            ? "border-blue-600 bg-blue-600 text-white"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    {CAMPAIGN_CARD_STYLES.find((s) => s.key === form.cardStyle)?.hint}
+                  </p>
+
+                  {form.cardStyle === "color" && (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={HEX_COLOR.test(form.cardColor) ? form.cardColor : "#d81b60"}
+                          onChange={(e) => setForm({ ...form, cardColor: e.target.value })}
+                          className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer bg-white p-0.5"
+                          title="Elegir color"
+                        />
+                        <input
+                          type="text"
+                          value={form.cardColor}
+                          onChange={(e) => setForm({ ...form, cardColor: e.target.value.trim() })}
+                          placeholder="#d81b60"
+                          maxLength={7}
+                          className={`input w-28 font-mono ${HEX_COLOR.test(form.cardColor) ? "" : "border-red-400"}`}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {CARD_COLOR_PRESETS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setForm({ ...form, cardColor: c })}
+                            title={c}
+                            className={`w-7 h-7 rounded-full border-2 transition-transform ${form.cardColor.toLowerCase() === c ? "border-slate-800 scale-110" : "border-white shadow"}`}
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Aviso del carrito: siempre se ve mientras la promo está vigente */}
+                {previewSummary && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-600 mb-2">
+                      Vista previa del carrito
+                      <span className="font-normal text-slate-400"> — con un carrito de {formatPrice(Math.round(previewTiers[0].minAmount * 0.6))}</span>
+                    </p>
+                    <div className="max-w-sm">
+                      <CartPromoNotice summary={previewSummary} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Tarjeta grande en el inicio */}
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.showCard}
+                    onChange={(e) => setForm({ ...form, showCard: e.target.checked })}
+                    className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-800">🎴 Tarjeta en el inicio</span>
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Mientras está vigente, el inicio muestra una tarjeta grande arriba de las categorías (junto a las
+                      de las campañas) con los escalones. Al tocarla lleva al catálogo.
+                    </span>
+                  </span>
+                </label>
+
+                {form.showCard && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Subtítulo <span className="text-slate-400 font-normal">— opcional</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={form.description}
+                        maxLength={140}
+                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        placeholder="ej: Solo esta semana · Envíos a todo el país"
+                        className="input"
+                      />
+                    </div>
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form.showCountdown}
+                        onChange={(e) => setForm({ ...form, showCountdown: e.target.checked })}
+                        className="w-4 h-4 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-slate-700">⏱️ Mostrar cuenta regresiva</span>
+                        <span className="block text-xs text-slate-500 mt-0.5">
+                          Hasta que termina la promo. Cuando faltan menos de 3 días se pone roja y titila.
+                        </span>
+                      </span>
+                    </label>
+                    {previewTiers.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-600 mb-2">Vista previa del inicio</p>
+                        <CampaignCard
+                          preview
+                          offer={previewPromo}
+                          badge={{ value: previewTiers[previewTiers.length - 1].percent, upTo: previewTiers.length > 1 }}
+                          tiers={previewTiers}
+                          cta="Ver productos"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Activa */}

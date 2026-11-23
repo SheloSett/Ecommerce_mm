@@ -11,6 +11,9 @@ import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
 // Flyers del carrusel en la mejor calidad, desde el original (ver utils/imageUrl.js)
 import { cloudinaryBanner } from "../utils/imageUrl";
+// Tarjeta de la promo por monto (Black Friday) junto a las de campaña
+import { useCartPromos } from "../hooks/useCartPromos";
+import { normalizePromoTiers, promoAppliesTo } from "../utils/cartPromo";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { getRecentIds } from "../utils/recentlyViewed";
 
@@ -115,6 +118,12 @@ export default function Home() {
   const [saleOffset, setSaleOffset] = useState(0);
   const { customer } = useCustomerAuth();
   const navigate = useNavigate();
+  // Promos de descuento por monto vigentes con tarjeta (Productos → Descuento por monto), en la misma fila
+  // que las campañas, con sus escalones. El servidor ya manda solo las de quien mira; el filtro de público
+  // es para el admin que mira la tienda (a él le llegan todas). Va después de `customer`: lo usa.
+  const promoCards = useCartPromos().filter(
+    (p) => p.showCard !== false && promoAppliesTo(p, customer?.type) && (!p.endsAt || new Date(p.endsAt) > new Date())
+  );
 
   useEffect(() => {
     const visibleFor = customer?.type || "MINORISTA";
@@ -569,17 +578,36 @@ export default function Home() {
 
       <main className="flex-1 max-w-[1280px] mx-auto px-6 py-12 w-full">
 
-        {/* Campañas vigentes: una tarjeta grande por campaña (estilo y color elegidos en Admin → Ofertas) */}
-        {campaignCards.length > 0 && (
+        {/* Campañas vigentes: una tarjeta grande por campaña (estilo y color elegidos en Admin → Ofertas).
+            También las promos por monto, primero, con sus escalones (estilo elegido en Productos →
+            Descuento por monto); llevan al catálogo completo porque cuentan todos los productos.
+            Antes la fila se armaba solo con campaignCards (cantidad, columnas y "solo"). */}
+        {campaignCards.length + promoCards.length > 0 && (
           <section className={`mb-10 grid gap-4 ${
-            campaignCards.length === 1 ? "grid-cols-1" : campaignCards.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
+            campaignCards.length + promoCards.length === 1 ? "grid-cols-1" : campaignCards.length + promoCards.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
           }`}>
+            {promoCards.map((promo) => {
+              const tiers = normalizePromoTiers(promo.tiers);
+              return (
+                <CampaignCard
+                  key={`promo-${promo.id}`}
+                  offer={promo}
+                  // "Hasta 10% OFF" con el escalón más alto (o "5% OFF" si hay uno solo)
+                  badge={{ value: tiers[tiers.length - 1]?.percent || 0, upTo: tiers.length > 1 }}
+                  tiers={tiers}
+                  to="/catalogo"
+                  cta="Ver productos"
+                  solo={campaignCards.length + promoCards.length === 1}
+                />
+              );
+            })}
             {campaignCards.map((offer) => (
               <CampaignCard
                 key={offer.id}
                 offer={offer}
                 badge={badgeFor(offer, customer?.type || "MINORISTA")}
-                solo={campaignCards.length === 1}
+                // Antes: solo={campaignCards.length === 1} — ahora cuenta también las promos de la misma fila
+                solo={campaignCards.length + promoCards.length === 1}
               />
             ))}
           </section>

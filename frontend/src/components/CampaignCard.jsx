@@ -20,8 +20,22 @@ export const EVENT_STYLES = [
   { key: "cybermonday", label: "Cyber Monday", hint: "Violeta oscuro con grilla de neón, cinta cian y rosa y el título con glitch", tape: "CYBER MONDAY", sep: "✦", icon: "computer" },
 ];
 
+// Todos los estilos que se pueden elegir para una tarjeta de campaña (o de una promo por monto): los de
+// las categorías (con la explicación adaptada donde hace falta), los de fecha especial y "Color propio".
+// Vivía en AdminOffers.jsx; se pasó acá para que Productos → Descuento por monto use la misma lista.
+export const CAMPAIGN_CARD_STYLES = [
+  ...CARD_STYLES.map((s) =>
+    s.key === "sale"  ? { ...s, hint: "Rojo con el descuento en amarillo" } :
+    s.key === "fresh" ? { ...s, hint: "Verde con un brillo que cruza" } : s
+  ),
+  ...EVENT_STYLES,
+  { key: "color", label: "Color propio", hint: "El color que elijas; el texto sale blanco o negro según el fondo" },
+];
+
 // Estilo a dibujar: los de las categorías, los de fecha especial o "color"; cualquier otro → "sale".
-function campaignStyle(offer) {
+// Exportada para el aviso del carrito de la promo por monto (CartPromoNotice.jsx), que usa el mismo estilo.
+// Antes: function campaignStyle(offer) {
+export function campaignStyle(offer) {
   const s = offer.cardStyle;
   return s === "color" || CARD_STYLES.some((x) => x.key === s) || EVENT_STYLES.some((x) => x.key === s) ? s : "sale";
 }
@@ -102,7 +116,14 @@ export function CampaignChip({ offer, className = "" }) {
   );
 }
 
-export default function CampaignCard({ offer, badge, preview = false, solo = false }) {
+// Promo por monto (Productos → Descuento por monto) con la misma tarjeta (23/11/2026):
+//   tiers → los escalones [{ minAmount, percent }], que se muestran en el cuerpo ("Desde $100.000 · 5% OFF")
+//   to    → a dónde lleva (la promo no tiene productos propios: al catálogo)
+//   cta   → el texto del botón (por defecto "Ver ofertas")
+const money = (n) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
+
+// Antes: export default function CampaignCard({ offer, badge, preview = false, solo = false }) {
+export default function CampaignCard({ offer, badge, preview = false, solo = false, tiers = null, to = null, cta = null }) {
   const style = campaignStyle(offer);
   const event = EVENT_STYLES.find((s) => s.key === style);
   const parts = badgeParts(badge, offer.discountType);
@@ -136,11 +157,23 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
         <span className="material-symbols-outlined cc-icon">{icon}</span>
         <p className="cc-name">{offer.name || "Nombre de la campaña"}</p>
         {offer.description && <p className="cc-camp-desc">{offer.description}</p>}
+        {/* Escalones de la promo por monto: cada uno en una pastilla con los colores del estilo (cc-hint) */}
+        {tiers?.length > 0 && (
+          <ul className="cc-camp-tiers">
+            {tiers.map((t) => (
+              <li key={t.minAmount} className="cc-hint">
+                {/* Monto y % en partes que no se cortan por dentro: si no entra, baja entero el "10% OFF" */}
+                <span>Desde {money(t.minAmount)}</span> · <b>{t.percent}% OFF</b>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="cc-camp-meta">
           {/* Antes: siempre el chip "Quedan N días"; ahora la cuenta regresiva, si la campaña la tiene */}
           {countdown ? <Countdown parts={countdown} /> : ends && <span className="cc-hint">{ends}</span>}
           <span className="cc-camp-cta">
-            Ver ofertas
+            {/* Antes: siempre "Ver ofertas" */}
+            {cta || "Ver ofertas"}
             <span className="material-symbols-outlined">chevron_right</span>
           </span>
         </div>
@@ -158,7 +191,8 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
 
   if (preview) return <div className={className} style={colorVars}>{content}</div>;
   return (
-    <Link to={`/catalogo?offerId=${offer.id}`} className={className} style={colorVars}>
+    // Antes: to={`/catalogo?offerId=${offer.id}`} siempre
+    <Link to={to || `/catalogo?offerId=${offer.id}`} className={className} style={colorVars}>
       {content}
     </Link>
   );
