@@ -14,7 +14,7 @@ import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../
 import { priceParts } from "../../utils/productPrice";
 // Descuento por monto (Black Friday): casilla "Aplicar promo" de "Modificar pedido"
 import { useCartPromos } from "../../hooks/useCartPromos";
-import { promoAppliesTo, promoTierFor } from "../../utils/cartPromo";
+import { promoAppliesTo, promoTierFor, promoBaseAmount } from "../../utils/cartPromo";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -1335,12 +1335,20 @@ export default function AdminOrderDetail() {
                       const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
                       // Promo por monto: va primero, sobre los pesos (mismo orden que el servidor). Con los
                       // escalones que ya tenía el pedido o, si se le agrega, la vigente que más da.
+                      // Si la promo es para algunos productos (productIds, guardados en el pedido o los de la
+                      // vigente), se mide y se descuenta solo sobre esos. Antes: siempre sobre todos los pesos.
                       let pPct = 0;
+                      let pBase = 0;
                       if (editPromo) {
                         const reglas = order.promoRule ? [order.promoRule] : livePromos.filter((p) => promoAppliesTo(p, order.customerType));
-                        for (const r of reglas) pPct = Math.max(pPct, promoTierFor(r.tiers, ars)?.percent || 0);
+                        const lineas = editItems.map((i) => ({ productId: i.productId, price: precioLineaConDesc(i), quantity: parseInt(i.quantity || 0), currency: i.currency }));
+                        for (const r of reglas) {
+                          const base = Array.isArray(r.productIds) ? promoBaseAmount(lineas, r.productIds) : ars;
+                          const pct = promoTierFor(r.tiers, base)?.percent || 0;
+                          if (pct > pPct) { pPct = pct; pBase = base; }
+                        }
                       }
-                      const pArs = Math.round(ars * pPct) / 100;
+                      const pArs = Math.round(pBase * pPct) / 100;
                       const arsTrasPromo = Math.max(0, ars - pArs);
                       // Descuento general sobre lo que quedó (mismo criterio que el backend: el % va
                       // a las dos monedas, el monto fijo está en pesos y solo baja los pesos).

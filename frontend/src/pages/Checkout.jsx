@@ -14,7 +14,7 @@ import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
 import ProductImage from "../components/ProductImage";
 // Descuento por monto (Black Friday): el descuento y el "Sumá $X y llevás 10% off"
 import { useCartPromos } from "../hooks/useCartPromos";
-import { cartPromoSummary } from "../utils/cartPromo";
+import { cartPromoSummary, promoLinesFromCart } from "../utils/cartPromo";
 import CartPromoNotice from "../components/CartPromoNotice";
 import { PROVINCES, formatDeliveryDate, motoDeliveryText, shippingAddressLines } from "../utils/shipping";
 
@@ -149,7 +149,8 @@ export default function Checkout() {
   // Descuento por monto (Black Friday): mismo orden que el backend (computeOrderTotals) → primero la
   // promo sobre los pesos, después el cupón sobre lo que quedó. Acá solo se MUESTRA: el total que se
   // cobra lo calcula el servidor al crear el pedido.
-  const promoInfo     = cartPromoSummary(useCartPromos(), subtotalArs, isMayorista ? "MAYORISTA" : "MINORISTA");
+  // Antes: cartPromoSummary(useCartPromos(), subtotalArs, ...). Ahora con las líneas (promos de algunos productos).
+  const promoInfo     = cartPromoSummary(useCartPromos(), promoLinesFromCart(items), isMayorista ? "MAYORISTA" : "MINORISTA");
   const promoDiscount = promoInfo.discount;
   const despuesPromo  = Math.max(0, subtotalArs - promoDiscount);
 

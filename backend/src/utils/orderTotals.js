@@ -22,7 +22,7 @@
 // en pesos, y el cupón y el descuento del vendedor se aplican después sobre lo que quedó. Solo la parte
 // en pesos: los escalones están en pesos.
 
-const { promoTierFor } = require("./cartPromo");
+const { promoTierFor, promoBaseAmount } = require("./cartPromo");
 
 // Redondeo a 2 decimales, igual que el resto del código de precios.
 function round2(n) {
@@ -66,10 +66,15 @@ function computeOrderTotals({ items, coupon = null, ivaRates = null, manualDisco
   const subtotalUsd = sumItems(items, "USD");
 
   // ── Descuento por monto (promo) ────────────────────────────────────────────
-  // El escalón se mide contra el subtotal de productos en pesos (sin envío, antes del IVA).
-  const promoTier = promo ? promoTierFor(promo.tiers, subtotalArs) : null;
+  // El escalón se mide contra el subtotal de productos en pesos (sin envío, antes del IVA). Si la promo
+  // es para algunos productos (promo.productIds), solo contra las líneas de esos, y el % se descuenta
+  // solo de ellas. Antes: promoTierFor(promo.tiers, subtotalArs) y el % sobre subtotalArs.
+  // El IVA reparte el descuento en proporción sobre todas las líneas en pesos (factorArs, abajo): con
+  // productos de distinta alícuota adentro y afuera de la promo puede diferir unos centavos.
+  const promoBase = promo ? (Array.isArray(promo.productIds) ? promoBaseAmount(items, promo.productIds) : subtotalArs) : 0;
+  const promoTier = promo ? promoTierFor(promo.tiers, promoBase) : null;
   const promoPercent = promoTier ? promoTier.percent : 0;
-  const promoDiscountArs = round2((subtotalArs * promoPercent) / 100);
+  const promoDiscountArs = round2((promoBase * promoPercent) / 100);
   // Lo que queda en pesos después de la promo: sobre esto van el cupón y el descuento del vendedor.
   const despuesPromoArs = Math.max(0, subtotalArs - promoDiscountArs);
 

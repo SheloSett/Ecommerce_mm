@@ -157,13 +157,16 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
         <span className="material-symbols-outlined cc-icon">{icon}</span>
         <p className="cc-name">{offer.name || "Nombre de la campaña"}</p>
         {offer.description && <p className="cc-camp-desc">{offer.description}</p>}
+        {/* Promo para algunas categorías o productos: para cuáles vale (ej. "En Audio y Cables") */}
+        {tiers?.length > 0 && offer.scopeLabel && <p className="cc-camp-desc">{offer.scopeLabel}</p>}
         {/* Escalones de la promo por monto: cada uno en una pastilla con los colores del estilo (cc-hint) */}
         {tiers?.length > 0 && (
           <ul className="cc-camp-tiers">
             {tiers.map((t) => (
               <li key={t.minAmount} className="cc-hint">
                 {/* Monto y % en partes que no se cortan por dentro: si no entra, baja entero el "10% OFF" */}
-                <span>Desde {money(t.minAmount)}</span> · <b>{t.percent}% OFF</b>
+                {/* Antes: "Desde $X" (pedido de la clienta, 24/11/2026: "a partir de") */}
+                <span>A partir de {money(t.minAmount)}</span> · <b>{t.percent}% OFF</b>
               </li>
             ))}
           </ul>

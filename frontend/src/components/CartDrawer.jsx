@@ -8,7 +8,7 @@ import { formatPrice } from "../utils/formatPrice";
 import ProductImage from "./ProductImage";
 // Descuento por monto (Black Friday): el descuento y el "Sumá $X y llevás 10% off"
 import { useCartPromos } from "../hooks/useCartPromos";
-import { cartPromoSummary } from "../utils/cartPromo";
+import { cartPromoSummary, promoLinesFromCart } from "../utils/cartPromo";
 import CartPromoNotice from "./CartPromoNotice";
 
 // Drawer lateral del carrito de compras
@@ -31,7 +31,9 @@ export default function CartDrawer({ open, onClose }) {
   const llegaAlMinimo = totalArs >= mayoristaMinimoCompra;
   const progreso = minimoActivo ? Math.min(100, (totalArs / mayoristaMinimoCompra) * 100) : 100;
   // Descuento por monto: se mide con los pesos, igual que el servidor (ver utils/cartPromo.js)
-  const promoInfo = cartPromoSummary(useCartPromos(), totalArs, isMayorista ? "MAYORISTA" : "MINORISTA");
+  // Antes: cartPromoSummary(useCartPromos(), totalArs, ...). Ahora con las líneas: una promo de algunos
+  // productos mide solo esos (ver utils/cartPromo.js).
+  const promoInfo = cartPromoSummary(useCartPromos(), promoLinesFromCart(items), isMayorista ? "MAYORISTA" : "MINORISTA");
   const navigate = useNavigate();
 
   const handleCheckout = () => {

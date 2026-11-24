@@ -156,3 +156,59 @@ describe("estilo de la promo", () => {
     assert.deepEqual([data.cardStyle, data.showCard, data.description, data.active], ["cybermonday", false, "Hasta el lunes", false]);
   });
 });
+
+// 24/11/2026: la promo puede ser para algunas categorías o productos. El monto se mide y el % se descuenta
+// solo sobre esos productos; el resto del carrito se cobra normal.
+describe("promo para algunos productos", () => {
+  const { promoBaseAmount, bestPromoForItems, promoSnapshot } = require("../src/utils/cartPromo");
+  const T = [{ minAmount: 100000, percent: 10 }];
+
+  test("lo que cuenta: solo las líneas en pesos de los productos que entran", () => {
+    const items = [ars(80000, 1, 1), ars(50000, 1, 2), usd(500, 1, 1), { price: 30000, quantity: 1, currency: "ARS", productId: null }];
+    assert.equal(promoBaseAmount(items, null), 160000, "sin elegir: todos los pesos, incluido el ítem libre");
+    assert.equal(promoBaseAmount(items, [1]), 80000, "solo el producto 1, sin los dólares");
+    assert.equal(promoBaseAmount(items, []), 0, "lista vacía resuelta: ninguno entra");
+  });
+
+  test("computeOrderTotals mide y descuenta solo lo que entra", () => {
+    const items = [ars(80000, 1, 1), ars(50000, 1, 2)];
+    // El 1 solo no llega a $100.000: sin descuento aunque el pedido sume $130.000
+    let t = computeOrderTotals({ items, promo: { tiers: T, productIds: [1] } });
+    assert.equal(t.promoPercent, 0);
+    assert.equal(t.totalArs, 130000);
+    // Con 2 del producto 1 llega: 10% de $160.000, el producto 2 se cobra entero
+    t = computeOrderTotals({ items: [ars(80000, 2, 1), ars(50000, 1, 2)], promo: { tiers: T, productIds: [1] } });
+    assert.equal(t.promoPercent, 10);
+    assert.equal(t.promoDiscountArs, 16000);
+    assert.equal(t.totalArs, 210000 - 16000);
+    // Sin productIds, como antes: todo el pedido
+    assert.equal(computeOrderTotals({ items, promo: { tiers: T } }).promoDiscountArs, 13000);
+  });
+
+  test("entre dos promos gana la que más da con lo que el pedido tiene de cada una", () => {
+    const items = [ars(120000, 1, 1), ars(30000, 1, 2)];
+    const general = { id: 1, tiers: [{ minAmount: 100000, percent: 5 }], eligibleProductIds: null };
+    const audio = { id: 2, tiers: [{ minAmount: 100000, percent: 15 }], eligibleProductIds: [2] };
+    assert.equal(bestPromoForItems([general, audio], items).promo.id, 1, "la de audio no llega con $30.000");
+    const best = bestPromoForItems([general, { ...audio, eligibleProductIds: [1] }], items);
+    assert.equal(best.promo.id, 2);
+    assert.equal(best.base, 120000);
+  });
+
+  test("el pedido guarda qué productos entraban (solo si la promo es para algunos)", () => {
+    assert.deepEqual(promoSnapshot({ name: "Audio", tiers: T, eligibleProductIds: [3, 4] }).productIds, [3, 4]);
+    assert.equal(promoSnapshot({ name: "Todo", tiers: T, eligibleProductIds: null }).productIds, undefined);
+  });
+
+  test("el panel guarda categorías y productos sin repetidos ni basura; vacías = todos", () => {
+    const ok = { name: "Audio", appliesTo: "AMBOS", startsAt: "2026-11-23T03:00:00Z", endsAt: "2026-11-30T03:00:00Z", tiers: T };
+    const { data } = parsePromoBody({ ...ok, categoryIds: [5, "5", "x", -1, 7], productIds: ["12", 12, 0] });
+    assert.deepEqual(data.categoryIds, [5, 7]);
+    assert.deepEqual(data.productIds, [12]);
+    const todos = parsePromoBody(ok).data;
+    assert.deepEqual([todos.categoryIds, todos.productIds], [[], []]);
+    assert.ok(parsePromoBody({ ...ok, productIds: Array.from({ length: 1001 }, (_, i) => i + 1) }).error);
+    // Editar otra cosa conserva lo elegido
+    assert.deepEqual(parsePromoBody({ active: false }, { ...ok, categoryIds: [9], productIds: [] }).data.categoryIds, [9]);
+  });
+});

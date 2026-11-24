@@ -7,6 +7,9 @@
 // REGLAS:
 // - El monto que cuenta es el SUBTOTAL DE PRODUCTOS EN PESOS: lo que el cliente paga por las líneas, con
 //   las ofertas de cada producto ya aplicadas, sin el envío y antes del IVA.
+// - Si la promo es para algunas categorías o productos (CartPromo.categoryIds / productIds, 24/11/2026),
+//   el monto se mide y el % se descuenta SOLO sobre las líneas de esos productos (productIds ya resuelto:
+//   la lista de ids de producto que entran; null = todos). El resto del carrito se cobra normal.
 // - Las líneas en dólares no suman ni se descuentan: los escalones están en pesos y el sistema no
 //   convierte monedas (mismo criterio que el cupón de monto fijo y el mínimo mayorista).
 // - Aplica el escalón más alto alcanzado. Si hay dos promos vigentes para el mismo cliente, la que más
@@ -51,6 +54,31 @@ function isPromoLive(promo, now = new Date()) {
   return !!promo?.active && new Date(promo.startsAt) <= now && now < new Date(promo.endsAt);
 }
 
+// Lo que cuenta para una promo: la suma de las líneas en pesos (precio × cantidad) de los productos que
+// entran. productIds: los ids que entran, o null/undefined = todos (incluidos los ítems libres del panel).
+function promoBaseAmount(items, productIds) {
+  const set = Array.isArray(productIds) ? new Set(productIds.map(Number)) : null;
+  const total = (items || []).reduce((sum, i) => {
+    if ((i.currency || "ARS") === "USD") return sum;
+    if (set && !set.has(Number(i.productId))) return sum;
+    return sum + i.price * i.quantity;
+  }, 0);
+  return Math.round(total * 100) / 100;
+}
+
+// Entre varias promos, la que más % da con lo que el pedido tiene de cada una: { promo, tier, base } o
+// null si ninguna llega. promo.eligibleProductIds: los ids que entran (los pone cartPromo.service), o
+// null = todos.
+function bestPromoForItems(promos, items) {
+  let best = null;
+  for (const promo of promos || []) {
+    const base = promoBaseAmount(items, promo.eligibleProductIds);
+    const tier = promoTierFor(promo.tiers, base);
+    if (tier && (!best || tier.percent > best.tier.percent)) best = { promo, tier, base };
+  }
+  return best;
+}
+
 // Entre varias promos, la que más % da con ese monto: { promo, tier } o null si ninguna llega.
 function bestPromoFor(promos, amount) {
   let best = null;
@@ -61,9 +89,13 @@ function bestPromoFor(promos, amount) {
   return best;
 }
 
-// Lo que se guarda en Order.promoRule: el nombre y los escalones de ese momento.
+// Lo que se guarda en Order.promoRule: el nombre, los escalones y, si es para algunos productos, cuáles
+// entraban en ese momento (así "Modificar pedido" la recalcula igual aunque después cambie la promo).
+// Antes: return { name, tiers }.
 function promoSnapshot(promo) {
-  return { name: String(promo?.name || "Promo"), tiers: normalizePromoTiers(promo?.tiers) };
+  const snap = { name: String(promo?.name || "Promo"), tiers: normalizePromoTiers(promo?.tiers) };
+  if (Array.isArray(promo?.eligibleProductIds)) snap.productIds = promo.eligibleProductIds;
+  return snap;
 }
 
-module.exports = { normalizePromoTiers, promoTierFor, nextPromoTier, promoAppliesTo, isPromoLive, bestPromoFor, promoSnapshot };
+module.exports = { normalizePromoTiers, promoTierFor, nextPromoTier, promoAppliesTo, isPromoLive, bestPromoFor, bestPromoForItems, promoBaseAmount, promoSnapshot };

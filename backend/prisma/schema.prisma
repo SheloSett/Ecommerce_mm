@@ -544,6 +544,11 @@ model CartPromo {
   cardStyle     String  @default("blackfriday")
   cardColor     String?                      // "#rrggbb" para el estilo "color"
   showCountdown Boolean @default(true)       // Cuenta regresiva en la tarjeta
+  // Qué productos entran (pedido de la clienta, 24/11/2026). Vacías las dos = todos los productos, como
+  // antes. Las categorías incluyen sus subcategorías. Se pasan a ids de producto al usar la promo
+  // (services/cartPromo.service.js): el monto se mide y el % se descuenta solo sobre esos productos.
+  categoryIds   Int[]   @default([])
+  productIds    Int[]   @default([])
   orders    Order[]
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt

@@ -10,6 +10,8 @@ const { livePromos } = require("../services/cartPromo.service");
 
 const APPLIES_TO = ["MINORISTA", "MAYORISTA", "AMBOS"];
 const MAX_TIERS = 10;
+const MAX_SCOPE_CATEGORIES = 100;
+const MAX_SCOPE_PRODUCTS = 1000;
 // Estilos de la tarjeta y del aviso del carrito: los mismos que las campañas (misma lista que
 // CARD_STYLE_KEYS en offer.controller.js; se dibujan con CampaignCard.jsx / category-cards.css).
 const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "blackfriday", "cybermonday", "color"];
@@ -34,11 +36,11 @@ function parsePromoBody(body, existing = null) {
   if (name.length > 60) return { error: "El nombre puede tener hasta 60 letras" };
 
   const rawTiers = pick("tiers");
-  if (!Array.isArray(rawTiers) || rawTiers.length === 0) return { error: "Agregá al menos un escalón (desde cuánto y qué %)" };
+  if (!Array.isArray(rawTiers) || rawTiers.length === 0) return { error: "Agregá al menos un escalón (a partir de cuánto y qué %)" };
   if (rawTiers.length > MAX_TIERS) return { error: `Hasta ${MAX_TIERS} escalones` };
   const tiers = normalizePromoTiers(rawTiers);
   // normalizePromoTiers descarta lo inválido: si se perdió alguno, había un monto o un % mal escrito.
-  if (tiers.length !== rawTiers.length) return { error: "Revisá los escalones: cada uno necesita un monto (desde $0) y un % entre 1 y 100" };
+  if (tiers.length !== rawTiers.length) return { error: "Revisá los escalones: cada uno necesita un monto (de $0 en adelante) y un % entre 1 y 100" };
   for (let i = 1; i < tiers.length; i++) {
     if (tiers[i].minAmount === tiers[i - 1].minAmount) return { error: "Hay dos escalones con el mismo monto" };
     // Un escalón más alto que dé menos % no tiene sentido y casi siempre es un error de tipeo.
@@ -68,6 +70,13 @@ function parsePromoBody(body, existing = null) {
   const showCard = pick("showCard");
   const showCountdown = pick("showCountdown");
 
+  // Qué productos entran (24/11/2026): ids de categoría y de producto; vacías las dos = todos.
+  const idList = (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0))];
+  const categoryIds = idList(pick("categoryIds"));
+  const productIds = idList(pick("productIds"));
+  if (categoryIds.length > MAX_SCOPE_CATEGORIES) return { error: `Hasta ${MAX_SCOPE_CATEGORIES} categorías` };
+  if (productIds.length > MAX_SCOPE_PRODUCTS) return { error: `Hasta ${MAX_SCOPE_PRODUCTS} productos sueltos (para más, elegí la categoría)` };
+
   // Antes: return { data: { name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active } };
   return {
     data: {
@@ -77,6 +86,8 @@ function parsePromoBody(body, existing = null) {
       cardColor,
       showCard: showCard === undefined ? true : !!showCard,
       showCountdown: showCountdown === undefined ? true : !!showCountdown,
+      categoryIds,
+      productIds,
     },
   };
 }
@@ -92,10 +103,13 @@ async function getActivePromos(req, res) {
     const visibles = viewer.isAdmin ? promos : promos.filter((p) => p.appliesTo === "AMBOS" || p.appliesTo === tipo);
     // Antes: { id, name, tiers, appliesTo, endsAt }. Ahora también cómo se ve, para la tarjeta del inicio y
     // el aviso del carrito.
+    // productIds: los ids de producto que entran (null = todos), para que el carrito mida y descuente solo
+    // esos; scopeLabel: "En Audio y Cables" para la tarjeta del inicio y el aviso del carrito.
     res.json(visibles.map((p) => ({
       id: p.id, name: p.name, tiers: normalizePromoTiers(p.tiers), appliesTo: p.appliesTo, endsAt: p.endsAt,
       description: p.description, showCard: p.showCard, cardStyle: p.cardStyle, cardColor: p.cardColor,
       showCountdown: p.showCountdown,
+      productIds: p.eligibleProductIds ?? null, scopeLabel: p.scopeLabel ?? null,
     })));
   } catch (err) {
     console.error("getActivePromos error:", err);
@@ -111,7 +125,20 @@ async function getPromos(req, res) {
       include: { _count: { select: { orders: true } } },
       orderBy: { startsAt: "desc" },
     });
-    res.json(promos.map((p) => withState(p)));
+    // Nombres de las categorías y productos elegidos, para mostrarlos en el panel
+    const catIds = [...new Set(promos.flatMap((p) => p.categoryIds || []))];
+    const prodIds = [...new Set(promos.flatMap((p) => p.productIds || []))];
+    const [cats, prods] = await Promise.all([
+      catIds.length ? prisma.category.findMany({ where: { id: { in: catIds } }, select: { id: true, name: true } }) : [],
+      prodIds.length ? prisma.product.findMany({ where: { id: { in: prodIds } }, select: { id: true, name: true } }) : [],
+    ]);
+    const catName = new Map(cats.map((c) => [c.id, c.name]));
+    const prodName = new Map(prods.map((p) => [p.id, p.name]));
+    res.json(promos.map((p) => ({
+      ...withState(p),
+      scopeCategories: (p.categoryIds || []).filter((id) => catName.has(id)).map((id) => ({ id, name: catName.get(id) })),
+      scopeProducts: (p.productIds || []).filter((id) => prodName.has(id)).map((id) => ({ id, name: prodName.get(id) })),
+    })));
   } catch (err) {
     console.error("getPromos error:", err);
     res.status(500).json({ error: "Error al obtener las promos" });

@@ -3470,9 +3470,10 @@ async function modifyOrder(req, res) {
           const inc = incomingMap[i.id];
           const precio = parseFloat(inc.price);
           const cant   = parseInt(inc.quantity);
-          return { price: isNaN(precio) ? i.price : precio, quantity: isNaN(cant) ? i.quantity : cant, currency: i.currency };
+          // productId: para las promos de algunas categorías o productos (antes no se mandaba)
+          return { productId: i.productId, price: isNaN(precio) ? i.price : precio, quantity: isNaN(cant) ? i.quantity : cant, currency: i.currency };
         }),
-        ...preparedNew.map((p) => ({ price: p.price, quantity: p.qty, currency: effectiveCurrency({ product: p.product }) })),
+        ...preparedNew.map((p) => ({ productId: p.pid, price: p.price, quantity: p.qty, currency: effectiveCurrency({ product: p.product }) })),
       ];
       overridePromo = await promoForOrder({ customerType: order.customerType, items: lineasFinales });
       if (!overridePromo) {

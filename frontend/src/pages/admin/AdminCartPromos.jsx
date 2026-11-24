@@ -2,9 +2,12 @@
 // fecha de inicio y de fin (pedido para Black Friday, 23/11/2026). Se aplican solas en el checkout y,
 // con la casilla "Aplicar promo", en la venta manual y en "Modificar pedido".
 // Backend: controllers/cartPromo.controller.js. Reglas del cálculo: utils/cartPromo.js (back y front).
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import AdminLayout from "../../components/AdminLayout";
-import { cartPromosApi } from "../../services/api";
+import { cartPromosApi, categoriesApi, productsApi } from "../../services/api";
+// Qué productos entran (24/11/2026): categorías con el mismo selector que los filtros de Productos
+import MultiSelectDropdown from "../../components/admin/MultiSelectDropdown";
+import { flattenTree } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
 import { localDay, localTime } from "../../utils/localDate";
 // Antes: import { normalizePromoTiers } from "../../utils/cartPromo";
@@ -50,7 +53,22 @@ function emptyForm() {
     cardStyle: "blackfriday",
     cardColor: "#d81b60",
     showCountdown: true,
+    // Qué productos entran: todos, o algunas categorías (ids como texto, para el selector) y productos
+    scopeAll: true,
+    categoryIds: [],
+    products: [], // [{ id, name }]
   };
+}
+
+// "Todos los productos" o "Audio, Cables · 3 productos" para la lista
+function scopeText(promo) {
+  const cats = promo.scopeCategories || [];
+  const prods = promo.scopeProducts || [];
+  if (cats.length === 0 && prods.length === 0) return "Todos los productos";
+  const parts = [];
+  if (cats.length) parts.push(cats.length <= 3 ? cats.map((c) => c.name).join(", ") : `${cats.slice(0, 3).map((c) => c.name).join(", ")} y ${cats.length - 3} más`);
+  if (prods.length) parts.push(`${prods.length} producto${prods.length === 1 ? "" : "s"}`);
+  return `Solo: ${parts.join(" · ")}`;
 }
 
 export default function AdminCartPromos() {
@@ -60,8 +78,35 @@ export default function AdminCartPromos() {
   const [editing, setEditing]     = useState(null); // null = crear, id = editar
   const [form, setForm]           = useState(emptyForm);
   const [saving, setSaving]       = useState(false);
+  // Para elegir qué productos entran
+  const [categories, setCategories] = useState([]);
+  const [prodQuery, setProdQuery]   = useState("");
+  const [prodResults, setProdResults] = useState([]);
+  const prodTimer = useRef(null);
 
   useEffect(() => { loadPromos(); }, []);
+  useEffect(() => { categoriesApi.getAll().then((r) => setCategories(r.data || [])).catch(() => {}); }, []);
+
+  const flatCats = flattenTree(categories);
+  const categoryOptions = flatCats.map((c) => ({ value: String(c.id), label: c.name, depth: c.depth }));
+
+  const searchProducts = (q) => {
+    setProdQuery(q);
+    clearTimeout(prodTimer.current);
+    if (q.trim().length < 2) { setProdResults([]); return; }
+    prodTimer.current = setTimeout(async () => {
+      try {
+        const res = await productsApi.getAllAdmin({ search: q.trim(), limit: 30, excludePaused: true });
+        setProdResults(res.data.products || []);
+      } catch { setProdResults([]); }
+    }, 300);
+  };
+  const addProduct = (p) => {
+    setForm((f) => (f.products.some((x) => x.id === p.id) ? f : { ...f, products: [...f.products, { id: p.id, name: p.name }] }));
+    setProdQuery("");
+    setProdResults([]);
+  };
+  const removeProduct = (id) => setForm((f) => ({ ...f, products: f.products.filter((x) => x.id !== id) }));
 
   async function loadPromos() {
     try {
@@ -99,7 +144,12 @@ export default function AdminCartPromos() {
       cardStyle: promo.cardStyle || "blackfriday",
       cardColor: promo.cardColor || "#d81b60",
       showCountdown: promo.showCountdown !== false,
+      scopeAll: !(promo.categoryIds?.length || promo.productIds?.length),
+      categoryIds: (promo.categoryIds || []).map(String),
+      products: promo.scopeProducts || [],
     });
+    setProdQuery("");
+    setProdResults([]);
     setShowModal(true);
   }
 
@@ -119,6 +169,9 @@ export default function AdminCartPromos() {
     if (isNaN(startsAt) || isNaN(endsAt)) return toast.error("Revisá las fechas");
     if (startsAt >= endsAt) return toast.error("La fecha de fin tiene que ser posterior a la de inicio");
     if (form.cardStyle === "color" && !HEX_COLOR.test(form.cardColor)) return toast.error("Elegí un color válido (ej: #d81b60)");
+    if (!form.scopeAll && form.categoryIds.length === 0 && form.products.length === 0) {
+      return toast.error("Elegí al menos una categoría o un producto (o marcá \"Todos los productos\")");
+    }
 
     setSaving(true);
     try {
@@ -136,6 +189,9 @@ export default function AdminCartPromos() {
         cardStyle: form.cardStyle,
         cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
         showCountdown: form.showCountdown,
+        // Qué productos entran (vacías las dos = todos)
+        categoryIds: form.scopeAll ? [] : form.categoryIds.map(Number),
+        productIds: form.scopeAll ? [] : form.products.map((p) => p.id),
       };
       if (editing) {
         await cartPromosApi.update(editing, payload);
@@ -189,6 +245,14 @@ export default function AdminCartPromos() {
     endsAt: isNaN(previewEndsAt) ? null : previewEndsAt, appliesTo: "AMBOS", tiers: previewTiers,
     cardStyle: form.cardStyle, cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
     showCountdown: form.showCountdown,
+    // Para cuáles vale, como lo arma el servidor (services/cartPromo.service.js, resolveScope)
+    scopeLabel: (() => {
+      if (form.scopeAll || (form.categoryIds.length === 0 && form.products.length === 0)) return null;
+      const names = flatCats.filter((c) => form.categoryIds.includes(String(c.id))).map((c) => c.name);
+      if (names.length === 0 || names.length > 3) return "En productos seleccionados";
+      const cats = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+      return form.products.length ? `En ${cats} y otros productos seleccionados` : `En ${cats}`;
+    })(),
   };
   const previewSummary = previewTiers.length > 0
     ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), "MINORISTA")
@@ -201,8 +265,9 @@ export default function AdminCartPromos() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-slate-500 text-sm max-w-2xl">
-            Un % de descuento sobre el total según cuánto compra el cliente (ej: desde $100.000, 5% off; desde
-            $200.000, 10% off). Se aplica solo en la web y con la casilla "Aplicar promo" en las ventas manuales.
+            Un % de descuento según cuánto compra el cliente (ej: a partir de $100.000, 5% off; a partir de
+            $200.000, 10% off), en todos los productos o solo en algunas categorías o productos. Se aplica solo
+            en la web y con la casilla "Aplicar promo" en las ventas manuales.
           </p>
           <button onClick={openCreate} className="btn-primary shrink-0">
             + Nueva promo
@@ -244,12 +309,13 @@ export default function AdminCartPromos() {
                           <p className="text-xs text-slate-400 mt-1">
                             {APPLIES_LABEL[promo.appliesTo]}{promo.showCard !== false ? " · tarjeta en el inicio" : ""}
                           </p>
+                          <p className="text-xs text-slate-500">{scopeText(promo)}</p>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
                             {normalizePromoTiers(promo.tiers).map((t) => (
                               <span key={t.minAmount} className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full whitespace-nowrap">
-                                desde {formatPrice(t.minAmount)} → {t.percent}%
+                                a partir de {formatPrice(t.minAmount)} → {t.percent}%
                               </span>
                             ))}
                           </div>
@@ -327,6 +393,67 @@ export default function AdminCartPromos() {
                 </select>
               </div>
 
+              {/* Qué productos entran (pedido de la clienta, 24/11/2026). El monto se mide y el % se
+                  descuenta solo sobre esos productos; las categorías incluyen sus subcategorías. */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Qué productos entran *</label>
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-700">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={form.scopeAll} onChange={() => setForm({ ...form, scopeAll: true })} />
+                    Todos los productos
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" checked={!form.scopeAll} onChange={() => setForm({ ...form, scopeAll: false })} />
+                    Solo algunas categorías o productos
+                  </label>
+                </div>
+                {!form.scopeAll && (
+                  <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <MultiSelectDropdown
+                      label="Categorías"
+                      options={categoryOptions}
+                      value={form.categoryIds}
+                      onChange={(v) => setForm((f) => ({ ...f, categoryIds: v }))}
+                      placeholder="Ninguna"
+                      searchable
+                      widthClass="w-full"
+                    />
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1">Productos sueltos</p>
+                      <input
+                        value={prodQuery}
+                        onChange={(e) => searchProducts(e.target.value)}
+                        placeholder="Buscar producto por nombre o SKU…"
+                        className="input"
+                      />
+                      {prodResults.length > 0 && (
+                        <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                          {prodResults.map((p) => (
+                            <button key={p.id} type="button" onClick={() => addProduct(p)} className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50">
+                              {p.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {form.products.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {form.products.map((p) => (
+                            <span key={p.id} className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-full pl-2.5 pr-1.5 py-0.5 text-xs text-slate-700">
+                              {p.name}
+                              <button type="button" onClick={() => removeProduct(p.id)} className="text-slate-400 hover:text-red-600 px-0.5" title="Sacar">✕</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      El monto se mide y el % se descuenta solo sobre estos productos (las categorías incluyen sus
+                      subcategorías). Lo demás del carrito se cobra normal.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Vigencia. Antes: grid-cols-1 sm:grid-cols-2 (empieza y termina lado a lado) con la hora en
                   w-24: en la ventana de max-w-lg no entraban y se cortaban ("23/11/202", "00:0"). Ahora
                   una debajo de la otra, con la fecha a todo el ancho y la hora en w-36. En el celular la
@@ -357,7 +484,7 @@ export default function AdminCartPromos() {
                     // en "%". Antes: "Desde $" y "% off" siempre. (Se probó el % en w-16 en el celular: "12,5" no
                     // entraba, así que queda en w-20.)
                     <div key={idx} className="flex items-center gap-2">
-                      <span className="text-sm text-slate-500 shrink-0"><span className="hidden sm:inline">Desde </span>$</span>
+                      <span className="text-sm text-slate-500 shrink-0"><span className="hidden sm:inline">A partir de </span>$</span>
                       <input
                         type="number" min="0" step="1"
                         value={t.minAmount}
@@ -384,14 +511,15 @@ export default function AdminCartPromos() {
                 </button>
                 {previewTiers.length > 0 && (
                   <p className="text-xs text-slate-500 mt-2">
-                    {previewTiers.map((t) => `desde ${formatPrice(t.minAmount)} → ${t.percent}% off`).join(" · ")}
+                    {previewTiers.map((t) => `a partir de ${formatPrice(t.minAmount)} → ${t.percent}% off`).join(" · ")}
                   </p>
                 )}
                 {/* Cómo se calcula hoy (dos puntos quedaron pendientes de confirmar con la clienta: si
                     cuentan los productos ya rebajados y si se combina con cupones — hoy sí en los dos) */}
                 <p className="text-xs text-slate-400 mt-1">
-                  Se mide sobre el total de productos en pesos, sin el envío. Cuentan también los productos
-                  que ya tienen oferta, y se puede usar junto con un cupón.
+                  Se mide sobre el total de productos en pesos (o solo de los productos que entran, si elegiste
+                  algunos), sin el envío. Cuentan también los productos que ya tienen oferta, y se puede usar
+                  junto con un cupón.
                 </p>
               </div>
 

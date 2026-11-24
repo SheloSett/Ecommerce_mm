@@ -24,10 +24,13 @@ export default function CartPromoNotice({ summary }) {
     ? { "--cc-bg": shown.cardColor || "#c2185b", "--cc-fg": textColorFor(shown.cardColor || "#c2185b") }
     : undefined;
 
+  // Promo para algunos productos: " (en Audio y Cables)" — el monto y el % son solo de esos
+  const scopeOf = (p) => (p?.scopeLabel ? ` (${p.scopeLabel.charAt(0).toLowerCase()}${p.scopeLabel.slice(1)})` : "");
+
   if (!next) {
     return (
       <div className={`cc-bar cc-${style} cc-promo-note`} style={colorVars}>
-        <span className="cc-bar-text">🎉 Ya tenés {percent}% off por {promo.name}</span>
+        <span className="cc-bar-text">🎉 Ya tenés {percent}% off por {promo.name}{scopeOf(promo)}</span>
       </div>
     );
   }
@@ -36,7 +39,7 @@ export default function CartPromoNotice({ summary }) {
   return (
     <div className={`cc-bar cc-${style} cc-promo-note`} style={colorVars}>
       <span className="cc-bar-text">
-        🎉 {next.promo.name}: sumá {formatPrice(next.missing)} y llevás {next.percent}% off
+        🎉 {next.promo.name}: sumá {formatPrice(next.missing)}{scopeOf(next.promo)} y llevás {next.percent}% off
         {percent > 0 && <span style={{ opacity: 0.8, fontWeight: 400 }}> (hoy tenés {percent}%)</span>}
       </span>
       <div className="cc-pn-track">

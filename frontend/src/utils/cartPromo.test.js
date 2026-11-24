@@ -55,3 +55,36 @@ describe("resumen para el carrito", () => {
     assert.equal(cartPromoSummary([BF, cyber], 210000, "MINORISTA").promo.id, 1);
   });
 });
+
+// 24/11/2026: promos para algunas categorías o productos (promo.productIds = los que entran; null = todos)
+import { promoBaseAmount, promoLinesFromCart } from "./cartPromo.js";
+
+test("con las líneas del carrito, cada promo mide solo sus productos", () => {
+  const lines = [
+    { productId: 1, price: 80000, quantity: 1, currency: "ARS" },
+    { productId: 2, price: 50000, quantity: 1, currency: "ARS" },
+    { productId: 1, price: 100, quantity: 1, currency: "USD" },
+  ];
+  assert.equal(promoBaseAmount(lines, null), 130000);
+  assert.equal(promoBaseAmount(lines, [1]), 80000);
+  const audio = { id: 7, name: "Audio", appliesTo: "AMBOS", tiers: [{ minAmount: 100000, percent: 10 }], productIds: [1] };
+  let s = cartPromoSummary([audio], lines, "MINORISTA");
+  assert.equal(s.percent, 0, "$130.000 en total, pero del producto 1 solo hay $80.000");
+  assert.equal(s.next.missing, 20000);
+  s = cartPromoSummary([audio], [...lines, { productId: 1, price: 30000, quantity: 1, currency: "ARS" }], "MINORISTA");
+  assert.equal(s.percent, 10);
+  assert.equal(s.base, 110000);
+  assert.equal(s.discount, 11000, "el 10% solo de lo que entra");
+});
+
+test("una promo para todo sigue igual, con líneas o con un número", () => {
+  const todo = { id: 1, name: "Todo", appliesTo: "AMBOS", tiers: [{ minAmount: 100000, percent: 5 }], productIds: null };
+  const lines = [{ productId: 9, price: 120000, quantity: 1, currency: "ARS" }];
+  assert.equal(cartPromoSummary([todo], lines, "MINORISTA").discount, 6000);
+  assert.equal(cartPromoSummary([todo], 120000, "MINORISTA").discount, 6000);
+});
+
+test("las líneas del carrito: id es el producto", () => {
+  assert.deepEqual(promoLinesFromCart([{ id: 3, price: 10, quantity: 2, currency: "ARS", name: "x" }]),
+    [{ productId: 3, price: 10, quantity: 2, currency: "ARS" }]);
+});

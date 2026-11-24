@@ -470,7 +470,12 @@ export default function AdminOrders() {
   // Promo por monto (casilla "Aplicar promo"): va primero, sobre los pesos, como en el servidor
   // (computeOrderTotals). manualPromo dice si hay una vigente para este tipo de cliente y a qué escalón
   // llega la venta; el descuento solo cuenta si la casilla está tildada.
-  const manualPromo = cartPromoSummary(livePromos, manualSubtotal, manualForm.customerType);
+  // Con las líneas (precio con su descuento): una promo de algunos productos mide solo esos; los ítems
+  // libres no tienen producto y solo cuentan en las promos para todo. Antes: (livePromos, manualSubtotal, ...).
+  const manualPromoLines = manualForm.items
+    .filter((it) => it.isCustom || it.productId)
+    .map((it) => ({ productId: it.isCustom ? null : it.productId, price: precioConDesc(it), quantity: parseInt(it.quantity) || 0, currency: manualItemCurrency(it) }));
+  const manualPromo = cartPromoSummary(livePromos, manualPromoLines, manualForm.customerType);
   const manualPromoDesc = manualForm.applyPromo ? manualPromo.discount : 0;
   const manualTrasPromo = Math.max(0, manualSubtotal - manualPromoDesc);
 

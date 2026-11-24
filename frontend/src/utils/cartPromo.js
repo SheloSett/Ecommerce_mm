@@ -30,32 +30,58 @@ export function promoAppliesTo(promo, customerType) {
   return promo?.appliesTo === "AMBOS" || promo?.appliesTo === tipo;
 }
 
-// Todo lo que necesita una pantalla, para un subtotal en pesos y un tipo de cliente:
+// Lo que cuenta para una promo (igual que el servidor, promoBaseAmount de backend/src/utils/cartPromo.js):
+// la suma de las líneas en pesos de los productos que entran. lines: [{ productId, price, quantity,
+// currency }]; productIds: los ids que entran (promo.productIds), o null/undefined = todos.
+export function promoBaseAmount(lines, productIds) {
+  const set = Array.isArray(productIds) ? new Set(productIds.map(Number)) : null;
+  return round2((lines || []).reduce((sum, l) => {
+    if ((l.currency || "ARS") === "USD") return sum;
+    if (set && !set.has(Number(l.productId))) return sum;
+    return sum + (Number(l.price) || 0) * (Number(l.quantity) || 0);
+  }, 0));
+}
+
+// Todo lo que necesita una pantalla, para el carrito y un tipo de cliente:
 //   promo / percent / discount → lo que se descuenta hoy (promo null y 0 si no llega a ningún escalón)
+//   base → lo que cuenta para la promo aplicada (solo sus productos, si es para algunos)
 //   next → el próximo escalón que da MÁS que el actual: { promo, percent, minAmount, missing } o null
 //   available → hay alguna promo vigente para este cliente (aunque todavía no llegue)
-// Entre varias promos, la que más da con ese monto (igual que el servidor).
-export function cartPromoSummary(promos, subtotalArs, customerType, now = new Date()) {
-  const amount = subtotalArs || 0;
+// Entre varias promos, la que más da con lo que el carrito tiene de cada una (igual que el servidor).
+//
+// itemsOrSubtotal: las líneas del carrito ([{ productId, price, quantity, currency }]): cada promo mide
+// solo sus productos (24/11/2026, promos para algunas categorías o productos). Con un número, todo ese
+// monto cuenta para todas, como antes (la vista previa del panel).
+// Antes: cartPromoSummary(promos, subtotalArs, customerType), siempre con todo el carrito en pesos.
+export function cartPromoSummary(promos, itemsOrSubtotal, customerType, now = new Date()) {
+  const baseOf = (p) => (Array.isArray(itemsOrSubtotal) ? promoBaseAmount(itemsOrSubtotal, p.productIds) : (itemsOrSubtotal || 0));
   const vigentes = (promos || []).filter((p) =>
     promoAppliesTo(p, customerType) && (!p.endsAt || new Date(p.endsAt) > now));
 
   let promo = null;
   let percent = 0;
+  let base = 0;
   for (const p of vigentes) {
-    const tier = promoTierFor(p.tiers, amount);
-    if (tier && tier.percent > percent) { promo = p; percent = tier.percent; }
+    const b = baseOf(p);
+    const tier = promoTierFor(p.tiers, b);
+    if (tier && tier.percent > percent) { promo = p; percent = tier.percent; base = b; }
   }
 
-  // El escalón más cercano que todavía no alcanza y que mejora el % actual
+  // El escalón que menos falta para alcanzar y que mejora el % actual
   let next = null;
   for (const p of vigentes) {
+    const b = baseOf(p);
     for (const t of normalizePromoTiers(p.tiers)) {
-      if (t.minAmount > amount && t.percent > percent && (!next || t.minAmount < next.minAmount)) {
-        next = { promo: p, percent: t.percent, minAmount: t.minAmount, missing: round2(t.minAmount - amount) };
+      if (t.minAmount > b && t.percent > percent && (!next || t.minAmount - b < next.missing)) {
+        next = { promo: p, percent: t.percent, minAmount: t.minAmount, missing: round2(t.minAmount - b) };
       }
     }
   }
 
-  return { promo, percent, discount: round2((amount * percent) / 100), next, available: vigentes.length > 0 };
+  return { promo, percent, base, discount: round2((base * percent) / 100), next, available: vigentes.length > 0 };
+}
+
+// Las líneas del carrito (CartContext: id = productId) en la forma que espera cartPromoSummary.
+export function promoLinesFromCart(items) {
+  return (items || []).map((i) => ({ productId: i.id, price: i.price, quantity: i.quantity, currency: i.currency }));
 }
