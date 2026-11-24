@@ -396,10 +396,11 @@ export default function AdminCartPromos() {
                       legacyCategoryIds={form.categoryIds}
                       onLegacyConverted={() => setForm((f) => ({ ...f, categoryIds: [] }))}
                     />
+                    {/* Antes, más largo: "Filtrá por categoría o buscá, usá “Seleccionar todos” y destildá los que no
+                        van. El monto se mide y el % se descuenta solo sobre los productos elegidos; lo demás del
+                        carrito se cobra normal. Un producto nuevo no entra solo: hay que tildarlo." */}
                     <p className="text-xs text-slate-500">
-                      Filtrá por categoría o buscá, usá “Seleccionar todos” y destildá los que no van. El monto se mide y
-                      el % se descuenta solo sobre los productos elegidos; lo demás del carrito se cobra normal. Un
-                      producto nuevo no entra solo: hay que tildarlo.
+                      El monto y el % cuentan solo los elegidos. Los productos que cargues después no entran solos.
                     </p>
                   </div>
                 )}
