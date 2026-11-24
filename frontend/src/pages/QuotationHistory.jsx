@@ -5,11 +5,15 @@ import { useNotifications } from "../context/NotificationContext";
 import { ordersApi, productsApi, getImageUrl } from "../services/api";
 // getOrderTotals: mismo criterio que el resto del sistema para separar subtotal, descuentos e IVA
 // (contempla el cupón y el descuento que le puso el vendedor a mano).
-import { getOrderTotals } from "../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals } from "../utils/orderTotals";
+import { getOrderTotals, promoLabel } from "../utils/orderTotals";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../utils/formatPrice";
+// Precio de lista/oferta con la misma regla que el servidor (utils/pricing.js), para el precio orientativo
+import { priceParts } from "../utils/productPrice";
 import { withReturnTo } from "../utils/returnTo";
 
 function formatDate(dateStr) {
@@ -82,6 +86,7 @@ export default function QuotationHistory() {
   const [addSearch, setAddSearch]   = useState("");
   const [addResults, setAddResults] = useState([]);
   const [searchingAdd, setSearching] = useState(false);
+  const [addTotal, setAddTotal]     = useState(0); // cuántos productos coinciden (pueden ser más que los que se muestran)
 
   const EDITABLE = ["PENDING", "QUOTE_APPROVED"];
 
@@ -118,18 +123,32 @@ export default function QuotationHistory() {
 
   // Precio orientativo de un producto del catálogo según el tipo de cliente. El precio final lo
   // calcula el backend al guardar (y el vendedor lo puede ajustar al revisar la cotización).
-  const precioOrientativo = (p) => (customer?.type === "MAYORISTA"
-    ? (p.wholesaleSalePrice ?? p.wholesalePrice ?? p.salePrice ?? p.price)
-    : (p.salePrice ?? p.price));
+  // Antes: mayorista → wholesaleSalePrice ?? wholesalePrice ?? salePrice ?? price. Si el producto no
+  // tenía precio mayorista caía a la oferta MINORISTA, y una oferta mayorista más cara que la lista
+  // igual se mostraba: no coincidía con lo que cobra el servidor (effectiveUnitPrice, utils/pricing.js:
+  // lista mayorista o, si no hay, el precio común; la oferta solo si es menor). priceParts es la misma
+  // regla del lado del navegador. El tipo de cliente es el de la cotización (order.customerType), que es
+  // el que usa el servidor al guardar; si no viene, el de la cuenta.
+  const precioOrientativo = (p) => {
+    const quote = quotes.find((q) => q.id === editing?.quoteId);
+    const isMayorista = (quote?.customerType ?? customer?.type) === "MAYORISTA";
+    return priceParts(p, null, isMayorista).price;
+  };
+
+  // Tope de resultados del buscador. Antes: limit 6, sin aviso de que había más: con una palabra común
+  // el producto buscado podía no aparecer nunca. La lista scrollea, como los buscadores del panel.
+  const ADD_SEARCH_LIMIT = 30;
 
   const searchToAdd = async (q) => {
     setAddSearch(q);
-    if (q.trim().length < 2) { setAddResults([]); return; }
+    if (q.trim().length < 2) { setAddResults([]); setAddTotal(0); return; }
     setSearching(true);
     try {
-      const res = await productsApi.getAll({ search: q.trim(), limit: 6, active: true, visibleFor: customer?.type || "MINORISTA" });
-      setAddResults(res.data.products || res.data || []);
-    } catch { setAddResults([]); } finally { setSearching(false); }
+      const res = await productsApi.getAll({ search: q.trim(), limit: ADD_SEARCH_LIMIT, active: true, visibleFor: customer?.type || "MINORISTA" });
+      const list = res.data.products || res.data || [];
+      setAddResults(list);
+      setAddTotal(res.data.pagination?.total ?? list.length);
+    } catch { setAddResults([]); setAddTotal(0); } finally { setSearching(false); }
   };
 
   const addProduct = (p) => {
@@ -371,6 +390,12 @@ export default function QuotationHistory() {
                             <p className="text-[#006b2c]">
                               Descuento en productos: −{formatPrice(T.ars.line)}
                               {T.usd.line > 0 && ` / −${formatPriceWithCurrency(T.usd.line, "USD")}`}
+                            </p>
+                          )}
+                          {/* Descuento por monto (Black Friday): solo en pesos, va antes del cupón */}
+                          {T.ars.promo > 0 && (
+                            <p className="text-[#006b2c]">
+                              {promoLabel(quote)}: −{formatPrice(T.ars.promo)}
                             </p>
                           )}
                           {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
@@ -616,6 +641,12 @@ export default function QuotationHistory() {
                                 </div>
                               </button>
                             ))}
+                            {/* Hay más coincidencias que las que se muestran: antes se cortaba en 6 sin decir nada */}
+                            {!searchingAdd && addTotal > addResults.length && (
+                              <p className="px-4 py-2 text-xs text-[#565e74] border-t border-[#bdcaba]/40">
+                                {addTotal - addResults.length === 1 ? "Hay 1 producto más" : `Hay ${addTotal - addResults.length} productos más`}: escribí más del nombre para encontrarlo.
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>

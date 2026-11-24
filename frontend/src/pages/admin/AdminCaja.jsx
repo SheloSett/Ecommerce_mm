@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { gastosApi, productsApi } from "../../services/api";
 import toast from "react-hot-toast";
@@ -20,6 +20,30 @@ const emptyForm = () => ({ amount: "", description: "", currency: "ARS", date: l
 // la computadora, y el gasto del 28/10 aparecía como 27/10.
 const formatDate = (d) => formatDateOnly(d);
 
+// Buscador del producto del RMA: mismas reglas que el de la venta manual (AdminOrders.jsx): por palabras
+// en cualquier orden, sin importar mayúsculas ni tildes, o por SKU; primero los que EMPIEZAN con lo
+// tipeado, después el resto alfabético. Antes era un desplegable sin búsqueda.
+const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function searchProducts(list, search) {
+  const term = norm(search).trim();
+  const words = term.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  return list
+    .map((p) => ({ p, name: norm(p.name) }))
+    .filter(({ p, name }) => words.every((w) => name.includes(w)) || (p.sku && norm(p.sku).includes(term)))
+    .sort((a, b) => {
+      const aStarts = a.name.startsWith(term) ? 0 : 1;
+      const bStarts = b.name.startsWith(term) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.name.localeCompare(b.name);
+    })
+    .map(({ p }) => p);
+}
+
+// Costo unitario del RMA: el de la variante si tiene uno propio, si no el del producto (como la venta
+// manual). Antes era siempre el del producto padre, aunque la variante devuelta costara otra cosa.
+const unitCost = (product, variant) => variant?.cost ?? product?.cost ?? 0;
+
 export default function AdminCaja() {
   const [tab, setTab]       = useState("NEGOCIO");
   const [gastos, setGastos] = useState([]);
@@ -33,6 +57,8 @@ export default function AdminCaja() {
   const [loadingProds, setLoadingProds] = useState(false);
   // Producto seleccionado para RMA
   const [rmaProductId, setRmaProductId] = useState("");
+  // Texto del buscador de producto del RMA
+  const [rmaSearch, setRmaSearch] = useState("");
   // Variante seleccionada (si el producto tiene variantes)
   const [rmaVariantId, setRmaVariantId] = useState("");
   const [rmaVariants, setRmaVariants]   = useState([]);
@@ -56,7 +82,9 @@ export default function AdminCaja() {
   useEffect(() => {
     if (subtype !== "RMA" || products.length > 0) return;
     setLoadingProds(true);
-    productsApi.getAllAdmin({ limit: 500 })
+    // Antes: { limit: 500 } — solo los 500 productos más nuevos; uno más viejo no se podía devolver.
+    // all=true trae el catálogo completo (sin excludePaused: un producto pausado también se puede devolver).
+    productsApi.getAllAdmin({ all: true })
       .then((res) => {
         // Solo productos con costo definido (los demás no tienen valor de RMA)
         const withCost = (res.data.products || res.data).filter((p) => p.cost > 0);
@@ -74,7 +102,8 @@ export default function AdminCaja() {
     const product = products.find((p) => String(p.id) === String(id));
     if (product) {
       // El monto sale del costo del producto → la moneda del gasto es la del producto, no se elige a mano.
-      setForm((f) => ({ ...f, amount: String(product.cost * rmaQty), currency: product.currency || "ARS" }));
+      // (Si tiene variantes, al elegir la variante se recalcula con el costo de la variante.)
+      setForm((f) => ({ ...f, amount: String(unitCost(product, null) * rmaQty), currency: product.currency || "ARS" }));
       if ((product._count?.variants ?? 0) > 0) {
         setLoadingVariants(true);
         try {
@@ -86,15 +115,30 @@ export default function AdminCaja() {
     }
   };
 
+  // Al elegir la variante, recalcular el monto con su costo (si tiene uno propio)
+  const handleRmaVariant = (id) => {
+    setRmaVariantId(id);
+    const product = products.find((p) => String(p.id) === String(rmaProductId));
+    const variant = rmaVariants.find((v) => String(v.id) === String(id));
+    if (product) {
+      setForm((f) => ({ ...f, amount: String(unitCost(product, variant) * rmaQty) }));
+    }
+  };
+
   // Al cambiar cantidad en RMA, recalcular el monto
   const handleRmaQty = (qty) => {
     const q = Math.max(1, parseInt(qty) || 1);
     setRmaQty(q);
     const product = products.find((p) => String(p.id) === String(rmaProductId));
+    const variant = rmaVariants.find((v) => String(v.id) === String(rmaVariantId));
     if (product) {
-      setForm((f) => ({ ...f, amount: String(product.cost * q) }));
+      // Antes: String(product.cost * q) — el costo del padre aunque hubiera una variante elegida
+      setForm((f) => ({ ...f, amount: String(unitCost(product, variant) * q) }));
     }
   };
+
+  const rmaProduct = products.find((p) => String(p.id) === String(rmaProductId));
+  const rmaMatches = useMemo(() => searchProducts(products, rmaSearch), [products, rmaSearch]);
 
   useEffect(() => { fetchGastos(); }, []);
 
@@ -141,12 +185,14 @@ export default function AdminCaja() {
       toast.success(subtype === "RMA" ? "RMA registrado y stock descontado" : "Gasto registrado");
       setForm(emptyForm());
       setRmaProductId("");
+      setRmaSearch("");
       setRmaVariantId("");
       setRmaVariants([]);
       setRmaQty(1);
       fetchGastos();
-    } catch {
-      toast.error("Error al guardar");
+    } catch (err) {
+      // Antes: siempre "Error al guardar". El servidor ahora explica qué falta (ej. "Elegí la variante de…").
+      toast.error(err.response?.data?.error || "Error al guardar");
     } finally {
       setSaving(false);
     }
@@ -179,7 +225,7 @@ export default function AdminCaja() {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => { setTab(t.key); setSubtype("GASTO"); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
+              onClick={() => { setTab(t.key); setSubtype("GASTO"); setRmaProductId(""); setRmaSearch(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
               className={`px-5 py-2.5 text-sm font-semibold rounded-t-lg transition-colors ${
                 tab === t.key
                   ? t.color === "blue"
@@ -204,7 +250,7 @@ export default function AdminCaja() {
                 <button
                   key={s}
                   type="button"
-                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
+                  onClick={() => { setSubtype(s); setRmaProductId(""); setRmaSearch(""); setRmaVariantId(""); setRmaVariants([]); setRmaQty(1); setForm(emptyForm()); }}
                   className={`px-4 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
                     subtype === s
                       ? s === "RMA"
@@ -274,22 +320,50 @@ export default function AdminCaja() {
             ) : (
               /* ── Formulario RMA ── */
               <div className="flex flex-col gap-3">
-                {/* Fila 1: selector de producto */}
+                {/* Fila 1: buscador de producto.
+                    Antes: un <select> con los 500 más nuevos y sin búsqueda. Ahora se busca por nombre o SKU
+                    sobre el catálogo completo; tocar el texto de un producto elegido lo deselecciona. */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-slate-500">Producto devuelto</label>
-                  <select
-                    value={rmaProductId}
-                    onChange={(e) => handleRmaProduct(e.target.value)}
+                  <input
+                    type="text"
+                    value={rmaProduct ? rmaProduct.name : rmaSearch}
+                    onChange={(e) => {
+                      setRmaSearch(e.target.value);
+                      if (rmaProductId) handleRmaProduct("");
+                    }}
+                    placeholder={loadingProds ? "Cargando productos..." : "Buscar producto por nombre o SKU..."}
                     className="w-full px-3 py-2 border border-orange-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50"
                     disabled={loadingProds}
-                  >
-                    <option value="">{loadingProds ? "Cargando productos..." : "— Seleccioná un producto —"}</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} — costo unitario: {formatPrice(p.cost, p.currency)}
-                      </option>
-                    ))}
-                  </select>
+                  />
+                  {rmaProduct && (
+                    <p className="text-xs text-slate-500">
+                      Costo unitario: {formatPrice(unitCost(rmaProduct, rmaVariants.find((v) => String(v.id) === String(rmaVariantId))), rmaProduct.currency)}
+                    </p>
+                  )}
+                  {!rmaProduct && rmaSearch.trim() && (
+                    <div className="border border-slate-200 rounded-lg bg-white max-h-64 overflow-y-auto">
+                      <div className="sticky top-0 bg-slate-50 border-b border-slate-200 px-3 py-1 text-[11px] text-slate-500">
+                        {rmaMatches.length === 0
+                          ? "Ningún producto con costo cargado coincide"
+                          : `${rmaMatches.length} ${rmaMatches.length === 1 ? "resultado" : "resultados"}`}
+                      </div>
+                      {rmaMatches.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => { setRmaSearch(""); handleRmaProduct(p.id); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 flex justify-between items-center gap-2"
+                        >
+                          <span className="font-medium text-slate-700 truncate">
+                            {p.name}
+                            {p.sku && <span className="ml-2 text-xs text-slate-400">{p.sku}</span>}
+                          </span>
+                          <span className="text-xs text-slate-500 shrink-0">costo: {formatPrice(p.cost, p.currency)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {/* Variante — aparece solo si el producto tiene variantes */}
                 {rmaVariants.length > 0 && (
@@ -297,7 +371,7 @@ export default function AdminCaja() {
                     <label className="text-xs font-medium text-slate-500">Variante devuelta *</label>
                     <select
                       value={rmaVariantId}
-                      onChange={(e) => setRmaVariantId(e.target.value)}
+                      onChange={(e) => handleRmaVariant(e.target.value)}
                       className="w-full px-3 py-2 border border-orange-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-orange-50"
                       disabled={loadingVariants}
                     >

@@ -1,11 +1,42 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import AdminLayout from "../../components/AdminLayout";
 import { productsApi, getImageUrl } from "../../services/api";
 import * as XLSX from "xlsx";
 import { localDay } from "../../utils/localDate";
+import { formatPrice } from "../../utils/formatPrice";
+import { priceParts } from "../../utils/productPrice";
 
-const formatPrice = (v) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v ?? 0);
+// Antes: const formatPrice = (v) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v ?? 0);
+// Todo salía en pesos: un producto cargado en dólares (USD 25) se imprimía como "$ 25,00". Ahora se usa
+// formatPrice(monto, product.currency) de utils/formatPrice.js, como en la tienda.
+
+// Precio que va al flyer (PDF, Excel y la tabla): el mismo cálculo que la venta manual y el checkout
+// (utils/productPrice.js): oferta si es menor que el de lista; en mayorista, sin precio mayorista cargado,
+// el de lista minorista. Antes el PDF y el Excel lo calculaban cada uno a su manera y no coincidían: en
+// mayorista sin precio mayorista el PDF caía a la OFERTA minorista y el Excel al precio de lista.
+// Productos con variantes: la tarjeta de la tienda muestra el precio de la primera variante disponible,
+// pero /products/admin/all no manda los precios de las variantes, así que acá va el del producto.
+const flyerPrice = (product, isMayorista) => priceParts(product, null, isMayorista).price;
+
+// Buscador: mismas reglas que el de la venta manual (AdminOrders.jsx): por palabras en cualquier orden,
+// sin importar mayúsculas ni tildes, o por SKU; primero los que EMPIEZAN con lo tipeado, después el resto
+// alfabético. Sin nada tipeado, la lista queda como viene (más nuevo primero).
+const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+function searchProducts(list, search) {
+  const term = norm(search).trim();
+  const words = term.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return list;
+  return list
+    .map((p) => ({ p, name: norm(p.name) }))
+    .filter(({ p, name }) => words.every((w) => name.includes(w)) || (p.sku && norm(p.sku).includes(term)))
+    .sort((a, b) => {
+      const aStarts = a.name.startsWith(term) ? 0 : 1;
+      const bStarts = b.name.startsWith(term) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.name.localeCompare(b.name);
+    })
+    .map(({ p }) => p);
+}
 
 export default function AdminFlyer() {
   const [products, setProducts]   = useState([]);
@@ -19,16 +50,18 @@ export default function AdminFlyer() {
 
   useEffect(() => {
     // getAllAdmin en vez de getAll para incluir atributos en el Excel
+    // Antes: { limit: 200 } — solo se podían elegir los 200 productos más nuevos. all=true trae el catálogo
+    // completo (como la venta manual); excludePaused: lo que el admin despublicó a mano no va a un flyer.
     productsApi
-      .getAllAdmin({ limit: 200 })
+      .getAllAdmin({ all: true, excludePaused: true })
       .then((res) => setProducts(res.data.products || res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = products.filter((p) =>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  );
+  // Antes: products.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())) — solo por nombre,
+  // la frase entera pegada y sensible a tildes ("bateria" no encontraba "Batería"). Ver searchProducts.
+  const filtered = useMemo(() => searchProducts(products, search), [products, search]);
 
   const toggle = (id) => {
     setSelected((prev) => {
@@ -46,12 +79,11 @@ export default function AdminFlyer() {
     }
   };
 
-  const getPrice = (product) => {
-    if (priceType === "MAYORISTA") {
-      return product.wholesaleSalePrice || product.wholesalePrice || product.salePrice || product.price;
-    }
-    return product.salePrice || product.price;
-  };
+  // Antes:
+  // if (priceType === "MAYORISTA") return product.wholesaleSalePrice || product.wholesalePrice || product.salePrice || product.price;
+  // return product.salePrice || product.price;
+  // (el Excel tenía su propia cuenta y daba otro número). Ahora los dos usan flyerPrice.
+  const getPrice = (product) => flyerPrice(product, priceType === "MAYORISTA");
 
   const generatePDF = () => {
     const selectedProducts = products.filter((p) => selected.has(p.id));
@@ -73,7 +105,7 @@ export default function AdminFlyer() {
           <div class="product-info">
             <p class="product-name">${p.name}</p>
             ${p.sku ? `<p class="product-sku">SKU: ${p.sku}</p>` : ""}
-            <p class="product-price">${formatPrice(price)}</p>
+            <p class="product-price">${formatPrice(price, p.currency || "ARS")}</p>
             ${priceType === "MAYORISTA"
               ? `<span class="badge badge-mayorista">Precio mayorista</span>`
               : `<span class="badge badge-minorista">Precio minorista</span>`
@@ -278,10 +310,11 @@ export default function AdminFlyer() {
   const handleExcelExport = () => {
     const selectedProducts = products.filter((p) => selected.has(p.id));
     const isMayorista = priceType === "MAYORISTA";
-    const fmtPrice = (v) =>
-      v != null
-        ? "$ " + new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)
-        : "";
+    // Antes el prefijo era siempre "$ ": un producto en dólares salía como si fueran pesos.
+    const fmtPrice = (v, currency) =>
+      v == null ? ""
+        : currency === "USD" ? formatPrice(v, "USD")
+        : "$ " + new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 
     // Nombre del atributo en MAYÚSCULAS para que resalte; separados por " | "
     const fmtAttrs = (p) =>
@@ -290,14 +323,16 @@ export default function AdminFlyer() {
         .join("  |  ");
 
     const rows = selectedProducts.map((p) => {
-      const price = isMayorista
-        ? (p.wholesaleSalePrice && p.wholesaleSalePrice < p.wholesalePrice ? p.wholesaleSalePrice : p.wholesalePrice) ?? p.price
-        : (p.salePrice && p.salePrice < p.price ? p.salePrice : p.price);
+      // Antes: isMayorista
+      //   ? (p.wholesaleSalePrice && p.wholesaleSalePrice < p.wholesalePrice ? p.wholesaleSalePrice : p.wholesalePrice) ?? p.price
+      //   : (p.salePrice && p.salePrice < p.price ? p.salePrice : p.price);
+      // Ahora el mismo precio que el PDF (flyerPrice).
+      const price = flyerPrice(p, isMayorista);
       return {
         Foto:       p.images?.[0] ? getImageUrl(p.images[0]) : "",
         Título:     p.name,
         SKU:        p.sku || "",
-        Precio:     fmtPrice(price),
+        Precio:     fmtPrice(price, p.currency || "ARS"),
         Atributos:  fmtAttrs(p),
       };
     });
@@ -339,7 +374,7 @@ export default function AdminFlyer() {
         <div className="flex flex-wrap items-center gap-3">
           <input
             type="text"
-            placeholder="Buscar producto..."
+            placeholder="Buscar producto por nombre o SKU..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="flex-1 min-w-48 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -423,19 +458,22 @@ export default function AdminFlyer() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
+                            {/* loading="lazy": con el catálogo completo (antes 200) no se bajan todas las fotos de una */}
                             {p.images?.[0]
-                              ? <img src={getImageUrl(p.images[0])} alt="" className="w-full h-full object-cover" />
+                              ? <img src={getImageUrl(p.images[0])} alt="" loading="lazy" className="w-full h-full object-cover" />
                               : <div className="w-full h-full flex items-center justify-center text-lg">📦</div>
                             }
                           </div>
                           <span className="font-medium text-slate-800">{p.name}</span>
                         </div>
                       </td>
+                      {/* Antes: formatPrice(p.salePrice || p.price) y formatPrice(p.wholesaleSalePrice || p.wholesalePrice),
+                          siempre en pesos. Ahora el mismo precio que se imprime, en la moneda del producto. */}
                       <td className="px-4 py-3 text-right font-semibold text-slate-800">
-                        {formatPrice(p.salePrice || p.price)}
+                        {formatPrice(flyerPrice(p, false), p.currency || "ARS")}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-green-700">
-                        {p.wholesalePrice ? formatPrice(p.wholesaleSalePrice || p.wholesalePrice) : "—"}
+                        {p.wholesalePrice ? formatPrice(flyerPrice(p, true), p.currency || "ARS") : "—"}
                       </td>
                       <td className="px-4 py-3 text-slate-400 text-xs">{p.sku || "—"}</td>
                     </tr>

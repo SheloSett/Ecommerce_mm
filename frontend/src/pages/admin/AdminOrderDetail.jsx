@@ -2,12 +2,19 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import PrintPricesModal from "../../components/admin/PrintPricesModal";
-import { ordersApi, productsApi, shippingApi, suppliersApi, getImageUrl } from "../../services/api";
+import ShippingLabelModal from "../../components/admin/ShippingLabelModal";
+import { labelFromOrder } from "../../utils/shippingLabel";
+import { ordersApi, productsApi, shippingApi, suppliersApi, shippingLabelsApi, getImageUrl } from "../../services/api";
 import { ORDER_ITEM_SORTS, sortOrderItems, itemSupplier, itemSku, loadOrderItemSort, saveOrderItemSort } from "../../utils/orderItemSort";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
-import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
+import { getOrderTotals, profitFromTotals, promoLabel } from "../../utils/orderTotals";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
 import { priceParts } from "../../utils/productPrice";
+// Descuento por monto (Black Friday): casilla "Aplicar promo" de "Modificar pedido"
+import { useCartPromos } from "../../hooks/useCartPromos";
+import { promoAppliesTo, promoTierFor, promoBaseAmount } from "../../utils/cartPromo";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -115,6 +122,15 @@ export default function AdminOrderDetail() {
   // editDiscount: descuento sobre TODO el pedido, editable junto con los productos.
   // type "PERCENTAGE" (%) | "FIXED" (monto en pesos); value vacío = sin descuento.
   const [editDiscount, setEditDiscount] = useState({ type: "PERCENTAGE", value: "" });
+  // "Agregar IVA (factura)" mientras se modifica el pedido (solo pedidos mayoristas, como el checkout)
+  const [editInvoice, setEditInvoice] = useState(false);
+  // "Aplicar promo" (descuento por monto) mientras se modifica el pedido. Arranca tildada si el pedido
+  // ya la tiene. livePromos: las vigentes, para poder agregársela a un pedido que no la tenía.
+  const [editPromo, setEditPromo] = useState(false);
+  const livePromos = useCartPromos();
+  // Etiqueta de envío abierta: { initial, others, fromOrder } (ver openShippingLabel)
+  const [labelModal, setLabelModal] = useState(null);
+  const [loadingLabel, setLoadingLabel] = useState(false);
   const [uploadingItemImg, setUploadingItemImg] = useState({}); // { [idx]: bool }
 
   // Foto para un ítem libre sin imagen (modo edición): se sube a Cloudinary y queda en el ítem al guardar
@@ -143,6 +159,8 @@ export default function AdminOrderDetail() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const searchTimer = useRef(null);
+  // Variantes activas de los productos agregados en "Modificar pedido": productId → null (cargando) | [].
+  const [variantCache, setVariantCache] = useState({});
   const [showOriginal, setShowOriginal] = useState(false);
   // Modal "¿con precios o sin precios?" antes de imprimir.
   const [printAsk, setPrintAsk] = useState(false);
@@ -237,6 +255,40 @@ export default function AdminOrderDetail() {
     }
   };
 
+  // Etiqueta de envío del cliente del pedido: la guardada más reciente (por cuenta, o si el pedido no
+  // tiene cuenta, la de nombre idéntico sin cuenta). Si no hay, una nueva con los datos del pedido.
+  const openShippingLabel = async () => {
+    setLoadingLabel(true);
+    try {
+      const normName = (v) => (v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toUpperCase().replace(/\s+/g, " ");
+      const sameName = (a, b) => normName(a) === normName(b);
+      let found = [];
+      if (order.customerId) {
+        found = (await shippingLabelsApi.list({ customerId: order.customerId })).data.labels || [];
+      }
+      if (found.length === 0 && order.customerName) {
+        // También las pendientes de revisar (importadas de BarTender): al guardarla queda confirmada y
+        // vinculada a este cliente. Primero las confirmadas.
+        const byName = (await shippingLabelsApi.list({ search: order.customerName, includePending: true })).data.labels || [];
+        found = byName
+          .filter((l) => sameName(l.recipientName, order.customerName) && (!l.customerId || l.customerId === order.customerId))
+          .sort((a, b) => Number(a.pending) - Number(b.pending));
+      }
+      const fromOrder = labelFromOrder(order, shippingAddressLines(deliveryAddressOf(order)));
+      if (found.length > 0) {
+        // Una etiqueta sin cuenta que es de este cliente: al guardarla queda vinculada
+        const first = { ...found[0], customerId: found[0].customerId ?? order.customerId ?? null };
+        setLabelModal({ initial: first, others: found, fromOrder });
+      } else {
+        setLabelModal({ initial: fromOrder, others: [], fromOrder: null });
+      }
+    } catch {
+      toast.error("No se pudo abrir la etiqueta de envío");
+    } finally {
+      setLoadingLabel(false);
+    }
+  };
+
   const enterEditMode = () => {
     setEditItems((order.items || []).map((i) => ({
       itemId:       i.id,
@@ -266,6 +318,8 @@ export default function AdminOrderDetail() {
       supplierId:      i.supplierId ?? "",
       lineSupplier:    i.supplier ?? null,
       productSupplier: i.variant?.supplier ?? i.product?.supplier ?? null,
+      // ivaRate: alícuota del producto, para mostrar el IVA en el "Total estimado" (los libres, 21%)
+      ivaRate:         i.product?.ivaRate ?? null,
     })));
     // Mismo orden que se estaba viendo. Se ordena acá y al cambiar el criterio, no en cada render:
     // si no, una fila se movería de lugar mientras se escribe su precio o se elige su proveedor.
@@ -273,12 +327,15 @@ export default function AdminOrderDetail() {
     if (suppliers.length === 0) {
       suppliersApi.getAll().then((r) => setSuppliers(r.data || [])).catch(() => {});
     }
+    setEditInvoice(!!order.wantsInvoice);
+    setEditPromo(!!order.promoRule);
     setEditDiscount({
       type:  order.manualDiscountType || "PERCENTAGE",
       value: order.manualDiscountValue ? String(order.manualDiscountValue) : "",
     });
     setProductSearch("");
     setSearchResults([]);
+    setVariantCache({}); // el stock de las variantes pudo cambiar desde la última vez
     setEditMode(true);
   };
 
@@ -359,7 +416,10 @@ export default function AdminOrderDetail() {
       setSearching(true);
       try {
         // Antes: active: "true", que el backend de /products/admin/all no usa (traía también los pausados)
-        const res = await productsApi.getAllAdmin({ search: q, limit: 8, excludePaused: true });
+        // Antes: limit: 8. El servidor ordena alfabético y corta: buscando "mini plug" solo llegaban
+        // los primeros 8 (hasta "CABLE ALARGUE...") y el resto no aparecía nunca. La lista scrollea,
+        // así que se traen todas las coincidencias (con un techo), igual que en la venta a mano.
+        const res = await productsApi.getAllAdmin({ search: q, limit: 100, excludePaused: true });
         setSearchResults(res.data.products || []);
       } catch { /* silent */ } finally {
         setSearching(false);
@@ -367,9 +427,43 @@ export default function AdminOrderDetail() {
     }, 300);
   }, []);
 
+  // Variantes activas de un producto, para el selector de la línea (mismo pedido que la venta a mano).
+  const loadVariants = (productId, productName) => {
+    setVariantCache((prev) => ({ ...prev, [productId]: null }));
+    productsApi.getById(productId)
+      .then((res) => setVariantCache((prev) => ({ ...prev, [productId]: (res.data.variants || []).filter((v) => v.active) })))
+      .catch(() => {
+        setVariantCache((prev) => ({ ...prev, [productId]: [] }));
+        toast.error(`No se pudieron cargar las variantes de "${productName}"`);
+      });
+  };
+
+  // Elegir la variante de una línea agregada: su precio (según el tipo de cliente), su costo y su SKU.
+  const selectEditVariant = (idx, variantIdValue) => {
+    setEditItems((prev) => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const product = it.catalogProduct;
+      const variant = (variantCache[it.productId] || []).find((v) => String(v.id) === String(variantIdValue)) || null;
+      const combo = Array.isArray(variant?.combination) ? variant.combination : [];
+      const cost = variant?.cost ?? product?.cost;
+      return {
+        ...it,
+        variantId:    variant ? variant.id : null,
+        variantLabel: variant ? combo.map((c) => `${c.name}: ${c.value}`).join(" / ") : null,
+        sku:          variant?.sku || product?.sku || null,
+        price:        priceParts(product, variant, order?.customerType === "MAYORISTA").price,
+        cost:         cost ?? "",
+      };
+    }));
+  };
+
   const addEditProduct = (product) => {
+    // Con variantes el stock es de cada variante: hay que elegir una, y cada variante va en su línea.
+    // Antes se agregaba sin variante y al guardar salía "Stock insuficiente… Disponible: 0" (el stock
+    // del producto padre), aunque las variantes tuvieran cientos de unidades.
+    const hasVariants = (product._count?.variants ?? 0) > 0;
     // Si ya está en la lista, solo incrementar cantidad
-    const existingIdx = editItems.findIndex((i) => i.productId === product.id && !i.variantId);
+    const existingIdx = hasVariants ? -1 : editItems.findIndex((i) => i.productId === product.id && !i.variantId);
     if (existingIdx >= 0) {
       setEditItems((prev) => prev.map((it, i) => i === existingIdx ? { ...it, quantity: it.quantity + 1 } : it));
     } else {
@@ -386,9 +480,13 @@ export default function AdminOrderDetail() {
         cost:         product.cost ?? "",
         // La moneda la define el producto (la variante hereda la del padre)
         currency:     product.currency || "ARS",
+        ivaRate:      product.ivaRate ?? null,
         variantId:    null,
         variantLabel: null,
+        // Solo en productos con variantes: muestra el selector y sirve para recalcular precio y costo.
+        catalogProduct: hasVariants ? product : null,
       }]);
+      if (hasVariants && variantCache[product.id] === undefined) loadVariants(product.id, product.name);
     }
     setProductSearch("");
     setSearchResults([]);
@@ -420,6 +518,12 @@ export default function AdminOrderDetail() {
   const handleSaveEdit = () => {
     if (editItems.length === 0) {
       toast.error("El pedido debe tener al menos un producto");
+      return;
+    }
+    // Producto con variantes agregado sin elegir cuál (mientras cargan también cuenta como sin elegir).
+    const sinVariante = editItems.find((it) => it.catalogProduct && !it.variantId && (variantCache[it.productId]?.length ?? 1) > 0);
+    if (sinVariante) {
+      toast.error(`Elegí la variante de "${sinVariante.name}"`);
       return;
     }
     // Si cambió algún costo o proveedor, preguntar si se aplica también al producto (próximos pedidos).
@@ -467,6 +571,10 @@ export default function AdminOrderDetail() {
         manualDiscountValue: editDiscount.value ? parseFloat(editDiscount.value) : null,
         // Misma respuesta del modal para el proveedor: también al producto, o solo este pedido.
         applySupplierToProduct: applyCostToProduct,
+        // IVA: solo se manda en un pedido mayorista (en uno minorista no se toca lo que tenga)
+        ...(order.customerType === "MAYORISTA" ? { wantsInvoice: editInvoice } : {}),
+        // Promo por monto: solo si se tildó o destildó (si no, el pedido sigue con la que tenía)
+        ...(editPromo !== !!order.promoRule ? { applyPromo: editPromo } : {}),
       });
       setOrder(res.data);
       setEditMode(false);
@@ -559,7 +667,9 @@ export default function AdminOrderDetail() {
 
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
-      ${hasDiscount ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
+      ${Tp.ars.promo > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🎉 ${esc(promoLabel(order))}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.promo)}</td></tr>` : ""}
+      <!-- Antes: \${hasDiscount ? ... − \${formatPrice(Tp.ars.discount)} ...}: el descuento por monto ahora va en su renglón de arriba y acá queda el resto -->
+      ${(Tp.ars.discount - Tp.ars.promo > 0 || Tp.usd.discount > 0) ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.discount - Tp.ars.promo)}${Tp.usd.discount > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.discount, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
       ${Tp.ars.shipping > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Envío</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.shipping)}</td></tr>` : ""}
       ${showArsPrint ? `<tr style="border-top:2px solid #1e293b"><td ${totLabelStyle}>TOTAL${hasUsdPrint ? " ARS" : ""}</td><td ${totValueStyle}>${formatPrice(totalArsPrint)}</td></tr>` : ""}
@@ -852,6 +962,15 @@ export default function AdminOrderDetail() {
               </svg>
               Orden de compra
             </button>
+            {/* Etiqueta de envío de 10×15 del cliente (la que antes se hacía en BarTender) */}
+            <button
+              onClick={openShippingLabel}
+              disabled={loadingLabel}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-blue-800 bg-blue-100 hover:bg-blue-200 rounded-xl transition-colors disabled:opacity-50"
+              title="Abrir, editar e imprimir la etiqueta de envío del cliente"
+            >
+              🏷 {loadingLabel ? "Abriendo…" : "Etiqueta de envío"}
+            </button>
             {!editMode && (
               <button
                 onClick={enterEditMode}
@@ -934,7 +1053,10 @@ export default function AdminOrderDetail() {
                 {/* Items editables */}
                 <div className="space-y-2">
                   {editItems.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+                    // En el celular la fila se parte: arriba foto, nombre y ✕; abajo los campos, cada uno en
+                    // su renglón a todo el ancho. Antes iban en una columna angosta al costado del nombre y
+                    // no se leía lo que se escribía. Desde sm (640px) es la fila de siempre.
+                    <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 p-3 bg-slate-50 rounded-xl">
                       <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 flex-shrink-0">
                         {item.image ? (
                           <img src={getImageUrl(item.image)} alt="" className="w-full h-full object-contain p-0.5" />
@@ -953,24 +1075,51 @@ export default function AdminOrderDetail() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p>
-                        {item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
+                        {item.catalogProduct ? (() => {
+                          // Línea recién agregada de un producto con variantes: elegir cuál
+                          const variants = variantCache[item.productId];
+                          if (!Array.isArray(variants)) return <p className="text-xs text-slate-400 mt-1">Cargando variantes...</p>;
+                          if (variants.length === 0) return null;
+                          return (
+                            <select
+                              value={item.variantId ?? ""}
+                              onChange={(e) => selectEditVariant(idx, e.target.value)}
+                              title="El stock se descuenta de la variante elegida"
+                              className={`mt-1 w-full max-w-xs border rounded-lg px-1.5 py-1 text-xs bg-white ${
+                                item.variantId ? "border-slate-300 text-slate-700" : "border-amber-400 text-amber-800 font-semibold"
+                              }`}
+                            >
+                              <option value="">— Elegí la variante —</option>
+                              {variants.map((v) => {
+                                const combo = Array.isArray(v.combination) ? v.combination : [];
+                                const label = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || v.sku || `#${v.id}`;
+                                const sinStock = !v.stockUnlimited && v.stock <= 0;
+                                return (
+                                  <option key={v.id} value={v.id} disabled={sinStock}>
+                                    {label} (stock: {v.stockUnlimited ? "∞" : v.stock}){sinStock ? " — sin stock" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          );
+                        })() : item.variantLabel && <p className="text-xs text-blue-500">{item.variantLabel}</p>}
                         {item.sku && <p className="text-[11px] text-slate-500 mt-0.5">SKU: {item.sku}</p>}
                       </div>
                       {/* Precio de venta + costo (proveedor) + cantidad editables */}
-                      <div className="flex flex-col items-end gap-1">
+                      <div className="order-last w-full sm:order-none sm:w-auto flex flex-col items-stretch sm:items-end gap-1.5 sm:gap-1">
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Venta $</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Venta $</span>
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={item.price}
                             onChange={(e) => updateEditPrice(idx, e.target.value)}
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Costo $</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Costo $</span>
                           <input
                             type="number"
                             min="0"
@@ -979,19 +1128,19 @@ export default function AdminOrderDetail() {
                             onChange={(e) => updateEditCost(idx, e.target.value)}
                             placeholder="—"
                             title="Costo del proveedor para este pedido (se usa en la orden de compra)"
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                         {/* Proveedor de este producto para ESTE pedido (como el costo). La primera
                             opción es el de siempre (variante o producto). Los ítems libres no tienen. */}
                         {!item.isFree && (
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-slate-400 w-12 text-right">🏭 Prov.</span>
+                            <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">🏭 Prov.</span>
                             <select
                               value={item.supplierId ?? ""}
                               onChange={(e) => updateEditSupplier(idx, e.target.value)}
                               title="Proveedor de este producto para este pedido (se usa en la orden de compra)"
-                              className={`w-40 border rounded-lg px-1.5 py-1 text-xs bg-white ${
+                              className={`flex-1 sm:flex-none sm:w-40 border rounded-lg px-1.5 py-2 sm:py-1 text-sm sm:text-xs bg-white ${
                                 item.supplierId !== "" && item.supplierId != null ? "border-blue-400 text-blue-800 font-semibold" : "border-slate-300 text-slate-700"
                               }`}
                             >
@@ -1007,10 +1156,10 @@ export default function AdminOrderDetail() {
                             Va resaltado (etiqueta verde + borde propio) porque entre "Venta", "Costo"
                             y "Cantidad" pasaba por un campo más y no se notaba que era el descuento. */}
                         <div className="flex items-center gap-1">
-                          <span className={`text-[10px] font-bold w-12 text-right ${parseFloat(item.desc) > 0 ? "text-emerald-700" : "text-emerald-600"}`}>
+                          <span className={`text-xs sm:text-[10px] font-bold w-16 sm:w-12 sm:text-right ${parseFloat(item.desc) > 0 ? "text-emerald-700" : "text-emerald-600"}`}>
                             🏷 Desc.
                           </span>
-                          <div className="relative w-24">
+                          <div className="relative flex-1 sm:flex-none sm:w-24">
                             <input
                               type="number"
                               min="0"
@@ -1020,7 +1169,7 @@ export default function AdminOrderDetail() {
                               onChange={(e) => updateEditDesc(idx, e.target.value)}
                               placeholder="0"
                               title="Descuento de este producto, en porcentaje"
-                              className={`w-full text-right rounded-lg pl-2 pr-6 py-1 text-sm border-2 transition-colors ${
+                              className={`w-full text-right rounded-lg pl-2 pr-6 py-2 sm:py-1 text-base sm:text-sm border-2 transition-colors ${
                                 parseFloat(item.desc) > 0
                                   ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
                                   : "border-emerald-200 bg-emerald-50/40"
@@ -1035,13 +1184,13 @@ export default function AdminOrderDetail() {
                           </p>
                         )}
                         <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-400 w-12 text-right">Cant. ×</span>
+                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Cant. ×</span>
                           <input
                             type="number"
                             min="1"
                             value={item.quantity}
                             onChange={(e) => updateEditQty(idx, e.target.value)}
-                            className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-sm"
+                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
                       </div>
@@ -1121,6 +1270,48 @@ export default function AdminOrderDetail() {
                   <p className="text-xs text-slate-400 pb-2.5">Además del descuento de cada producto. Vacío = sin descuento.</p>
                 </div>
 
+                {/* IVA, como en el checkout y la venta a mano: solo en pedidos mayoristas (sus precios son
+                    sin IVA). Arranca tildada si el pedido ya tenía IVA; destildarla lo saca. */}
+                {order.customerType === "MAYORISTA" && (
+                  <label className="flex items-start gap-2 mt-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editInvoice}
+                      onChange={(e) => setEditInvoice(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-blue-600"
+                    />
+                    <span className="text-sm">
+                      <span className="font-bold text-slate-800">🧾 Agregar IVA (factura)</span>
+                      <span className="block text-xs text-slate-400">
+                        Se suma el IVA de cada producto (21% o 10,5%) sobre el precio ya descontado.
+                      </span>
+                    </span>
+                  </label>
+                )}
+
+                {/* Promo por monto (Black Friday): se ve si el pedido ya la tiene (para poder sacarla) o si
+                    hay una vigente para este tipo de cliente (para agregarla, ej. una venta por WhatsApp). */}
+                {(order.promoRule || livePromos.some((p) => promoAppliesTo(p, order.customerType))) && (
+                  <label className="flex items-start gap-2 mt-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editPromo}
+                      onChange={(e) => setEditPromo(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-emerald-600"
+                    />
+                    <span className="text-sm">
+                      <span className="font-bold text-slate-800">
+                        🎉 Aplicar promo {order.promoRule?.name || livePromos.find((p) => promoAppliesTo(p, order.customerType))?.name}
+                      </span>
+                      <span className="block text-xs text-slate-400">
+                        {order.promoRule
+                          ? "El pedido sigue con los escalones de cuando se aplicó; el % se recalcula con el total nuevo."
+                          : "Se aplica el escalón que alcance el total de productos (sin envío)."}
+                      </span>
+                    </span>
+                  </label>
+                )}
+
                 {/* Total estimado + botón guardar */}
                 <div className="border-t border-slate-200 pt-3 flex items-center justify-between">
                   <div className="text-sm text-slate-500">
@@ -1142,14 +1333,47 @@ export default function AdminOrderDetail() {
                       const listaArs = sumLista("ARS");
                       const listaUsd = sumLista("USD");
                       const anyUsd = editItems.some((i) => (i.currency || "ARS") === "USD");
+                      // Promo por monto: va primero, sobre los pesos (mismo orden que el servidor). Con los
+                      // escalones que ya tenía el pedido o, si se le agrega, la vigente que más da.
+                      // Si la promo es para algunos productos (productIds, guardados en el pedido o los de la
+                      // vigente), se mide y se descuenta solo sobre esos. Antes: siempre sobre todos los pesos.
+                      let pPct = 0;
+                      let pBase = 0;
+                      if (editPromo) {
+                        const reglas = order.promoRule ? [order.promoRule] : livePromos.filter((p) => promoAppliesTo(p, order.customerType));
+                        const lineas = editItems.map((i) => ({ productId: i.productId, price: precioLineaConDesc(i), quantity: parseInt(i.quantity || 0), currency: i.currency }));
+                        for (const r of reglas) {
+                          const base = Array.isArray(r.productIds) ? promoBaseAmount(lineas, r.productIds) : ars;
+                          const pct = promoTierFor(r.tiers, base)?.percent || 0;
+                          if (pct > pPct) { pPct = pct; pBase = base; }
+                        }
+                      }
+                      const pArs = Math.round(pBase * pPct) / 100;
+                      const arsTrasPromo = Math.max(0, ars - pArs);
                       // Descuento general sobre lo que quedó (mismo criterio que el backend: el % va
                       // a las dos monedas, el monto fijo está en pesos y solo baja los pesos).
                       const v = parseFloat(editDiscount.value) || 0;
                       const esPct = editDiscount.type === "PERCENTAGE";
-                      const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
+                      // Antes (sin la promo): const dArs = v > 0 ? (esPct ? Math.round(ars * Math.min(100, v)) / 100 : Math.min(v, ars)) : 0;
+                      const dArs = v > 0 ? (esPct ? Math.round(arsTrasPromo * Math.min(100, v)) / 100 : Math.min(v, arsTrasPromo)) : 0;
                       const dUsd = v > 0 && esPct ? Math.round(usd * Math.min(100, v)) / 100 : 0;
                       // Descuento total = lo de cada producto + el general
-                      const descTotalArs = (listaArs - ars) + dArs;
+                      // IVA (casilla "Agregar IVA"): misma cuenta que el servidor — cada línea con la alícuota
+                      // de su producto (los libres al 21%) sobre su base bajada por el descuento general.
+                      const conIva = order.customerType === "MAYORISTA" && editInvoice;
+                      const ivaDe = (cur, sub, desc) => {
+                        if (!conIva || sub <= 0) return 0;
+                        const factor = (sub - desc) / sub;
+                        const sumIva = editItems
+                          .filter((i) => (i.currency || "ARS") === cur)
+                          .reduce((s, i) => s + Math.round(precioLineaConDesc(i) * parseInt(i.quantity || 0) * factor * (i.ivaRate ?? 21)) / 100, 0);
+                        return Math.round(sumIva * 100) / 100;
+                      };
+                      // Antes: const ivaArs = ivaDe("ARS", ars, dArs); — la promo también baja la base del IVA
+                      const ivaArs = ivaDe("ARS", ars, pArs + dArs);
+                      const ivaUsd = ivaDe("USD", usd, dUsd);
+                      // Antes: const descTotalArs = (listaArs - ars) + dArs;
+                      const descTotalArs = (listaArs - ars) + pArs + dArs;
                       const descTotalUsd = (listaUsd - usd) + dUsd;
                       return (
                         <span className="font-bold text-slate-800">
@@ -1159,10 +1383,16 @@ export default function AdminOrderDetail() {
                               <span className="text-emerald-600 font-semibold"> −{formatPrice(descTotalArs)}{descTotalUsd > 0 && ` / −${formatPriceWithCurrency(descTotalUsd, "USD")}`}</span>
                             </span>
                           ) : null}
+                          {conIva && (ivaArs > 0 || ivaUsd > 0) && (
+                            <span className="block text-[11px] font-normal text-slate-500">
+                              IVA +{formatPrice(ivaArs)}{ivaUsd > 0 && ` / +${formatPriceWithCurrency(ivaUsd, "USD")}`}
+                            </span>
+                          )}
                           {/* El envío se mantiene al modificar el pedido: va en el total */}
-                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - dArs) + (order.shippingCost || 0))}
+                          {/* Antes: formatPrice(Math.max(0, ars - dArs) + ivaArs + ...) — ahora también sin la promo */}
+                          {(!anyUsd || ars > 0 || order.shippingCost > 0) && formatPrice(Math.max(0, ars - pArs - dArs) + ivaArs + (order.shippingCost || 0))}
                           {(!anyUsd || ars > 0 || order.shippingCost > 0) && anyUsd && " + "}
-                          {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd), "USD")}
+                          {anyUsd && formatPriceWithCurrency(Math.max(0, usd - dUsd) + ivaUsd, "USD")}
                         </span>
                       );
                     })()}
@@ -1309,6 +1539,13 @@ export default function AdminOrderDetail() {
                       <div className="flex justify-between items-start text-sm text-green-700 font-medium">
                         <span>Descuento en productos</span>
                         {moneyPair(T.ars.line, T.usd.line, { prefix: "−" })}
+                      </div>
+                    )}
+                    {/* Descuento por monto (Black Friday): solo en pesos */}
+                    {T.ars.promo > 0 && (
+                      <div className="flex justify-between items-start text-sm text-green-700 font-medium">
+                        <span>🎉 {promoLabel(order)}</span>
+                        <span>−{formatPrice(T.ars.promo)}</span>
                       </div>
                     )}
                     {(T.ars.manual > 0 || T.usd.manual > 0) && (
@@ -1665,6 +1902,15 @@ export default function AdminOrderDetail() {
           title={`Imprimir ${order.paymentMethod === "COTIZACION" ? "cotización" : "orden"} #${order.id}`}
           onCancel={() => setPrintAsk(false)}
           onChoose={(withPrices) => { printOrder(withPrices); setPrintAsk(false); }}
+        />
+      )}
+      {labelModal && (
+        <ShippingLabelModal
+          initial={labelModal.initial}
+          others={labelModal.others}
+          fromOrder={labelModal.fromOrder}
+          subtitle={`Pedido #${order.id} · ${order.customerName || ""}`}
+          onClose={() => setLabelModal(null)}
         />
       )}
     </AdminLayout>

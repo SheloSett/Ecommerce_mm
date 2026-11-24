@@ -238,6 +238,20 @@ model Order {
   manualDiscountValue Float?
   manualDiscount      Float?
   manualDiscountUsd   Float?
+  // ── Descuento por monto de compra (ej. Black Friday: desde $X, Y% off) ──
+  // Ver model CartPromo y utils/cartPromo.js. Solo descuenta la parte EN PESOS.
+  //   promoId       → la promo que se aplicó (null si se borró la promo; el pedido conserva el resto)
+  //   promoRule     → copia de la promo al aplicarla: { name, tiers: [{ minAmount, percent }] }. Si
+  //                   después se modifica el pedido, el % se recalcula con ESTOS escalones (no con los
+  //                   de hoy), así el pedido sigue con las reglas de cuando se compró aunque la promo
+  //                   ya haya terminado o se haya cambiado.
+  //   promoPercent / promoDiscount → el % del escalón alcanzado y el monto ya calculado, para que las
+  //                   pantallas muestren el desglose sin recalcular (igual que couponDiscount).
+  promoId             Int?
+  promo               CartPromo?    @relation(fields: [promoId], references: [id], onDelete: SetNull)
+  promoRule           Json?
+  promoPercent        Float?
+  promoDiscount       Float?
   // customerModifiedAt: última vez que el CLIENTE modificó su cotización desde su perfil (cantidades,
   // productos que sacó o agregó). Al modificar, la cotización vuelve a PENDING para que el admin la
   // revise y la apruebe de nuevo. null = nunca la tocó el cliente.
@@ -381,6 +395,7 @@ model Customer {
   notifications     Notification[]     // Notificaciones de cotizaciones
   coupons           Coupon[]           // Cupones personales asignados a este cliente
   returnRequests    ReturnRequest[]    // Solicitudes de arrepentimiento del cliente
+  shippingLabels    ShippingLabel[]    // Etiquetas de envío guardadas (las que antes eran .btw de BarTender)
   seenByAdmin       Boolean            @default(false) // true = el admin abrió el detalle del cliente
   resetToken        String?            // Token de un solo uso para reset de contraseña (64 chars hex)
   resetTokenExpiry  DateTime?          // Expiración del token (1 hora desde la solicitud)
@@ -504,6 +519,41 @@ model CouponUsage {
 enum DiscountType {
   PERCENTAGE // % del total
   FIXED      // monto fijo en ARS
+}
+
+// Descuento por monto de compra, con vigencia (pedido para Black Friday, 23/11/2026): a partir de cierto
+// total del carrito, un % de descuento; a partir de otro total, otro %. Se arma en Admin → Descuento por
+// monto. A diferencia de Offer (que escribe precios en los productos), esto no toca ningún producto: se
+// calcula sobre el total del pedido, en el checkout y en la venta manual (casilla "Aplicar promo").
+// Las reglas del cálculo están en utils/cartPromo.js.
+model CartPromo {
+  id        Int                @id @default(autoincrement())
+  name      String             // Lo que ve el cliente en el carrito y en el pedido (ej: "Black Friday")
+  // Escalones: [{ minAmount, percent }] ordenados por minAmount. minAmount en pesos, sobre el subtotal
+  // de productos en pesos (sin envío). Aplica el escalón más alto alcanzado.
+  tiers     Json
+  appliesTo CustomerVisibility @default(AMBOS) // MINORISTA, MAYORISTA o los dos
+  startsAt  DateTime
+  endsAt    DateTime
+  active    Boolean            @default(true)  // Interruptor manual (pausar sin borrar)
+  // Cómo se ve (pedido de la clienta, 23/11/2026: "algo como lo tenemos con las campañas"). Mismos
+  // estilos que la tarjeta de campaña (ver Offer.cardStyle y CampaignCard.jsx): los usa la tarjeta del
+  // inicio con los escalones y el aviso "sumá $X y llevás Y%" del carrito.
+  description   String?                      // Subtítulo de la tarjeta del inicio (opcional)
+  showCard      Boolean @default(true)       // Tarjeta grande en el inicio, arriba de las categorías
+  cardStyle     String  @default("blackfriday")
+  cardColor     String?                      // "#rrggbb" para el estilo "color"
+  showCountdown Boolean @default(true)       // Cuenta regresiva en la tarjeta
+  // Qué productos entran (pedido de la clienta, 24/11/2026). Vacías las dos = todos los productos, como
+  // antes. Las categorías incluyen sus subcategorías. Se pasan a ids de producto al usar la promo
+  // (services/cartPromo.service.js): el monto se mide y el % se descuenta solo sobre esos productos.
+  categoryIds   Int[]   @default([])
+  productIds    Int[]   @default([])
+  orders    Order[]
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@map("cart_promos")
 }
 
 // Campañas de oferta con vigencia: el admin elige un conjunto de productos y un rango de fechas, y el
@@ -940,4 +990,32 @@ model EmailRecipient {
   @@index([status, broadcastId])
   @@index([sentAt])
   @@map("email_recipients")
+}
+
+// Etiqueta de envío de un cliente: lo que antes era un archivo .btw de BarTender por cliente (nombre,
+// datos de entrega, transporte, seguro y remitente). Se edita e imprime desde el panel en 10×15.
+// customerId es opcional: muchos destinatarios no tienen cuenta en la tienda (ventas por Mercado Libre,
+// clientes de mostrador). La cantidad de bultos no se guarda: es de cada envío y se elige al imprimir.
+model ShippingLabel {
+  id               Int       @id @default(autoincrement())
+  customerId       Int?
+  customer         Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  recipientName    String // Destinatario (el renglón grande de arriba)
+  recipientDetails String    @default("") // DNI, dirección, CP, localidad, teléfono, indicaciones (varios renglones)
+  transport        String? // Transporte: Vía Cargo, Cruz del Sur, moto...
+  insurance        String? // Seguro declarado: "$ 100.000", "MINIMO"...
+  sender           String // Remitente (varios renglones)
+  sourceFile       String? // Nombre del .btw del que se importó (null = creada en el panel)
+  sourceSize       String? // Tamaño original del .btw: "10x10", "10x15"
+  sourceDate       DateTime? // Fecha del .btw (para saber cuál es la más nueva de una persona)
+  // Revisión de las importadas de BarTender: "PENDING" (sin revisar, pestaña "Pendientes"), "CONFIRMED"
+  // (en uso; las creadas en el panel nacen así) o "DISCARDED" (descartada: no se muestra, pero se recuerda
+  // para no volver a importarla si se sube la carpeta de nuevo).
+  status           String    @default("CONFIRMED")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@map("shipping_labels")
 }

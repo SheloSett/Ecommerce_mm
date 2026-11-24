@@ -6,6 +6,10 @@ import { getImageUrl } from "../services/api";
 import { formatPrice } from "../utils/formatPrice";
 // Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
 import ProductImage from "./ProductImage";
+// Descuento por monto (Black Friday): el descuento y el "Sumá $X y llevás 10% off"
+import { useCartPromos } from "../hooks/useCartPromos";
+import { cartPromoSummary, promoLinesFromCart } from "../utils/cartPromo";
+import CartPromoNotice from "./CartPromoNotice";
 
 // Drawer lateral del carrito de compras
 export default function CartDrawer({ open, onClose }) {
@@ -26,6 +30,10 @@ export default function CartDrawer({ open, onClose }) {
   // Antes: const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;  (mezclaba monedas)
   const llegaAlMinimo = totalArs >= mayoristaMinimoCompra;
   const progreso = minimoActivo ? Math.min(100, (totalArs / mayoristaMinimoCompra) * 100) : 100;
+  // Descuento por monto: se mide con los pesos, igual que el servidor (ver utils/cartPromo.js)
+  // Antes: cartPromoSummary(useCartPromos(), totalArs, ...). Ahora con las líneas: una promo de algunos
+  // productos mide solo esos (ver utils/cartPromo.js).
+  const promoInfo = cartPromoSummary(useCartPromos(), promoLinesFromCart(items), isMayorista ? "MAYORISTA" : "MINORISTA");
   const navigate = useNavigate();
 
   const handleCheckout = () => {
@@ -200,6 +208,9 @@ export default function CartDrawer({ open, onClose }) {
               </div>
             )}
 
+            {/* Descuento por monto: cuánto falta para el próximo escalón */}
+            <CartPromoNotice summary={promoInfo} />
+
             {/* Total — Antes: siempre formatPrice(totalPrice), que en un carrito mixto mostraba
                 la suma de pesos y dólares con símbolo de pesos. */}
             {hasUsd ? (
@@ -208,6 +219,12 @@ export default function CartDrawer({ open, onClose }) {
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-[#565e74] font-medium">Subtotal ARS</span>
                     <span className="font-bold text-[#0b1c30]">{formatPrice(totalArs)}</span>
+                  </div>
+                )}
+                {promoInfo.discount > 0 && (
+                  <div className="flex justify-between items-center text-sm text-[#006b2c] font-semibold">
+                    <span>{promoInfo.promo.name} ({promoInfo.percent}%)</span>
+                    <span>−{formatPrice(promoInfo.discount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between items-center text-sm">
@@ -220,10 +237,19 @@ export default function CartDrawer({ open, onClose }) {
                 </div>
               </div>
             ) : (
-              <div className="flex justify-between items-center">
-                <span className="text-[#565e74] font-medium text-sm">Total</span>
-                <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalPrice)}</span>
-              </div>
+              <>
+                {promoInfo.discount > 0 && (
+                  <div className="flex justify-between items-center text-sm text-[#006b2c] font-semibold">
+                    <span>{promoInfo.promo.name} ({promoInfo.percent}%)</span>
+                    <span>−{formatPrice(promoInfo.discount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center">
+                  <span className="text-[#565e74] font-medium text-sm">Total</span>
+                  {/* Antes: {formatPrice(totalPrice)} — ahora con el descuento por monto ya restado */}
+                  <span className="text-xl font-bold text-[#0b1c30]">{formatPrice(totalPrice - promoInfo.discount)}</span>
+                </div>
+              </>
             )}
 
             {/* Ver carrito completo */}

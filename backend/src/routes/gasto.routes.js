@@ -47,6 +47,35 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
     const parsedProductId = validSubtype === "RMA" && productId ? parseInt(productId) : null;
     const parsedVariantId = validSubtype === "RMA" && variantId ? parseInt(variantId) : null;
 
+    // RMA: validar producto y variante ANTES de guardar nada (con un 400 no queda un gasto a medias).
+    // Antes no se validaba: una variante de OTRO producto (o desactivada) descontaba stock de ese otro
+    // producto, y un producto con variantes sin variante elegida guardaba el gasto sin tocar ningún stock.
+    // Misma regla que la venta manual (createManualOrder en order.controller.js).
+    let rmaProduct = null;
+    let rmaVariant = null;
+    if (validSubtype === "RMA") {
+      if (parsedVariantId && !parsedProductId) {
+        return res.status(400).json({ error: "Falta el producto de la variante devuelta" });
+      }
+      if (parsedProductId) {
+        rmaProduct = await prisma.product.findUnique({ where: { id: parsedProductId } });
+        if (!rmaProduct) {
+          return res.status(400).json({ error: `Producto no encontrado: ${parsedProductId}` });
+        }
+        if (parsedVariantId) {
+          rmaVariant = await prisma.productVariant.findUnique({ where: { id: parsedVariantId } });
+          if (!rmaVariant || rmaVariant.productId !== rmaProduct.id || !rmaVariant.active) {
+            return res.status(400).json({ error: `Variante inválida para "${rmaProduct.name}"` });
+          }
+        } else {
+          const activeVariants = await prisma.productVariant.count({ where: { productId: rmaProduct.id, active: true } });
+          if (activeVariants > 0) {
+            return res.status(400).json({ error: `Elegí la variante de "${rmaProduct.name}" que se devuelve` });
+          }
+        }
+      }
+    }
+
     const gasto = await prisma.gasto.create({
       data: {
         amount:      parseFloat(amount),
@@ -60,19 +89,24 @@ router.post("/", authMiddleware, adminMiddleware, requireAnyPermission("caja"), 
       },
     });
 
-    // Descontar stock al registrar un RMA: de la variante si viene, si no del producto. Nunca baja de 0
-    // y si no queda nada para vender (el producto, o su última variante con stock) se despublica.
-    // Antes, con variante no se miraba la publicación. Queda en el historial con el número de este gasto.
-    if (validSubtype === "RMA" && quantity > 0) {
+    // Descontar stock al registrar un RMA (producto y variante ya validados arriba): de la variante si vino,
+    // si no del producto. Pasa por el servicio de stock: nunca baja de 0, respeta el ilimitado, despublica
+    // si no queda nada para vender y queda en el historial con el número de este gasto.
+    if (validSubtype === "RMA" && quantity > 0 && rmaProduct) {
       const qty = parseInt(quantity) || 1;
-      if (parsedVariantId || parsedProductId) {
+      // El gasto ya quedó guardado: si esto falla no se responde error (un reintento registraría el RMA dos
+      // veces). Queda en el log para corregir el stock a mano.
+      try {
         await adjustStock({
-          ...(parsedVariantId ? { variantId: parsedVariantId } : { productId: parsedProductId }),
+          productId: rmaProduct.id,
+          ...(rmaVariant ? { variantId: rmaVariant.id } : {}),
           delta:  -qty,
           reason: REASONS.RMA,
           ref:    { type: "gasto", id: gasto.id },
           actor:  actorOf(req.user),
         });
+      } catch (err) {
+        console.error("RMA: falló el descuento del stock del gasto", gasto.id, err);
       }
     }
 

@@ -54,6 +54,7 @@ export default function AdminLayout({ children, title }) {
       subItems: [
         { label: "Todos los pedidos", tab: "",             badge: badges.ordenesPendientes },
         { label: "Cotizaciones",      tab: "cotizaciones", badge: badges.cotizaciones },
+        { label: "Etiquetas de envío", href: "/admin/ordenes/etiquetas" },
       ],
     },
     {
@@ -82,6 +83,8 @@ export default function AdminLayout({ children, title }) {
         // { label: "Sin stock",           tab: "sinstock" },
         { label: "+ Nuevo producto",    href: "/admin/productos/nuevo" },
         { label: "🏷 Ofertas / Campañas", href: "/admin/productos/ofertas" },
+        // Descuento por monto de compra (Black Friday): "desde $X, Y% off" sobre el total del carrito
+        { label: "🎉 Descuento por monto", href: "/admin/productos/descuento-por-monto" },
         { label: "🖨 Generar Flyer o Excel", href: "/admin/productos/flyer" },
       ],
     },
@@ -116,6 +119,9 @@ export default function AdminLayout({ children, title }) {
       ],
     },
     { path: "/admin/cupones",      label: "Cupones",         icon: "🏷️", permission: "cupones" },
+    // Comentado: "Descuento por monto" se movió adentro de Productos (al lado de Ofertas / Campañas), pedido
+    // de la clienta el 23/11/2026. Antes era un ítem suelto con el permiso de los cupones:
+    // { path: "/admin/descuento-por-monto", label: "Descuento por monto", icon: "🎉", permission: "cupones" },
     // Carrusel movido a Configuración → sección "Carrusel"
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
     {
@@ -231,7 +237,11 @@ export default function AdminLayout({ children, title }) {
                     const to = sub.href
                       ? sub.href
                       : sub.tab ? `${item.path}?tab=${sub.tab}` : item.path;
-                    const subActive = !sub.href && currentTab === sub.tab;
+                    // Con ruta propia (sub.href): activo en esa ruta. Por ?tab=: activo salvo que se esté en
+                    // la ruta propia de otro subítem (en "Etiquetas de envío" no se marca "Todos los pedidos").
+                    // Antes: const subActive = !sub.href && currentTab === sub.tab;
+                    const enOtraRuta = item.subItems.some((o) => o.href && location.pathname.startsWith(o.href));
+                    const subActive = sub.href ? location.pathname.startsWith(sub.href) : (!enOtraRuta && currentTab === sub.tab);
                     return (
                       <Link
                         key={sub.href || sub.tab}

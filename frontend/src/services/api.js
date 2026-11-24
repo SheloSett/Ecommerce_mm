@@ -193,6 +193,23 @@ export const suppliersApi = {
   geocode: (addresses) => api.post("/suppliers/geocode", { addresses }),
 };
 
+// ─── Etiquetas de envío (ex BarTender) ───────────────────────────────────────
+export const shippingLabelsApi = {
+  // params: { search?, customerId?, pending?: true, includePending?: true }
+  //   → { labels, pendingCount, defaultSender }. Con pending: cada una trae suggestions y newerFile.
+  list: (params) => api.get("/shipping-labels", { params }),
+  create: (data) => api.post("/shipping-labels", data),
+  update: (id, data) => api.put(`/shipping-labels/${id}`, data), // guardar una pendiente la confirma
+  remove: (id) => api.delete(`/shipping-labels/${id}`),
+  // formData: files[] (.btw) + lastModified (JSON). Las de envío quedan como pendientes de revisar.
+  //   → { created, repeated, notShipping, unreadable: [nombres] }
+  upload: (formData) => api.post("/shipping-labels/import/upload", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  // items: [{ id, customerId }] → { confirmed }
+  confirm: (items) => api.post("/shipping-labels/confirm", { items }),
+  // ids → { discarded } (solo pendientes)
+  discard: (ids) => api.post("/shipping-labels/discard", { ids }),
+};
+
 // ─── Órdenes ──────────────────────────────────────────────────────────────────
 export const ordersApi = {
   // Con el token del CLIENTE: el servidor saca de ahí quién compra y a qué precio (ya no confía en el
@@ -233,6 +250,7 @@ export const ordersApi = {
   // applyCostToProduct: si true, además de guardar el costo en la orden, actualiza el costo maestro
   // del producto (para los próximos pedidos) y congela el viejo en las órdenes anteriores.
   // extra: { manualDiscountType, manualDiscountValue } — descuento sobre todo el pedido (opcional)
+  //        { applyPromo } — casilla "Aplicar promo" (descuento por monto): true/false, o no mandarla
   modifyOrder: (orderId, items, applyCostToProduct = false, extra = {}) =>
     api.post(`/orders/${orderId}/modify`, { items, applyCostToProduct, ...extra }),
   // Admin: publicar cambios de items al cliente (actualiza snapshot + notifica)
@@ -403,6 +421,19 @@ export const couponsApi = {
   update:  (id, data) => api.patch(`/coupons/${id}`, data),
   remove:  (id)       => api.delete(`/coupons/${id}`),
   getUsages: (id)     => api.get(`/coupons/${id}/usages`),
+};
+
+// ─── Descuento por monto de compra (Black Friday) ─────────────────────────────
+// "Desde $X, Y% off sobre el total". Ver utils/cartPromo.js y Admin → Descuento por monto.
+export const cartPromosApi = {
+  // Público: promos vigentes para el carrito y el checkout. Con el token del cliente, así el mayorista
+  // aprobado recibe las suyas. Desde el panel (admin_token) llegan todas, para la venta manual.
+  getActive: ()       => api.get("/cart-promos/active", { headers: storefrontAuthHeaders() }),
+  // Admin: CRUD
+  getAll:  ()         => api.get("/cart-promos"),
+  create:  (data)     => api.post("/cart-promos", data),
+  update:  (id, data) => api.patch(`/cart-promos/${id}`, data),
+  remove:  (id)       => api.delete(`/cart-promos/${id}`),
 };
 
 // ─── Campañas de oferta ───────────────────────────────────────────────────────

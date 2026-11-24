@@ -48,6 +48,8 @@ const AdminProductCreate = lazy(() => import("./pages/admin/AdminProductCreate")
 const AdminCaja = lazy(() => import("./pages/admin/AdminCaja"));
 const AdminFlyer = lazy(() => import("./pages/admin/AdminFlyer"));
 const AdminCoupons = lazy(() => import("./pages/admin/AdminCoupons"));
+// Descuento por monto de compra (Black Friday): "desde $X, Y% off"
+const AdminCartPromos = lazy(() => import("./pages/admin/AdminCartPromos"));
 const AdminOffers = lazy(() => import("./pages/admin/AdminOffers"));
 const AdminPurchases = lazy(() => import("./pages/admin/AdminPurchases"));
 const AdminSuppliers = lazy(() => import("./pages/admin/AdminSuppliers"));
@@ -63,6 +65,7 @@ const AdminEmails = lazy(() => import("./pages/admin/AdminEmails"));
 const AdminOrderDetail = lazy(() => import("./pages/admin/AdminOrderDetail"));
 const AdminPurchaseOrder = lazy(() => import("./pages/admin/AdminPurchaseOrder"));
 const AdminPurchaseOrderBulk = lazy(() => import("./pages/admin/AdminPurchaseOrderBulk"));
+const AdminShippingLabels = lazy(() => import("./pages/admin/AdminShippingLabels"));
 import ProtectedRoute from "./components/ProtectedRoute";
 import RequirePermission from "./components/RequirePermission";
 import WhatsAppButton from "./components/WhatsAppButton";
@@ -190,6 +193,15 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* Etiquetas de envío (ex BarTender). Como "oc-multiple", va antes de "/admin/ordenes/:id". */}
+          <Route
+            path="/admin/ordenes/etiquetas"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="ordenes"><AdminShippingLabels /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/admin/ordenes/:id"
             element={
@@ -302,6 +314,20 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+
+          {/* Antes: path="/admin/descuento-por-monto" con permission="cupones", como ítem suelto del menú.
+              Pedido de la clienta (23/11/2026): va dentro de Productos, al lado de Ofertas / Campañas, así
+              que lleva la ruta y el permiso de esa sección (el menú abre Productos según la ruta). */}
+          <Route
+            path="/admin/productos/descuento-por-monto"
+            element={
+              <ProtectedRoute>
+                <RequirePermission permission="productos"><AdminCartPromos /></RequirePermission>
+              </ProtectedRoute>
+            }
+          />
+          {/* La dirección vieja estuvo publicada un rato: lleva a la nueva */}
+          <Route path="/admin/descuento-por-monto" element={<Navigate to="/admin/productos/descuento-por-monto" replace />} />
 
           {/* /admin/carrusel — descartada: funcionalidad movida a CarouselSectionContent en /admin/configuracion */}
           {/* <Route

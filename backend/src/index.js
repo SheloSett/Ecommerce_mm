@@ -21,6 +21,7 @@ const gastoRoutes    = require("./routes/gasto.routes");
 const variantRoutes  = require("./routes/variant.routes");
 const couponRoutes   = require("./routes/coupon.routes");
 const offerRoutes    = require("./routes/offer.routes");
+const cartPromoRoutes = require("./routes/cartPromo.routes"); // descuento por monto de compra (Black Friday)
 const slideRoutes    = require("./routes/slide.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const settingsRoutes = require("./routes/settings.routes");
@@ -30,6 +31,7 @@ const adminUsersRoutes = require("./routes/adminUsers.routes");
 const shippingRoutes   = require("./routes/shipping.routes");
 const adminTestRoutes  = require("./routes/admin-test.routes");
 const supplierRoutes   = require("./routes/supplier.routes");
+const shippingLabelRoutes = require("./routes/shippingLabel.routes"); // etiquetas de envío (ex BarTender)
 const aiRoutes         = require("./routes/ai.routes");
 const seoRoutes        = require("./routes/seo.routes");
 const analyticsRoutes  = require("./routes/analytics.routes");
@@ -76,6 +78,7 @@ const generalLimiter = rateLimit({
       "/slides",
       "/settings",
       "/offers",     // /offers/active lo pide el Home en cada carga
+      "/cart-promos/active", // lo pide el carrito en cada carga (descuento por monto)
 
       "/health",
       "/sitemap.xml",
@@ -157,6 +160,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/gastos",    gastoRoutes);
 app.use("/api/coupons",   couponRoutes);
 app.use("/api/offers",    offerRoutes);
+app.use("/api/cart-promos", cartPromoRoutes);
 app.use("/api/slides",    slideRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/settings",  settingsRoutes);
@@ -167,6 +171,7 @@ app.use("/api/admin-users", adminUsersRoutes);
 app.use("/api/shipping",   shippingRoutes);
 app.use("/api/admin-test", adminTestRoutes);
 app.use("/api/suppliers",  supplierRoutes);
+app.use("/api/shipping-labels", shippingLabelRoutes);
 app.use("/api/ai",         aiRoutes);
 app.use("/api/analytics",  analyticsRoutes);
 app.use("/api/events",     eventsRoutes);

@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
+// Prisma.DbNull: para vaciar una columna Json (Order.promoRule) al sacarle la promo a un pedido
+const { Prisma } = require("@prisma/client");
 const { pushToClient } = require("../sse/notificationSSE");
 // Todo cambio de stock pasa por services/stock.service.js (ver ahí el porqué). La publicación
 // automática según el stock también vive ahí. Antes: require("./product.controller").
@@ -44,6 +46,8 @@ const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 const { findCustomerByEmail } = require("../utils/email");
 const { computeOrderTotals } = require("../utils/orderTotals");
 const { resolveOrderShipping } = require("../services/shipping.service");
+// Descuento por monto de compra (Black Friday): qué promo vigente le toca a un pedido
+const { promoForOrder } = require("../services/cartPromo.service");
 
 // Datos del proveedor que viajan en los pedidos del panel (producto y variante). La orden de compra
 // imprime la calle y el teléfono junto al nombre. Antes solo iban id y nombre, y para que la
@@ -280,7 +284,7 @@ async function getOrder(req, res) {
             // suma si está en la misma moneda que la línea vendida, para no mezclar pesos y dólares.
             // Antes: ... shelf: true, cost: true, supplier: ...
             // sku: se muestra en la lista de productos del detalle.
-            product: { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            product: { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, ivaRate: true, supplier: { select: SUPPLIER_SELECT } } },
             // proveedor elegido para la línea en "Modificar pedido" (null = el de la variante o del producto)
             supplier: { select: SUPPLIER_SELECT },
           },
@@ -634,11 +638,17 @@ async function createOrder(req, res) {
     });
     if (shipping.error) return res.status(shipping.status).json({ error: shipping.error });
 
+    // Descuento por monto (ej. Black Friday): la promo vigente para este tipo de cliente que más
+    // descuento da con este carrito. Como los precios, la decide SIEMPRE el servidor: el navegador solo
+    // la muestra. null si no hay promo o el carrito no llega al primer escalón.
+    const promoAplicada = await promoForOrder({ customerType: isMayorista ? "MAYORISTA" : "MINORISTA", items: orderItems });
+
     const totales = computeOrderTotals({
       items:  orderItems,
       coupon: appliedCoupon,
       ivaRates,
       shippingCost: shipping.cost,
+      promo:  promoAplicada?.rule || null,
     });
 
     // Nombres viejos mantenidos para no tocar el resto de la función: ahora son SOLO la parte
@@ -686,6 +696,13 @@ async function createOrder(req, res) {
           couponDiscount,
           // Los cupones de monto fijo dejan esto en 0 (el valor del cupón está en pesos).
           ...(totales.hasUsd ? { couponDiscountUsd: totales.couponDiscountUsd } : {}),
+        } : {}),
+        // Descuento por monto (ver promoAplicada arriba y Order.promoRule en el schema)
+        ...(promoAplicada ? {
+          promoId:       promoAplicada.id,
+          promoRule:     promoAplicada.rule,
+          promoPercent:  totales.promoPercent,
+          promoDiscount: totales.promoDiscountArs,
         } : {}),
         items: {
           create: orderItems,
@@ -1419,6 +1436,9 @@ async function saveOriginalAndMarkModified(orderId, order) {
       total:          order.total,
       ivaAmount:      order.ivaAmount      || 0,
       couponDiscount: order.couponDiscount || 0,
+      // promoDiscount: descuento por monto del pedido original, para que el "pedido original" que ve el
+      // cliente muestre todo lo que se le descontó (ver OrderDetail.jsx)
+      promoDiscount:  order.promoDiscount  || 0,
       shippingCost:   order.shippingCost   || 0,
     };
     await prisma.order.update({
@@ -1436,6 +1456,12 @@ async function saveOriginalAndMarkModified(orderId, order) {
 // no toca los ilimitados, publica o despublica según lo que quede y deja el movimiento en el historial.
 async function moveLineStock(line, delta, { orderId, actor, note = null, tx = null }) {
   if (!delta || !line?.productId) return null;
+  // Línea sin variante de un producto con variantes (surtido viejo): nunca se descontó del padre, así que
+  // tampoco se le devuelve ni se le descuenta (mismo criterio que aprobar y cancelar en updateOrderStatus).
+  if (!line.variantId) {
+    const db = tx || prisma;
+    if (await db.productVariant.count({ where: { productId: line.productId, active: true } })) return null;
+  }
   return adjustStock({
     ...(line.variantId ? { variantId: line.variantId } : { productId: line.productId }),
     delta,
@@ -1614,40 +1640,65 @@ async function addItemToOrder(req, res) {
     // Precio por defecto según el tipo de cliente de la orden (una cotización mayorista debe tomar
     // el precio mayorista, no el minorista). Si el admin manda price, ese manda.
     const isMayoristaOrder = order.customerType === "MAYORISTA";
-    const productBasePrice = isMayoristaOrder
-      ? (product.wholesaleSalePrice ?? product.wholesalePrice ?? product.salePrice ?? product.price)
-      : (product.salePrice ?? product.price);
-    let finalPrice        = priceOverride ? parseFloat(priceOverride) : productBasePrice;
-    let variantLabel      = null;
-    let variantSku        = null;
-    let resolvedVariantId = null;
+    // Antes: una fórmula propia (wholesaleSalePrice ?? wholesalePrice ?? salePrice ?? price, y la
+    // variante heredaba la oferta del producto). Un mayorista sin precio mayorista cargado se llevaba
+    // la oferta minorista y no se aplicaban los tramos por cantidad. Ahora, la misma regla que el
+    // checkout y el carrito (utils/pricing.js). Si el admin manda price, ese manda.
+    // const productBasePrice = isMayoristaOrder
+    //   ? (product.wholesaleSalePrice ?? product.wholesalePrice ?? product.salePrice ?? product.price)
+    //   : (product.salePrice ?? product.price);
+    let variant      = null;
+    let variantLabel = null;
 
     if (variantId) {
-      const variant = await prisma.productVariant.findUnique({ where: { id: parseInt(variantId) } });
-      if (!variant) return res.status(404).json({ error: "Variante no encontrada" });
-      if (!variant.stockUnlimited && variant.stock < qty) {
-        return res.status(400).json({ error: `Stock insuficiente. Disponible: ${variant.stock}` });
+      variant = await prisma.productVariant.findUnique({ where: { id: parseInt(variantId) } });
+      // Antes solo se miraba que existiera: se podía cargar la variante de otro producto o una apagada.
+      // Mismo control que la venta a mano y la aprobación de cotizaciones.
+      if (!variant || variant.productId !== product.id || !variant.active) {
+        return res.status(400).json({ error: `Variante inválida para "${product.name}"` });
       }
-      if (ajustaStock) {
-        await moveLineStock({ productId: product.id, variantId: variant.id }, -qty, { orderId, actor: actorOf(req.user), note: "Producto agregado al pedido" });
-      }
-      resolvedVariantId = variant.id;
-      // Precio de la variante según tipo de cliente, con fallback al del producto
-      const variantBasePrice = isMayoristaOrder
-        ? (variant.wholesaleSalePrice ?? variant.wholesalePrice ?? null)
-        : (variant.salePrice ?? variant.price ?? null);
-      finalPrice   = priceOverride ? parseFloat(priceOverride) : (variantBasePrice ?? productBasePrice);
       const combo  = Array.isArray(variant.combination) ? variant.combination : JSON.parse(String(variant.combination || "[]"));
-      variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ");
-      variantSku   = variant.sku || null;
-    } else {
-      if (!product.stockUnlimited && product.stock < qty) {
-        return res.status(400).json({ error: `Stock insuficiente. Disponible: ${product.stock}` });
+      variantLabel = combo.map((c) => `${c.name}: ${c.value}`).join(" / ") || null;
+      if (!variant.stockUnlimited && variant.stock < qty) {
+        return res.status(400).json({ error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${variant.stock}` });
       }
-      if (ajustaStock) {
-        await moveLineStock({ productId: product.id }, -qty, { orderId, actor: actorOf(req.user), note: "Producto agregado al pedido" });
+    } else {
+      const activeVariants = await prisma.productVariant.findMany({
+        where:  { productId: product.id, active: true },
+        select: { stock: true, stockUnlimited: true },
+      });
+      if (activeVariants.length > 0) {
+        // Producto con variantes y sin variante elegida. Antes se miraba el stock del producto padre
+        // (que con variantes es 0): "Stock insuficiente. Disponible: 0" y no se podía agregar.
+        // Si el pedido ya descontó stock hay que saber de qué variante sale. Una cotización que todavía
+        // no lo descontó puede ir sin variante, como en el checkout: el admin la asigna al aprobarla,
+        // y el stock que cuenta es la suma de las variantes.
+        if (ajustaStock) {
+          return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
+        }
+        if (!activeVariants.some((v) => v.stockUnlimited)) {
+          const totalVariantStock = activeVariants.reduce((sum, v) => sum + v.stock, 0);
+          if (totalVariantStock < qty) {
+            return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Stock total de sus variantes: ${totalVariantStock}` });
+          }
+        }
+      } else if (!product.stockUnlimited && product.stock < qty) {
+        return res.status(400).json({ error: `Stock insuficiente para "${product.name}". Disponible: ${product.stock}` });
       }
     }
+
+    // El stock se mueve después de validar todo (antes se descontaba en el medio de las validaciones), por
+    // el servicio de stock: no baja de 0, respeta el ilimitado, despublica si no queda nada y queda en el
+    // historial con el número de este pedido.
+    if (ajustaStock) {
+      await moveLineStock({ productId: product.id, variantId: variant ? variant.id : null }, -qty, {
+        orderId, actor: actorOf(req.user), note: "Producto agregado al pedido",
+      });
+    }
+
+    const finalPrice        = priceOverride ? parseFloat(priceOverride) : effectiveUnitPrice({ product, variant, isMayorista: isMayoristaOrder, quantity: qty });
+    const resolvedVariantId = variant ? variant.id : null;
+    const variantSku        = variant ? (variant.sku || null) : null;
 
     // Guardar el snapshot ANTES de crear el nuevo item para que refleje el estado previo a la
     // modificación. Solo aplica a pedidos ya aprobados (una cotización PENDING todavía se está
@@ -1846,7 +1897,13 @@ async function getMyCotizaciones(req, res) {
 // la edición del pedido, donde el vendedor puede cambiarlo en el mismo guardado).
 // overrideShipping: costo de envío nuevo, si es lo que se está cambiando (si no, el que ya tenía el pedido).
 // Antes no miraba el envío: modificar un pedido se lo sacaba del total.
-async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined) {
+// overrideInvoice: true/false si en este guardado se prende o se apaga el IVA ("Agregar IVA" de
+// "Modificar pedido"); si no viene, el que ya tenía el pedido. Devuelve también wantsInvoice.
+// overridePromo: { id, rule } para agregarle la promo al pedido, null para sacársela ("Aplicar promo" de
+// "Modificar pedido"). Si no viene, se mantiene la que tenía, con SUS escalones (Order.promoRule): el %
+// se recalcula con el subtotal nuevo, aunque la promo ya haya terminado.
+// Antes: async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined) {
+async function recalcOrderTotals(orderId, overrideManual = undefined, overrideShipping = undefined, overrideInvoice = undefined, overridePromo = undefined) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -1861,32 +1918,51 @@ async function recalcOrderTotals(orderId, overrideManual = undefined, overrideSh
     : parseManualDiscount(order.manualDiscountType, order.manualDiscountValue);
 
   // Las alícuotas solo se consultan si la orden lleva factura.
+  const conIva = overrideInvoice !== undefined ? overrideInvoice : !!order.wantsInvoice;
   let ivaRates = null;
-  if (order.wantsInvoice) {
+  if (conIva) {
     const prods = await prisma.product.findMany({
-      where:  { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+      // filter(Boolean): los ítems libres no tienen producto (van al 21%). Antes se mandaba el null
+      // en la lista; no pasaba porque solo el checkout llevaba IVA, y ahora también la venta a mano.
+      where:  { id: { in: [...new Set(order.items.map((i) => i.productId).filter(Boolean))] } },
       select: { id: true, ivaRate: true },
     });
     ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
   }
 
   const shippingCost = overrideShipping !== undefined ? overrideShipping : (order.shippingCost || 0);
-  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost });
+  const promoRule = overridePromo !== undefined ? (overridePromo?.rule || null) : (order.promoRule || null);
+  // Antes: const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost });
+  const t = computeOrderTotals({ items: order.items, coupon: order.coupon, ivaRates, manualDiscount: manual, shippingCost, promo: promoRule });
+
+  // Campos de la promo: se escriben si el pedido la tiene, o si en este guardado se agrega o se saca.
+  // Un pedido sin promo no los toca (quedan en null, como siempre).
+  let promoData = {};
+  if (overridePromo) {
+    promoData = { promoId: overridePromo.id, promoRule: overridePromo.rule, promoPercent: t.promoPercent, promoDiscount: t.promoDiscountArs };
+  } else if (overridePromo === null) {
+    promoData = { promoId: null, promoRule: Prisma.DbNull, promoPercent: null, promoDiscount: null };
+  } else if (order.promoRule) {
+    promoData = { promoPercent: t.promoPercent, promoDiscount: t.promoDiscountArs };
+  }
 
   return {
+    ...promoData,
     total:     t.totalArs,
+    ...(overrideInvoice !== undefined ? { wantsInvoice: conIva } : {}),
     // Descuento manual: se recalcula siempre (si es un %, el monto cambia cuando cambian los ítems).
     ...(overrideManual !== undefined ? { manualDiscountType: manual?.type ?? null, manualDiscountValue: manual?.value ?? null } : {}),
     manualDiscount:    t.manualDiscountArs || null,
     manualDiscountUsd: t.hasUsd ? (t.manualDiscountUsd || null) : null,
-    ivaAmount: order.wantsInvoice ? t.ivaAmountArs : (order.ivaAmount || 0),
+    // Sin IVA: si se acaba de apagar, queda en 0; si nunca tuvo, se deja lo que había (como siempre).
+    ivaAmount: conIva ? t.ivaAmountArs : (overrideInvoice === false ? 0 : (order.ivaAmount || 0)),
     // El descuento solo se toca si la orden tiene un cupón aplicado.
     ...(order.couponId ? { couponDiscount: t.couponDiscountArs } : {}),
     // Los campos en dólares solo se escriben si el pedido tiene ítems en dólares. Un pedido 100%
     // en pesos los deja en null y se comporta exactamente como antes.
     ...(t.hasUsd ? {
       totalUsd:     t.totalUsd,
-      ivaAmountUsd: order.wantsInvoice ? t.ivaAmountUsd : 0,
+      ivaAmountUsd: conIva ? t.ivaAmountUsd : 0,
       ...(order.couponId ? { couponDiscountUsd: t.couponDiscountUsd } : {}),
     } : {}),
   };
@@ -2772,7 +2848,8 @@ async function applyCouponToOrder(req, res) {
     let ivaRatesQuote = null;
     if (order.wantsInvoice) {
       const prods = await prisma.product.findMany({
-        where: { id: { in: [...new Set(order.items.map((i) => i.productId))] } },
+        // filter(Boolean): los ítems libres (sin producto) van al 21%; antes se mandaba el null en la lista.
+        where: { id: { in: [...new Set(order.items.map((i) => i.productId).filter(Boolean))] } },
         select: { id: true, ivaRate: true },
       });
       ivaRatesQuote = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
@@ -2782,6 +2859,9 @@ async function applyCouponToOrder(req, res) {
       // Si el vendedor ya le había puesto un descuento a mano, se mantiene además del cupón.
       manualDiscount: parseManualDiscount(order.manualDiscountType, order.manualDiscountValue),
       shippingCost: order.shippingCost || 0,
+      // La promo por monto que ya tenía la cotización se mantiene (va antes del cupón). Sin esto, aplicar
+      // un cupón le sacaba la promo del total.
+      promo: order.promoRule || null,
     });
     const discount = totalesQuote.couponDiscountArs;
     const newTotal = totalesQuote.totalArs;
@@ -2794,6 +2874,7 @@ async function applyCouponToOrder(req, res) {
           total: newTotal,
           couponId: coupon.id,
           couponDiscount: discount,
+          ...(order.promoRule ? { promoPercent: totalesQuote.promoPercent, promoDiscount: totalesQuote.promoDiscountArs } : {}),
           ...(totalesQuote.hasUsd ? {
             totalUsd:          totalesQuote.totalUsd,
             couponDiscountUsd: totalesQuote.couponDiscountUsd,
@@ -2828,8 +2909,11 @@ async function applyCouponToOrder(req, res) {
 // El stock se descuenta igual que en una venta normal.
 async function createManualOrder(req, res) {
   try {
+    // applyPromo: la casilla "Aplicar promo" del panel. Los clientes que compran por WhatsApp no pasan
+    // por el checkout, así que la promo por monto (Black Friday) se la aplica el vendedor desde acá.
+    // Antes: ... manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
     const { customerName, customerEmail, customerPhone, customerId, items, paymentMethod, notes, status, salesChannel, customerType, crearCuenta, cuentaPassword,
-            manualDiscountType, manualDiscountValue } = req.body;
+            manualDiscountType, manualDiscountValue, wantsInvoice, applyPromo } = req.body;
 
     // Email es opcional en ventas manuales — solo el nombre es obligatorio
     if (!customerName) {
@@ -2935,6 +3019,11 @@ async function createManualOrder(req, res) {
             error: `Stock insuficiente para "${product.name}" (${variantLabel}). Disponible: ${selectedVariant.stock}`,
           });
         }
+      } else if (await prisma.productVariant.count({ where: { productId: product.id, active: true } }) > 0) {
+        // Producto con variantes y sin variante: la pantalla lo pide, pero si las variantes todavía no
+        // habían cargado (o fallaron) la venta pasaba igual y descontaba del producto padre. Mismo
+        // criterio que "Modificar pedido" y el checkout.
+        return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
       } else if (!product.stockUnlimited && product.stock < qty) {
         // Verificar stock del producto (solo si no es ilimitado y no se vende una variante)
         return res.status(400).json({
@@ -2977,11 +3066,36 @@ async function createManualOrder(req, res) {
       });
     }
 
-    // Totales por moneda. La venta manual no lleva cupón ni factura con IVA, así que acá
-    // computeOrderTotals solo separa pesos de dólares — pero se usa la misma función que el resto
-    // para que el criterio sea uno solo. Los ítems libres (sin productId) van en pesos.
+    // Totales por moneda, con la misma función que el checkout. Los ítems libres (sin productId) van
+    // en pesos. La venta manual no lleva cupón.
+    //
+    // IVA: antes la venta manual nunca lo sumaba. Ahora, igual que el checkout, se suma si la venta es
+    // para un MAYORISTA y el vendedor marcó "Agregar IVA (factura)": los precios mayoristas son sin
+    // IVA y los minoristas ya lo tienen incluido. Cada producto con su alícuota (21% o 10,5%), sobre
+    // la base ya descontada; los ítems libres al 21% (computeOrderTotals usa 21 si no hay alícuota).
+    // Antes: computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null, manualDiscount: descuentoManual })
+    const applyIva = wantsInvoice === true && customerType === "MAYORISTA";
+    let ivaRates = null;
+    if (applyIva) {
+      const prods = await prisma.product.findMany({
+        where:  { id: { in: [...new Set(orderItems.map((i) => i.productId).filter(Boolean))] } },
+        select: { id: true, ivaRate: true },
+      });
+      ivaRates = Object.fromEntries(prods.map((p) => [p.id, p.ivaRate ?? 21]));
+    }
     const descuentoManual = parseManualDiscount(manualDiscountType, manualDiscountValue);
-    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates: null, manualDiscount: descuentoManual });
+    // Promo por monto: solo si el vendedor la tildó. Se elige igual que en el checkout (la vigente para
+    // el tipo de cliente de la venta que más da con este total). Si tildó la casilla pero ya no hay
+    // ninguna vigente (terminó mientras armaba la venta), se avisa en vez de registrar la venta sin ella.
+    let promoManual = null;
+    if (applyPromo === true) {
+      promoManual = await promoForOrder({ customerType: customerType === "MAYORISTA" ? "MAYORISTA" : "MINORISTA", items: orderItems });
+      if (!promoManual) {
+        return res.status(400).json({ error: "La venta no llega al monto de ninguna promo vigente. Destildá \"Aplicar promo\" para registrarla igual." });
+      }
+    }
+    // Antes: const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual });
+    const totalesManual = computeOrderTotals({ items: orderItems, coupon: null, ivaRates, manualDiscount: descuentoManual, promo: promoManual?.rule || null });
     // Antes: `total` era la suma cruda de todas las líneas, mezclando monedas.
     total = totalesManual.totalArs;
 
@@ -3091,6 +3205,18 @@ async function createManualOrder(req, res) {
           manualDiscountValue: descuentoManual?.value ?? null,
           manualDiscount:      totalesManual.manualDiscountArs || null,
           ...(totalesManual.hasUsd ? { totalUsd: totalesManual.totalUsd, manualDiscountUsd: totalesManual.manualDiscountUsd || null } : {}),
+          // Promo por monto (casilla "Aplicar promo", ver promoManual arriba)
+          ...(promoManual ? {
+            promoId:       promoManual.id,
+            promoRule:     promoManual.rule,
+            promoPercent:  totalesManual.promoPercent,
+            promoDiscount: totalesManual.promoDiscountArs,
+          } : {}),
+          // IVA (ver applyIva arriba). wantsInvoice queda guardado: si después se modifica el pedido,
+          // recalcOrderTotals vuelve a calcular el IVA con las líneas nuevas.
+          wantsInvoice: applyIva,
+          ivaAmount:    totalesManual.ivaAmountArs,
+          ...(totalesManual.hasUsd ? { ivaAmountUsd: totalesManual.ivaAmountUsd } : {}),
           items: { create: orderItems },
         },
         include: {
@@ -3301,7 +3427,11 @@ async function modifyOrder(req, res) {
     // manualDiscountType/Value: descuento sobre TODO el pedido, editable desde el mismo modal.
     // Si no vienen en el body, se deja el que ya tenía la orden.
     // applySupplierToProduct: ídem para el proveedor de la línea (misma respuesta del modal).
-    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue } = req.body;
+    // wantsInvoice: la casilla "Agregar IVA (factura)" del panel (true/false; si no viene, no se toca).
+    // applyPromo: la casilla "Aplicar promo" (true/false; si no viene, no se toca). Sacarla siempre se
+    // puede; agregarla solo si hay una promo vigente a la que llegue el pedido modificado.
+    // Antes: const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice } = req.body;
+    const { items, applyCostToProduct, applySupplierToProduct, manualDiscountType, manualDiscountValue, wantsInvoice, applyPromo } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "La lista de items no puede estar vacía" });
@@ -3357,6 +3487,7 @@ async function modifyOrder(req, res) {
           total:          order.total,
           ivaAmount:      order.ivaAmount      || 0,
           couponDiscount: order.couponDiscount || 0,
+          promoDiscount:  order.promoDiscount  || 0, // descuento por monto del pedido original
         };
 
     // Separar items entrantes: los que tienen itemId (existentes) vs los nuevos
@@ -3394,9 +3525,15 @@ async function modifyOrder(req, res) {
       let variant = null;
       if (newItem.variantId) {
         variant = await prisma.productVariant.findUnique({ where: { id: parseInt(newItem.variantId) } });
-        if (!variant || variant.productId !== pid) {
-          return res.status(400).json({ error: `La variante elegida no es de "${product.name}"` });
+        // Antes no se miraba si estaba activa (la venta a mano y la aprobación de cotizaciones sí).
+        if (!variant || variant.productId !== pid || !variant.active) {
+          return res.status(400).json({ error: `La variante elegida no es de "${product.name}" o ya no está activa` });
         }
+      } else if (await prisma.productVariant.count({ where: { productId: pid, active: true } }) > 0) {
+        // Producto con variantes y sin variante elegida: antes se miraba el stock del producto padre
+        // (que con variantes es 0) y salía "Stock insuficiente… Disponible: 0" aunque las variantes
+        // tuvieran cientos. El panel ahora muestra el selector; esto cubre a quien no lo use.
+        return res.status(400).json({ error: `Elegí la variante de "${product.name}"` });
       }
       const stockOf = variant || product;
       if (!stockOf.stockUnlimited && stockOf.stock < qty) {
@@ -3407,6 +3544,29 @@ async function modifyOrder(req, res) {
 
     // Datos de los movimientos de stock de esta modificación (historial)
     const stockMove = { orderId, actor: actorOf(req.user), note: "Modificar pedido" };
+
+    // Promo por monto: agregarla también se resuelve ANTES de tocar nada (mismo motivo que los ítems
+    // nuevos de arriba). Se mide con las líneas como van a quedar: las que siguen, con su precio nuevo,
+    // más las agregadas. Si el pedido ya la tenía, se mantiene con sus escalones (ver recalcOrderTotals).
+    let overridePromo;
+    if (applyPromo === false && order.promoRule) {
+      overridePromo = null;
+    } else if (applyPromo === true && !order.promoRule) {
+      const lineasFinales = [
+        ...order.items.filter((i) => incomingMap[i.id]).map((i) => {
+          const inc = incomingMap[i.id];
+          const precio = parseFloat(inc.price);
+          const cant   = parseInt(inc.quantity);
+          // productId: para las promos de algunas categorías o productos (antes no se mandaba)
+          return { productId: i.productId, price: isNaN(precio) ? i.price : precio, quantity: isNaN(cant) ? i.quantity : cant, currency: i.currency };
+        }),
+        ...preparedNew.map((p) => ({ productId: p.pid, price: p.price, quantity: p.qty, currency: effectiveCurrency({ product: p.product }) })),
+      ];
+      overridePromo = await promoForOrder({ customerType: order.customerType, items: lineasFinales });
+      if (!overridePromo) {
+        return res.status(400).json({ error: "El pedido no llega al monto de ninguna promo vigente. Destildá \"Aplicar promo\" para guardarlo igual." });
+      }
+    }
 
     // Devolver stock de los items eliminados
     // (solo si el pedido lo había descontado: antes lo devolvía siempre). Un ítem libre no tiene stock
@@ -3498,7 +3658,13 @@ async function modifyOrder(req, res) {
           // pesos — y ahora que los totales se calculan por moneda, esa línea se sumaba a los pesos.
           currency:     effectiveCurrency({ product }),
           variantId:    newItemVariantId,
-          variantLabel: variant ? (newItem.variantLabel || null) : null,
+          // La etiqueta se arma acá, con el mismo formato que la tienda y la venta a mano
+          // ("Color: Negro / Largo: 1m"). Antes: newItem.variantLabel, el texto que mandara el navegador.
+          variantLabel: variant
+            ? ((Array.isArray(variant.combination) ? variant.combination : []).map((c) => `${c.name}: ${c.value}`).join(" / ") || null)
+            : null,
+          // SKU de la variante al momento de agregarla (como addItemToOrder): el detalle lo muestra.
+          variantSku:   variant ? (variant.sku || null) : null,
         },
       });
 
@@ -3572,7 +3738,13 @@ async function modifyOrder(req, res) {
     const overrideManual = manualDiscountType !== undefined || manualDiscountValue !== undefined
       ? parseManualDiscount(manualDiscountType, manualDiscountValue)
       : undefined;
-    const totalsData = await recalcOrderTotals(orderId, overrideManual);
+    // IVA: como en el checkout y la venta a mano, solo para un pedido MAYORISTA (sus precios son sin
+    // IVA). Si el panel no lo manda, queda como estaba.
+    const overrideInvoice = typeof wantsInvoice === "boolean"
+      ? (wantsInvoice && order.customerType === "MAYORISTA")
+      : undefined;
+    // Antes: const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice);
+    const totalsData = await recalcOrderTotals(orderId, overrideManual, undefined, overrideInvoice, overridePromo);
 
     const updated = await prisma.order.update({
       where: { id: orderId },
@@ -3591,7 +3763,7 @@ async function modifyOrder(req, res) {
       include: {
         items: {
           include: {
-            product:  { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, supplier: { select: SUPPLIER_SELECT } } },
+            product:  { select: { id: true, name: true, sku: true, images: true, module: true, shelf: true, cost: true, currency: true, ivaRate: true, supplier: { select: SUPPLIER_SELECT } } },
             supplier: { select: SUPPLIER_SELECT },
           },
           orderBy: { id: "asc" },

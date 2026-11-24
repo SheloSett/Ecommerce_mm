@@ -9,6 +9,11 @@ import { badgeFor } from "../utils/campaignCard";
 import { getCategoryIcon } from "../utils/categoryIcon";
 import SiteMeta from "../components/SiteMeta";
 import { productsApi, categoriesApi, slidesApi, offersApi, getImageUrl } from "../services/api";
+// Flyers del carrusel en la mejor calidad, desde el original (ver utils/imageUrl.js)
+import { cloudinaryBanner } from "../utils/imageUrl";
+// Tarjeta de la promo por monto (Black Friday) junto a las de campaña
+import { useCartPromos } from "../hooks/useCartPromos";
+import { normalizePromoTiers, promoAppliesTo } from "../utils/cartPromo";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { getRecentIds } from "../utils/recentlyViewed";
 
@@ -113,6 +118,12 @@ export default function Home() {
   const [saleOffset, setSaleOffset] = useState(0);
   const { customer } = useCustomerAuth();
   const navigate = useNavigate();
+  // Promos de descuento por monto vigentes con tarjeta (Productos → Descuento por monto), en la misma fila
+  // que las campañas, con sus escalones. El servidor ya manda solo las de quien mira; el filtro de público
+  // es para el admin que mira la tienda (a él le llegan todas). Va después de `customer`: lo usa.
+  const promoCards = useCartPromos().filter(
+    (p) => p.showCard !== false && promoAppliesTo(p, customer?.type) && (!p.endsAt || new Date(p.endsAt) > new Date())
+  );
 
   useEffect(() => {
     const visibleFor = customer?.type || "MINORISTA";
@@ -359,10 +370,13 @@ export default function Home() {
         <div>
         {/* Antes: style={{ aspectRatio: "1920 / 600", minHeight: "220px" }} en todos los tamaños.
             Ahora: en el teléfono la proporción de la versión de celular (o 3:1), con tope de 70% del alto
-            de la pantalla (celular acostado); en md+ la de siempre. */}
+            de la pantalla (celular acostado); en md+ 3:1.
+            Antes en md+: md:aspect-[1920/600]. Los flyers se diseñan en 1920×640 (3:1): con 1920/600 se
+            cortaban ~20 px arriba y abajo (en el de Cyber Week, la franja de arriba salía cortada a la
+            mitad). Con 3:1 entran enteros. */}
         <section
           ref={heroRef}
-          className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/600] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
+          className="relative w-full overflow-hidden bg-[#0b1c30] aspect-[var(--hero-m)] max-h-[70vh] md:aspect-[1920/640] md:min-h-[220px] md:max-h-none touch-pan-y touch-pinch-zoom"
           style={{ "--hero-m": heroMobileRatio }}
           onTouchStart={onHeroTouchStart}
           onTouchEnd={onHeroTouchEnd}
@@ -380,21 +394,32 @@ export default function Home() {
                   <picture>: en el teléfono usa la versión de celular si el slide la tiene. */}
               {/* Las fotos solo se piden si el banner está en loadedSlides (el actual o el siguiente):
                   sin src el navegador no baja nada. Antes: src={getImageUrl(slide.image)} siempre. */}
+              {/* Antes las dos <picture> usaban getImageUrl(slide.image) / getImageUrl(slide.mobileImage): la
+                  versión guardada al subir, achicada y muy comprimida (ver cloudinaryBanner). Ahora salen del
+                  original con la mejor calidad. El fondo desenfocado lleva el mismo srcSet que la imagen
+                  principal: el navegador elige el mismo archivo y lo baja una sola vez. */}
               <picture>
-                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={cloudinaryBanner(getImageUrl(slide.mobileImage), 1080)} />}
                 <img
-                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
+                  src={loadedSlides.has(idx) ? cloudinaryBanner(getImageUrl(slide.image), 1920) : undefined}
+                  srcSet={loadedSlides.has(idx) ? `${cloudinaryBanner(getImageUrl(slide.image), 1920)} 1920w, ${cloudinaryBanner(getImageUrl(slide.image), 3840)} 3840w` : undefined}
+                  sizes="100vw"
                   alt=""
                   aria-hidden="true"
                   className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl opacity-70 pointer-events-none"
                 />
               </picture>
               {/* Imagen principal. En el teléfono "contain": nunca se corta (si la proporción no coincide,
-                  el fondo desenfocado rellena). En md+ "cover" como siempre. */}
+                  el fondo desenfocado rellena). En md+ "cover" como siempre.
+                  srcSet: en pantallas de alta densidad (notebooks con escala de Windows, Mac, 4K) pide hasta
+                  3840 de ancho. Solo se nota si el flyer se subió a ese tamaño; si mide 1920, Cloudinary
+                  devuelve el de 1920 (c_limit nunca agranda). */}
               <picture>
-                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={getImageUrl(slide.mobileImage)} />}
+                {slide.mobileImage && loadedSlides.has(idx) && <source media="(max-width: 767px)" srcSet={cloudinaryBanner(getImageUrl(slide.mobileImage), 1080)} />}
                 <img
-                  src={loadedSlides.has(idx) ? getImageUrl(slide.image) : undefined}
+                  src={loadedSlides.has(idx) ? cloudinaryBanner(getImageUrl(slide.image), 1920) : undefined}
+                  srcSet={loadedSlides.has(idx) ? `${cloudinaryBanner(getImageUrl(slide.image), 1920)} 1920w, ${cloudinaryBanner(getImageUrl(slide.image), 3840)} 3840w` : undefined}
+                  sizes="100vw"
                   alt={slide.title || ""}
                   className="absolute inset-0 w-full h-full object-contain md:object-cover z-10"
                 />
@@ -553,17 +578,36 @@ export default function Home() {
 
       <main className="flex-1 max-w-[1280px] mx-auto px-6 py-12 w-full">
 
-        {/* Campañas vigentes: una tarjeta grande por campaña (estilo y color elegidos en Admin → Ofertas) */}
-        {campaignCards.length > 0 && (
+        {/* Campañas vigentes: una tarjeta grande por campaña (estilo y color elegidos en Admin → Ofertas).
+            También las promos por monto, primero, con sus escalones (estilo elegido en Productos →
+            Descuento por monto); llevan al catálogo completo porque cuentan todos los productos.
+            Antes la fila se armaba solo con campaignCards (cantidad, columnas y "solo"). */}
+        {campaignCards.length + promoCards.length > 0 && (
           <section className={`mb-10 grid gap-4 ${
-            campaignCards.length === 1 ? "grid-cols-1" : campaignCards.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
+            campaignCards.length + promoCards.length === 1 ? "grid-cols-1" : campaignCards.length + promoCards.length === 2 ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
           }`}>
+            {promoCards.map((promo) => {
+              const tiers = normalizePromoTiers(promo.tiers);
+              return (
+                <CampaignCard
+                  key={`promo-${promo.id}`}
+                  offer={promo}
+                  // "Hasta 10% OFF" con el escalón más alto (o "5% OFF" si hay uno solo)
+                  badge={{ value: tiers[tiers.length - 1]?.percent || 0, upTo: tiers.length > 1 }}
+                  tiers={tiers}
+                  to="/catalogo"
+                  cta="Ver productos"
+                  solo={campaignCards.length + promoCards.length === 1}
+                />
+              );
+            })}
             {campaignCards.map((offer) => (
               <CampaignCard
                 key={offer.id}
                 offer={offer}
                 badge={badgeFor(offer, customer?.type || "MINORISTA")}
-                solo={campaignCards.length === 1}
+                // Antes: solo={campaignCards.length === 1} — ahora cuenta también las promos de la misma fila
+                solo={campaignCards.length + promoCards.length === 1}
               />
             ))}
           </section>

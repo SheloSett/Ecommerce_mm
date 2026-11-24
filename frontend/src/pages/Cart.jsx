@@ -8,6 +8,10 @@ import { getImageUrl } from "../services/api";
 import { formatPrice } from "../utils/formatPrice";
 // Fotos de producto al tamaño justo y con carga diferida (ver components/ProductImage.jsx)
 import ProductImage from "../components/ProductImage";
+// Descuento por monto (Black Friday): el descuento y el "Sumá $X y llevás 10% off"
+import { useCartPromos } from "../hooks/useCartPromos";
+import { cartPromoSummary, promoLinesFromCart } from "../utils/cartPromo";
+import CartPromoNotice from "../components/CartPromoNotice";
 
 export default function Cart() {
   const { items, totalPrice, removeItem, updateQuantity } = useCart();
@@ -33,6 +37,10 @@ export default function Cart() {
   // Antes: const llegaAlMinimo = totalPrice >= mayoristaMinimoCompra;  (mezclaba monedas)
   const llegaAlMinimo = totalArs >= mayoristaMinimoCompra;
   const progreso = minimoActivo ? Math.min(100, (totalArs / mayoristaMinimoCompra) * 100) : 100;
+  // Descuento por monto: se mide con los pesos, igual que el servidor (ver utils/cartPromo.js)
+  // Antes: cartPromoSummary(useCartPromos(), totalArs, ...). Ahora con las líneas: una promo de algunos
+  // productos mide solo esos (ver utils/cartPromo.js).
+  const promoInfo = cartPromoSummary(useCartPromos(), promoLinesFromCart(items), isMayorista ? "MAYORISTA" : "MINORISTA");
 
   const totalItems = items.reduce((s, i) => s + i.quantity, 0);
   // Hay items sin stock = no se puede finalizar la compra
@@ -279,7 +287,16 @@ export default function Cart() {
                     </div>
                   </>
                 )}
+                {/* Descuento por monto (solo la parte en pesos) */}
+                {promoInfo.discount > 0 && (
+                  <div className="flex justify-between text-[#006b2c] font-semibold">
+                    <span>{promoInfo.promo.name} ({promoInfo.percent}%)</span>
+                    <span>−{formatPrice(promoInfo.discount)}</span>
+                  </div>
+                )}
               </div>
+
+              <CartPromoNotice summary={promoInfo} />
 
               <div className="border-t border-[#bdcaba]/30 pt-4 flex justify-between items-center">
                 <span className="font-bold text-[#0b1c30]">Total</span>
@@ -289,7 +306,8 @@ export default function Cart() {
                   <span className="text-base font-extrabold text-[#006b2c]">A convenir</span>
                 ) : (
                   <span className="text-2xl font-extrabold text-[#0b1c30]">
-                    {formatPrice(totalPrice)}
+                    {/* Antes: {formatPrice(totalPrice)} — ahora con el descuento por monto ya restado */}
+                    {formatPrice(totalPrice - promoInfo.discount)}
                   </span>
                 )}
               </div>

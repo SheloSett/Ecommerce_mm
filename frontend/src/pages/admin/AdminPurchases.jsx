@@ -57,7 +57,9 @@ export default function AdminPurchases() {
     setLoading(true);
     Promise.all([
       purchasesApi.getAll(),
-      productsApi.getAllAdmin({ limit: 500 }),
+      // Antes: { limit: 500 } — solo los 500 más nuevos. El SKU de un producto más viejo aparecía como
+      // "nuevo producto", sin su stock ni su costo actual. Todos, como la venta a mano.
+      productsApi.getAllAdmin({ all: true }),
       suppliersApi.getAll(),
     ])
       .then(([pRes, prodRes, supRes]) => {

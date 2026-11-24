@@ -20,6 +20,7 @@ function resetDb() {
     items: {},
     movements: [],
     nextId: 1,
+    synced: [], // productos a los que se les pidió publicar/ocultar según stock
   };
 }
 const matches = (row, where = {}) => Object.entries(where).every(([k, v]) => {
@@ -27,6 +28,11 @@ const matches = (row, where = {}) => Object.entries(where).every(([k, v]) => {
     if ("gt" in v) return row[k] > v.gt;
     if ("not" in v) return row[k] !== v.not;
     if ("in" in v) return v.in.includes(row[k]);
+    if ("equals" in v) {
+      return v.mode === "insensitive"
+        ? row[k] != null && String(row[k]).toLowerCase() === String(v.equals).toLowerCase()
+        : row[k] === v.equals;
+    }
   }
   return row[k] === v;
 });
@@ -94,7 +100,10 @@ class FakePrismaClient {
 const root = path.join(__dirname, "..");
 const stub = (resolved, exportsObj) => { require.cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports: exportsObj }; };
 stub(require.resolve("@prisma/client", { paths: [root] }), { PrismaClient: FakePrismaClient });
-stub(require.resolve(path.join(root, "src/controllers/product.controller.js")), { deleteProductImages: async () => {} });
+stub(require.resolve(path.join(root, "src/controllers/product.controller.js")), {
+  deleteProductImages: async () => {},
+  syncProductVisibility: async (id) => { db.synced.push(id); },
+});
 
 const { createPurchase, updatePurchase, deletePurchase } = require("../src/controllers/purchase.controller");
 
@@ -208,5 +217,38 @@ describe("costo promedio con la fila bloqueada", () => {
     db.staleCostOnce = 100;                                  // esta lo había leído en 100
     await buy(10, 200);
     assert.equal(db.products[1].cost, 175, "(150×10 + 200×10) / 20; con el costo viejo daba 150");
+  });
+});
+
+// 12/11/2026: la pantalla compara el SKU sin distinguir mayúsculas y el servidor lo comparaba exacto.
+describe("comprar con el SKU en otras mayúsculas", () => {
+  beforeEach(resetDb);
+
+  test("suma al producto que ya existe, no crea uno nuevo", async () => {
+    const res = await call(createPurchase, { body: { supplier: "Mayorista SA", date: "2026-10-01", items: [{ sku: "cab-1", productName: "Cable USB", quantity: 10, cost: 100 }] } });
+    assert.equal(res.code, 201);
+    assert.equal(db.products[1].stock, 10);
+    assert.equal(Object.keys(db.products).length, 1, "antes creaba un producto oculto con precio 0");
+  });
+
+  test("el SKU exacto gana si hay dos que solo difieren en mayúsculas", async () => {
+    db.products[2] = { id: 2, name: "Otro", sku: "cab-1", stock: 0, cost: 50 };
+    await call(createPurchase, { body: { supplier: "Mayorista SA", date: "2026-10-01", items: [{ sku: "cab-1", productName: "Otro", quantity: 4, cost: 50 }] } });
+    assert.equal(db.products[2].stock, 4);
+    assert.equal(db.products[1].stock, 0);
+  });
+});
+
+// 12/11/2026: reponer por Compras no volvía a publicar lo que se había ocultado solo por falta de stock.
+describe("comprar, editar o borrar una compra publica u oculta según el stock", () => {
+  beforeEach(resetDb);
+
+  test("crear, editar y borrar sincronizan el producto", async () => {
+    const id = await buy(10, 100);
+    assert.deepEqual(db.synced, [1]);
+    assert.equal((await edit(id, [line(5, 100)])).code, 200);
+    assert.deepEqual(db.synced, [1, 1], "los de antes y los de ahora, sin repetir");
+    await call(deletePurchase, { params: { id: String(id) }, body: {} });
+    assert.deepEqual(db.synced, [1, 1, 1]);
   });
 });

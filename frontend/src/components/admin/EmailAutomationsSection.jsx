@@ -108,7 +108,9 @@ export default function EmailAutomationsSection() {
     searchTimeoutRef.current = setTimeout(async () => {
       setSearchingProducts(true);
       try {
-        const res = await productsApi.getAllAdmin({ search: value, limit: 8, excludePaused: true });
+        // Antes: limit: 8 — el servidor ordena alfabético y corta, así que las coincidencias que venían
+        // después de las primeras 8 no aparecían nunca. La lista scrollea: se traen todas (con un techo).
+        const res = await productsApi.getAllAdmin({ search: value, limit: 100, excludePaused: true });
         const list = Array.isArray(res.data) ? res.data : (res.data?.products || []);
         setEmailSearchResults(list.filter((p) => p.active && !emailFeatured.some((f) => f.id === p.id)));
       } catch {}

@@ -9,6 +9,10 @@ import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../util
 // Datos del pedido en la hoja: escapados (la variante y el nombre del cliente vienen del checkout)
 import { escapeHtml as esc } from "../../utils/escapeHtml";
 
+// Al imprimir, un proveedor con hasta esta cantidad de productos va entero en una hoja (no se parte).
+// Con más, puede empezar donde haya lugar y seguir en la hoja siguiente (ver @media print).
+const OC_KEEP_TOGETHER = 6;
+
 const formatDate = (d) =>
   new Date(d).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -193,8 +197,8 @@ export default function AdminPurchaseOrder() {
       // Con recorrido: número de parada delante del nombre y metros desde la parada anterior.
       const contact = [supplierContact(g), stopWalk(route, g.key)].filter(Boolean).join(" · ");
       return `
-      <section style="margin-bottom:12px;break-inside:avoid">
-        <div style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
+      <section class="${g.items.length <= OC_KEEP_TOGETHER ? "oc-entera" : ""}" style="margin-bottom:12px">
+        <div class="oc-titulo" style="background:#1e293b;color:#fff;padding:5px 10px;border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap">
           <span style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase">${stopPrefix(route, g.key)}🏭 ${esc(g.name)}</span>
           ${contact ? `<span style="font-size:11px;font-weight:600">${esc(contact)}</span>` : ""}
         </div>
@@ -241,7 +245,13 @@ export default function AdminPurchaseOrder() {
     @media print {
       html, body { width: 186mm; background: #fff; }
       .page { width: 186mm; max-width: 186mm; padding: 0; margin: 0 auto; }
-      section { break-inside: avoid; }
+      /* Antes: section { break-inside: avoid; } — un proveedor con muchos productos no entraba en lo que
+         quedaba de la primera hoja, el navegador lo pasaba entero a la segunda y la primera salía casi
+         vacía (solo el encabezado). Ahora solo los proveedores chicos van enteros; en los grandes no se
+         corta un producto por la mitad ni queda el título del proveedor solo al pie de la hoja. */
+      section.oc-entera { break-inside: avoid; }
+      .oc-titulo { break-after: avoid; }
+      section tr { break-inside: avoid; }
       .print-btn { display: none !important; }
     }
     ${photoSizeCss(48)}

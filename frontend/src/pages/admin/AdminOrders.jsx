@@ -6,12 +6,17 @@ import { ordersApi, productsApi, customersApi, suppliersApi, getImageUrl } from 
 import { useBadges } from "../../context/BadgeContext";
 import toast from "react-hot-toast";
 import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice";
-import { getOrderTotals } from "../../utils/orderTotals";
+// promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
+// Antes: import { getOrderTotals } from "../../utils/orderTotals";
+import { getOrderTotals, promoLabel } from "../../utils/orderTotals";
 import { formatDeliveryDate } from "../../utils/shipping";
 import { priceParts, activeOfferName } from "../../utils/productPrice";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
 import { sortOrderItems, loadOrderItemSort } from "../../utils/orderItemSort";
+// Descuento por monto (Black Friday): casilla "Aplicar promo" de la venta manual
+import { useCartPromos } from "../../hooks/useCartPromos";
+import { cartPromoSummary } from "../../utils/cartPromo";
 // Datos del pedido en la hoja de impresión: escapados (el cliente escribe nombre, teléfono y nota)
 import { escapeHtml as esc } from "../../utils/escapeHtml";
 
@@ -196,6 +201,8 @@ export default function AdminOrders() {
   // ── Modal Nueva Venta Manual ─────────────────────────────────────────────────
   const [manualModal, setManualModal] = useState(false);
   const [allProducts, setAllProducts] = useState([]);  // cache de productos para el selector
+  // Promos de descuento por monto vigentes (desde el panel llegan las de los dos tipos de cliente)
+  const livePromos = useCartPromos();
   const [manualForm, setManualForm] = useState({
     customerId: null,
     customerName: "", customerEmail: "", customerPhone: "",
@@ -212,6 +219,11 @@ export default function AdminOrders() {
     // un monto en pesos). Es aparte del descuento que se le puede poner a cada producto (item.desc).
     manualDiscountType: "PERCENTAGE",
     manualDiscountValue: "",
+    // wantsInvoice: "Agregar IVA (factura)". Solo cuenta si el cliente es MAYORISTA, como en el checkout.
+    wantsInvoice: false,
+    // applyPromo: "Aplicar promo" (descuento por monto, ej. Black Friday) para los clientes que compran
+    // por WhatsApp y no pasan por el checkout. Solo se ve si hay una promo vigente para ese tipo de cliente.
+    applyPromo: false,
     // variantId/variantLabel: variante elegida para productos con variantes (vacío = sin variante)
     // cost: costo del ítem — se autocompleta con el costo real del producto/variante y es editable
     // desc: % de descuento de ESA línea. El precio unitario sigue siendo el de lista; el precio con
@@ -435,28 +447,82 @@ export default function AdminOrders() {
 
   // Subtotal a precio de LISTA (sin ningún descuento): es contra este número que se muestra
   // después cuánto se descontó en total.
-  const manualSubtotalLista = manualForm.items.reduce(
-    (sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0
-  );
+  //
+  // Por moneda: antes se sumaban todas las líneas juntas, así que USD 100 + $50.000 se mostraba como
+  // "Total $50.100" (el servidor ya los guardaba por separado). Moneda de la línea = la del producto;
+  // los productos libres van en pesos, como los guarda el servidor. Mismo criterio que "Modificar pedido".
+  const manualItemCurrency = (it) =>
+    (!it.isCustom && it.productId ? (allProducts || []).find((p) => p.id === it.productId)?.currency : null) || "ARS";
+  const manualPorMoneda = (cur) => {
+    const its = manualForm.items.filter((it) => manualItemCurrency(it) === cur);
+    const lista = its.reduce((sum, it) => sum + (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 0), 0);
+    const desc  = its.reduce((sum, it) => sum + ((parseFloat(it.price) || 0) - precioConDesc(it)) * (parseInt(it.quantity) || 0), 0);
+    return { lista, desc };
+  };
+  const manualHasUsd = manualForm.items.some((it) => manualItemCurrency(it) === "USD");
+  const manualUsd = manualPorMoneda("USD");
+  const manualSubtotalLista = manualPorMoneda("ARS").lista;
   // Lo que se bajó producto por producto
-  const manualDescLineas = manualForm.items.reduce(
-    (sum, it) => sum + ((parseFloat(it.price) || 0) - precioConDesc(it)) * (parseInt(it.quantity) || 0), 0
-  );
+  const manualDescLineas = manualPorMoneda("ARS").desc;
   // Subtotal ya con los descuentos de cada línea: sobre este se aplica el descuento general.
   const manualSubtotal = manualSubtotalLista - manualDescLineas;
 
+  // Promo por monto (casilla "Aplicar promo"): va primero, sobre los pesos, como en el servidor
+  // (computeOrderTotals). manualPromo dice si hay una vigente para este tipo de cliente y a qué escalón
+  // llega la venta; el descuento solo cuenta si la casilla está tildada.
+  // Con las líneas (precio con su descuento): una promo de algunos productos mide solo esos; los ítems
+  // libres no tienen producto y solo cuentan en las promos para todo. Antes: (livePromos, manualSubtotal, ...).
+  const manualPromoLines = manualForm.items
+    .filter((it) => it.isCustom || it.productId)
+    .map((it) => ({ productId: it.isCustom ? null : it.productId, price: precioConDesc(it), quantity: parseInt(it.quantity) || 0, currency: manualItemCurrency(it) }));
+  const manualPromo = cartPromoSummary(livePromos, manualPromoLines, manualForm.customerType);
+  const manualPromoDesc = manualForm.applyPromo ? manualPromo.discount : 0;
+  const manualTrasPromo = Math.max(0, manualSubtotal - manualPromoDesc);
+
   // Descuento sobre toda la venta (el de cada producto ya está dentro del subtotal).
   // Mismo criterio que el backend: el porcentaje se aplica al subtotal, el monto fijo se topea.
+  // Con la promo, sobre lo que dejó la promo (manualTrasPromo; sin promo es igual a manualSubtotal).
   const manualDescGeneral = (() => {
     const v = parseFloat(manualForm.manualDiscountValue) || 0;
     if (v <= 0) return 0;
     if (manualForm.manualDiscountType === "PERCENTAGE") {
-      return Math.round(manualSubtotal * Math.min(100, v)) / 100;
+      // Antes: return Math.round(manualSubtotal * Math.min(100, v)) / 100;
+      return Math.round(manualTrasPromo * Math.min(100, v)) / 100;
     }
-    return Math.min(v, manualSubtotal);
+    // Antes: return Math.min(v, manualSubtotal);
+    return Math.min(v, manualTrasPromo);
   })();
 
-  const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
+  // Antes: const manualTotal = Math.max(0, manualSubtotal - manualDescGeneral);
+  const manualTotal = Math.max(0, manualTrasPromo - manualDescGeneral);
+  // La parte en dólares: el porcentaje general también la baja; el monto fijo está en pesos y no
+  // (mismo criterio que el servidor, utils/orderTotals.js computeOrderTotals).
+  const manualSubtotalUsd = manualUsd.lista - manualUsd.desc;
+  const manualDescGeneralUsd = (() => {
+    const v = parseFloat(manualForm.manualDiscountValue) || 0;
+    if (v <= 0 || manualForm.manualDiscountType !== "PERCENTAGE") return 0;
+    return Math.round(manualSubtotalUsd * Math.min(100, v)) / 100;
+  })();
+  const manualTotalUsd = Math.max(0, manualSubtotalUsd - manualDescGeneralUsd);
+
+  // IVA de la venta a mano (solo MAYORISTA con "Agregar IVA"): la misma cuenta que el servidor
+  // (computeOrderTotals): cada línea con la alícuota de su producto (los libres al 21%), sobre su base
+  // ya bajada en proporción al descuento general, redondeando línea por línea.
+  const manualConIva = manualForm.customerType === "MAYORISTA" && !!manualForm.wantsInvoice;
+  const manualIva = (cur, subtotal, descGeneral) => {
+    if (!manualConIva || subtotal <= 0) return 0;
+    const factor = (subtotal - descGeneral) / subtotal;
+    const sum = manualForm.items
+      .filter((it) => manualItemCurrency(it) === cur)
+      .reduce((s, it) => {
+        const rate = (!it.isCustom && it.productId ? (allProducts || []).find((p) => p.id === it.productId)?.ivaRate : null) ?? 21;
+        return s + Math.round(precioConDesc(it) * (parseInt(it.quantity) || 0) * factor * rate) / 100;
+      }, 0);
+    return Math.round(sum * 100) / 100;
+  };
+  // Antes: manualIva("ARS", manualSubtotal, manualDescGeneral) — la promo también baja la base del IVA
+  const manualIvaArs = manualIva("ARS", manualSubtotal, manualPromoDesc + manualDescGeneral);
+  const manualIvaUsd = manualIva("USD", manualSubtotalUsd, manualDescGeneralUsd);
 
   // Resetea por completo el formulario de venta manual (cliente + productos + búsquedas)
   const resetManualForm = () => {
@@ -475,6 +541,8 @@ export default function AdminOrders() {
       paymentMethod: "EFECTIVO", status: "APPROVED", notes: "",
       crearCuenta: true, cuentaPassword: "",
       manualDiscountType: "PERCENTAGE", manualDiscountValue: "",
+      wantsInvoice: false,
+      applyPromo: false,
       items: [{ productId: "", productName: "", productImage: "", price: "", quantity: 1, variantId: "", variantLabel: "", cost: "", desc: "", isCustom: false }],
     });
   };
@@ -519,6 +587,13 @@ export default function AdminOrders() {
     });
     if (missingVariant) {
       toast.error(`Elegí la variante de "${missingVariant.productName}"`);
+      return;
+    }
+    // Mientras las variantes cargan (null) no se sabe si hay que elegir una. Antes la venta pasaba sin
+    // variante y descontaba del producto padre; ahora además el servidor la rechaza.
+    const loadingVariants = manualForm.items.find((it) => !it.isCustom && it.productId && !it.variantId && variantOptionsCache[it.productId] === null);
+    if (loadingVariants) {
+      toast.error(`Esperá que carguen las variantes de "${loadingVariants.productName}"`);
       return;
     }
 
@@ -592,6 +667,11 @@ export default function AdminOrders() {
         cuentaPassword: manualForm.cuentaPassword || undefined,
         manualDiscountType:  manualForm.manualDiscountValue ? manualForm.manualDiscountType : undefined,
         manualDiscountValue: manualForm.manualDiscountValue || undefined,
+        // IVA: solo mayorista (el servidor vuelve a controlarlo)
+        wantsInvoice:  manualForm.customerType === "MAYORISTA" && !!manualForm.wantsInvoice,
+        // Promo por monto: solo si está tildada y hay una vigente para este tipo de cliente (la casilla
+        // queda tildada aunque se cambie a un tipo de cliente sin promo; ahí no se manda)
+        applyPromo:    !!manualForm.applyPromo && manualPromo.available,
         notes:         manualForm.notes || undefined,
         salesChannel:  manualForm.salesChannel,
         customerType:  manualForm.customerType,
@@ -1238,6 +1318,7 @@ ${pagesHtml}
     const totalRows = `
       <tr><td style="padding:4px 8px;font-size:12px;color:#64748b">Subtotal (${(order.items || []).reduce((s, i) => s + i.quantity, 0)} items)</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">${showArsPrint ? formatPrice(subtotalSinDesc) : ""}${hasUsdPrint && Tp.usd.subtotal > 0 ? `${showArsPrint ? "<br>" : ""}${formatPriceWithCurrency(Tp.usd.subtotal, "USD")}` : ""}</td></tr>
       ${Tp.ars.line > 0 || Tp.usd.line > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Descuento en productos</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.line)}${Tp.usd.line > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.line, "USD")}` : ""}</td></tr>` : ""}
+      ${Tp.ars.promo > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🎉 ${esc(promoLabel(order))}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.promo)}</td></tr>` : ""}
       ${Tp.ars.coupon > 0 || Tp.usd.coupon > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Cupón${order.coupon?.code ? ` <strong>${esc(order.coupon.code)}</strong>` : ""}${order.coupon?.discountType === "PERCENTAGE" ? ` (${order.coupon.discountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.coupon)}${Tp.usd.coupon > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.coupon, "USD")}` : ""}</td></tr>` : ""}
       ${Tp.ars.manual > 0 || Tp.usd.manual > 0 ? `<tr><td style="padding:4px 8px;font-size:12px;color:#16a34a">🏷 Descuento general${order.manualDiscountType === "PERCENTAGE" && order.manualDiscountValue ? ` (${order.manualDiscountValue}% off)` : ""}</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#16a34a">− ${formatPrice(Tp.ars.manual)}${Tp.usd.manual > 0 ? `<br>− ${formatPriceWithCurrency(Tp.usd.manual, "USD")}` : ""}</td></tr>` : ""}
       ${hasIva ? `<tr><td style="padding:4px 8px;font-size:12px;color:#64748b">IVA</td><td style="padding:4px 8px;text-align:right;font-size:12px;color:#64748b">+ ${formatPrice(Tp.ars.iva)}${Tp.usd.iva > 0 ? `<br>+ ${formatPriceWithCurrency(Tp.usd.iva, "USD")}` : ""}</td></tr>` : ""}
@@ -1801,7 +1882,12 @@ ${pagesHtml}
                                           ? <img src={getImageUrl(p.images[0])} alt="" className="w-9 h-9 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
                                           : <span className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-base flex-shrink-0">📦</span>}
                                         <span className="font-medium text-slate-700 truncate flex-1">{p.name}</span>
-                                        <span className="text-xs text-slate-500 shrink-0">{formatPrice(p.price)}</span>
+                                        {/* Antes: formatPrice(p.price) — el de lista minorista y en pesos, aunque la
+                                            cotización fuera mayorista, hubiera campaña o el producto fuera en dólares.
+                                            Ahora el que va a cobrar el servidor al agregarlo (sin tramos por cantidad). */}
+                                        <span className="text-xs text-slate-500 shrink-0">
+                                          {formatPriceWithCurrency(priceParts(p, null, order.customerType === "MAYORISTA").price, p.currency || "ARS")}
+                                        </span>
                                       </button>
                                     ))}
                                   </div>
@@ -1884,6 +1970,13 @@ ${pagesHtml}
                                     <div className="flex justify-between gap-4 text-emerald-700">
                                       <span>Descuento en productos</span>
                                       <span className="font-semibold">−{par(T.ars.line, T.usd.line)}</span>
+                                    </div>
+                                  )}
+                                  {/* Descuento por monto (Black Friday): solo en pesos */}
+                                  {T.ars.promo > 0 && (
+                                    <div className="flex justify-between gap-4 text-emerald-700">
+                                      <span>🎉 {promoLabel(order)}</span>
+                                      <span className="font-semibold">−{formatPrice(T.ars.promo)}</span>
                                     </div>
                                   )}
                                   {(T.ars.coupon > 0 || T.usd.coupon > 0) && (
@@ -2911,9 +3004,10 @@ ${pagesHtml}
                                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isMayorista ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
                                         {isMayorista ? "May." : "Min."}
                                       </span>
+                                      {/* En la moneda del producto (antes: siempre "$", aunque fuera en dólares) */}
                                       {displayOffer != null
-                                        ? <><s className="text-slate-400">{formatPrice(displayList)}</s> <span className="text-emerald-700 font-semibold">{formatPrice(displayOffer)}</span></>
-                                        : formatPrice(displayList)}
+                                        ? <><s className="text-slate-400">{formatPriceWithCurrency(displayList, p.currency || "ARS")}</s> <span className="text-emerald-700 font-semibold">{formatPriceWithCurrency(displayOffer, p.currency || "ARS")}</span></>
+                                        : formatPriceWithCurrency(displayList, p.currency || "ARS")}
                                     </span>
                                   </button>
                                 );
@@ -2959,31 +3053,37 @@ ${pagesHtml}
                           );
                         })()}
 
-                        <div className="flex gap-2">
+                        {/* En el celular: dos columnas (Costo | Precio, Descuento | Cantidad). Antes era una
+                            sola fila con anchos fijos y el precio quedaba en una cajita donde no se leía lo
+                            que se escribía. Desde sm (640px) vuelve a ser la fila de siempre.
+                            text-base en el celular: con menos de 16px el iPhone hace zoom al tocar el campo. */}
+                        <div className="grid grid-cols-2 gap-2 sm:flex">
                           {/* Costo: autocompletado con el costo real del producto/variante, editable.
                               Si difiere del de la base, al registrar se pregunta si actualizarlo. */}
-                          <div className="w-28">
+                          <div className="sm:w-28">
                             <label className="block text-xs text-slate-500 mb-1">Costo</label>
                             <input
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="0.01"
                               value={item.cost}
                               onChange={(e) => setManualItem(idx, "cost", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="—"
                             />
                           </div>
-                          <div className="flex-1">
+                          <div className="sm:flex-1">
                             <label className="block text-xs text-slate-500 mb-1">Precio unitario *</label>
                             <input
                               required
                               type="number"
+                              inputMode="decimal"
                               min="0"
                               step="0.01"
                               value={item.price}
                               onChange={(e) => setManualItem(idx, "price", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="0.00"
                             />
                             {/* Producto en campaña (u oferta cargada a mano): la línea arranca con ese precio; la
@@ -2999,14 +3099,14 @@ ${pagesHtml}
                                     className="mt-0.5 accent-emerald-600"
                                   />
                                   <span>
-                                    {offerName ? `Precio de campaña ${offerName}` : "Precio de oferta"}: {formatPrice(item.offerPrice)}
-                                    <span className="text-slate-400"> (lista {formatPrice(item.listPrice)})</span>
+                                    {offerName ? `Precio de campaña ${offerName}` : "Precio de oferta"}: {formatPriceWithCurrency(item.offerPrice, manualItemCurrency(item))}
+                                    <span className="text-slate-400"> (lista {formatPriceWithCurrency(item.listPrice, manualItemCurrency(item))})</span>
                                   </span>
                                 </label>
                               );
                             })()}
                           </div>
-                          <div className="w-24">
+                          <div className="sm:w-24">
                             {/* Descuento de ESTE producto: baja el precio unitario de la línea. El
                                 precio de lista se guarda igual, para mostrarlo tachado. Resaltado en
                                 verde para que no se confunda con los otros campos de la fila. */}
@@ -3014,12 +3114,13 @@ ${pagesHtml}
                             <div className="relative">
                               <input
                                 type="number"
+                                inputMode="decimal"
                                 min="0"
                                 max="100"
                                 step="1"
                                 value={item.desc}
                                 onChange={(e) => setManualItem(idx, "desc", e.target.value)}
-                                className={`w-full pl-2 pr-6 py-2 rounded-lg text-sm border-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors ${
+                                className={`w-full pl-2 pr-6 py-2 rounded-lg text-base sm:text-sm border-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors ${
                                   parseFloat(item.desc) > 0
                                     ? "border-emerald-500 bg-emerald-50 text-emerald-800 font-bold"
                                     : "border-emerald-200 bg-emerald-50/40"
@@ -3029,25 +3130,27 @@ ${pagesHtml}
                               <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-emerald-600 pointer-events-none">%</span>
                             </div>
                           </div>
-                          <div className="w-24">
+                          <div className="sm:w-24">
                             <label className="block text-xs text-slate-500 mb-1">Cantidad *</label>
                             <input
                               required
                               type="number"
+                              inputMode="numeric"
                               min="1"
                               value={item.quantity}
                               onChange={(e) => setManualItem(idx, "quantity", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                             />
                           </div>
-                          <div className="flex items-end pb-0.5">
+                          {/* En el celular va en su propio renglón, a la derecha, con texto */}
+                          <div className="col-span-2 flex justify-end sm:col-span-1 sm:items-end sm:pb-0.5">
                             <button
                               type="button"
                               onClick={() => removeManualItem(idx)}
                               disabled={manualForm.items.length === 1}
-                              className="px-3 py-2 text-slate-400 hover:text-red-500 disabled:opacity-30 transition-colors"
+                              className="px-3 py-1 sm:py-2 text-slate-400 hover:text-red-500 disabled:opacity-30 transition-colors text-sm"
                             >
-                              ✕
+                              ✕<span className="sm:hidden ml-1">Quitar línea</span>
                             </button>
                           </div>
                         </div>
@@ -3056,11 +3159,11 @@ ${pagesHtml}
                           <p className="text-xs text-slate-500 text-right">
                             {parseFloat(item.desc) > 0 && (
                               <span className="text-emerald-600 font-semibold mr-2">
-                                {formatPrice(precioConDesc(item))} c/u
-                                <span className="text-slate-400 line-through ml-1 font-normal">{formatPrice(parseFloat(item.price))}</span>
+                                {formatPriceWithCurrency(precioConDesc(item), manualItemCurrency(item))} c/u
+                                <span className="text-slate-400 line-through ml-1 font-normal">{formatPriceWithCurrency(parseFloat(item.price), manualItemCurrency(item))}</span>
                               </span>
                             )}
-                            Subtotal: {formatPrice(precioConDesc(item) * parseInt(item.quantity))}
+                            Subtotal: {formatPriceWithCurrency(precioConDesc(item) * parseInt(item.quantity), manualItemCurrency(item))}
                           </p>
                         )}
                       </div>
@@ -3221,19 +3324,85 @@ ${pagesHtml}
                 </p>
               </div>
 
+              {/* IVA, como en el checkout: solo para mayoristas (sus precios son sin IVA; los minoristas
+                  ya lo tienen incluido). Para un minorista no se muestra. */}
+              {manualForm.customerType === "MAYORISTA" && (
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!manualForm.wantsInvoice}
+                    onChange={(e) => setManualForm((p) => ({ ...p, wantsInvoice: e.target.checked }))}
+                    className="mt-0.5 w-4 h-4 accent-blue-600"
+                  />
+                  <span className="text-sm">
+                    <span className="font-bold text-slate-800">🧾 Agregar IVA (factura)</span>
+                    <span className="block text-xs text-slate-400">
+                      Como en el checkout: se suma el IVA de cada producto (21% o 10,5%) sobre el precio ya descontado.
+                    </span>
+                  </span>
+                </label>
+              )}
+
+              {/* Promo por monto (Black Friday): para los clientes de WhatsApp, que no pasan por el checkout.
+                  Solo aparece si hay una promo vigente para este tipo de cliente. */}
+              {manualPromo.available && (
+                <label className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!manualForm.applyPromo}
+                    onChange={(e) => setManualForm((p) => ({ ...p, applyPromo: e.target.checked }))}
+                    className="mt-0.5 w-4 h-4 accent-emerald-600"
+                  />
+                  <span className="text-sm">
+                    <span className="font-bold text-slate-800">
+                      🎉 Aplicar promo {manualPromo.promo?.name || manualPromo.next?.promo?.name}
+                    </span>
+                    <span className="block text-xs text-slate-400">
+                      {manualPromo.percent > 0
+                        ? `Esta venta llega al ${manualPromo.percent}% (−${formatPrice(manualPromo.discount)}).`
+                        : `Todavía no llega al mínimo: faltan ${formatPrice(manualPromo.next?.missing || 0)} para el ${manualPromo.next?.percent}%.`}
+                      {manualPromo.percent > 0 && manualPromo.next && ` Con ${formatPrice(manualPromo.next.missing)} más llega al ${manualPromo.next.percent}%.`}
+                      {" "}Se calcula sobre los productos en pesos, sin envío.
+                    </span>
+                  </span>
+                </label>
+              )}
+
               {/* Total y acciones */}
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <div className="text-sm font-bold text-slate-800">
-                  {(manualDescGeneral > 0 || manualDescLineas > 0) && (
+                  {/* Antes: (manualDescGeneral > 0 || manualDescLineas > 0) y el descuento sin la promo */}
+                  {(manualDescGeneral > 0 || manualDescLineas > 0 || manualPromoDesc > 0) && (
                     <span className="block text-xs font-normal text-slate-500">
                       Subtotal: {formatPrice(manualSubtotalLista)} · Descuento:{" "}
-                      <span className="text-emerald-600 font-semibold">−{formatPrice(manualDescLineas + manualDescGeneral)}</span>
+                      <span className="text-emerald-600 font-semibold">−{formatPrice(manualDescLineas + manualPromoDesc + manualDescGeneral)}</span>
                       {manualDescLineas > 0 && manualDescGeneral > 0 && (
                         <span className="text-slate-400"> ({formatPrice(manualDescLineas)} en productos + {formatPrice(manualDescGeneral)} general)</span>
                       )}
+                      {manualPromoDesc > 0 && (
+                        <span className="text-slate-400"> · {manualPromo.promo?.name} {manualPromo.percent}%: −{formatPrice(manualPromoDesc)}</span>
+                      )}
                     </span>
                   )}
-                  Total: <span className="text-blue-600 text-base">{formatPrice(manualTotal)}</span>
+                  {/* Con dólares: su subtotal y descuento aparte, nunca sumados a los pesos */}
+                  {manualHasUsd && (manualUsd.desc > 0 || manualDescGeneralUsd > 0) && (
+                    <span className="block text-xs font-normal text-slate-500">
+                      En dólares: subtotal {formatPriceWithCurrency(manualUsd.lista, "USD")} · Descuento:{" "}
+                      <span className="text-emerald-600 font-semibold">−{formatPriceWithCurrency(manualUsd.desc + manualDescGeneralUsd, "USD")}</span>
+                    </span>
+                  )}
+                  {manualConIva && (manualIvaArs > 0 || manualIvaUsd > 0) && (
+                    <span className="block text-xs font-normal text-slate-500">
+                      IVA: <span className="font-semibold text-slate-700">+{formatPrice(manualIvaArs)}</span>
+                      {manualIvaUsd > 0 && <span className="font-semibold text-slate-700"> / +{formatPriceWithCurrency(manualIvaUsd, "USD")}</span>}
+                    </span>
+                  )}
+                  Total{manualConIva ? " con IVA" : ""}:{" "}
+                  <span className="text-blue-600 text-base">
+                    {(!manualHasUsd || manualSubtotalLista > 0) && formatPrice(manualTotal + manualIvaArs)}
+                    {manualHasUsd && manualSubtotalLista > 0 && " + "}
+                    {manualHasUsd && formatPriceWithCurrency(manualTotalUsd + manualIvaUsd, "USD")}
+                  </span>
                 </div>
                 <div className="flex gap-2">
                   <button

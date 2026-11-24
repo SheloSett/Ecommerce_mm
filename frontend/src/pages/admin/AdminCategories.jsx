@@ -66,7 +66,10 @@ export default function AdminCategories() {
       // filtrar por "Audio" traiga también lo de "Audio › Auriculares"). Acá NO queremos eso: el
       // número del badge que abre este modal es _count.products, o sea los vínculos DIRECTOS, así
       // que la lista tiene que mostrar exactamente esos y no los de las hijas.
-      const res = await productsApi.getAllAdmin({ category: cat.slug, limit: 100, exactCategory: true });
+      // Antes: { category: cat.slug, limit: 100, exactCategory: true } — el tope de 100 cortaba la lista
+      // y el título cuenta lo que llegó: una categoría con 230 productos decía "100 productos vinculados".
+      // all=true trae todos (sin paginar en el server), igual que el listado de productos.
+      const res = await productsApi.getAllAdmin({ category: cat.slug, all: true, exactCategory: true });
       setCatProducts(res.data.products || []);
     } catch {
       toast.error("No se pudieron cargar los productos");
