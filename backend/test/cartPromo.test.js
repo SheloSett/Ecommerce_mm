@@ -207,7 +207,7 @@ describe("promo para algunos productos", () => {
     assert.deepEqual(data.productIds, [12]);
     const todos = parsePromoBody(ok).data;
     assert.deepEqual([todos.categoryIds, todos.productIds], [[], []]);
-    assert.ok(parsePromoBody({ ...ok, productIds: Array.from({ length: 1001 }, (_, i) => i + 1) }).error);
+    assert.ok(parsePromoBody({ ...ok, productIds: Array.from({ length: 20001 }, (_, i) => i + 1) }).error);
     // Editar otra cosa conserva lo elegido
     assert.deepEqual(parsePromoBody({ active: false }, { ...ok, categoryIds: [9], productIds: [] }).data.categoryIds, [9]);
   });

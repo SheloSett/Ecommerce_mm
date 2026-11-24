@@ -2,11 +2,11 @@
 // fecha de inicio y de fin (pedido para Black Friday, 23/11/2026). Se aplican solas en el checkout y,
 // con la casilla "Aplicar promo", en la venta manual y en "Modificar pedido".
 // Backend: controllers/cartPromo.controller.js. Reglas del cálculo: utils/cartPromo.js (back y front).
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import AdminLayout from "../../components/AdminLayout";
-import { cartPromosApi, categoriesApi, productsApi } from "../../services/api";
-// Qué productos entran (24/11/2026): categorías con el mismo selector que los filtros de Productos
-import MultiSelectDropdown from "../../components/admin/MultiSelectDropdown";
+import { cartPromosApi, categoriesApi } from "../../services/api";
+// Qué productos entran (24/11/2026): lista con "Seleccionar todos" y casillas
+import PromoProductPicker from "../../components/admin/PromoProductPicker";
 import { flattenTree } from "../../utils/categoryTree";
 import toast from "react-hot-toast";
 import { localDay, localTime } from "../../utils/localDate";
@@ -56,7 +56,7 @@ function emptyForm() {
     // Qué productos entran: todos, o algunas categorías (ids como texto, para el selector) y productos
     scopeAll: true,
     categoryIds: [],
-    products: [], // [{ id, name }]
+    productIds: [], // ids de producto elegidos (categoryIds queda solo para promos de la versión anterior)
   };
 }
 
@@ -80,33 +80,11 @@ export default function AdminCartPromos() {
   const [saving, setSaving]       = useState(false);
   // Para elegir qué productos entran
   const [categories, setCategories] = useState([]);
-  const [prodQuery, setProdQuery]   = useState("");
-  const [prodResults, setProdResults] = useState([]);
-  const prodTimer = useRef(null);
 
   useEffect(() => { loadPromos(); }, []);
   useEffect(() => { categoriesApi.getAll().then((r) => setCategories(r.data || [])).catch(() => {}); }, []);
 
   const flatCats = flattenTree(categories);
-  const categoryOptions = flatCats.map((c) => ({ value: String(c.id), label: c.name, depth: c.depth }));
-
-  const searchProducts = (q) => {
-    setProdQuery(q);
-    clearTimeout(prodTimer.current);
-    if (q.trim().length < 2) { setProdResults([]); return; }
-    prodTimer.current = setTimeout(async () => {
-      try {
-        const res = await productsApi.getAllAdmin({ search: q.trim(), limit: 30, excludePaused: true });
-        setProdResults(res.data.products || []);
-      } catch { setProdResults([]); }
-    }, 300);
-  };
-  const addProduct = (p) => {
-    setForm((f) => (f.products.some((x) => x.id === p.id) ? f : { ...f, products: [...f.products, { id: p.id, name: p.name }] }));
-    setProdQuery("");
-    setProdResults([]);
-  };
-  const removeProduct = (id) => setForm((f) => ({ ...f, products: f.products.filter((x) => x.id !== id) }));
 
   async function loadPromos() {
     try {
@@ -146,10 +124,8 @@ export default function AdminCartPromos() {
       showCountdown: promo.showCountdown !== false,
       scopeAll: !(promo.categoryIds?.length || promo.productIds?.length),
       categoryIds: (promo.categoryIds || []).map(String),
-      products: promo.scopeProducts || [],
+      productIds: promo.productIds || [],
     });
-    setProdQuery("");
-    setProdResults([]);
     setShowModal(true);
   }
 
@@ -169,7 +145,7 @@ export default function AdminCartPromos() {
     if (isNaN(startsAt) || isNaN(endsAt)) return toast.error("Revisá las fechas");
     if (startsAt >= endsAt) return toast.error("La fecha de fin tiene que ser posterior a la de inicio");
     if (form.cardStyle === "color" && !HEX_COLOR.test(form.cardColor)) return toast.error("Elegí un color válido (ej: #d81b60)");
-    if (!form.scopeAll && form.categoryIds.length === 0 && form.products.length === 0) {
+    if (!form.scopeAll && form.categoryIds.length === 0 && form.productIds.length === 0) {
       return toast.error("Elegí al menos una categoría o un producto (o marcá \"Todos los productos\")");
     }
 
@@ -191,7 +167,7 @@ export default function AdminCartPromos() {
         showCountdown: form.showCountdown,
         // Qué productos entran (vacías las dos = todos)
         categoryIds: form.scopeAll ? [] : form.categoryIds.map(Number),
-        productIds: form.scopeAll ? [] : form.products.map((p) => p.id),
+        productIds: form.scopeAll ? [] : form.productIds,
       };
       if (editing) {
         await cartPromosApi.update(editing, payload);
@@ -247,11 +223,11 @@ export default function AdminCartPromos() {
     showCountdown: form.showCountdown,
     // Para cuáles vale, como lo arma el servidor (services/cartPromo.service.js, resolveScope)
     scopeLabel: (() => {
-      if (form.scopeAll || (form.categoryIds.length === 0 && form.products.length === 0)) return null;
+      if (form.scopeAll || (form.categoryIds.length === 0 && form.productIds.length === 0)) return null;
       const names = flatCats.filter((c) => form.categoryIds.includes(String(c.id))).map((c) => c.name);
       if (names.length === 0 || names.length > 3) return "En productos seleccionados";
       const cats = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
-      return form.products.length ? `En ${cats} y otros productos seleccionados` : `En ${cats}`;
+      return form.productIds.length ? `En ${cats} y otros productos seleccionados` : `En ${cats}`;
     })(),
   };
   const previewSummary = previewTiers.length > 0
@@ -404,51 +380,26 @@ export default function AdminCartPromos() {
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="radio" checked={!form.scopeAll} onChange={() => setForm({ ...form, scopeAll: false })} />
-                    Solo algunas categorías o productos
+                    {/* Antes: "Solo algunas categorías o productos" (ahora se tildan productos; la categoría es un filtro) */}
+                    Solo algunos productos
                   </label>
                 </div>
+                {/* Antes: un desplegable de categorías + un buscador de productos sueltos con chips. Pedido de la
+                    clienta (24/11/2026): una lista con "Seleccionar todos" en el encabezado y destildar lo que
+                    no va (PromoProductPicker). */}
                 {!form.scopeAll && (
-                  <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <MultiSelectDropdown
-                      label="Categorías"
-                      options={categoryOptions}
-                      value={form.categoryIds}
-                      onChange={(v) => setForm((f) => ({ ...f, categoryIds: v }))}
-                      placeholder="Ninguna"
-                      searchable
-                      widthClass="w-full"
+                  <div className="mt-3 space-y-2">
+                    <PromoProductPicker
+                      categories={categories}
+                      selected={form.productIds}
+                      onChange={(ids) => setForm((f) => ({ ...f, productIds: ids }))}
+                      legacyCategoryIds={form.categoryIds}
+                      onLegacyConverted={() => setForm((f) => ({ ...f, categoryIds: [] }))}
                     />
-                    <div>
-                      <p className="text-xs font-semibold text-slate-600 mb-1">Productos sueltos</p>
-                      <input
-                        value={prodQuery}
-                        onChange={(e) => searchProducts(e.target.value)}
-                        placeholder="Buscar producto por nombre o SKU…"
-                        className="input"
-                      />
-                      {prodResults.length > 0 && (
-                        <div className="mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
-                          {prodResults.map((p) => (
-                            <button key={p.id} type="button" onClick={() => addProduct(p)} className="w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50">
-                              {p.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {form.products.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {form.products.map((p) => (
-                            <span key={p.id} className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-full pl-2.5 pr-1.5 py-0.5 text-xs text-slate-700">
-                              {p.name}
-                              <button type="button" onClick={() => removeProduct(p.id)} className="text-slate-400 hover:text-red-600 px-0.5" title="Sacar">✕</button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
                     <p className="text-xs text-slate-500">
-                      El monto se mide y el % se descuenta solo sobre estos productos (las categorías incluyen sus
-                      subcategorías). Lo demás del carrito se cobra normal.
+                      Filtrá por categoría o buscá, usá “Seleccionar todos” y destildá los que no van. El monto se mide y
+                      el % se descuenta solo sobre los productos elegidos; lo demás del carrito se cobra normal. Un
+                      producto nuevo no entra solo: hay que tildarlo.
                     </p>
                   </div>
                 )}

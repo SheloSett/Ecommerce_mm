@@ -11,7 +11,8 @@ const { livePromos } = require("../services/cartPromo.service");
 const APPLIES_TO = ["MINORISTA", "MAYORISTA", "AMBOS"];
 const MAX_TIERS = 10;
 const MAX_SCOPE_CATEGORIES = 100;
-const MAX_SCOPE_PRODUCTS = 1000;
+// Con "Seleccionar todos" se pueden elegir miles (antes 1000, cuando se agregaban de a uno)
+const MAX_SCOPE_PRODUCTS = 20000;
 // Estilos de la tarjeta y del aviso del carrito: los mismos que las campañas (misma lista que
 // CARD_STYLE_KEYS en offer.controller.js; se dibujan con CampaignCard.jsx / category-cards.css).
 const CARD_STYLE_KEYS = ["normal", "fire", "sale", "fresh", "premium", "bolt", "neon", "ice", "blackfriday", "cybermonday", "color"];
@@ -75,7 +76,7 @@ function parsePromoBody(body, existing = null) {
   const categoryIds = idList(pick("categoryIds"));
   const productIds = idList(pick("productIds"));
   if (categoryIds.length > MAX_SCOPE_CATEGORIES) return { error: `Hasta ${MAX_SCOPE_CATEGORIES} categorías` };
-  if (productIds.length > MAX_SCOPE_PRODUCTS) return { error: `Hasta ${MAX_SCOPE_PRODUCTS} productos sueltos (para más, elegí la categoría)` };
+  if (productIds.length > MAX_SCOPE_PRODUCTS) return { error: `Hasta ${MAX_SCOPE_PRODUCTS} productos` };
 
   // Antes: return { data: { name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active } };
   return {
