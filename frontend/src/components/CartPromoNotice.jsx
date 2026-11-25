@@ -26,10 +26,13 @@ export default function CartPromoNotice({ summary }) {
 
   // Promo para algunos productos: " (en Audio y Cables)" — el monto y el % son solo de esos
   const scopeOf = (p) => (p?.scopeLabel ? ` (${p.scopeLabel.charAt(0).toLowerCase()}${p.scopeLabel.slice(1)})` : "");
+  // Promo solo para mayoristas (pedido de la clienta, 25/11/2026): una línea arriba que lo dice
+  const excl = shown.appliesTo === "MAYORISTA" ? <span className="cc-pn-excl">Exclusivo para mayoristas</span> : null;
 
   if (!next) {
     return (
       <div className={`cc-bar cc-${style} cc-promo-note`} style={colorVars}>
+        {excl}
         <span className="cc-bar-text">🎉 Ya tenés {percent}% off por {promo.name}{scopeOf(promo)}</span>
       </div>
     );
@@ -38,6 +41,7 @@ export default function CartPromoNotice({ summary }) {
   const progreso = Math.min(100, Math.max(0, ((next.minAmount - next.missing) / next.minAmount) * 100));
   return (
     <div className={`cc-bar cc-${style} cc-promo-note`} style={colorVars}>
+      {excl}
       <span className="cc-bar-text">
         🎉 {next.promo.name}: sumá {formatPrice(next.missing)}{scopeOf(next.promo)} y llevás {next.percent}% off
         {percent > 0 && <span style={{ opacity: 0.8, fontWeight: 400 }}> (hoy tenés {percent}%)</span>}

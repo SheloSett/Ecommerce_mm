@@ -78,6 +78,7 @@ export default function AdminCartPromos() {
   const [editing, setEditing]     = useState(null); // null = crear, id = editar
   const [form, setForm]           = useState(emptyForm);
   const [saving, setSaving]       = useState(false);
+  const [copyOf, setCopyOf]       = useState(null); // la promo que se está duplicando (para el aviso del formulario)
   // Para elegir qué productos entran
   const [categories, setCategories] = useState([]);
 
@@ -100,17 +101,36 @@ export default function AdminCartPromos() {
 
   function openCreate() {
     setEditing(null);
+    setCopyOf(null);
     setForm(emptyForm());
     setShowModal(true);
   }
 
+  // Antes: openEdit armaba el formulario acá adentro; ahora lo arma formFromPromo y lo usa también Duplicar.
   function openEdit(promo) {
     setEditing(promo.id);
+    setCopyOf(null);
+    setForm(formFromPromo(promo));
+    setShowModal(true);
+  }
+
+  // Duplicar (pedido de la clienta, 25/11/2026: el Black Friday con otros escalones y otro % para los
+  // mayoristas): una promo nueva con todo lo de esta (productos elegidos, estilo, fechas, escalones). Si era
+  // solo para minoristas pasa a mayoristas y al revés, que es para lo que se duplica; se revisa y se guarda.
+  function openDuplicate(promo) {
+    const swap = { MINORISTA: "MAYORISTA", MAYORISTA: "MINORISTA" };
+    setEditing(null);
+    setCopyOf(promo);
+    setForm({ ...formFromPromo(promo), appliesTo: swap[promo.appliesTo] || promo.appliesTo });
+    setShowModal(true);
+  }
+
+  function formFromPromo(promo) {
     // Fecha y hora en la zona de la computadora, que es como se vuelven a guardar (mismo criterio que
     // los cupones: cortar el texto ISO, que está en UTC, corría las fechas 3 horas en cada edición).
     const ini = new Date(promo.startsAt);
     const fin = new Date(promo.endsAt);
-    setForm({
+    return {
       name: promo.name,
       appliesTo: promo.appliesTo,
       startDay: localDay(ini), startTime: localTime(ini),
@@ -125,8 +145,7 @@ export default function AdminCartPromos() {
       scopeAll: !(promo.categoryIds?.length || promo.productIds?.length),
       categoryIds: (promo.categoryIds || []).map(String),
       productIds: promo.productIds || [],
-    });
-    setShowModal(true);
+    };
   }
 
   const setTier = (idx, field, value) =>
@@ -218,7 +237,8 @@ export default function AdminCartPromos() {
   const previewEndsAt = new Date(`${form.endDay}T${form.endTime || "23:59"}:00`);
   const previewPromo = {
     id: 0, name: form.name.trim() || "Black Friday", description: form.description.trim(),
-    endsAt: isNaN(previewEndsAt) ? null : previewEndsAt, appliesTo: "AMBOS", tiers: previewTiers,
+    // Antes: appliesTo: "AMBOS" fijo. Ahora el elegido, para que la vista previa muestre "Exclusivo para mayoristas"
+    endsAt: isNaN(previewEndsAt) ? null : previewEndsAt, appliesTo: form.appliesTo, tiers: previewTiers,
     cardStyle: form.cardStyle, cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
     showCountdown: form.showCountdown,
     // Para cuáles vale, como lo arma el servidor (services/cartPromo.service.js, resolveScope)
@@ -231,7 +251,8 @@ export default function AdminCartPromos() {
     })(),
   };
   const previewSummary = previewTiers.length > 0
-    ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), "MINORISTA")
+    // Antes: siempre "MINORISTA" (con una promo solo para mayoristas no se veía el aviso)
+    ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), form.appliesTo === "MAYORISTA" ? "MAYORISTA" : "MINORISTA")
     : null;
 
   return (
@@ -318,6 +339,9 @@ export default function AdminCartPromos() {
                             <button onClick={() => openEdit(promo)} className="text-slate-400 hover:text-blue-600 transition-colors text-sm" title="Editar">
                               ✏️
                             </button>
+                            <button onClick={() => openDuplicate(promo)} className="text-slate-400 hover:text-blue-600 transition-colors text-sm" title="Duplicar (ej. la misma promo con otros escalones para mayoristas)">
+                              📄
+                            </button>
                             <button onClick={() => handleDelete(promo)} className="text-slate-400 hover:text-red-600 transition-colors text-sm" title="Eliminar">
                               🗑️
                             </button>
@@ -339,11 +363,20 @@ export default function AdminCartPromos() {
           {/* Antes: max-w-lg. Más ancho para la vista previa de la tarjeta del inicio. */}
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h2 className="text-lg font-bold text-slate-800">{editing ? "Editar promo" : "Nueva promo"}</h2>
+              <h2 className="text-lg font-bold text-slate-800">{editing ? "Editar promo" : copyOf ? "Duplicar promo" : "Nueva promo"}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-5">
+              {/* Duplicando: qué se copió y qué falta revisar */}
+              {copyOf && (
+                <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
+                  Copia de “{copyOf.name}” ({APPLIES_LABEL[copyOf.appliesTo].toLowerCase()}), con los mismos productos, estilo y fechas.
+                  {copyOf.appliesTo !== "AMBOS" && <> “Para quién” ya quedó en <b>{APPLIES_LABEL[form.appliesTo].toLowerCase()}</b>.</>}
+                  {" "}Poné los escalones y el % de esta y guardá.
+                </div>
+              )}
+
               {/* Nombre */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Nombre *</label>
@@ -367,6 +400,16 @@ export default function AdminCartPromos() {
                   <option value="MINORISTA">Solo minoristas</option>
                   <option value="MAYORISTA">Solo mayoristas</option>
                 </select>
+                {/* Pedido de la clienta (25/11/2026): otros escalones para mayoristas, y que diga "exclusivo" */}
+                {form.appliesTo === "MAYORISTA" && (
+                  <p className="text-xs text-slate-500 mt-1">La tarjeta del inicio y el aviso del carrito dicen “Exclusivo para mayoristas”.</p>
+                )}
+                {form.appliesTo === "AMBOS" && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    ¿Otros escalones o % para los mayoristas? Hacé dos promos, una para cada uno: guardá esta como “Solo
+                    minoristas” y en la lista tocá 📄 Duplicar.
+                  </p>
+                )}
               </div>
 
               {/* Qué productos entran (pedido de la clienta, 24/11/2026). El monto se mide y el % se

@@ -155,6 +155,10 @@ export default function CampaignCard({ offer, badge, preview = false, solo = fal
 
       <div className="cc-camp-body">
         <span className="material-symbols-outlined cc-icon">{icon}</span>
+        {/* Promo por monto solo para mayoristas (pedido de la clienta, 25/11/2026): que diga que es exclusiva */}
+        {tiers?.length > 0 && offer.appliesTo === "MAYORISTA" && (
+          <span className="cc-hint cc-camp-excl">Exclusivo para mayoristas</span>
+        )}
         <p className="cc-name">{offer.name || "Nombre de la campaña"}</p>
         {offer.description && <p className="cc-camp-desc">{offer.description}</p>}
         {/* Promo para algunas categorías o productos: para cuáles vale (ej. "En Audio y Cables") */}
