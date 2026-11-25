@@ -3,6 +3,7 @@
 // con la casilla "Aplicar promo", en la venta manual y en "Modificar pedido".
 // Backend: controllers/cartPromo.controller.js. Reglas del cálculo: utils/cartPromo.js (back y front).
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { cartPromosApi, categoriesApi } from "../../services/api";
 // Qué productos entran (24/11/2026): lista con "Seleccionar todos" y casillas
@@ -57,6 +58,8 @@ function emptyForm() {
     cardStyle: "blackfriday",
     cardColor: "#d81b60",
     showCountdown: true,
+    // Avisar por email cuando empieza (25/11/2026; lo manda el servidor una vez, ver broadcast.service.js)
+    emailAnnounce: false,
     // Qué productos entran: todos, o algunas categorías (ids como texto, para el selector) y productos
     scopeAll: true,
     categoryIds: [],
@@ -129,7 +132,8 @@ export default function AdminCartPromos() {
     setEditing(null);
     setCopyOf(promo);
     setPreviewAs("MINORISTA");
-    setForm({ ...formFromPromo(promo), appliesTo: swap[promo.appliesTo] || promo.appliesTo });
+    // emailAnnounce: la copia no hereda el aviso programado (se decide aparte)
+    setForm({ ...formFromPromo(promo), appliesTo: swap[promo.appliesTo] || promo.appliesTo, emailAnnounce: false });
     setShowModal(true);
   }
 
@@ -154,6 +158,7 @@ export default function AdminCartPromos() {
       cardStyle: promo.cardStyle || "blackfriday",
       cardColor: promo.cardColor || "#d81b60",
       showCountdown: promo.showCountdown !== false,
+      emailAnnounce: !!promo.emailAnnounce,
       scopeAll: !(promo.categoryIds?.length || promo.productIds?.length),
       categoryIds: (promo.categoryIds || []).map(String),
       productIds: promo.productIds || [],
@@ -214,6 +219,9 @@ export default function AdminCartPromos() {
         appliesTo: form.appliesTo,
         startsAt: startsAt.toISOString(),
         endsAt: endsAt.toISOString(),
+        // Solo si todavía no empezó: una promo en curso se avisa a mano desde Emails (si no, al guardar
+        // saldría el aviso en el próximo minuto sin confirmarlo; mismo criterio que las campañas)
+        emailAnnounce: form.emailAnnounce && startsAt > new Date(),
         tiers,
         wholesaleTiers, // [] = los mayoristas usan los mismos
         active: form.active,
@@ -394,6 +402,7 @@ export default function AdminCartPromos() {
                           <CampaignChip offer={promo} />
                           <p className="text-xs text-slate-400 mt-1">
                             {APPLIES_LABEL[promo.appliesTo]}{promo.showCard !== false ? " · tarjeta en el inicio" : ""}
+                            {promo.announcedAt ? " · avisada por email" : promo.emailAnnounce ? " · se avisa por email al empezar" : ""}
                           </p>
                           <p className="text-xs text-slate-500">{scopeText(promo)}</p>
                         </td>
@@ -441,6 +450,10 @@ export default function AdminCartPromos() {
                             <button onClick={() => openDuplicate(promo)} className="text-slate-400 hover:text-blue-600 transition-colors text-sm" title="Duplicar (ej. la misma promo con otros escalones para mayoristas)">
                               📄
                             </button>
+                            {/* Aviso por email (25/11/2026): se manda desde Emails → Avisos de campañas */}
+                            <Link to="/admin/emails?tab=campanas" className="text-slate-400 hover:text-blue-600 transition-colors text-sm" title="Avisar por email a los clientes">
+                              📧
+                            </Link>
                             <button onClick={() => handleDelete(promo)} className="text-slate-400 hover:text-red-600 transition-colors text-sm" title="Eliminar">
                               🗑️
                             </button>
@@ -776,6 +789,44 @@ export default function AdminCartPromos() {
                   </div>
                 )}
               </div>
+
+              {/* Aviso por email (pedido de la clienta, 25/11/2026: "no llega mail"). Igual que las campañas: si
+                  todavía no empezó, se puede dejar programado; si ya empezó, se avisa desde Emails. */}
+              {(() => {
+                const startsAt = new Date(`${form.startDay}T${form.startTime || "00:00"}:00`);
+                const startsLater = !isNaN(startsAt) && startsAt > new Date();
+                const announcedAt = editing ? promos.find((p) => p.id === editing)?.announcedAt : null;
+                return (
+                  <div className="rounded-xl border border-slate-200 p-4 space-y-1.5">
+                    <p className="text-sm font-semibold text-slate-800">📧 Aviso por email</p>
+                    {announcedAt ? (
+                      <p className="text-xs text-emerald-700">
+                        ✅ Ya se avisó el {formatDate(announcedAt)}. Para mandarlo otra vez: <Link to="/admin/emails?tab=campanas" className="underline font-semibold">Emails → Avisos de campañas</Link>.
+                      </p>
+                    ) : startsLater ? (
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={form.emailAnnounce}
+                          onChange={(e) => setForm({ ...form, emailAnnounce: e.target.checked })}
+                          className="w-4 h-4 mt-0.5 rounded border-slate-300 flex-shrink-0"
+                        />
+                        <span>
+                          <span className="block text-sm text-slate-700">Avisarles por email a los clientes cuando empiece</span>
+                          <span className="block text-xs text-slate-500 mt-0.5">
+                            Una sola vez, a quienes les aplica (a los mayoristas, con sus escalones). No les llega a los que se dieron de baja de las promociones.
+                          </span>
+                        </span>
+                      </label>
+                    ) : (
+                      <p className="text-xs text-slate-600">
+                        {editing ? "Esta promo ya empezó." : "Esta promo empieza apenas la guardes."} Para avisarla por email, después de guardar andá a{" "}
+                        <Link to="/admin/emails?tab=campanas" className="text-blue-600 underline font-semibold">Emails → Avisos de campañas</Link> y tocá “📧 Avisar ahora”.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Activa */}
               <label className="flex items-center gap-2 cursor-pointer select-none">

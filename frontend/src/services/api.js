@@ -538,6 +538,11 @@ export const emailsApi = {
   announceOffer: (offerId, force = false) => api.post(`/emails/offers/${offerId}/announce`, { force }),
   // El aviso de una campaña solo a clientes elegidos (no la marca como avisada)
   sendOffer:  (offerId, customerIds) => api.post(`/emails/offers/${offerId}/send`, { customerIds }),
+  // Descuentos por monto (25/11/2026): el mismo aviso que las campañas
+  promos:        ()                    => api.get("/emails/promos"),
+  setPromoAuto:  (id, emailAnnounce)   => api.put(`/emails/promos/${id}/auto`, { emailAnnounce }),
+  announcePromo: (id, force = false)   => api.post(`/emails/promos/${id}/announce`, { force }),
+  sendPromo:     (id, customerIds)     => api.post(`/emails/promos/${id}/send`, { customerIds }),
   getSettings:    ()     => api.get("/emails/settings"),
   updateSettings: (data) => api.put("/emails/settings", data),
 };

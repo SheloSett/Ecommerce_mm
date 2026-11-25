@@ -7,6 +7,10 @@ const {
   createCustomBroadcast,
   announceOfferNow,
   sendOfferToSelected,
+  listPromosForEmails,
+  setPromoAutoAnnounce,
+  announcePromoNow,
+  sendPromoToSelected,
   listBroadcasts,
   getBroadcast,
   listRecipients,
@@ -34,5 +38,10 @@ router.get("/broadcasts/:id/recipients", listRecipients);
 router.post("/broadcasts/:id/cancel", cancelBroadcastNow);
 router.post("/offers/:id/announce", announceOfferNow);
 router.post("/offers/:id/send", sendOfferToSelected); // a clientes elegidos
+// Descuentos por monto (25/11/2026): mismo aviso que las campañas
+router.get("/promos", listPromosForEmails);
+router.put("/promos/:id/auto", setPromoAutoAnnounce);
+router.post("/promos/:id/announce", announcePromoNow);
+router.post("/promos/:id/send", sendPromoToSelected); // a clientes elegidos
 
 module.exports = router;

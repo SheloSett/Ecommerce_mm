@@ -92,6 +92,8 @@ function parsePromoBody(body, existing = null) {
   if (cardStyle === "color" && !cardColor) return { error: "Elegí el color de la promo" };
   const showCard = pick("showCard");
   const showCountdown = pick("showCountdown");
+  // Avisar por email cuando empieza (25/11/2026; ver broadcast.service.js). Sin mandar = no.
+  const emailAnnounce = pick("emailAnnounce");
 
   // Qué productos entran (24/11/2026): ids de categoría y de producto; vacías las dos = todos.
   const idList = (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0))];
@@ -110,6 +112,7 @@ function parsePromoBody(body, existing = null) {
       cardColor,
       showCard: showCard === undefined ? true : !!showCard,
       showCountdown: showCountdown === undefined ? true : !!showCountdown,
+      emailAnnounce: emailAnnounce === true,
       categoryIds,
       productIds,
     },

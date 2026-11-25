@@ -450,7 +450,144 @@ function buildOfferEmail(offer, products, side, recipient, ctx) {
   };
 }
 
+// ── Aviso de un descuento por monto (model CartPromo, 25/11/2026) ─────────────
+// Pedido de la clienta: "no llega mail" al crear la promo de Black Friday. Mismos dos formatos que el
+// aviso de campañas (liviano y simple; la promo no tiene fotos de productos, así que "con fotos y precios"
+// sale como el liviano). promo: ya en la versión de quien lo recibe (promoForCustomer: un mayorista con sus
+// escalones y appliesTo "MAYORISTA" si es exclusiva para ellos), con scopeLabel ("En Audio y Cables") si es
+// para algunos productos.
+const promoMoney = (n) => `$ ${Number(n).toLocaleString("es-AR", { maximumFractionDigits: 0 })}`;
+const promoTiersOf = (promo) => (Array.isArray(promo.tiers) ? promo.tiers : [])
+  .map((t) => ({ minAmount: Number(t.minAmount), percent: Number(t.percent) }))
+  .filter((t) => Number.isFinite(t.minAmount) && Number.isFinite(t.percent) && t.percent > 0)
+  .sort((a, b) => a.minAmount - b.minAmount);
+// "Hasta 18% de descuento" (o "5% de descuento" con un solo escalón)
+function promoDiscountText(tiers) {
+  if (!tiers.length) return "Descuentos";
+  const top = tiers[tiers.length - 1].percent.toLocaleString("es-AR", { maximumFractionDigits: 2 });
+  return `${tiers.length > 1 ? "Hasta " : ""}${top}% de descuento`;
+}
+// "sobre el total de tu compra" / "sobre lo que compres en Audio y Cables"
+function promoScopeText(promo) {
+  if (!promo.scopeLabel) return "sobre el total de tu compra";
+  if (promo.scopeLabel === "En productos seleccionados") return "en productos seleccionados";
+  return `sobre lo que compres ${promo.scopeLabel.charAt(0).toLowerCase()}${promo.scopeLabel.slice(1)}`;
+}
+const promoTierLine = (t) => `A partir de ${promoMoney(t.minAmount)}: ${t.percent.toLocaleString("es-AR", { maximumFractionDigits: 2 })}% de descuento`;
+const isExclusiveWholesale = (promo, recipient) => promo.appliesTo === "MAYORISTA" && recipient?.type === "MAYORISTA";
+function promoSubject(promo, name, ctx, exclusive) {
+  return `${name ? `${name}, a` : "A"}rrancó ${promo.name}${exclusive ? " (exclusivo para mayoristas)" : ""} en ${ctx.storeName}`;
+}
+
+function buildLightPromoEmail(promo, recipient, ctx) {
+  const tiers = promoTiersOf(promo);
+  const name = firstName(recipient?.name);
+  const ends = endsText(promo.endsAt);
+  const catalogUrl = `${ctx.frontendUrl}/catalogo`;
+  const color = heroColor(promo);
+  const exclusive = isExclusiveWholesale(promo, recipient);
+  const discount = promoDiscountText(tiers);
+  const p = (html, extra = "") => `<p style="margin:0 0 16px;font-family:${FONT};font-size:16px;line-height:1.6;color:${TEXT};${extra}">${html}</p>`;
+  // Una fila por escalón, con una línea arriba de cada una menos la primera
+  const tierRows = tiers.map((t, i) => {
+    const line = i === 0 ? "" : "border-top:1px solid #e2e8f0;";
+    return `
+            <tr>
+              <td style="padding:9px 14px;${line}font-family:${FONT};font-size:15px;color:${TEXT}">A partir de <strong style="color:${INK}">${escapeHtml(promoMoney(t.minAmount))}</strong></td>
+              <td align="right" style="padding:9px 14px;${line}font-family:${FONT};font-size:16px;font-weight:800;color:${color};white-space:nowrap">${escapeHtml(t.percent.toLocaleString("es-AR", { maximumFractionDigits: 2 }))}%</td>
+            </tr>`;
+  }).join("");
+  const html = `<!DOCTYPE html>
+<html lang="es" style="background:#f1f5f9">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Language" content="es">
+<meta name="color-scheme" content="light">
+<title>${escapeHtml(ctx.storeName)}</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f1f5f9" style="background:#f1f5f9">
+    <tr><td align="center" style="padding:24px 10px">
+      <table width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:560px;background:#ffffff;border-radius:14px;border-top:5px solid ${color}">
+        <tr><td style="padding:24px 28px 6px">
+          <span style="font-family:${FONT};font-size:28px;font-weight:900;letter-spacing:-0.5px;color:#334155">igwt</span><span style="font-family:${FONT};font-size:18px;font-weight:700;color:#2e8b2e">.store</span>
+        </td></tr>
+        <tr><td style="padding:16px 28px 8px">
+          ${exclusive ? `<p style="margin:0 0 14px;font-family:${FONT};font-size:12px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:${color}">Exclusivo para mayoristas</p>` : ""}
+          ${p(escapeHtml(name ? `Hola ${name},` : "Hola,"))}
+          ${p(`Arrancó <strong style="color:${INK}">${escapeHtml(promo.name)}</strong> en ${escapeHtml(ctx.storeName)}: cuanto más comprás, más descuento.`)}
+          <p style="margin:4px 0 6px;font-family:${FONT};font-size:26px;line-height:1.2;font-weight:800;color:${color}">${escapeHtml(discount)}</p>
+          ${p(`${escapeHtml(promoScopeText(promo))}${ends ? `, hasta el <strong style="color:${INK}">${escapeHtml(ends)}</strong>` : ""}:`)}
+          ${tiers.length ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid #e2e8f0;border-radius:10px;border-collapse:separate">${tierRows}
+          </table>` : ""}
+          ${promo.description ? p(escapeHtml(promo.description)) : ""}
+          <div style="margin:8px 0 22px">${button("Ver productos", catalogUrl, { bg: color, color: textOn(color) })}</div>
+          ${p("Cualquier consulta, respondé este email o escribinos por WhatsApp.")}
+          ${p(`Saludos,<br><strong style="color:${INK}">${escapeHtml(ctx.storeName)}</strong>`, "margin-bottom:24px")}
+        </td></tr>
+        ${ctx.unsubscribeUrl ? `<tr><td style="padding:14px 28px 20px;border-top:1px solid #e2e8f0;font-family:${FONT};font-size:12px;line-height:1.5;color:#94a3b8">
+          Si no querés recibir más ofertas de ${escapeHtml(ctx.storeName)}, <a href="${escapeHtml(ctx.unsubscribeUrl)}" style="color:#94a3b8;text-decoration:underline">tocá acá</a>.
+        </td></tr>` : ""}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  const text = [
+    exclusive ? "EXCLUSIVO PARA MAYORISTAS" : null,
+    name ? `Hola ${name},` : "Hola,",
+    `Arrancó ${promo.name} en ${ctx.storeName}: ${discount.toLowerCase()} ${promoScopeText(promo)}${ends ? `, hasta el ${ends}` : ""}:`,
+    tiers.map((t) => `- ${promoTierLine(t)}`).join("\n") || null,
+    promo.description || null,
+    `Ver productos: ${catalogUrl}`,
+    "Cualquier consulta, respondé este email o escribinos por WhatsApp.",
+    `Saludos,\n${ctx.storeName}`,
+    ctx.unsubscribeUrl ? `Si no querés recibir más ofertas: ${ctx.unsubscribeUrl}` : null,
+  ].filter(Boolean).join("\n\n");
+  return { subject: promoSubject(promo, name, ctx, exclusive), html, text };
+}
+
+// Formato simple, como un mensaje escrito a mano (mismo criterio que buildPlainOfferEmail).
+function buildPlainPromoEmail(promo, recipient, ctx) {
+  const tiers = promoTiersOf(promo);
+  const name = firstName(recipient?.name);
+  const ends = endsText(promo.endsAt);
+  const catalogUrl = `${ctx.frontendUrl}/catalogo`;
+  const exclusive = isExclusiveWholesale(promo, recipient);
+  const lines = [
+    name ? `Hola ${name},` : "Hola,",
+    `Te cuento que arrancó ${promo.name} en ${ctx.storeName}${exclusive ? ", exclusivo para mayoristas" : ""}: un descuento ${promoScopeText(promo)}${ends ? `, hasta el ${ends}` : ""}.`,
+    tiers.map(promoTierLine).join("\n") || null,
+    promo.description || null,
+    `Los productos están acá: ${catalogUrl}`,
+    "Cualquier consulta, respondé este email.",
+  ].filter(Boolean);
+  const paragraphs = lines
+    .map((l) => `<p style="margin:0 0 14px">${escapeHtml(l).replace(/\n/g, "<br>").replace(/(https?:\/\/[^\s<]+)/g, (url) => `<a href="${url}">${url}</a>`)}</p>`)
+    .join("");
+  const html = `<!DOCTYPE html>
+<html lang="es" style="background:#ffffff">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Language" content="es"></head>
+<body style="margin:0;padding:12px;background:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#222222">
+<div style="max-width:600px">
+${paragraphs}
+<p style="margin:22px 0 0;color:#555555">${escapeHtml(ctx.storeName)}</p>
+${ctx.unsubscribeUrl ? `<p style="margin:18px 0 0;font-size:12px;color:#888888">Si no querés recibir más emails de ${escapeHtml(ctx.storeName)}, <a href="${escapeHtml(ctx.unsubscribeUrl)}" style="color:#888888">tocá acá</a>.</p>` : ""}
+</div>
+</body>
+</html>`;
+  return {
+    subject: promoSubject(promo, name, ctx, exclusive),
+    html,
+    text: [...lines, ctx.storeName, ctx.unsubscribeUrl ? `Si no querés recibir más emails: ${ctx.unsubscribeUrl}` : null]
+      .filter(Boolean).join("\n\n"),
+  };
+}
+
 module.exports = {
+  buildLightPromoEmail,
+  buildPlainPromoEmail,
   escapeHtml,
   firstName,
   personalize,

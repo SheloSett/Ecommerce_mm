@@ -9,7 +9,8 @@ import { useAuth } from "../../context/AuthContext";
 
 // Admin → Emails. Pestañas (?tab=):
 //   ""           Enviar email: escribir un email a todos, a un público o a clientes elegidos
-//   campanas     Avisos de campañas: avisar por email una campaña de ofertas (a mano o al empezar)
+//   campanas     Avisos de campañas: avisar por email una campaña de ofertas o un descuento por monto (a mano
+//                o al empezar)
 //   historial    Lo que se mandó, cómo va la cola y el tope diario
 //   cambios      Cambios de email de los clientes (antes en Clientes)
 //   automaticos  Recomendaciones y recordatorios automáticos (antes en Configuración)
@@ -420,8 +421,11 @@ const STATE_STYLES = {
   FINALIZADA: "bg-slate-100 text-slate-500",
 };
 
+// Cada fila es una campaña de Ofertas o un descuento por monto (25/11/2026, pedido de la clienta: "no llega
+// mail" con la promo de Black Friday). _type: "offer" | "promo"; las acciones van a la ruta de cada una.
 function CampaignsTab() {
   const [offers, setOffers] = useState([]);
+  const [promos, setPromos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);           // id de la campaña en proceso
   const [previewOf, setPreviewOf] = useState(null); // { offer, side }
@@ -448,27 +452,38 @@ function CampaignsTab() {
   }
   const navigate = useNavigate();
 
+  // Antes: solo offersApi.getAll(). Ahora también los descuentos por monto que no terminaron.
   const load = () => {
     setLoading(true);
-    offersApi.getAll()
-      .then((r) => setOffers(r.data.filter((o) => o.state !== "FINALIZADA")))
-      .catch(() => toast.error("Error al cargar las campañas"))
-      .finally(() => setLoading(false));
+    Promise.all([
+      offersApi.getAll()
+        .then((r) => setOffers(r.data.filter((o) => o.state !== "FINALIZADA").map((o) => ({ ...o, _type: "offer" }))))
+        .catch(() => toast.error("Error al cargar las campañas")),
+      emailsApi.promos()
+        .then((r) => setPromos(r.data.map((p) => ({ ...p, _type: "promo" }))))
+        .catch(() => toast.error("Error al cargar los descuentos por monto")),
+    ]).finally(() => setLoading(false));
   };
   useEffect(load, []);
+  const items = [...promos, ...offers];
 
   useEffect(() => {
     if (!previewOf) return;
     setPreview((p) => ({ ...p, loading: true }));
-    emailsApi.preview({ kind: "OFFER", offerId: previewOf.offer.id, side: previewOf.side, format: offerFormat })
+    // Antes: siempre { kind: "OFFER", offerId }
+    const it = previewOf.offer;
+    emailsApi.preview(it._type === "promo"
+      ? { kind: "PROMO", cartPromoId: it.id, side: previewOf.side, format: offerFormat }
+      : { kind: "OFFER", offerId: it.id, side: previewOf.side, format: offerFormat })
       .then((r) => setPreview({ ...r.data, loading: false, error: "" }))
       .catch((e) => setPreview({ subject: "", html: "", loading: false, error: e.response?.data?.error || "No se pudo armar la vista previa" }));
   }, [previewOf, offerFormat]);
 
   async function toggleAuto(offer) {
-    setBusy(offer.id);
+    setBusy(`${offer._type}-${offer.id}`);
     try {
-      await offersApi.update(offer.id, { emailAnnounce: !offer.emailAnnounce });
+      if (offer._type === "promo") await emailsApi.setPromoAuto(offer.id, !offer.emailAnnounce);
+      else await offersApi.update(offer.id, { emailAnnounce: !offer.emailAnnounce });
       toast.success(!offer.emailAnnounce ? "Se avisa por email cuando empiece" : "Aviso automático desactivado");
       load();
     } catch (e) {
@@ -484,9 +499,11 @@ function CampaignsTab() {
       ? `Esta campaña ya se avisó el ${fmtDateTime(offer.announcedAt)}. ¿Mandar el aviso OTRA VEZ a todos?`
       : `¿Avisar "${offer.name}" por email a los clientes ahora?`;
     if (!confirm(msg)) return;
-    setBusy(offer.id);
+    setBusy(`${offer._type}-${offer.id}`);
     try {
-      const r = await emailsApi.announceOffer(offer.id, again);
+      const r = offer._type === "promo"
+        ? await emailsApi.announcePromo(offer.id, again)
+        : await emailsApi.announceOffer(offer.id, again);
       toast.success(`Aviso en camino para ${r.data.total} cliente(s)`);
       navigate("/admin/emails?tab=historial");
     } catch (e) {
@@ -499,7 +516,8 @@ function CampaignsTab() {
   async function sendToChosen() {
     setSendingTo(true);
     try {
-      const r = await emailsApi.sendOffer(sendTo.id, chosen.map((c) => c.id));
+      const ids = chosen.map((c) => c.id);
+      const r = sendTo._type === "promo" ? await emailsApi.sendPromo(sendTo.id, ids) : await emailsApi.sendOffer(sendTo.id, ids);
       toast.success(`Aviso en camino para ${r.data.total} cliente(s)${r.data.skipped ? ` (${r.data.skipped} no aplicaban)` : ""}`);
       setSendTo(null);
       navigate("/admin/emails?tab=historial");
@@ -515,9 +533,9 @@ function CampaignsTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500 max-w-3xl">
-        Cada campaña puede avisarse por email <strong>sola, cuando empieza</strong> (una única vez), a mano con "Avisar ahora",
+        Cada campaña o descuento por monto puede avisarse por email <strong>solo, cuando empieza</strong> (una única vez), a mano con "Avisar ahora",
         o solo a algunos clientes con "Mandar a…".
-        El aviso le llega a quien aplica la campaña, con su descuento. Los que se dieron de baja de las promociones no lo reciben.
+        El aviso le llega a quien aplica, con su descuento (a los mayoristas, sus escalones). Los que se dieron de baja de las promociones no lo reciben.
       </p>
 
       {/* Formato de los avisos */}
@@ -539,22 +557,27 @@ function CampaignsTab() {
         </div>
         <p className="text-xs text-slate-500 mt-2 leading-relaxed">
           {OFFER_FORMATS.find((f) => f.key === offerFormat)?.hint}
+          {offerFormat === "DESIGN" && " Los descuentos por monto no tienen fotos: salen como el liviano."}
         </p>
       </div>
 
-      {offers.length === 0 ? (
+      {/* Antes: offers.length / offers.map (solo campañas). Ahora también los descuentos por monto. */}
+      {items.length === 0 ? (
         <div className="text-center py-16 text-slate-400 bg-white rounded-2xl border border-slate-200">
           <p className="text-4xl mb-3">🏷</p>
-          <p>No hay campañas activas ni programadas</p>
+          <p>No hay campañas ni descuentos por monto activos o programados</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {offers.map((o) => (
-            <div key={o.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-wrap items-center gap-4">
+          {items.map((o) => (
+            <div key={`${o._type}-${o.id}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-wrap items-center gap-4">
               <div className="flex-1 min-w-[220px]">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-semibold text-slate-800">{o.name}</p>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATE_STYLES[o.state] || ""}`}>{o.state}</span>
+                  {o._type === "promo" && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-700">🎉 Descuento por monto</span>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {fmtDateTime(o.startsAt)} → {fmtDateTime(o.endsAt)} ·{" "}
@@ -573,7 +596,7 @@ function CampaignsTab() {
                   <input
                     type="checkbox"
                     checked={!!o.emailAnnounce}
-                    disabled={busy === o.id}
+                    disabled={busy === `${o._type}-${o.id}`}
                     onChange={() => toggleAuto(o)}
                     className="w-4 h-4 rounded border-slate-300"
                   />
@@ -598,7 +621,7 @@ function CampaignsTab() {
                 </button>
                 <button
                   onClick={() => announce(o)}
-                  disabled={o.state !== "ACTIVA" || busy === o.id}
+                  disabled={o.state !== "ACTIVA" || busy === `${o._type}-${o.id}`}
                   title={o.state !== "ACTIVA" ? "Se puede avisar cuando la campaña está activa" : undefined}
                   className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-40"
                 >
@@ -664,7 +687,7 @@ function CampaignsTab() {
               </div>
               <button onClick={() => setPreviewOf(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold px-2">×</button>
             </div>
-            {previewOf.offer.state !== "ACTIVA" && (
+            {previewOf.offer.state !== "ACTIVA" && previewOf.offer._type !== "promo" && (
               <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">
                 La campaña todavía no empezó: los productos aparecen en el email cuando ya tienen el descuento aplicado.
               </p>
@@ -716,7 +739,10 @@ function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
           <div>
             <h3 className="font-bold text-slate-800">Destinatarios</h3>
             <p className="text-xs text-slate-500">
-              {broadcast.kind?.startsWith("OFFER") ? `Aviso: ${broadcast.offer?.name || broadcast.subject}` : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
+              {/* PROMO_*: aviso de un descuento por monto (25/11/2026) */}
+              {broadcast.kind?.startsWith("OFFER") ? `Aviso: ${broadcast.offer?.name || broadcast.subject}`
+                : broadcast.kind?.startsWith("PROMO") ? `Aviso: ${broadcast.cartPromo?.name || broadcast.subject}`
+                : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
@@ -882,7 +908,10 @@ function HistoryTab() {
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDateTime(b.createdAt)}</td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">
-                        {b.kind?.startsWith("OFFER") ? `🏷 Aviso: ${b.offer?.name || b.subject}` : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
+                        {/* PROMO_*: aviso de un descuento por monto (25/11/2026) */}
+                        {b.kind?.startsWith("OFFER") ? `🏷 Aviso: ${b.offer?.name || b.subject}`
+                          : b.kind?.startsWith("PROMO") ? `🎉 Aviso: ${b.cartPromo?.name || b.subject}`
+                          : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
                       </p>
                       <p className="text-xs text-slate-400">{b.createdBy ? `Mandado por ${b.createdBy}` : "Automático (al empezar la campaña)"}</p>
                     </td>

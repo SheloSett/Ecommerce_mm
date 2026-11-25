@@ -9,6 +9,9 @@ const {
   createBroadcast,
   announceOffer,
   sendOfferTo,
+  announcePromo,
+  sendPromoTo,
+  PROMO_KIND_BY_FORMAT,
   renderFor,
   getDailyLimit,
   setDailyLimit,
@@ -47,6 +50,15 @@ const parseIds = (ids) => (Array.isArray(ids) ? [...new Set(ids.map((x) => parse
 // Lo que se previsualiza o se manda de prueba: un email escrito (CUSTOM) o el aviso de una campaña
 // (OFFER, con side "retail" | "wholesale" para ver la versión de cada público).
 function draftFromBody(body) {
+  // Aviso de un descuento por monto (25/11/2026), con side como el de las campañas
+  if (body.kind === "PROMO") {
+    const cartPromoId = parseInt(body.cartPromoId);
+    if (!cartPromoId) return { error: "Falta la promo" };
+    return {
+      broadcast: { kind: PROMO_KIND_BY_FORMAT[body.format] || PROMO_KIND_BY_FORMAT.LIGHT, cartPromoId },
+      type: body.side === "wholesale" ? "MAYORISTA" : "MINORISTA",
+    };
+  }
   if (body.kind === "OFFER") {
     const offerId = parseInt(body.offerId);
     if (!offerId) return { error: "Falta la campaña" };
@@ -183,13 +195,77 @@ async function sendOfferToSelected(req, res) {
   }
 }
 
+// ── Descuentos por monto en "Avisos de campañas" (25/11/2026) ──────────────────
+// Con el permiso "emails" alcanza (como con las campañas): la lista para la pestaña y prender o apagar el
+// aviso automático, sin poder tocar escalones ni productos (eso pide "productos" en /api/cart-promos).
+
+// GET /api/emails/promos — las que no terminaron, con su estado
+async function listPromosForEmails(req, res) {
+  try {
+    const now = new Date();
+    const promos = await prisma.cartPromo.findMany({
+      where: { endsAt: { gt: now } },
+      select: { id: true, name: true, appliesTo: true, startsAt: true, endsAt: true, active: true, emailAnnounce: true, announcedAt: true },
+      orderBy: { startsAt: "desc" },
+    });
+    // Mismos nombres de estado que las campañas, para la misma pantalla
+    const state = (p) => (!p.active ? "PAUSADA" : new Date(p.startsAt) > now ? "PROGRAMADA" : "ACTIVA");
+    res.json(promos.map((p) => ({ ...p, state: state(p) })));
+  } catch (err) {
+    handleError(res, err, "Error al cargar las promos");
+  }
+}
+
+// PUT /api/emails/promos/:id/auto — { emailAnnounce } (avisar sola cuando empieza)
+async function setPromoAutoAnnounce(req, res) {
+  try {
+    const promo = await prisma.cartPromo.update({
+      where: { id: parseInt(req.params.id) },
+      data: { emailAnnounce: req.body?.emailAnnounce === true },
+      select: { id: true, emailAnnounce: true },
+    });
+    res.json(promo);
+  } catch (err) {
+    if (err.code === "P2025") return res.status(404).json({ error: "Promo no encontrada" });
+    handleError(res, err, "Error al guardar el aviso");
+  }
+}
+
+// POST /api/emails/promos/:id/announce — aviso manual (force: mandarlo otra vez)
+async function announcePromoNow(req, res) {
+  try {
+    const broadcast = await announcePromo(parseInt(req.params.id), {
+      createdBy: senderLabel(req),
+      force: req.body?.force === true,
+    });
+    kickQueue();
+    res.status(201).json(broadcast);
+  } catch (err) {
+    handleError(res, err, "Error al avisar la promo");
+  }
+}
+
+// POST /api/emails/promos/:id/send — a clientes elegidos
+async function sendPromoToSelected(req, res) {
+  try {
+    const { broadcast, skipped } = await sendPromoTo(parseInt(req.params.id), parseIds(req.body?.customerIds), {
+      createdBy: senderLabel(req),
+    });
+    kickQueue();
+    res.status(201).json({ ...broadcast, skipped });
+  } catch (err) {
+    handleError(res, err, "Error al mandar la promo");
+  }
+}
+
 // ── GET /api/emails/broadcasts — historial ────────────────────────────────────
 async function listBroadcasts(req, res) {
   try {
     const broadcasts = await prisma.emailBroadcast.findMany({
       orderBy: { createdAt: "desc" },
       take: 100,
-      include: { offer: { select: { id: true, name: true } } },
+      // cartPromo: el descuento por monto avisado (25/11/2026)
+      include: { offer: { select: { id: true, name: true } }, cartPromo: { select: { id: true, name: true } } },
     });
     res.json(broadcasts);
   } catch (err) {
@@ -203,7 +279,8 @@ async function getBroadcast(req, res) {
     const id = parseInt(req.params.id);
     const broadcast = await prisma.emailBroadcast.findUnique({
       where: { id },
-      include: { offer: { select: { id: true, name: true } } },
+      // cartPromo: el descuento por monto avisado (25/11/2026)
+      include: { offer: { select: { id: true, name: true } }, cartPromo: { select: { id: true, name: true } } },
     });
     if (!broadcast) return res.status(404).json({ error: "Envío no encontrado" });
     const [byStatus, failed] = await Promise.all([
@@ -307,6 +384,10 @@ module.exports = {
   createCustomBroadcast,
   announceOfferNow,
   sendOfferToSelected,
+  listPromosForEmails,
+  setPromoAutoAnnounce,
+  announcePromoNow,
+  sendPromoToSelected,
   listBroadcasts,
   getBroadcast,
   listRecipients,

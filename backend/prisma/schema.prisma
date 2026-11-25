@@ -553,6 +553,12 @@ model CartPromo {
   // (services/cartPromo.service.js): el monto se mide y el % se descuenta solo sobre esos productos.
   categoryIds   Int[]   @default([])
   productIds    Int[]   @default([])
+  // Aviso por email (pedido de la clienta, 25/11/2026: "no llega mail"), igual que las campañas de Ofertas:
+  // emailAnnounce = avisar sola cuando empieza (el cron, una única vez); announcedAt = cuándo se avisó (también
+  // se puede avisar a mano desde Admin → Emails → Avisos de campañas). Ver broadcast.service.js.
+  emailAnnounce Boolean   @default(false)
+  announcedAt   DateTime?
+  broadcasts    EmailBroadcast[]
   orders    Order[]
   createdAt DateTime           @default(now())
   updatedAt DateTime           @updatedAt
@@ -937,6 +943,9 @@ model EmailBroadcast {
   buttonUrl   String?
   offerId     Int?
   offer       Offer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  // Aviso de un descuento por monto (kind PROMO_LIGHT | PROMO_PLAIN, 25/11/2026)
+  cartPromoId Int?
+  cartPromo   CartPromo?       @relation(fields: [cartPromoId], references: [id], onDelete: SetNull)
   audience    String           // ALL | MINORISTA | MAYORISTA | SELECTED
   status      String           @default("SENDING") // SENDING | DONE | CANCELLED
   total       Int              @default(0)

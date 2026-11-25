@@ -16,8 +16,12 @@
 const crypto = require("crypto");
 const { offerState } = require("./offers.service");
 const { createBulkTransporter } = require("./email.service");
-const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail, buildLightOfferEmail } = require("./broadcast.templates");
+const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail, buildLightOfferEmail, buildLightPromoEmail, buildPlainPromoEmail } = require("./broadcast.templates");
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
+// Aviso del descuento por monto (25/11/2026)
+const { isPromoLive, promoForCustomer } = require("../utils/cartPromo");
+const { resolveScope } = require("./cartPromo.service");
+const { loadFlatCategories } = require("../utils/categoryTree");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -121,7 +125,8 @@ function validateCustomPayload(body) {
 }
 
 // recipients: opcional, ya resueltos (el aviso a clientes elegidos los filtra antes por público).
-async function createBroadcast({ kind, audience, customerIds = [], offerId = null, createdBy = null, content, recipients: given = null }) {
+// cartPromoId: el descuento por monto que se avisa (kind PROMO_*). Antes solo offerId.
+async function createBroadcast({ kind, audience, customerIds = [], offerId = null, cartPromoId = null, createdBy = null, content, recipients: given = null }) {
   if (!AUDIENCES.includes(audience)) throw new BroadcastError(400, "Destinatarios inválidos");
   if (audience === "SELECTED" && customerIds.length === 0 && !given) throw new BroadcastError(400, "Elegí al menos un cliente");
   const recipients = given || (await resolveRecipients(audience, customerIds));
@@ -129,7 +134,7 @@ async function createBroadcast({ kind, audience, customerIds = [], offerId = nul
 
   return prisma.$transaction(async (tx) => {
     const broadcast = await tx.emailBroadcast.create({
-      data: { kind, audience, offerId, createdBy, total: recipients.length, ...content },
+      data: { kind, audience, offerId, cartPromoId, createdBy, total: recipients.length, ...content },
     });
     await tx.emailRecipient.createMany({
       data: recipients.map((r) => ({ ...r, broadcastId: broadcast.id })),
@@ -159,7 +164,13 @@ const offerKind = async () => OFFER_KIND_BY_FORMAT[await getOfferFormat()];
 const isOfferKind = (kind) => kind === "OFFER" || kind === "OFFER_LIGHT" || kind === "OFFER_PLAIN";
 // Formatos simples: van sin el header List-Unsubscribe (Gmail lo usa para detectar newsletters y
 // mandarlas a Promociones). El link de baja sigue en el texto del email, como pide la ley.
-const isPlainKind = (kind) => kind === "PLAIN" || kind === "OFFER_PLAIN" || kind === "OFFER_LIGHT";
+// Antes: sin PROMO_* (el aviso del descuento por monto, 25/11/2026, sale en los mismos formatos livianos).
+const isPlainKind = (kind) => kind === "PLAIN" || kind === "OFFER_PLAIN" || kind === "OFFER_LIGHT" || kind === "PROMO_PLAIN" || kind === "PROMO_LIGHT";
+// Aviso de un descuento por monto: mismo formato elegido para las campañas. La promo no tiene fotos de
+// productos, así que "con fotos y precios" (DESIGN) sale como el liviano.
+const PROMO_KIND_BY_FORMAT = { DESIGN: "PROMO_LIGHT", LIGHT: "PROMO_LIGHT", PLAIN: "PROMO_PLAIN" };
+const promoKind = async () => PROMO_KIND_BY_FORMAT[await getOfferFormat()];
+const isPromoKind = (kind) => kind === "PROMO_LIGHT" || kind === "PROMO_PLAIN";
 
 // Público del aviso según a quién aplica la campaña.
 const offerAudience = (offer) => (offer.appliesTo === "AMBOS" ? "ALL" : offer.appliesTo);
@@ -242,6 +253,88 @@ async function announceStartedOffers() {
   }
 }
 
+// ── Aviso de un descuento por monto (model CartPromo) ─────────────────────────
+// Pedido de la clienta (25/11/2026): "no llega mail" al crear el Black Friday. Funciona igual que el aviso
+// de las campañas: a mano ("Avisar ahora", una vez salvo force), a clientes elegidos, o solo cuando empieza
+// (emailAnnounce, lo manda el cron). A cada cliente le llega SU versión: un mayorista, con los escalones de
+// mayoristas si la promo los tiene (promoForCustomer) y "Exclusivo para mayoristas".
+
+async function announcePromo(promoId, { createdBy = null, force = false } = {}) {
+  const promo = await prisma.cartPromo.findUnique({ where: { id: promoId } });
+  if (!promo) throw new BroadcastError(404, "Promo no encontrada");
+  if (!isPromoLive(promo)) throw new BroadcastError(400, "Solo se puede avisar una promo vigente (en fecha y sin pausar)");
+  if (promo.announcedAt && !force) throw new BroadcastError(409, "Esta promo ya se avisó por email");
+
+  // "Reservar" el aviso (mismo criterio que announceOffer): si el cron y el admin avisan a la vez, solo uno
+  // lo consigue.
+  const claimed = await prisma.cartPromo.updateMany({
+    where: { id: promoId, ...(force ? {} : { announcedAt: null }) },
+    data: { announcedAt: new Date() },
+  });
+  if (claimed.count === 0) throw new BroadcastError(409, "Esta promo ya se avisó por email");
+
+  try {
+    return await createBroadcast({
+      kind: await promoKind(), audience: offerAudience(promo), cartPromoId: promoId, createdBy,
+      content: { subject: promo.name },
+    });
+  } catch (err) {
+    await prisma.cartPromo.update({ where: { id: promoId }, data: { announcedAt: promo.announcedAt } });
+    throw err;
+  }
+}
+
+// A clientes elegidos uno por uno (no marca la promo como avisada). { broadcast, skipped }.
+async function sendPromoTo(promoId, customerIds, { createdBy = null } = {}) {
+  const promo = await prisma.cartPromo.findUnique({ where: { id: promoId } });
+  if (!promo) throw new BroadcastError(404, "Promo no encontrada");
+  if (!isPromoLive(promo)) throw new BroadcastError(400, "Solo se puede mandar una promo vigente (en fecha y sin pausar)");
+  if (!customerIds.length) throw new BroadcastError(400, "Elegí al menos un cliente");
+
+  const chosen = await resolveRecipients("SELECTED", customerIds);
+  const recipients = recipientsForOffer(chosen, promo.appliesTo);
+  if (recipients.length === 0) {
+    throw new BroadcastError(400, promo.appliesTo === "MAYORISTA"
+      ? "La promo es solo para mayoristas aprobados y ninguno de los elegidos lo es"
+      : "La promo es solo para minoristas y los elegidos son mayoristas");
+  }
+  const broadcast = await createBroadcast({
+    kind: await promoKind(), audience: "SELECTED", cartPromoId: promoId, createdBy, recipients,
+    content: { subject: promo.name },
+  });
+  return { broadcast, skipped: chosen.length - recipients.length };
+}
+
+// Cron: las promos con "Avisar por email" que ya empezaron y todavía no se avisaron.
+async function announceStartedPromos() {
+  const now = new Date();
+  const due = await prisma.cartPromo.findMany({
+    where: { emailAnnounce: true, announcedAt: null, active: true, startsAt: { lte: now }, endsAt: { gt: now } },
+    select: { id: true, name: true },
+  });
+  for (const p of due) {
+    try {
+      const b = await announcePromo(p.id);
+      console.log(`[EMAIL] Aviso de la promo "${p.name}" en cola para ${b.total} cliente(s)`);
+    } catch (err) {
+      if (err.status !== 409) console.error(`[EMAIL] No se pudo avisar la promo ${p.id}:`, err.message);
+    }
+  }
+}
+
+// La promo para armar el email, con scopeLabel si es para algunos productos. null si ya no está vigente
+// (salvo la vista previa).
+async function promoEmailData(promoId, { allowInactive = false } = {}) {
+  if (!promoId) return null;
+  const promo = await prisma.cartPromo.findUnique({ where: { id: promoId } });
+  if (!promo || (!allowInactive && !isPromoLive(promo))) return null;
+  let scopeLabel = null;
+  if ((promo.categoryIds || []).length || (promo.productIds || []).length) {
+    scopeLabel = (await resolveScope(promo, await loadFlatCategories(prisma))).label;
+  }
+  return { ...promo, scopeLabel };
+}
+
 // ── Armado de cada email ──────────────────────────────────────────────────────
 
 // Campaña + sus productos con descuento para un público. null si la campaña ya no está activa.
@@ -295,6 +388,19 @@ async function renderFor(broadcast, recipient, cache = new Map(), { preview = fa
     ? ""
     : recipient.customerId ? unsubscribeUrls(recipient.customerId).page : `${frontendUrl()}/desuscribirse`;
   const ctx = emailCtx(unsubscribeUrl);
+  // Aviso de un descuento por monto: la versión de la promo de este cliente (sus escalones)
+  if (isPromoKind(broadcast.kind)) {
+    const key = `promo:${broadcast.cartPromoId}:${preview}`;
+    if (!cache.has(key)) cache.set(key, await promoEmailData(broadcast.cartPromoId, { allowInactive: preview }));
+    const data = cache.get(key);
+    if (!data) {
+      const err = new Error("La promo terminó, se pausó o se borró antes de que se mandaran todos los avisos");
+      err.code = "OFFER_GONE"; // la cola cancela lo que falta, igual que con una campaña
+      throw err;
+    }
+    const promo = promoForCustomer(data, recipient.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA");
+    return broadcast.kind === "PROMO_PLAIN" ? buildPlainPromoEmail(promo, recipient, ctx) : buildLightPromoEmail(promo, recipient, ctx);
+  }
   if (isOfferKind(broadcast.kind)) {
     const side = recipient.type === "MAYORISTA" ? "wholesale" : "retail";
     const key = `${broadcast.offerId}:${side}:${preview}`;
@@ -485,6 +591,12 @@ async function runEmailJobs() {
   } catch (err) {
     console.error("[EMAIL] Error revisando avisos de campañas:", err.message);
   }
+  // Los descuentos por monto con "Avisar por email al empezar" (25/11/2026)
+  try {
+    await announceStartedPromos();
+  } catch (err) {
+    console.error("[EMAIL] Error revisando avisos de promos:", err.message);
+  }
   await processEmailQueue();
 }
 
@@ -508,6 +620,11 @@ module.exports = {
   sendOfferTo,
   announceStartedOffers,
   offerEmailData,
+  announcePromo,
+  sendPromoTo,
+  announceStartedPromos,
+  promoEmailData,
+  PROMO_KIND_BY_FORMAT,
   renderFor,
   isRetryableSendError,
   getDailyLimit,

@@ -185,3 +185,56 @@ describe("plantillas", () => {
     assert.ok(/680,00/.test(html));
   });
 });
+
+// Aviso de un descuento por monto (25/11/2026): "no llega mail" al crear la promo de Black Friday.
+describe("aviso de un descuento por monto", () => {
+  const { buildLightPromoEmail, buildPlainPromoEmail } = require("../src/services/broadcast.templates");
+  const { promoForCustomer } = require("../src/utils/cartPromo");
+  const ctx = { storeName: "Tienda", frontendUrl: "https://tienda.test", backendUrl: "https://api.tienda.test", unsubscribeUrl: "https://tienda.test/baja" };
+  const promo = {
+    id: 7, name: "Black Friday", appliesTo: "AMBOS", endsAt: "2026-11-28T02:59:00Z", cardStyle: "blackfriday", cardColor: null,
+    description: "", scopeLabel: null,
+    tiers: [{ minAmount: 100000, percent: 5 }, { minAmount: 300000, percent: 10 }],
+    wholesaleTiers: [{ minAmount: 150000, percent: 5 }, { minAmount: 500000, percent: 18 }],
+  };
+  const minorista = { name: "Ana Pérez", type: "MINORISTA" };
+  const mayorista = { name: "Beto", type: "MAYORISTA" };
+
+  test("el minorista recibe sus escalones, sin el cartel de mayoristas", () => {
+    const e = buildLightPromoEmail(promoForCustomer(promo, "MINORISTA"), minorista, ctx);
+    assert.equal(e.subject, "Ana, arrancó Black Friday en Tienda");
+    assert.match(e.text, /Hasta 10% de descuento|hasta 10% de descuento/);
+    assert.match(e.text, /A partir de \$ 100\.000: 5% de descuento/);
+    assert.doesNotMatch(e.html + e.text, /xclusivo para mayoristas|EXCLUSIVO/);
+    assert.match(e.html, /https:\/\/tienda\.test\/catalogo/);
+  });
+
+  test("el mayorista recibe los suyos y 'Exclusivo para mayoristas'", () => {
+    const e = buildLightPromoEmail(promoForCustomer(promo, "MAYORISTA"), mayorista, ctx);
+    assert.equal(e.subject, "Beto, arrancó Black Friday (exclusivo para mayoristas) en Tienda");
+    assert.match(e.html, /Exclusivo para mayoristas/);
+    assert.match(e.text, /A partir de \$ 500\.000: 18% de descuento/);
+    assert.doesNotMatch(e.text, /\$ 300\.000/, "no le muestra los escalones de minoristas");
+  });
+
+  test("formato simple: solo texto, con los escalones y el link de baja", () => {
+    const e = buildPlainPromoEmail(promoForCustomer(promo, "MAYORISTA"), mayorista, ctx);
+    assert.match(e.text, /exclusivo para mayoristas/);
+    assert.match(e.text, /A partir de \$ 150\.000: 5% de descuento\nA partir de \$ 500\.000: 18% de descuento/);
+    assert.match(e.text, /https:\/\/tienda\.test\/baja/);
+    assert.doesNotMatch(e.html, /<table|<img/);
+  });
+
+  test("una promo para algunos productos dice para cuáles", () => {
+    const e = buildLightPromoEmail({ ...promoForCustomer(promo, "MINORISTA"), scopeLabel: "En Audio y Cables" }, minorista, ctx);
+    assert.match(e.text, /sobre lo que compres en Audio y Cables/);
+    const sel = buildPlainPromoEmail({ ...promoForCustomer(promo, "MINORISTA"), scopeLabel: "En productos seleccionados" }, minorista, ctx);
+    assert.match(sel.text, /en productos seleccionados/);
+  });
+
+  test("sin nombre ni link de baja (mensaje directo) no rompe", () => {
+    const e = buildLightPromoEmail(promoForCustomer(promo, "MINORISTA"), { type: "MINORISTA" }, { ...ctx, unsubscribeUrl: "" });
+    assert.equal(e.subject, "Arrancó Black Friday en Tienda");
+    assert.doesNotMatch(e.html, /tocá acá/);
+  });
+});
