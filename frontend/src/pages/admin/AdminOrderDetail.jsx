@@ -14,7 +14,7 @@ import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../
 import { priceParts } from "../../utils/productPrice";
 // Descuento por monto (Black Friday): casilla "Aplicar promo" de "Modificar pedido"
 import { useCartPromos } from "../../hooks/useCartPromos";
-import { promoAppliesTo, promoTierFor, promoBaseAmount } from "../../utils/cartPromo";
+import { promoAppliesTo, promoForCustomer, promoTierFor, promoBaseAmount } from "../../utils/cartPromo";
 import toast from "react-hot-toast";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
 import { locationCss, locationControlsHtml, LOCATION_KEYS } from "../../utils/printLocation";
@@ -1340,7 +1340,9 @@ export default function AdminOrderDetail() {
                       let pPct = 0;
                       let pBase = 0;
                       if (editPromo) {
-                        const reglas = order.promoRule ? [order.promoRule] : livePromos.filter((p) => promoAppliesTo(p, order.customerType));
+                        // Antes: sin el .map. Ahora con los escalones del tipo de cliente del pedido (una promo
+                        // para los dos puede tener otros para mayoristas; promoForCustomer, 25/11/2026).
+                        const reglas = order.promoRule ? [order.promoRule] : livePromos.filter((p) => promoAppliesTo(p, order.customerType)).map((p) => promoForCustomer(p, order.customerType));
                         const lineas = editItems.map((i) => ({ productId: i.productId, price: precioLineaConDesc(i), quantity: parseInt(i.quantity || 0), currency: i.currency }));
                         for (const r of reglas) {
                           const base = Array.isArray(r.productIds) ? promoBaseAmount(lineas, r.productIds) : ars;

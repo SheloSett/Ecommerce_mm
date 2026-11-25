@@ -49,6 +49,21 @@ function promoAppliesTo(promo, customerType) {
   return promo?.appliesTo === "AMBOS" || promo?.appliesTo === tipo;
 }
 
+// La versión de la promo que le toca a un tipo de cliente (25/11/2026). Una promo para los dos
+// (appliesTo AMBOS) puede tener otros escalones y otro % para los mayoristas (wholesaleTiers). Para un
+// mayorista se cambian los escalones y queda marcada como solo para mayoristas (appliesTo MAYORISTA), así
+// la tarjeta del inicio y el aviso del carrito dicen "Exclusivo para mayoristas". En los demás casos, la
+// promo tal cual. Nunca devuelve wholesaleTiers (ya se usaron), así que aplicarla dos veces da lo mismo.
+function promoForCustomer(promo, customerType) {
+  if (!promo) return promo;
+  const { wholesaleTiers, ...rest } = promo;
+  const own = normalizePromoTiers(wholesaleTiers);
+  if (customerType === "MAYORISTA" && promo.appliesTo === "AMBOS" && own.length > 0) {
+    return { ...rest, tiers: own, appliesTo: "MAYORISTA" };
+  }
+  return rest;
+}
+
 // Vigente: prendida y con la fecha de hoy entre el inicio y el fin.
 function isPromoLive(promo, now = new Date()) {
   return !!promo?.active && new Date(promo.startsAt) <= now && now < new Date(promo.endsAt);
@@ -98,4 +113,4 @@ function promoSnapshot(promo) {
   return snap;
 }
 
-module.exports = { normalizePromoTiers, promoTierFor, nextPromoTier, promoAppliesTo, isPromoLive, bestPromoFor, bestPromoForItems, promoBaseAmount, promoSnapshot };
+module.exports = { normalizePromoTiers, promoTierFor, nextPromoTier, promoAppliesTo, promoForCustomer, isPromoLive, bestPromoFor, bestPromoForItems, promoBaseAmount, promoSnapshot };

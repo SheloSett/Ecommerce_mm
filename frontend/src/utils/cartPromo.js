@@ -30,6 +30,21 @@ export function promoAppliesTo(promo, customerType) {
   return promo?.appliesTo === "AMBOS" || promo?.appliesTo === tipo;
 }
 
+// La versión de la promo que le toca a un tipo de cliente (igual que promoForCustomer del servidor,
+// 25/11/2026): en una promo para los dos con escalones propios para mayoristas (wholesaleTiers), un
+// mayorista usa esos y la promo queda como solo para mayoristas ("Exclusivo para mayoristas"). El servidor
+// ya se la manda resuelta a la tienda; el panel la recibe entera y la resuelve acá según el cliente de la
+// venta. Aplicarla dos veces da lo mismo.
+export function promoForCustomer(promo, customerType) {
+  if (!promo) return promo;
+  const { wholesaleTiers, ...rest } = promo;
+  const own = normalizePromoTiers(wholesaleTiers);
+  if (customerType === "MAYORISTA" && promo.appliesTo === "AMBOS" && own.length > 0) {
+    return { ...rest, tiers: own, appliesTo: "MAYORISTA" };
+  }
+  return rest;
+}
+
 // Lo que cuenta para una promo (igual que el servidor, promoBaseAmount de backend/src/utils/cartPromo.js):
 // la suma de las líneas en pesos de los productos que entran. lines: [{ productId, price, quantity,
 // currency }]; productIds: los ids que entran (promo.productIds), o null/undefined = todos.
@@ -55,8 +70,10 @@ export function promoBaseAmount(lines, productIds) {
 // Antes: cartPromoSummary(promos, subtotalArs, customerType), siempre con todo el carrito en pesos.
 export function cartPromoSummary(promos, itemsOrSubtotal, customerType, now = new Date()) {
   const baseOf = (p) => (Array.isArray(itemsOrSubtotal) ? promoBaseAmount(itemsOrSubtotal, p.productIds) : (itemsOrSubtotal || 0));
+  // Antes: sin el .map (cada promo con un solo juego de escalones)
   const vigentes = (promos || []).filter((p) =>
-    promoAppliesTo(p, customerType) && (!p.endsAt || new Date(p.endsAt) > now));
+    promoAppliesTo(p, customerType) && (!p.endsAt || new Date(p.endsAt) > now))
+    .map((p) => promoForCustomer(p, customerType));
 
   let promo = null;
   let percent = 0;

@@ -212,3 +212,43 @@ describe("promo para algunos productos", () => {
     assert.deepEqual(parsePromoBody({ active: false }, { ...ok, categoryIds: [9], productIds: [] }).data.categoryIds, [9]);
   });
 });
+
+// Escalones propios para mayoristas (25/11/2026): una promo para los dos con otros escalones y otro % para
+// los mayoristas (wholesaleTiers).
+describe("escalones para mayoristas", () => {
+  const { promoForCustomer } = require("../src/utils/cartPromo");
+  const { Prisma } = require("@prisma/client");
+  const MIN = [{ minAmount: 100000, percent: 5 }];
+  const MAY = [{ minAmount: 150000, percent: 5 }, { minAmount: 500000, percent: 8 }];
+  const promo = { id: 1, name: "Black Friday", appliesTo: "AMBOS", tiers: MIN, wholesaleTiers: MAY };
+
+  test("el mayorista recibe sus escalones y la promo marcada como exclusiva; el minorista, los de siempre", () => {
+    const may = promoForCustomer(promo, "MAYORISTA");
+    assert.deepEqual([may.tiers, may.appliesTo, may.wholesaleTiers], [MAY, "MAYORISTA", undefined]);
+    const min = promoForCustomer(promo, "MINORISTA");
+    assert.deepEqual([min.tiers, min.appliesTo, min.wholesaleTiers], [MIN, "AMBOS", undefined]);
+  });
+
+  test("sin escalones de mayoristas, o en una promo solo para un tipo, no cambia nada", () => {
+    assert.deepEqual(promoForCustomer({ ...promo, wholesaleTiers: null }, "MAYORISTA").tiers, MIN);
+    assert.deepEqual(promoForCustomer({ ...promo, wholesaleTiers: [] }, "MAYORISTA").appliesTo, "AMBOS");
+    assert.deepEqual(promoForCustomer({ ...promo, appliesTo: "MAYORISTA" }, "MAYORISTA").tiers, MIN);
+  });
+
+  test("aplicarla dos veces da lo mismo (el carrito la recibe ya resuelta del servidor)", () => {
+    const una = promoForCustomer(promo, "MAYORISTA");
+    assert.deepEqual(promoForCustomer(una, "MAYORISTA"), una);
+  });
+
+  test("el panel guarda los escalones de mayoristas solo en una promo para los dos", () => {
+    const ok = { name: "Black Friday", appliesTo: "AMBOS", startsAt: "2026-11-23T03:00:00Z", endsAt: "2026-11-30T03:00:00Z", tiers: MIN };
+    assert.deepEqual(parsePromoBody({ ...ok, wholesaleTiers: [MAY[1], MAY[0]] }).data.wholesaleTiers, MAY, "ordenados");
+    assert.equal(parsePromoBody(ok).data.wholesaleTiers, Prisma.DbNull, "sin mandar = los mismos que minoristas");
+    assert.equal(parsePromoBody({ ...ok, wholesaleTiers: [] }).data.wholesaleTiers, Prisma.DbNull);
+    assert.equal(parsePromoBody({ ...ok, appliesTo: "MAYORISTA", wholesaleTiers: MAY }).data.wholesaleTiers, Prisma.DbNull, "solo mayoristas: usa tiers");
+    const mal = parsePromoBody({ ...ok, wholesaleTiers: [{ minAmount: 1000, percent: 10 }, { minAmount: 5000, percent: 5 }] }).error;
+    assert.match(mal, /de mayoristas/);
+    // Editar otra cosa conserva los de mayoristas
+    assert.deepEqual(parsePromoBody({ active: false }, { ...ok, wholesaleTiers: MAY }).data.wholesaleTiers, MAY);
+  });
+});

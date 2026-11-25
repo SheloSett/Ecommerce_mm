@@ -4,8 +4,9 @@
 // services/cartPromo.service.js.
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+const { Prisma } = require("@prisma/client"); // Prisma.DbNull: para dejar vacía la columna wholesaleTiers
 const { resolvePriceViewer } = require("../utils/productPrivacy");
-const { normalizePromoTiers } = require("../utils/cartPromo");
+const { normalizePromoTiers, promoForCustomer } = require("../utils/cartPromo");
 const { livePromos } = require("../services/cartPromo.service");
 
 const APPLIES_TO = ["MINORISTA", "MAYORISTA", "AMBOS"];
@@ -27,6 +28,23 @@ function withState(promo, now = new Date()) {
   return { ...promo, state };
 }
 
+// Escalones que manda el panel: { tiers } limpios y ordenados, o { error }. who: "de mayoristas" para que el
+// mensaje diga de cuáles se habla.
+function parseTiers(raw, who = "") {
+  const de = who ? ` ${who}` : "";
+  if (!Array.isArray(raw) || raw.length === 0) return { error: `Agregá al menos un escalón${de} (a partir de cuánto y qué %)` };
+  if (raw.length > MAX_TIERS) return { error: `Hasta ${MAX_TIERS} escalones${de}` };
+  const tiers = normalizePromoTiers(raw);
+  // normalizePromoTiers descarta lo inválido: si se perdió alguno, había un monto o un % mal escrito.
+  if (tiers.length !== raw.length) return { error: `Revisá los escalones${de}: cada uno necesita un monto (de $0 en adelante) y un % entre 1 y 100` };
+  for (let i = 1; i < tiers.length; i++) {
+    if (tiers[i].minAmount === tiers[i - 1].minAmount) return { error: `Hay dos escalones${de} con el mismo monto` };
+    // Un escalón más alto que dé menos % no tiene sentido y casi siempre es un error de tipeo.
+    if (tiers[i].percent <= tiers[i - 1].percent) return { error: `Cada escalón${de} tiene que dar más % que el anterior` };
+  }
+  return { tiers };
+}
+
 // Valida lo que manda el panel. Devuelve { data } listo para Prisma o { error } con el motivo.
 // En una edición (existing) los campos que no vienen se toman de la promo guardada.
 function parsePromoBody(body, existing = null) {
@@ -36,20 +54,24 @@ function parsePromoBody(body, existing = null) {
   if (!name) return { error: "Poné un nombre para la promo (es lo que ve el cliente, ej: Black Friday)" };
   if (name.length > 60) return { error: "El nombre puede tener hasta 60 letras" };
 
-  const rawTiers = pick("tiers");
-  if (!Array.isArray(rawTiers) || rawTiers.length === 0) return { error: "Agregá al menos un escalón (a partir de cuánto y qué %)" };
-  if (rawTiers.length > MAX_TIERS) return { error: `Hasta ${MAX_TIERS} escalones` };
-  const tiers = normalizePromoTiers(rawTiers);
-  // normalizePromoTiers descarta lo inválido: si se perdió alguno, había un monto o un % mal escrito.
-  if (tiers.length !== rawTiers.length) return { error: "Revisá los escalones: cada uno necesita un monto (de $0 en adelante) y un % entre 1 y 100" };
-  for (let i = 1; i < tiers.length; i++) {
-    if (tiers[i].minAmount === tiers[i - 1].minAmount) return { error: "Hay dos escalones con el mismo monto" };
-    // Un escalón más alto que dé menos % no tiene sentido y casi siempre es un error de tipeo.
-    if (tiers[i].percent <= tiers[i - 1].percent) return { error: "Cada escalón tiene que dar más % que el anterior" };
-  }
+  // Antes: la validación de los escalones estaba acá; pasó a parseTiers para usarla también con los de
+  // mayoristas.
+  const parsed = parseTiers(pick("tiers"));
+  if (parsed.error) return parsed;
+  const { tiers } = parsed;
 
   const appliesTo = pick("appliesTo") || "AMBOS";
   if (!APPLIES_TO.includes(appliesTo)) return { error: "Elegí para quién es la promo" };
+
+  // Escalones para mayoristas (25/11/2026): solo en una promo para los dos. Vacío o sin mandar = los mismos
+  // que los minoristas (null en la base; Prisma.DbNull para vaciar una columna Json).
+  const rawWholesale = pick("wholesaleTiers");
+  let wholesaleTiers = Prisma.DbNull;
+  if (appliesTo === "AMBOS" && Array.isArray(rawWholesale) && rawWholesale.length > 0) {
+    const w = parseTiers(rawWholesale, "de mayoristas");
+    if (w.error) return w;
+    wholesaleTiers = w.tiers;
+  }
 
   const startsAt = new Date(pick("startsAt"));
   const endsAt   = new Date(pick("endsAt"));
@@ -82,6 +104,7 @@ function parsePromoBody(body, existing = null) {
   return {
     data: {
       name, tiers, appliesTo, startsAt, endsAt, active: active === undefined ? true : !!active,
+      wholesaleTiers,
       description: description || null,
       cardStyle,
       cardColor,
@@ -101,7 +124,12 @@ async function getActivePromos(req, res) {
   try {
     const [promos, viewer] = await Promise.all([livePromos(), resolvePriceViewer(req, prisma)]);
     const tipo = viewer.isMayorista ? "MAYORISTA" : "MINORISTA";
-    const visibles = viewer.isAdmin ? promos : promos.filter((p) => p.appliesTo === "AMBOS" || p.appliesTo === tipo);
+    // Antes: sin el .map. Ahora un mayorista recibe la versión con los escalones de mayoristas, si la promo
+    // los tiene (marcada como MAYORISTA: la tarjeta dice "Exclusivo para mayoristas"). El panel las recibe
+    // enteras, con wholesaleTiers, y elige según el tipo de cliente de la venta (cartPromoSummary).
+    const visibles = viewer.isAdmin
+      ? promos
+      : promos.filter((p) => p.appliesTo === "AMBOS" || p.appliesTo === tipo).map((p) => promoForCustomer(p, tipo));
     // Antes: { id, name, tiers, appliesTo, endsAt }. Ahora también cómo se ve, para la tarjeta del inicio y
     // el aviso del carrito.
     // productIds: los ids de producto que entran (null = todos), para que el carrito mida y descuente solo
@@ -111,6 +139,7 @@ async function getActivePromos(req, res) {
       description: p.description, showCard: p.showCard, cardStyle: p.cardStyle, cardColor: p.cardColor,
       showCountdown: p.showCountdown,
       productIds: p.eligibleProductIds ?? null, scopeLabel: p.scopeLabel ?? null,
+      ...(viewer.isAdmin && normalizePromoTiers(p.wholesaleTiers).length ? { wholesaleTiers: normalizePromoTiers(p.wholesaleTiers) } : {}),
     })));
   } catch (err) {
     console.error("getActivePromos error:", err);

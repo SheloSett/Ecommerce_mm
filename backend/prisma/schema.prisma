@@ -532,6 +532,10 @@ model CartPromo {
   // Escalones: [{ minAmount, percent }] ordenados por minAmount. minAmount en pesos, sobre el subtotal
   // de productos en pesos (sin envío). Aplica el escalón más alto alcanzado.
   tiers     Json
+  // Escalones para mayoristas (pedido de la clienta, 25/11/2026): en una promo para los dos tipos de
+  // cliente, otros escalones y otro % para los mayoristas. null = los mismos que `tiers`. Solo cuenta con
+  // appliesTo = AMBOS (ver promoForCustomer en utils/cartPromo.js).
+  wholesaleTiers Json?
   appliesTo CustomerVisibility @default(AMBOS) // MINORISTA, MAYORISTA o los dos
   startsAt  DateTime
   endsAt    DateTime

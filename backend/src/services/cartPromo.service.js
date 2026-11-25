@@ -5,7 +5,7 @@
 // "Modificar pedido" (si se la agrega a un pedido que no la tenía).
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
-const { promoAppliesTo, bestPromoForItems, promoSnapshot } = require("../utils/cartPromo");
+const { promoAppliesTo, promoForCustomer, bestPromoForItems, promoSnapshot } = require("../utils/cartPromo");
 const { loadFlatCategories, collectDescendantIds } = require("../utils/categoryTree");
 
 // Qué productos entran en una promo (24/11/2026): los elegidos sueltos más los de las categorías elegidas
@@ -81,7 +81,11 @@ async function livePromos(now = new Date()) {
 // promoRule, o null si ninguna llega a su primer escalón (así un pedido chico no queda marcado con una
 // promo del 0%). Antes: bestPromoFor(promos, sumItems(items, "ARS")), con todo el pedido.
 async function promoForOrder({ customerType, items, now = new Date() }) {
-  const promos = (await livePromos(now)).filter((p) => promoAppliesTo(p, customerType));
+  // Antes: sin el .map. Ahora cada promo con los escalones de ese tipo de cliente (un mayorista, los de
+  // mayoristas si la promo los tiene): son los que quedan guardados en promoRule.
+  const promos = (await livePromos(now))
+    .filter((p) => promoAppliesTo(p, customerType))
+    .map((p) => promoForCustomer(p, customerType));
   const best = bestPromoForItems(promos, items);
   return best ? { id: best.promo.id, rule: promoSnapshot(best.promo) } : null;
 }

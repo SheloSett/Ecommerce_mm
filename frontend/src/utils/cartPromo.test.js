@@ -88,3 +88,25 @@ test("las líneas del carrito: id es el producto", () => {
   assert.deepEqual(promoLinesFromCart([{ id: 3, price: 10, quantity: 2, currency: "ARS", name: "x" }]),
     [{ productId: 3, price: 10, quantity: 2, currency: "ARS" }]);
 });
+
+// Escalones propios para mayoristas (25/11/2026)
+import { promoForCustomer } from "./cartPromo.js";
+describe("escalones para mayoristas", () => {
+  const MIN = [{ minAmount: 100000, percent: 5 }];
+  const MAY = [{ minAmount: 150000, percent: 5 }, { minAmount: 500000, percent: 8 }];
+  const promo = { id: 1, name: "Black Friday", appliesTo: "AMBOS", tiers: MIN, wholesaleTiers: MAY, endsAt: null };
+
+  test("cada tipo de cliente ve sus escalones (el panel resuelve según el cliente de la venta)", () => {
+    const may = cartPromoSummary([promo], 200000, "MAYORISTA");
+    assert.deepEqual([may.percent, may.promo.appliesTo, may.next.minAmount], [5, "MAYORISTA", 500000]);
+    const min = cartPromoSummary([promo], 200000, "MINORISTA");
+    assert.deepEqual([min.percent, min.promo.appliesTo, min.next], [5, "AMBOS", null]);
+    assert.equal(cartPromoSummary([promo], 120000, "MAYORISTA").percent, 0, "el mayorista todavía no llega a $150.000");
+  });
+
+  test("igual que el servidor: sin escalones de mayoristas no cambia, y dos veces da lo mismo", () => {
+    assert.deepEqual(promoForCustomer({ ...promo, wholesaleTiers: null }, "MAYORISTA").tiers, MIN);
+    const una = promoForCustomer(promo, "MAYORISTA");
+    assert.deepEqual(promoForCustomer(una, "MAYORISTA"), una);
+  });
+});

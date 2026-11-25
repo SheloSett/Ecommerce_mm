@@ -46,6 +46,10 @@ function emptyForm() {
     startDay: localDay(hoy), startTime: "00:00",
     endDay: localDay(fin), endTime: "23:59",
     tiers: [{ minAmount: "", percent: "" }],
+    // Escalones para mayoristas (25/11/2026), solo con "Minoristas y mayoristas": wholesaleSame = usan los
+    // mismos que los minoristas; si no, los de wholesaleTiers.
+    wholesaleSame: true,
+    wholesaleTiers: [{ minAmount: "", percent: "" }],
     active: true,
     // Cómo se ve: tarjeta en el inicio y aviso del carrito (mismos estilos que las campañas)
     description: "",
@@ -79,6 +83,7 @@ export default function AdminCartPromos() {
   const [form, setForm]           = useState(emptyForm);
   const [saving, setSaving]       = useState(false);
   const [copyOf, setCopyOf]       = useState(null); // la promo que se está duplicando (para el aviso del formulario)
+  const [previewAs, setPreviewAs] = useState("MINORISTA"); // vista previa como minorista o mayorista
   // Para elegir qué productos entran
   const [categories, setCategories] = useState([]);
 
@@ -102,6 +107,7 @@ export default function AdminCartPromos() {
   function openCreate() {
     setEditing(null);
     setCopyOf(null);
+    setPreviewAs("MINORISTA");
     setForm(emptyForm());
     setShowModal(true);
   }
@@ -110,6 +116,7 @@ export default function AdminCartPromos() {
   function openEdit(promo) {
     setEditing(promo.id);
     setCopyOf(null);
+    setPreviewAs("MINORISTA");
     setForm(formFromPromo(promo));
     setShowModal(true);
   }
@@ -121,6 +128,7 @@ export default function AdminCartPromos() {
     const swap = { MINORISTA: "MAYORISTA", MAYORISTA: "MINORISTA" };
     setEditing(null);
     setCopyOf(promo);
+    setPreviewAs("MINORISTA");
     setForm({ ...formFromPromo(promo), appliesTo: swap[promo.appliesTo] || promo.appliesTo });
     setShowModal(true);
   }
@@ -136,6 +144,10 @@ export default function AdminCartPromos() {
       startDay: localDay(ini), startTime: localTime(ini),
       endDay: localDay(fin), endTime: localTime(fin),
       tiers: normalizePromoTiers(promo.tiers).map((t) => ({ minAmount: String(t.minAmount), percent: String(t.percent) })),
+      wholesaleSame: normalizePromoTiers(promo.wholesaleTiers).length === 0,
+      wholesaleTiers: normalizePromoTiers(promo.wholesaleTiers).length
+        ? normalizePromoTiers(promo.wholesaleTiers).map((t) => ({ minAmount: String(t.minAmount), percent: String(t.percent) }))
+        : [{ minAmount: "", percent: "" }],
       active: promo.active,
       description: promo.description || "",
       showCard: promo.showCard !== false,
@@ -148,17 +160,43 @@ export default function AdminCartPromos() {
     };
   }
 
-  const setTier = (idx, field, value) =>
-    setForm((f) => ({ ...f, tiers: f.tiers.map((t, i) => (i === idx ? { ...t, [field]: value } : t)) }));
-  const addTier = () => setForm((f) => ({ ...f, tiers: [...f.tiers, { minAmount: "", percent: "" }] }));
-  const removeTier = (idx) => setForm((f) => ({ ...f, tiers: f.tiers.filter((_, i) => i !== idx) }));
+  // key: "tiers" (minoristas, o todos) o "wholesaleTiers" (mayoristas). Antes solo había "tiers".
+  const setTier = (key, idx, field, value) =>
+    setForm((f) => ({ ...f, [key]: f[key].map((t, i) => (i === idx ? { ...t, [field]: value } : t)) }));
+  const addTier = (key) => setForm((f) => ({ ...f, [key]: [...f[key], { minAmount: "", percent: "" }] }));
+  const removeTier = (key, idx) => setForm((f) => ({ ...f, [key]: f[key].filter((_, i) => i !== idx) }));
+
+  // Cambiar "Para quién" sin perder escalones: una promo "solo mayoristas" que pasa a "los dos" lleva sus
+  // escalones a la columna de mayoristas (y una copia a minoristas, para cambiarla); al revés, "solo
+  // mayoristas" se queda con los de mayoristas.
+  function changeAppliesTo(value) {
+    setForm((f) => {
+      const copy = (rows) => rows.map((t) => ({ ...t }));
+      if (f.appliesTo === "MAYORISTA" && value === "AMBOS") {
+        return { ...f, appliesTo: value, wholesaleSame: false, wholesaleTiers: copy(f.tiers) };
+      }
+      if (f.appliesTo === "AMBOS" && value === "MAYORISTA" && !f.wholesaleSame) {
+        return { ...f, appliesTo: value, tiers: copy(f.wholesaleTiers), wholesaleSame: true };
+      }
+      return { ...f, appliesTo: value };
+    });
+  }
+
+  // Las filas del formulario → escalones { minAmount, percent } (las vacías no cuentan)
+  const rowsToTiers = (rows) => rows
+    .filter((t) => t.minAmount !== "" || t.percent !== "")
+    .map((t) => ({ minAmount: parseFloat(t.minAmount), percent: parseFloat(t.percent) }));
+  const separateWholesale = form.appliesTo === "AMBOS" && !form.wholesaleSame;
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const tiers = form.tiers
-      .filter((t) => t.minAmount !== "" || t.percent !== "")
-      .map((t) => ({ minAmount: parseFloat(t.minAmount), percent: parseFloat(t.percent) }));
-    if (tiers.length === 0) return toast.error("Agregá al menos un escalón");
+    // Antes: los escalones se armaban acá (ahora rowsToTiers, para los dos juegos)
+    const tiers = rowsToTiers(form.tiers);
+    if (tiers.length === 0) return toast.error(separateWholesale ? "Agregá al menos un escalón para minoristas" : "Agregá al menos un escalón");
+    const wholesaleTiers = separateWholesale ? rowsToTiers(form.wholesaleTiers) : [];
+    if (separateWholesale && wholesaleTiers.length === 0) {
+      return toast.error("Agregá al menos un escalón para mayoristas (o tildá “Igual que minoristas”)");
+    }
     const startsAt = new Date(`${form.startDay}T${form.startTime || "00:00"}:00`);
     const endsAt   = new Date(`${form.endDay}T${form.endTime || "23:59"}:00`);
     if (isNaN(startsAt) || isNaN(endsAt)) return toast.error("Revisá las fechas");
@@ -177,6 +215,7 @@ export default function AdminCartPromos() {
         startsAt: startsAt.toISOString(),
         endsAt: endsAt.toISOString(),
         tiers,
+        wholesaleTiers, // [] = los mayoristas usan los mismos
         active: form.active,
         // Cómo se ve
         description: form.description.trim() || null,
@@ -228,17 +267,24 @@ export default function AdminCartPromos() {
     }
   }
 
-  // Vista previa de los escalones tal como los va a ver el cliente
-  const previewTiers = normalizePromoTiers(
-    form.tiers.map((t) => ({ minAmount: parseFloat(t.minAmount), percent: parseFloat(t.percent) }))
-  );
+  // Escalones tal como los va a ver el cliente: los de minoristas (o todos) y los de mayoristas
+  const minTiers = normalizePromoTiers(rowsToTiers(form.tiers));
+  const mayTiers = separateWholesale ? normalizePromoTiers(rowsToTiers(form.wholesaleTiers)) : [];
+  // La vista previa se ve como el cliente que corresponde: con escalones distintos, se elige cuál
+  // (previewAs); con "solo mayoristas", como mayorista.
+  const previewType = form.appliesTo === "AMBOS" ? (separateWholesale ? previewAs : "MINORISTA") : form.appliesTo;
+  // Antes: previewTiers = normalizePromoTiers(form.tiers...), siempre los de todos
+  const previewTiers = previewType === "MAYORISTA" && separateWholesale ? mayTiers : minTiers;
   // Vista previa de cómo se ve: la tarjeta del inicio y el aviso del carrito con un carrito de ejemplo
   // (el 60% del primer escalón, para que se vea el "sumá $X y llevás...")
   const previewEndsAt = new Date(`${form.endDay}T${form.endTime || "23:59"}:00`);
   const previewPromo = {
     id: 0, name: form.name.trim() || "Black Friday", description: form.description.trim(),
-    // Antes: appliesTo: "AMBOS" fijo. Ahora el elegido, para que la vista previa muestre "Exclusivo para mayoristas"
-    endsAt: isNaN(previewEndsAt) ? null : previewEndsAt, appliesTo: form.appliesTo, tiers: previewTiers,
+    // Antes: appliesTo: "AMBOS" fijo. Ahora el que ve ese cliente, para que la vista previa muestre "Exclusivo
+    // para mayoristas" (en una promo para los dos con escalones de mayoristas, el mayorista la ve exclusiva)
+    endsAt: isNaN(previewEndsAt) ? null : previewEndsAt,
+    appliesTo: previewType === "MAYORISTA" && (form.appliesTo === "MAYORISTA" || separateWholesale) ? "MAYORISTA" : form.appliesTo,
+    tiers: previewTiers,
     cardStyle: form.cardStyle, cardColor: HEX_COLOR.test(form.cardColor) ? form.cardColor : null,
     showCountdown: form.showCountdown,
     // Para cuáles vale, como lo arma el servidor (services/cartPromo.service.js, resolveScope)
@@ -252,8 +298,51 @@ export default function AdminCartPromos() {
   };
   const previewSummary = previewTiers.length > 0
     // Antes: siempre "MINORISTA" (con una promo solo para mayoristas no se veía el aviso)
-    ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), form.appliesTo === "MAYORISTA" ? "MAYORISTA" : "MINORISTA")
+    ? cartPromoSummary([{ ...previewPromo, endsAt: null }], Math.round(previewTiers[0].minAmount * 0.6), previewType)
     : null;
+
+  // Una lista de escalones editable: key = "tiers" o "wholesaleTiers"; clean = esos escalones ya limpios,
+  // para el resumen de abajo. Antes estaba escrita una sola vez en el formulario (solo "tiers").
+  const tierEditor = (key, clean) => (
+    <>
+      <div className="space-y-2">
+        {form[key].map((t, idx) => (
+          // En el celular el monto se cortaba ("100000" no entraba): ahí "Desde $" queda en "$" y "% off"
+          // en "%". Antes: "Desde $" y "% off" siempre. (Se probó el % en w-16 en el celular: "12,5" no
+          // entraba, así que queda en w-20.)
+          <div key={idx} className="flex items-center gap-2">
+            <span className="text-sm text-slate-500 shrink-0"><span className="hidden sm:inline">A partir de </span>$</span>
+            <input
+              type="number" min="0" step="1"
+              value={t.minAmount}
+              onChange={(e) => setTier(key, idx, "minAmount", e.target.value)}
+              placeholder="100000"
+              className="input flex-1 min-w-0"
+            />
+            <input
+              type="number" min="1" max="100" step="0.5"
+              value={t.percent}
+              onChange={(e) => setTier(key, idx, "percent", e.target.value)}
+              placeholder="5"
+              className="input w-20"
+            />
+            <span className="text-sm text-slate-500 shrink-0">%<span className="hidden sm:inline"> off</span></span>
+            {form[key].length > 1 && (
+              <button type="button" onClick={() => removeTier(key, idx)} className="text-slate-400 hover:text-red-600 text-sm" title="Sacar escalón">✕</button>
+            )}
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={() => addTier(key)} className="mt-2 text-sm font-semibold text-blue-600 hover:text-blue-700">
+        + Agregar escalón
+      </button>
+      {clean.length > 0 && (
+        <p className="text-xs text-slate-500 mt-2">
+          {clean.map((t) => `a partir de ${formatPrice(t.minAmount)} → ${t.percent}% off`).join(" · ")}
+        </p>
+      )}
+    </>
+  );
 
   return (
     <AdminLayout title="Descuento por monto de compra">
@@ -309,13 +398,23 @@ export default function AdminCartPromos() {
                           <p className="text-xs text-slate-500">{scopeText(promo)}</p>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {normalizePromoTiers(promo.tiers).map((t) => (
-                              <span key={t.minAmount} className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full whitespace-nowrap">
-                                a partir de {formatPrice(t.minAmount)} → {t.percent}%
-                              </span>
-                            ))}
-                          </div>
+                          {/* Con escalones propios para mayoristas (25/11/2026), los dos juegos, cada uno con su título */}
+                          {[
+                            ...(promo.appliesTo === "AMBOS" && normalizePromoTiers(promo.wholesaleTiers).length
+                              ? [["Minoristas", promo.tiers], ["Mayoristas", promo.wholesaleTiers]]
+                              : [[null, promo.tiers]]),
+                          ].map(([quien, tiers]) => (
+                            <div key={quien || "todos"} className={quien ? "mb-1 last:mb-0" : ""}>
+                              {quien && <p className="text-[11px] font-semibold text-slate-500 mb-0.5">{quien}</p>}
+                              <div className="flex flex-wrap gap-1">
+                                {normalizePromoTiers(tiers).map((t) => (
+                                  <span key={t.minAmount} className="text-xs font-semibold bg-green-100 text-green-700 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                    a partir de {formatPrice(t.minAmount)} → {t.percent}%
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                         </td>
                         <td className="px-4 py-3 text-slate-600 text-xs hidden md:table-cell">
                           {formatDate(promo.startsAt)}<br />
@@ -396,7 +495,8 @@ export default function AdminCartPromos() {
               {/* Para quién */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Para quién *</label>
-                <select value={form.appliesTo} onChange={(e) => setForm({ ...form, appliesTo: e.target.value })} className="input">
+                {/* Antes: onChange={(e) => setForm({ ...form, appliesTo: e.target.value })} (ver changeAppliesTo) */}
+                <select value={form.appliesTo} onChange={(e) => changeAppliesTo(e.target.value)} className="input">
                   <option value="AMBOS">Minoristas y mayoristas</option>
                   <option value="MINORISTA">Solo minoristas</option>
                   <option value="MAYORISTA">Solo mayoristas</option>
@@ -405,10 +505,11 @@ export default function AdminCartPromos() {
                 {form.appliesTo === "MAYORISTA" && (
                   <p className="text-xs text-slate-500 mt-1">La tarjeta del inicio y el aviso del carrito dicen “Exclusivo para mayoristas”.</p>
                 )}
+                {/* Antes: "¿Otros escalones o % para los mayoristas? Hacé dos promos, una para cada uno..." — a la
+                    clienta no le cerró ("lo de los minoristas no lo veo hecho"): ahora se cargan acá mismo. */}
                 {form.appliesTo === "AMBOS" && (
                   <p className="text-xs text-slate-500 mt-1">
-                    ¿Otros escalones o % para los mayoristas? Hacé dos promos, una para cada uno: guardá esta como “Solo
-                    minoristas” y en la lista tocá 📄 Duplicar.
+                    Abajo, en Escalones, podés poner otros escalones y otro % para los mayoristas.
                   </p>
                 )}
               </div>
@@ -471,44 +572,44 @@ export default function AdminCartPromos() {
                 </div>
               </div>
 
-              {/* Escalones */}
+              {/* Escalones. Con "Minoristas y mayoristas", dos columnas: los de minoristas y los de mayoristas
+                  (pedido de la clienta, 25/11/2026: otros escalones y otro % para los mayoristas, en la misma
+                  promo). Antes: una sola lista para todos. */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Escalones *</label>
-                <div className="space-y-2">
-                  {form.tiers.map((t, idx) => (
-                    // En el celular el monto se cortaba ("100000" no entraba): ahí "Desde $" queda en "$" y "% off"
-                    // en "%". Antes: "Desde $" y "% off" siempre. (Se probó el % en w-16 en el celular: "12,5" no
-                    // entraba, así que queda en w-20.)
-                    <div key={idx} className="flex items-center gap-2">
-                      <span className="text-sm text-slate-500 shrink-0"><span className="hidden sm:inline">A partir de </span>$</span>
-                      <input
-                        type="number" min="0" step="1"
-                        value={t.minAmount}
-                        onChange={(e) => setTier(idx, "minAmount", e.target.value)}
-                        placeholder="100000"
-                        className="input flex-1 min-w-0"
-                      />
-                      <input
-                        type="number" min="1" max="100" step="0.5"
-                        value={t.percent}
-                        onChange={(e) => setTier(idx, "percent", e.target.value)}
-                        placeholder="5"
-                        className="input w-20"
-                      />
-                      <span className="text-sm text-slate-500 shrink-0">%<span className="hidden sm:inline"> off</span></span>
-                      {form.tiers.length > 1 && (
-                        <button type="button" onClick={() => removeTier(idx)} className="text-slate-400 hover:text-red-600 text-sm" title="Sacar escalón">✕</button>
+                {form.appliesTo === "AMBOS" ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Escalones para minoristas *</label>
+                      {tierEditor("tiers", minTiers)}
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 mb-1">
+                        <label className="text-sm font-medium text-slate-700">Escalones para mayoristas *</label>
+                        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={form.wholesaleSame}
+                            onChange={(e) => setForm({ ...form, wholesaleSame: e.target.checked })}
+                            className="w-3.5 h-3.5 accent-blue-600"
+                          />
+                          Igual que minoristas
+                        </label>
+                      </div>
+                      {form.wholesaleSame ? (
+                        <p className="text-sm text-slate-400 py-2">Los mayoristas tienen los mismos escalones y el mismo %.</p>
+                      ) : (
+                        <>
+                          {tierEditor("wholesaleTiers", mayTiers)}
+                          <p className="text-xs text-slate-500 mt-1">A los mayoristas les dice “Exclusivo para mayoristas”.</p>
+                        </>
                       )}
                     </div>
-                  ))}
-                </div>
-                <button type="button" onClick={addTier} className="mt-2 text-sm font-semibold text-blue-600 hover:text-blue-700">
-                  + Agregar escalón
-                </button>
-                {previewTiers.length > 0 && (
-                  <p className="text-xs text-slate-500 mt-2">
-                    {previewTiers.map((t) => `a partir de ${formatPrice(t.minAmount)} → ${t.percent}% off`).join(" · ")}
-                  </p>
+                  </div>
+                ) : (
+                  <>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Escalones *</label>
+                    {tierEditor("tiers", minTiers)}
+                  </>
                 )}
                 {/* Cómo se calcula hoy (dos puntos quedaron pendientes de confirmar con la clienta: si
                     cuentan los productos ya rebajados y si se combina con cupones — hoy sí en los dos) */}
@@ -522,7 +623,27 @@ export default function AdminCartPromos() {
               {/* ── Cómo se ve ── (pedido del 23/11/2026: "algo como lo tenemos con las campañas")
                   El estilo pinta la tarjeta del inicio y el aviso del carrito. Mismos estilos que las campañas. */}
               <div className="p-4 rounded-xl border-2 border-slate-200 space-y-4">
-                <p className="text-sm font-bold text-slate-800">🎨 Cómo se ve</p>
+                {/* Con escalones distintos para mayoristas, la vista previa se puede ver como cada uno */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-slate-800">🎨 Cómo se ve</p>
+                  {separateWholesale && (
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      Ver como
+                      <div className="flex rounded-md bg-slate-200 p-0.5">
+                        {[["MINORISTA", "Minorista"], ["MAYORISTA", "Mayorista"]].map(([k, l]) => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => setPreviewAs(k)}
+                            className={`px-2.5 py-1 rounded transition-colors ${previewAs === k ? "bg-white text-slate-800 font-semibold shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                          >
+                            {l}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <div>
                   <p className="text-xs font-semibold text-slate-600 mb-2">Estilo</p>
