@@ -452,6 +452,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 217- promo por monto: otros escalones para mayoristas, "Duplicar" y "Exclusivo para mayoristas" (25/11/2026): la clienta quería el Black Friday para minoristas y mayoristas pero con otros escalones y otro % para los mayoristas, y que a ellos les diga "EXCLUSIVO PARA MAYORISTAS". Ya se podía con dos promos (el servidor le muestra y le aplica a cada cliente solo las de su tipo), pero había que volver a tildar los productos. Ahora cada promo de la lista tiene 📄 Duplicar: abre una promo nueva con los mismos productos, estilo, fechas y escalones, con "Para quién" ya cambiado (solo minoristas ↔ solo mayoristas) y un aviso de qué revisar. Con "Minoristas y mayoristas" el formulario explica que para escalones distintos se hacen dos promos. Las promos "Solo mayoristas" muestran "Exclusivo para mayoristas" arriba del nombre en la tarjeta del inicio (pastilla con los colores del estilo) y en el aviso del carrito y el checkout; la vista previa del panel ahora usa el "Para quién" elegido (antes siempre minorista: con una promo de mayoristas el aviso no se veía). Probado con el servidor simulado: duplicar una promo de mayoristas y la vista previa con el cartel. Sin migración. ✅
 
+218- el formulario de la promo por monto, más ancho (25/11/2026): pedido de la clienta. La ventana pasó de max-w-2xl (672 px) a max-w-5xl (1024 px); en pantallas más chicas sigue ocupando el ancho disponible. Sin migración. ✅
+
 ##
 
 

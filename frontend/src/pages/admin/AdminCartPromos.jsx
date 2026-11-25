@@ -360,8 +360,9 @@ export default function AdminCartPromos() {
       {/* ── Modal crear/editar ────────────────────────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          {/* Antes: max-w-lg. Más ancho para la vista previa de la tarjeta del inicio. */}
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          {/* Antes: max-w-lg, después max-w-2xl (para la vista previa de la tarjeta del inicio). Pedido de la
+              clienta (25/11/2026): "el modal de la promo hacelo más ancho" → max-w-5xl. */}
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
               <h2 className="text-lg font-bold text-slate-800">{editing ? "Editar promo" : copyOf ? "Duplicar promo" : "Nueva promo"}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
