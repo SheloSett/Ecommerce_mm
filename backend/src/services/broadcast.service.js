@@ -574,6 +574,12 @@ async function processEmailQueue({ transporter: injected } = {}) {
     return result;
   } catch (err) {
     console.error("[EMAIL] Error en la cola de emails:", err.message);
+    // Que se vea en el historial (25/11/2026): con una migración sin correr, la cola fallaba en cada vuelta y
+    // el envío quedaba "Enviando…" para siempre sin ningún motivo a la vista.
+    await prisma.emailBroadcast.updateMany({
+      where: { status: "SENDING", channel: "EMAIL" },
+      data: { lastError: `Error en la cola (revisá el log del servidor): ${err.message}`.slice(0, 300) },
+    }).catch(() => {});
     return result;
   } finally {
     if (transporter && !injected) transporter.close();
@@ -797,6 +803,11 @@ async function processWhatsappQueue({ now = new Date(), send = sendWhatsapp, ran
     return { paused: res.motivo };
   } catch (err) {
     console.error("[WHATSAPP] Error en la cola:", err.message);
+    // Que se vea en el historial (mismo criterio que la cola de emails)
+    await prisma.emailBroadcast.updateMany({
+      where: { status: "SENDING", channel: "WHATSAPP" },
+      data: { lastError: `Error en la cola (revisá el log del servidor): ${err.message}`.slice(0, 300) },
+    }).catch(() => {});
     return { error: err.message };
   } finally {
     waRunning = false;
