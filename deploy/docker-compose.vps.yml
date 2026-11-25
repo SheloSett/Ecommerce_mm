@@ -156,8 +156,8 @@ services:
   # EVOLUTION_URL=http://evolution:8080 y EVOLUTION_INSTANCIA (ej. igwt-avisos).
   #
   # Vincular la eSIM: el panel de Evolution no sale a internet. Desde tu PC:
-  #   ssh -L 8081:127.0.0.1:8081 shelo@82.25.74.242
-  # y en el navegador http://localhost:8081/manager → crear la instancia con el nombre de
+  #   ssh -L 18081:127.0.0.1:18081 shelo@82.25.74.242
+  # y en el navegador http://localhost:18081/manager → crear la instancia con el nombre de
   # EVOLUTION_INSTANCIA → escanear el QR con el teléfono de la eSIM.
   evolution-db:
     image: postgres:17
@@ -204,7 +204,7 @@ services:
         condition: service_healthy
     environment:
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
-      SERVER_URL: http://localhost:8081
+      SERVER_URL: http://localhost:${EVOLUTION_HOST_PORT:-18081}
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: postgresql
       DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:-}@evolution-db:5432/evolution
@@ -225,9 +225,12 @@ services:
       CONFIG_SESSION_PHONE_VERSION: ${EVOLUTION_PHONE_VERSION:-2.3000.1020885143}
       LOG_LEVEL: ${EVOLUTION_LOG_LEVEL:-ERROR}
       DEL_INSTANCE: "false"
-    # Solo en localhost del VPS (para el túnel del panel). 8081 y no 8080: el 8080 es el de Shiraf.
+    # Solo en localhost del VPS (para el túnel del panel). La tienda no lo usa: le habla a Evolution por la red
+    # del compose (evolution:8080). Antes 127.0.0.1:8081:8080, pero en el VPS el 8081 ya estaba ocupado
+    # ("port is already allocated", 25/11/2026) y el 8080 es el de Shiraf. Si 18081 también estuviera ocupado,
+    # se cambia con EVOLUTION_HOST_PORT en deploy/.env.
     ports:
-      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:${EVOLUTION_HOST_PORT:-18081}:8080"
     # La sesión vinculada vive acá: sobrevive a reinicios y redeploys sin volver a escanear el QR.
     volumes:
       - igwtstore_evolution_instances:/evolution/instances
