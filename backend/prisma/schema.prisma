@@ -970,6 +970,7 @@ model EmailRecipient {
   customerId  Int?           // sin FK: borrar un cliente no tiene que romper el historial
   email       String
   phone       String?        // Celular en formato WhatsApp (549...), solo en los envíos por WhatsApp
+  message     String?        // Texto ya armado para ese cliente (WhatsApp de carrito abandonado y restock, kind WA_TEXT)
   name        String
   type        String         // MINORISTA | MAYORISTA (mayorista APROBADO) — define precios y descuento
   status      String         @default("PENDING") // PENDING | SENT | FAILED | CANCELLED

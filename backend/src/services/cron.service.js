@@ -2,9 +2,10 @@ const cron = require("node-cron");
 const crypto = require("crypto");
 // Antes: { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } (sendErrorAlert: el vigilante de WhatsApp)
 const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail, sendErrorAlert } = require("./email.service");
-const { whatsappWatchdog } = require("./whatsapp.service");
+const { whatsappWatchdog, whatsappConfigured, getWhatsappSettings, restockText } = require("./whatsapp.service");
 const { syncOffers } = require("./offers.service");
-const { runEmailJobs, unsubscribeUrls } = require("./broadcast.service");
+// queueWhatsappMessages: el restock también por WhatsApp (25/11/2026)
+const { runEmailJobs, unsubscribeUrls, queueWhatsappMessages } = require("./broadcast.service");
 const { runAbandonedCartReminders } = require("./cartReminder.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
@@ -61,6 +62,10 @@ async function getEmailCampaignSettings() {
 // ---------------------------------------------------------------------------
 async function runMayoristaRestock() {
   console.log("[CRON] runMayoristaRestock iniciado");
+  // WhatsApp (pedido de la clienta, 25/11/2026: "carritos abandonados... restock"): a quienes les sale el
+  // email, el mismo recordatorio por la cola lenta de WhatsApp (de a uno, con tope por día).
+  const wa = whatsappConfigured() ? await getWhatsappSettings().catch(() => null) : null;
+  const waMessages = [];
   try {
     const customers = await prisma.customer.findMany({
       where: { type: "MAYORISTA", status: "APPROVED", unsubscribeRestock: false },
@@ -115,10 +120,19 @@ async function runMayoristaRestock() {
       });
 
       console.log(`[CRON] Restock email #${count + 1} enviado a ${customer.email}`);
+
+      if (wa?.restock && customer.phone) {
+        waMessages.push({
+          customer,
+          text: restockText(customer, { frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000", unsubscribeUrl, storePhone: wa.storePhone }),
+        });
+      }
     }
   } catch (err) {
     console.error("[CRON] Error en runMayoristaRestock:", err.message);
   }
+  // SELECTED: ya filtrados por su propia baja (unsubscribeRestock), no por la de promociones
+  if (waMessages.length) await queueWhatsappMessages("Restock mayoristas", waMessages, { audience: "SELECTED" });
 }
 
 // ---------------------------------------------------------------------------

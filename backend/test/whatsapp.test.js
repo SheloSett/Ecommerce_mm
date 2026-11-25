@@ -114,3 +114,31 @@ describe("campañas por WhatsApp", () => {
     assert.equal(argentinaHour(new Date("2026-11-26T02:30:00Z")), 23);
   });
 });
+
+// Carrito abandonado y restock por WhatsApp (25/11/2026)
+describe("recordatorios por WhatsApp", () => {
+  const { abandonedCartText, restockText } = require("../src/services/whatsapp.service");
+  const { renderWhatsapp } = require("../src/services/broadcast.service");
+  const ctx = { frontendUrl: "https://tienda.test", unsubscribeUrl: "https://tienda.test/baja", storePhone: "1150395166" };
+
+  test("carrito: los productos (hasta 4 y 'y N más'), el link al carrito, la baja y la firma", () => {
+    const items = ["A", "B", "C", "D", "E", "F"].map((n, i) => ({ name: `PRODUCTO ${n}`, variantLabel: i === 0 ? "Rojo" : null, quantity: i === 1 ? 3 : 1 }));
+    const t = abandonedCartText({ name: "Ana Pérez" }, items, ctx);
+    assert.match(t, /^Hola Ana! 👋/);
+    assert.match(t, /• PRODUCTO A \(Rojo\)\n• PRODUCTO B x3\n• PRODUCTO C\n• PRODUCTO D\n• y 2 más/);
+    assert.match(t, /Lo terminás acá: https:\/\/tienda\.test\/carrito/);
+    assert.match(t, /Si no querés recibir más recordatorios: https:\/\/tienda\.test\/baja/);
+    assert.match(t, /escribinos al 11 5039-5166\.$/);
+  });
+
+  test("restock: el recordatorio al mayorista con el link al catálogo", () => {
+    const t = restockText({ name: "Beto" }, ctx);
+    assert.match(t, /^Hola Beto! 👋/);
+    assert.match(t, /¿Reponemos\?/);
+    assert.match(t, /https:\/\/tienda\.test\/catalogo/);
+  });
+
+  test("la cola manda el texto armado tal cual (WA_TEXT)", async () => {
+    assert.equal(await renderWhatsapp({ kind: "WA_TEXT" }, { message: "hola tal cual" }), "hola tal cual");
+  });
+});

@@ -134,8 +134,12 @@ async function restartWhatsapp() {
 //   whatsappNewOrder       "false" = no avisar pedidos nuevos (por defecto sí, si hay números)
 //   whatsappCustomerStatus "false" = no avisarle al cliente el estado del pedido (por defecto sí)
 //   whatsappDailyLimit     tope de avisos de campañas por día (cola lenta, ver broadcast.service.js)
+//   whatsappAbandonedCart  "false" = el recordatorio de carrito abandonado solo por email (por defecto también
+//                          por WhatsApp; el recordatorio en sí se prende en Emails → Automáticos)
+//   whatsappRestock        "false" = el recordatorio de restock a mayoristas solo por email (por defecto también)
 //   footerPhone            el teléfono de la tienda (el del pie de la web): va en la firma de los avisos
-const SETTING_KEYS = ["whatsappAdminNumbers", "whatsappNewOrder", "whatsappCustomerStatus", "whatsappDailyLimit", "footerPhone"];
+// (whatsappAbandonedCart / whatsappRestock: pedido de la clienta, 25/11/2026, "carritos abandonados... restock")
+const SETTING_KEYS = ["whatsappAdminNumbers", "whatsappNewOrder", "whatsappCustomerStatus", "whatsappDailyLimit", "whatsappAbandonedCart", "whatsappRestock", "footerPhone"];
 const DEFAULT_DAILY_LIMIT = 100;
 const MAX_DAILY_LIMIT = 400;
 
@@ -147,11 +151,13 @@ async function getWhatsappSettings() {
     newOrder: v.whatsappNewOrder !== "false",
     customerStatus: v.whatsappCustomerStatus !== "false",
     dailyLimit: Math.min(MAX_DAILY_LIMIT, parseInt(v.whatsappDailyLimit, 10) > 0 ? parseInt(v.whatsappDailyLimit, 10) : DEFAULT_DAILY_LIMIT),
+    abandonedCart: v.whatsappAbandonedCart !== "false",
+    restock: v.whatsappRestock !== "false",
     storePhone: v.footerPhone || "1150395166",
   };
 }
 
-async function saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, dailyLimit }) {
+async function saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, dailyLimit, abandonedCart, restock }) {
   const upsert = (key, value) => prisma.siteConfig.upsert({ where: { key }, update: { value }, create: { key, value } });
   const ops = [];
   if (adminNumbers !== undefined) {
@@ -164,6 +170,8 @@ async function saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, da
   }
   if (newOrder !== undefined) ops.push(upsert("whatsappNewOrder", newOrder ? "true" : "false"));
   if (customerStatus !== undefined) ops.push(upsert("whatsappCustomerStatus", customerStatus ? "true" : "false"));
+  if (abandonedCart !== undefined) ops.push(upsert("whatsappAbandonedCart", abandonedCart ? "true" : "false"));
+  if (restock !== undefined) ops.push(upsert("whatsappRestock", restock ? "true" : "false"));
   if (dailyLimit !== undefined) {
     const n = parseInt(dailyLimit, 10);
     if (!(n >= 10 && n <= MAX_DAILY_LIMIT)) return { error: `El tope por día tiene que ser entre 10 y ${MAX_DAILY_LIMIT}` };
@@ -218,6 +226,29 @@ function customerStatusText(order, { kind, status }, { storePhone }) {
   }
   if (!body) return null;
   return [hola, body, "", firma(storePhone)].join("\n");
+}
+
+// Recordatorio de carrito abandonado (el mismo que sale por email, cartReminder.service.js). items: los del
+// carrito con stock ({ name, variantLabel, quantity }). ctx: { frontendUrl, unsubscribeUrl, storePhone }
+function abandonedCartText(customer, items, ctx) {
+  const lista = items.slice(0, 4).map((i) => `• ${i.name}${i.variantLabel ? ` (${i.variantLabel})` : ""}${i.quantity > 1 ? ` x${i.quantity}` : ""}`);
+  if (items.length > 4) lista.push(`• y ${items.length - 4} más`);
+  return [
+    `Hola${firstName(customer.name) ? ` ${firstName(customer.name)}` : ""}! 👋`,
+    `Te quedó esto en el carrito de IGWT Store:\n${lista.join("\n")}`,
+    `Lo terminás acá: ${ctx.frontendUrl}/carrito`,
+    [ctx.unsubscribeUrl ? `Si no querés recibir más recordatorios: ${ctx.unsubscribeUrl}` : null, firma(ctx.storePhone)].filter(Boolean).join("\n"),
+  ].join("\n\n");
+}
+
+// Recordatorio de restock a un mayorista (el mismo que sale por email, runMayoristaRestock en cron.service.js)
+function restockText(customer, ctx) {
+  return [
+    `Hola${firstName(customer.name) ? ` ${firstName(customer.name)}` : ""}! 👋`,
+    "Hace un tiempo que no hacés un pedido en IGWT Store. ¿Reponemos? Tus clientes te están esperando.",
+    `Catálogo mayorista: ${ctx.frontendUrl}/catalogo`,
+    [ctx.unsubscribeUrl ? `Si no querés recibir más recordatorios: ${ctx.unsubscribeUrl}` : null, firma(ctx.storePhone)].filter(Boolean).join("\n"),
+  ].join("\n\n");
 }
 
 // ── Avisos (fire-and-forget: nunca tiran error) ───────────────────────────────
@@ -290,6 +321,8 @@ module.exports = {
   saveWhatsappSettings,
   newOrderText,
   customerStatusText,
+  abandonedCartText,
+  restockText,
   notifyNewOrderWhatsapp,
   notifyOrderStatusWhatsapp,
   whatsappWatchdog,

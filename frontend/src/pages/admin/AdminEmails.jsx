@@ -429,7 +429,7 @@ function WhatsappText({ text }) {
 // Pestaña "WhatsApp": si la eSIM está conectada, qué avisa y la prueba. Ver backend/src/services/whatsapp.service.js.
 function WhatsappTab() {
   const [data, setData] = useState(null);
-  const [form, setForm] = useState({ adminNumbers: "", newOrder: true, customerStatus: true, dailyLimit: 100 });
+  const [form, setForm] = useState({ adminNumbers: "", newOrder: true, customerStatus: true, dailyLimit: 100, abandonedCart: true, restock: true });
   const [saving, setSaving] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [busy, setBusy] = useState("");
@@ -437,7 +437,10 @@ function WhatsappTab() {
   const load = () => emailsApi.whatsapp()
     .then((r) => {
       setData(r.data);
-      setForm({ adminNumbers: (r.data.adminNumbers || []).join(", "), newOrder: r.data.newOrder, customerStatus: r.data.customerStatus, dailyLimit: r.data.dailyLimit });
+      setForm({
+        adminNumbers: (r.data.adminNumbers || []).join(", "), newOrder: r.data.newOrder, customerStatus: r.data.customerStatus,
+        dailyLimit: r.data.dailyLimit, abandonedCart: r.data.abandonedCart, restock: r.data.restock,
+      });
     })
     .catch((e) => toast.error(e.response?.data?.error || "No se pudo leer la configuración de WhatsApp"));
   useEffect(() => { load(); }, []);
@@ -545,8 +548,27 @@ function WhatsappTab() {
             <span className="block text-xs text-slate-500">Cuando se aprueba el pago y cuando está listo para retirar o despachado. Al celular que cargó en el pedido.</span>
           </span>
         </label>
+        {/* Carrito abandonado y restock (25/11/2026): el mismo recordatorio del email, también por WhatsApp */}
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={form.abandonedCart} onChange={(e) => setForm({ ...form, abandonedCart: e.target.checked })} className="w-4 h-4 mt-0.5" />
+          <span>
+            <span className="block text-sm text-slate-800 font-medium">🛒 Carrito abandonado, también por WhatsApp</span>
+            <span className="block text-xs text-slate-500">
+              Cuando sale el email de “te quedó esto en el carrito”, le llega lo mismo por WhatsApp. El recordatorio se prende en Emails → Automáticos.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={form.restock} onChange={(e) => setForm({ ...form, restock: e.target.checked })} className="w-4 h-4 mt-0.5" />
+          <span>
+            <span className="block text-sm text-slate-800 font-medium">📦 Restock a mayoristas, también por WhatsApp</span>
+            <span className="block text-xs text-slate-500">
+              Al mayorista que hace tiempo no compra, el mismo recordatorio del email (“¿reponemos?”) con el link al catálogo.
+            </span>
+          </span>
+        </label>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-sm text-slate-800 font-medium">📣 Campañas: hasta</span>
+          <span className="text-sm text-slate-800 font-medium">📣 Campañas y recordatorios: hasta</span>
           <input
             type="number" min="10" max="400"
             value={form.dailyLimit}
@@ -555,7 +577,9 @@ function WhatsappTab() {
           />
           <span className="text-sm text-slate-600">mensajes por día</span>
           <p className="text-xs text-slate-500 w-full">
-            Se mandan desde “Avisos de campañas” → 📱 WhatsApp. Salen de a uno (cada 1,5 a 3 minutos) y solo entre las 9 y las 21. Más por día = más riesgo de bloqueo.
+            {/* Antes: "Se mandan desde “Avisos de campañas” → 📱 WhatsApp. ..." (ahora también los recordatorios) */}
+            Las campañas (desde “Avisos de campañas” → 📱 WhatsApp) y los recordatorios de carrito y restock salen por la misma cola:
+            de a uno (cada 1,5 a 3 minutos) y solo entre las 9 y las 21. Más por día = más riesgo de bloqueo.
           </p>
         </div>
         <div className="flex justify-end">

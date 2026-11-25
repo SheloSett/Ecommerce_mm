@@ -13,7 +13,9 @@
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 const { sendAbandonedCartEmail } = require("./email.service");
-const { unsubscribeUrls } = require("./broadcast.service");
+// Antes: { unsubscribeUrls }. queueWhatsappMessages: el mismo recordatorio por WhatsApp (25/11/2026)
+const { unsubscribeUrls, queueWhatsappMessages } = require("./broadcast.service");
+const { whatsappConfigured, getWhatsappSettings, abandonedCartText } = require("./whatsapp.service");
 
 const HOUR_MS = 60 * 60 * 1000;
 const MIN_AGE_MS = 24 * HOUR_MS;
@@ -32,8 +34,8 @@ async function runAbandonedCartReminders({ now = new Date(), send = sendAbandone
       customer:  { unsubscribeMarketing: false, status: { not: "REJECTED" } },
     },
     include: {
-      // type: para el precio mayorista al recalcular (ver enrichCarts)
-      customer: { select: { id: true, name: true, email: true, type: true } },
+      // type: para el precio mayorista al recalcular (ver enrichCarts). phone: el WhatsApp (25/11/2026)
+      customer: { select: { id: true, name: true, email: true, type: true, phone: true } },
       items:    { orderBy: { id: "asc" } },
     },
     orderBy: { updatedAt: "asc" },
@@ -44,6 +46,9 @@ async function runAbandonedCartReminders({ now = new Date(), send = sendAbandone
   const { enrichCarts } = require("../routes/cart.routes");
   let sent = 0;
   let skipped = 0;
+  // WhatsApp (25/11/2026): a quienes les salió el email, el mismo recordatorio por la cola lenta de WhatsApp
+  const wa = whatsappConfigured() ? await getWhatsappSettings() : null;
+  const waMessages = [];
   for (const cart of pending) {
     if (sent >= PER_RUN) break;
     // ¿Hizo un pedido después de dejar el carrito? (por otro medio, o uno de MP sin pagar todavía)
@@ -57,6 +62,16 @@ async function runAbandonedCartReminders({ now = new Date(), send = sendAbandone
       const ok = await send(cart.customer, items, { unsubscribe: unsubscribeUrls(cart.customerId) });
       if (!ok) continue; // SMTP caído o sin configurar: se reintenta en la próxima pasada
       sent++;
+      if (wa?.abandonedCart && cart.customer.phone) {
+        waMessages.push({
+          customer: cart.customer,
+          text: abandonedCartText(cart.customer, items, {
+            frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+            unsubscribeUrl: unsubscribeUrls(cart.customerId).page,
+            storePhone: wa.storePhone,
+          }),
+        });
+      }
     } else {
       skipped++;
     }
@@ -66,6 +81,7 @@ async function runAbandonedCartReminders({ now = new Date(), send = sendAbandone
     await prisma.cart.update({ where: { id: cart.id }, data: { reminderSentAt: now, updatedAt: cart.updatedAt } });
   }
   if (sent || skipped) console.log(`[CARRITOS] Recordatorios: ${sent} enviados, ${skipped} salteados`);
+  if (waMessages.length) await queueWhatsappMessages("Recordatorio de carrito", waMessages, { audience: "ALL" });
   return { sent, skipped };
 }
 

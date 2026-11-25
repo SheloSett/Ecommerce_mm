@@ -282,8 +282,9 @@ async function getWhatsappPanel(req, res) {
 // PUT /api/emails/whatsapp — { adminNumbers, newOrder, customerStatus, dailyLimit }
 async function updateWhatsappPanel(req, res) {
   try {
-    const { adminNumbers, newOrder, customerStatus, dailyLimit } = req.body || {};
-    const out = await saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, dailyLimit });
+    // abandonedCart / restock: los recordatorios automáticos también por WhatsApp (25/11/2026)
+    const { adminNumbers, newOrder, customerStatus, dailyLimit, abandonedCart, restock } = req.body || {};
+    const out = await saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, dailyLimit, abandonedCart, restock });
     if (out.error) return res.status(400).json({ error: out.error });
     res.json(out.data);
   } catch (err) {

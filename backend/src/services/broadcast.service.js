@@ -637,6 +637,8 @@ async function waTarget(target, id) {
 
 // Texto del aviso para un destinatario. cache: Map compartido (la promo / campaña y la configuración).
 async function renderWhatsapp(broadcast, recipient, cache = new Map(), { preview = false } = {}) {
+  // Carrito abandonado y restock (WA_TEXT): el texto viene armado para cada cliente (queueWhatsappMessages)
+  if (broadcast.kind === "WA_TEXT") return recipient.message;
   if (!cache.has("waSettings")) cache.set("waSettings", await getWhatsappSettings());
   const ctx = {
     storeName: storeName(),
@@ -700,6 +702,32 @@ async function announceWhatsapp(target, id, { createdBy = null, force = false } 
     kind, channel: "WHATSAPP", audience, offerId: ref.offerId ?? null, cartPromoId: ref.cartPromoId ?? null,
     createdBy, recipients, content: { subject: item.name },
   });
+}
+
+// Mensajes ya armados (carrito abandonado, restock) → a la cola de WhatsApp, en un envío del historial con
+// ese asunto. messages: [{ customer: { id, name, email, phone, type }, text }]. audience: "ALL" (al mandar
+// se vuelve a mirar la baja de promociones) o "SELECTED" (ya filtrados, ej. el restock tiene su propia
+// baja). Sin WhatsApp configurado o sin celulares válidos no hace nada. Nunca tira error.
+async function queueWhatsappMessages(subject, messages, { audience = "ALL" } = {}) {
+  try {
+    if (!whatsappConfigured()) return null;
+    const seen = new Set();
+    const recipients = [];
+    for (const { customer, text } of messages) {
+      const phone = toWhatsappNumber(customer?.phone);
+      if (!phone || seen.has(phone) || !String(text || "").trim()) continue;
+      seen.add(phone);
+      recipients.push({
+        customerId: customer.id, email: String(customer.email || "").trim().toLowerCase(), phone,
+        name: customer.name || "", type: customer.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA", message: text,
+      });
+    }
+    if (recipients.length === 0) return null;
+    return await createBroadcast({ kind: "WA_TEXT", channel: "WHATSAPP", audience, recipients, content: { subject } });
+  } catch (err) {
+    console.error("[WHATSAPP] No se pudieron encolar los mensajes:", err.message);
+    return null;
+  }
 }
 
 // Hora en Argentina (0-23), para el horario de envío.
@@ -823,6 +851,7 @@ module.exports = {
   whatsappPreview,
   announceWhatsapp,
   processWhatsappQueue,
+  queueWhatsappMessages,
   argentinaHour,
   renderFor,
   isRetryableSendError,
