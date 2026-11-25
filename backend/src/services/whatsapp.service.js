@@ -270,7 +270,8 @@ function abandonedCartText(customer, items, ctx) {
     `Hola${firstName(customer.name) ? ` ${firstName(customer.name)}` : ""}! 👋`,
     `Te quedó esto en el carrito de IGWT Store:\n${lista.join("\n")}`,
     ctx.couponCode ? `🎁 Usá el cupón *${ctx.couponCode}*${ctx.couponDescription ? ` (${ctx.couponDescription})` : ""} al pagar.` : null,
-    `Lo terminás acá: ${ctx.frontendUrl}/carrito`,
+    // ?recordatorio=1: sin sesión iniciada, el carrito le pide iniciar sesión en vez de mostrarse vacío
+    `Lo terminás acá: ${ctx.frontendUrl}/carrito?recordatorio=1`,
     [ctx.unsubscribeUrl ? `Si no querés recibir más recordatorios: ${ctx.unsubscribeUrl}` : null, firma(ctx.storePhone)].filter(Boolean).join("\n"),
   ].filter(Boolean).join("\n\n");
 }

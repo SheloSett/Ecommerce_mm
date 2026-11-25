@@ -1,4 +1,5 @@
-import { Link, useNavigate } from "react-router-dom";
+// Antes: { Link, useNavigate }. useLocation: el ?recordatorio=1 de los links de carrito abandonado (25/11/2026)
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { useCart } from "../context/CartContext";
@@ -18,6 +19,13 @@ export default function Cart() {
   const { customer } = useCustomerAuth();
   const { mayoristaMinimoCompra } = useSiteConfig();
   const navigate = useNavigate();
+  // Sin sesión iniciada (25/11/2026): el carrito guardado está en la cuenta del cliente, y quien abría el link
+  // del recordatorio de carrito (email o WhatsApp) en otro navegador o en el celular lo veía vacío. Se le
+  // ofrece iniciar sesión y volver acá (?volver=/carrito, ver utils/returnTo.js): al entrar, la tienda trae
+  // el carrito guardado y le suma lo que tuviera como invitado (CartContext → mergeGuestCart).
+  const location = useLocation();
+  const fromReminder = new URLSearchParams(location.search).has("recordatorio");
+  const loginToCart = `/login?volver=${encodeURIComponent("/carrito")}`;
 
   const isMayorista = customer?.type === "MAYORISTA";
 
@@ -69,6 +77,24 @@ export default function Cart() {
           )}
         </div>
 
+        {/* Vino del recordatorio de carrito sin sesión iniciada: su carrito está en la cuenta (25/11/2026) */}
+        {!customer && fromReminder && (
+          <div className="mb-8 flex flex-col sm:flex-row sm:items-center gap-4 rounded-[14px] border border-[#00873a]/30 bg-[#00873a]/10 px-5 py-4">
+            <span className="material-symbols-outlined text-[32px] text-[#00873a]">shopping_cart_checkout</span>
+            <div className="flex-1">
+              <p className="font-bold text-[#0b1c30]">Tu carrito está guardado en tu cuenta</p>
+              <p className="text-sm text-[#565e74]">Iniciá sesión para verlo y terminar la compra. Te traemos de vuelta acá.</p>
+            </div>
+            <Link
+              to={loginToCart}
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-[#00873a] text-white font-bold rounded-[10px] hover:brightness-110 transition-all"
+            >
+              <span className="material-symbols-outlined text-[20px]">login</span>
+              Iniciar sesión
+            </Link>
+          </div>
+        )}
+
         {items.length === 0 ? (
           /* ── Carrito vacío ── */
           <div className="flex flex-col items-center justify-center py-32">
@@ -79,6 +105,14 @@ export default function Cart() {
             <p className="text-[#565e74] mb-8">
               Agregá productos desde el catálogo para empezar.
             </p>
+            {/* Sin sesión (25/11/2026): quizás dejó productos guardados en su cuenta desde otro dispositivo */}
+            {!customer && !fromReminder && (
+              <p className="text-sm text-[#565e74] -mt-4 mb-8 text-center">
+                ¿Ya tenés cuenta?{" "}
+                <Link to={loginToCart} className="font-semibold text-[#006b2c] underline underline-offset-4">Iniciá sesión</Link>{" "}
+                para ver los productos que guardaste.
+              </p>
+            )}
             <Link
               to="/catalogo"
               className="flex items-center gap-2 px-8 py-3 bg-[#00873a] text-white font-bold rounded-[10px] hover:brightness-110 transition-all"

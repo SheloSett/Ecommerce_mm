@@ -126,7 +126,8 @@ describe("recordatorios por WhatsApp", () => {
     const t = abandonedCartText({ name: "Ana Pérez" }, items, ctx);
     assert.match(t, /^Hola Ana! 👋/);
     assert.match(t, /• PRODUCTO A \(Rojo\)\n• PRODUCTO B x3\n• PRODUCTO C\n• PRODUCTO D\n• y 2 más/);
-    assert.match(t, /Lo terminás acá: https:\/\/tienda\.test\/carrito/);
+    // ?recordatorio=1: sin sesión, el carrito pide iniciar sesión en vez de verse vacío
+    assert.match(t, /Lo terminás acá: https:\/\/tienda\.test\/carrito\?recordatorio=1/);
     assert.match(t, /Si no querés recibir más recordatorios: https:\/\/tienda\.test\/baja/);
     assert.match(t, /escribinos al 11 5039-5166\.$/);
   });

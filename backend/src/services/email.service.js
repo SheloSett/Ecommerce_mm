@@ -1519,7 +1519,9 @@ async function sendAbandonedCartEmail(customer, cartItems, { couponCode, couponD
   }
 
   const baseUrl = storeUrl || process.env.FRONTEND_URL || "http://localhost:3000";
-  const url = `${baseUrl}/carrito`;
+  // ?recordatorio=1 (25/11/2026): si el cliente lo abre sin sesión iniciada, el carrito le muestra "tu carrito
+  // está guardado en tu cuenta, iniciá sesión" en vez de un carrito vacío. Antes: `${baseUrl}/carrito`
+  const url = `${baseUrl}/carrito?recordatorio=1`;
   const attachments = [];
 
   const rowsHtml = cartItems.map((item, idx) => {
