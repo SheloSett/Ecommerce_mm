@@ -20,6 +20,9 @@ const { buildCustomEmail, buildPlainEmail, buildOfferEmail, buildPlainOfferEmail
 const { AVAILABLE_STOCK_FILTER } = require("../utils/stockFilter");
 // Aviso del descuento por monto (25/11/2026)
 const { isPromoLive, promoForCustomer } = require("../utils/cartPromo");
+// Avisos de campañas por WhatsApp (25/11/2026)
+const { whatsappConfigured, toWhatsappNumber, phoneDisplay, sendWhatsapp, getWhatsappSettings } = require("./whatsapp.service");
+const { whatsappPromoText, whatsappOfferText } = require("./broadcast.templates");
 const { resolveScope } = require("./cartPromo.service");
 const { loadFlatCategories } = require("../utils/categoryTree");
 
@@ -68,7 +71,8 @@ function pickRecipients(customers, audience) {
   return out;
 }
 
-const CUSTOMER_SELECT = { id: true, name: true, email: true, type: true, status: true, unsubscribeMarketing: true };
+// phone: para los avisos por WhatsApp (25/11/2026)
+const CUSTOMER_SELECT = { id: true, name: true, email: true, phone: true, type: true, status: true, unsubscribeMarketing: true };
 
 async function resolveRecipients(audience, customerIds = []) {
   const where = audience === "SELECTED" ? { id: { in: customerIds } } : {};
@@ -126,7 +130,8 @@ function validateCustomPayload(body) {
 
 // recipients: opcional, ya resueltos (el aviso a clientes elegidos los filtra antes por público).
 // cartPromoId: el descuento por monto que se avisa (kind PROMO_*). Antes solo offerId.
-async function createBroadcast({ kind, audience, customerIds = [], offerId = null, cartPromoId = null, createdBy = null, content, recipients: given = null }) {
+// channel: "EMAIL" | "WHATSAPP" (25/11/2026; los de WhatsApp llegan con recipients ya resueltos, con phone).
+async function createBroadcast({ kind, channel = "EMAIL", audience, customerIds = [], offerId = null, cartPromoId = null, createdBy = null, content, recipients: given = null }) {
   if (!AUDIENCES.includes(audience)) throw new BroadcastError(400, "Destinatarios inválidos");
   if (audience === "SELECTED" && customerIds.length === 0 && !given) throw new BroadcastError(400, "Elegí al menos un cliente");
   const recipients = given || (await resolveRecipients(audience, customerIds));
@@ -134,7 +139,7 @@ async function createBroadcast({ kind, audience, customerIds = [], offerId = nul
 
   return prisma.$transaction(async (tx) => {
     const broadcast = await tx.emailBroadcast.create({
-      data: { kind, audience, offerId, cartPromoId, createdBy, total: recipients.length, ...content },
+      data: { kind, channel, audience, offerId, cartPromoId, createdBy, total: recipients.length, ...content },
     });
     await tx.emailRecipient.createMany({
       data: recipients.map((r) => ({ ...r, broadcastId: broadcast.id })),
@@ -452,8 +457,9 @@ async function setDailyLimit(n) {
     create: { key: "emailDailyLimit", value: String(n) },
   });
 }
-const sentLast24h = (now = new Date()) =>
-  prisma.emailRecipient.count({ where: { status: "SENT", sentAt: { gt: new Date(now.getTime() - DAY_MS) } } });
+// Antes: sin filtrar el canal. Los avisos por WhatsApp (25/11/2026) no cuentan para el tope de Gmail.
+const sentLast24h = (now = new Date(), channel = "EMAIL") =>
+  prisma.emailRecipient.count({ where: { status: "SENT", sentAt: { gt: new Date(now.getTime() - DAY_MS) }, broadcast: { channel } } });
 
 let queueRunning = false;
 
@@ -480,7 +486,8 @@ async function processEmailQueue({ transporter: injected } = {}) {
     const budget = Math.min(PER_TICK, (await getDailyLimit()) - (await sentLast24h(now)));
     const batch = budget > 0
       ? await prisma.emailRecipient.findMany({
-          where: { status: "PENDING", broadcast: { status: "SENDING" } },
+          // Antes: broadcast: { status: "SENDING" }. Los de WhatsApp los manda processWhatsappQueue.
+          where: { status: "PENDING", broadcast: { status: "SENDING", channel: "EMAIL" } },
           orderBy: [{ broadcastId: "asc" }, { id: "asc" }],
           take: budget,
           include: { broadcast: true },
@@ -584,6 +591,190 @@ async function cancelBroadcast(id) {
   ]);
 }
 
+// ── Avisos de campañas por WhatsApp (Evolution, 25/11/2026) ───────────────────
+// Pedido de la clienta: las campañas y los descuentos por monto también por WhatsApp, desde la eSIM de
+// avisos (whatsapp.service.js; NO es la API oficial: el número se puede banear). Usa las mismas tablas que
+// los emails (channel "WHATSAPP", kind WA_OFFER | WA_PROMO), pero su propia cola, mucho más lenta:
+//   - UN mensaje cada 1,5 a 3 minutos (al azar): ráfagas iguales es lo que hace que WhatsApp mire el número
+//   - solo entre las 9 y las 21 (hora argentina): a las 3 de la mañana parece un robot y molesta
+//   - con un tope por día (Emails → WhatsApp, 100 por defecto)
+//   - si la sesión de la eSIM se cae, se pausa y sigue sola cuando vuelve (no marca a nadie como fallido)
+// A cada cliente le llega su versión (sus escalones / su descuento) y el link de baja de las promociones.
+
+const WA_FROM_HOUR = 9;
+const WA_TO_HOUR = 21;
+let waLastSentAt = 0;
+let waNextGapMs = 0;
+let waRunning = false;
+
+// Clientes → destinatarios por WhatsApp de un público (ALL | MINORISTA | MAYORISTA): sin rechazados, sin
+// dados de baja y con un celular válido, sin repetir el número. Puro, para testearlo.
+function pickWhatsappRecipients(customers, audience) {
+  const seen = new Set();
+  const out = [];
+  for (const c of customers) {
+    const type = effectiveType(c);
+    if (c.status === "REJECTED" || c.unsubscribeMarketing) continue;
+    if (audience === "MINORISTA" && type !== "MINORISTA") continue;
+    if (audience === "MAYORISTA" && type !== "MAYORISTA") continue;
+    const phone = toWhatsappNumber(c.phone);
+    if (!phone || seen.has(phone)) continue;
+    seen.add(phone);
+    out.push({ customerId: c.id, email: String(c.email || "").trim().toLowerCase(), phone, name: c.name || "", type });
+  }
+  return out;
+}
+
+// La campaña o promo a avisar: { item, live, kind, ref } (ref = { offerId } | { cartPromoId }).
+async function waTarget(target, id) {
+  if (target === "promo") {
+    const item = await prisma.cartPromo.findUnique({ where: { id } });
+    return { item, live: !!item && isPromoLive(item), kind: "WA_PROMO", ref: { cartPromoId: id } };
+  }
+  const item = await prisma.offer.findUnique({ where: { id } });
+  return { item, live: !!item && offerState(item) === "ACTIVA", kind: "WA_OFFER", ref: { offerId: id } };
+}
+
+// Texto del aviso para un destinatario. cache: Map compartido (la promo / campaña y la configuración).
+async function renderWhatsapp(broadcast, recipient, cache = new Map(), { preview = false } = {}) {
+  if (!cache.has("waSettings")) cache.set("waSettings", await getWhatsappSettings());
+  const ctx = {
+    storeName: storeName(),
+    frontendUrl: frontendUrl(),
+    unsubscribeUrl: recipient.customerId ? unsubscribeUrls(recipient.customerId).page : `${frontendUrl()}/desuscribirse`,
+    storePhone: phoneDisplay(cache.get("waSettings").storePhone),
+  };
+  const type = recipient.type === "MAYORISTA" ? "MAYORISTA" : "MINORISTA";
+  const gone = () => Object.assign(new Error("La campaña terminó, se pausó o se borró antes de que se mandaran todos los avisos"), { code: "OFFER_GONE" });
+  if (broadcast.kind === "WA_PROMO") {
+    const key = `promo:${broadcast.cartPromoId}:${preview}`;
+    if (!cache.has(key)) cache.set(key, await promoEmailData(broadcast.cartPromoId, { allowInactive: preview }));
+    if (!cache.get(key)) throw gone();
+    return whatsappPromoText(promoForCustomer(cache.get(key), type), recipient, ctx);
+  }
+  const side = type === "MAYORISTA" ? "wholesale" : "retail";
+  const key = `offer:${broadcast.offerId}:${side}:${preview}`;
+  if (!cache.has(key)) cache.set(key, await offerEmailData(broadcast.offerId, side, { allowInactive: preview }));
+  if (!cache.get(key)) throw gone();
+  return whatsappOfferText(cache.get(key).offer, side, recipient, ctx);
+}
+
+// Antes de mandar: a cuántos les llega y cómo se ve (minorista y mayorista, con un nombre de ejemplo).
+async function whatsappPreview(target, id) {
+  const { item, kind, ref } = await waTarget(target, id);
+  if (!item) throw new BroadcastError(404, target === "promo" ? "Promo no encontrada" : "Campaña no encontrada");
+  const audience = offerAudience(item);
+  const customers = await prisma.customer.findMany({ select: CUSTOMER_SELECT, orderBy: { id: "asc" } });
+  const recipients = pickWhatsappRecipients(customers, audience);
+  const settings = await getWhatsappSettings();
+  const cache = new Map();
+  const b = { kind, ...ref };
+  const sample = (type) => renderWhatsapp(b, { customerId: null, name: "Juan", type }, cache, { preview: true });
+  return {
+    configured: whatsappConfigured(),
+    count: recipients.length,
+    dailyLimit: settings.dailyLimit,
+    retail: audience === "MAYORISTA" ? null : await sample("MINORISTA"),
+    wholesale: audience === "MINORISTA" ? null : await sample("MAYORISTA"),
+  };
+}
+
+// Encola el aviso por WhatsApp de una campaña o promo VIGENTE, a todos los que les aplica. Una sola vez
+// salvo force (el admin confirma que lo quiere mandar de nuevo).
+async function announceWhatsapp(target, id, { createdBy = null, force = false } = {}) {
+  if (!whatsappConfigured()) throw new BroadcastError(400, "El WhatsApp de avisos todavía no está configurado (Emails → WhatsApp)");
+  const { item, live, kind, ref } = await waTarget(target, id);
+  if (!item) throw new BroadcastError(404, target === "promo" ? "Promo no encontrada" : "Campaña no encontrada");
+  if (!live) throw new BroadcastError(400, "Solo se puede avisar mientras está vigente (en fecha y sin pausar)");
+  if (!force) {
+    const prev = await prisma.emailBroadcast.findFirst({
+      where: { channel: "WHATSAPP", ...ref, status: { in: ["SENDING", "DONE"] } }, select: { createdAt: true },
+    });
+    if (prev) throw new BroadcastError(409, "Esto ya se mandó por WhatsApp");
+  }
+  const audience = offerAudience(item);
+  const customers = await prisma.customer.findMany({ select: CUSTOMER_SELECT, orderBy: { id: "asc" } });
+  const recipients = pickWhatsappRecipients(customers, audience);
+  if (recipients.length === 0) throw new BroadcastError(400, "Ningún cliente al que le aplica tiene un celular cargado");
+  return createBroadcast({
+    kind, channel: "WHATSAPP", audience, offerId: ref.offerId ?? null, cartPromoId: ref.cartPromoId ?? null,
+    createdBy, recipients, content: { subject: item.name },
+  });
+}
+
+// Hora en Argentina (0-23), para el horario de envío.
+const argentinaHour = (d) => Number(d.toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires", hour: "numeric", hourCycle: "h23" }));
+
+// Cron, cada minuto: manda COMO MUCHO un mensaje (ver arriba). send/random: inyectables para los tests.
+async function processWhatsappQueue({ now = new Date(), send = sendWhatsapp, random = Math.random } = {}) {
+  if (waRunning || !whatsappConfigured()) return { skipped: "sin configurar" };
+  const hour = argentinaHour(now);
+  if (hour < WA_FROM_HOUR || hour >= WA_TO_HOUR) return { skipped: "fuera de horario" };
+  if (now.getTime() - waLastSentAt < waNextGapMs) return { skipped: "esperando" };
+  waRunning = true;
+  try {
+    const settings = await getWhatsappSettings();
+    if ((await sentLast24h(now, "WHATSAPP")) >= settings.dailyLimit) return { skipped: "tope diario" };
+    const r = await prisma.emailRecipient.findFirst({
+      where: { status: "PENDING", broadcast: { status: "SENDING", channel: "WHATSAPP" } },
+      orderBy: [{ broadcastId: "asc" }, { id: "asc" }],
+      include: { broadcast: true },
+    });
+    if (!r) return { idle: true };
+    const b = r.broadcast;
+
+    // Quien se dio de baja mientras esperaba en la cola ya no lo recibe (mismo criterio que el email)
+    if (b.audience !== "SELECTED" && r.customerId) {
+      const customer = await prisma.customer.findUnique({ where: { id: r.customerId }, select: { status: true, unsubscribeMarketing: true } });
+      const skip = skipReasonAtSend(b, customer);
+      if (skip) {
+        await prisma.emailRecipient.update({ where: { id: r.id }, data: { status: "CANCELLED", error: skip } });
+        return { cancelled: skip };
+      }
+    }
+
+    let text;
+    try {
+      text = await renderWhatsapp(b, r);
+    } catch (err) {
+      if (err.code !== "OFFER_GONE") throw err;
+      await prisma.$transaction([
+        prisma.emailRecipient.updateMany({ where: { broadcastId: b.id, status: "PENDING" }, data: { status: "CANCELLED" } }),
+        prisma.emailBroadcast.update({ where: { id: b.id }, data: { status: "CANCELLED", finishedAt: new Date(), lastError: err.message } }),
+      ]);
+      return { cancelled: err.message };
+    }
+
+    const res = await send({ to: r.phone, text });
+    waLastSentAt = now.getTime();
+    waNextGapMs = Math.round((90 + random() * 90) * 1000);
+    if (res.ok) {
+      await prisma.$transaction([
+        prisma.emailRecipient.update({ where: { id: r.id }, data: { status: "SENT", sentAt: new Date(), error: null } }),
+        prisma.emailBroadcast.update({ where: { id: b.id }, data: { sentCount: { increment: 1 }, lastError: null } }),
+      ]);
+      return { sent: 1 };
+    }
+    // El número no tiene WhatsApp: falla ese y se sigue. Cualquier otra cosa (sesión cerrada, Evolution
+    // caído, llave mal) es del servidor: se pausa y se reintenta en el próximo turno, sin marcar a nadie.
+    if (/"exists"\s*:\s*false|no es un celular/i.test(res.motivo)) {
+      await prisma.$transaction([
+        prisma.emailRecipient.update({ where: { id: r.id }, data: { status: "FAILED", error: "Ese número no tiene WhatsApp" } }),
+        prisma.emailBroadcast.update({ where: { id: b.id }, data: { failedCount: { increment: 1 } } }),
+      ]);
+      return { failed: 1 };
+    }
+    await prisma.emailBroadcast.update({ where: { id: b.id }, data: { lastError: `WhatsApp en pausa: ${res.motivo}`.slice(0, 300) } });
+    console.error("[WHATSAPP] Cola en pausa:", res.motivo);
+    return { paused: res.motivo };
+  } catch (err) {
+    console.error("[WHATSAPP] Error en la cola:", err.message);
+    return { error: err.message };
+  } finally {
+    waRunning = false;
+  }
+}
+
 // Cron: avisos de campañas que empezaron + una tanda de la cola.
 async function runEmailJobs() {
   try {
@@ -598,6 +789,8 @@ async function runEmailJobs() {
     console.error("[EMAIL] Error revisando avisos de promos:", err.message);
   }
   await processEmailQueue();
+  // Avisos por WhatsApp (25/11/2026): como mucho uno por turno, ver processWhatsappQueue
+  await processWhatsappQueue();
 }
 
 module.exports = {
@@ -625,6 +818,12 @@ module.exports = {
   announceStartedPromos,
   promoEmailData,
   PROMO_KIND_BY_FORMAT,
+  pickWhatsappRecipients,
+  renderWhatsapp,
+  whatsappPreview,
+  announceWhatsapp,
+  processWhatsappQueue,
+  argentinaHour,
   renderFor,
   isRetryableSendError,
   getDailyLimit,

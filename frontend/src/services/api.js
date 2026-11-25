@@ -543,6 +543,13 @@ export const emailsApi = {
   setPromoAuto:  (id, emailAnnounce)   => api.put(`/emails/promos/${id}/auto`, { emailAnnounce }),
   announcePromo: (id, force = false)   => api.post(`/emails/promos/${id}/announce`, { force }),
   sendPromo:     (id, customerIds)     => api.post(`/emails/promos/${id}/send`, { customerIds }),
+  // WhatsApp de avisos por Evolution (25/11/2026). type: "offer" | "promo"
+  whatsapp:          ()                => api.get("/emails/whatsapp"),
+  saveWhatsapp:      (data)            => api.put("/emails/whatsapp", data),
+  whatsappTest:      (to)              => api.post("/emails/whatsapp/test", { to }),
+  whatsappRestart:   ()                => api.post("/emails/whatsapp/restart"),
+  whatsappPreview:   (type, id)        => api.get(`/emails/${type === "promo" ? "promos" : "offers"}/${id}/whatsapp`),
+  whatsappAnnounce:  (type, id, force = false) => api.post(`/emails/${type === "promo" ? "promos" : "offers"}/${id}/whatsapp`, { force }),
   getSettings:    ()     => api.get("/emails/settings"),
   updateSettings: (data) => api.put("/emails/settings", data),
 };

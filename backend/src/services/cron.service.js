@@ -1,6 +1,8 @@
 const cron = require("node-cron");
 const crypto = require("crypto");
-const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } = require("./email.service");
+// Antes: { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } (sendErrorAlert: el vigilante de WhatsApp)
+const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail, sendErrorAlert } = require("./email.service");
+const { whatsappWatchdog } = require("./whatsapp.service");
 const { syncOffers } = require("./offers.service");
 const { runEmailJobs, unsubscribeUrls } = require("./broadcast.service");
 const { runAbandonedCartReminders } = require("./cartReminder.service");
@@ -262,6 +264,13 @@ function startCronJobs() {
   cron.schedule("30 * * * *", () => {
     runAbandonedCartReminders().catch((err) => console.error("[CRON] Error en recordatorios de carrito:", err.message));
   });
+  // WhatsApp de avisos (25/11/2026): cada 10 minutos mira si la eSIM sigue conectada; si no, reinicia la
+  // sesión y, si no vuelve, manda un email. Sin Evolution configurado no hace nada. Ver whatsapp.service.js.
+  cron.schedule("*/10 * * * *", () => {
+    whatsappWatchdog({ sendAlert: (s, t) => sendErrorAlert(s, t).catch(() => {}) })
+      .catch((err) => console.error("[CRON] Error en el vigilante de WhatsApp:", err.message));
+  });
+
   // Una pasada al arrancar: si el contenedor estuvo caído justo cuando una campaña tenía que
   // empezar o terminar, se corrige de entrada en vez de esperar al próximo minuto.
   syncOffers();

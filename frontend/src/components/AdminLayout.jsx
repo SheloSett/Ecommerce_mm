@@ -135,6 +135,8 @@ export default function AdminLayout({ children, title }) {
         { label: "Historial",            tab: "historial" },
         { label: "Cambios de email",     tab: "cambios" },
         { label: "Automáticos",          tab: "automaticos" },
+        // WhatsApp de avisos por Evolution (25/11/2026): estado de la eSIM y qué avisa
+        { label: "📱 WhatsApp",          tab: "whatsapp" },
       ],
     },
 

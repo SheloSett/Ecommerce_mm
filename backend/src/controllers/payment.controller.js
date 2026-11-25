@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 const { sendOrderNotificationToAdmin, sendOrderConfirmationToCustomer } = require("../services/email.service");
+// WhatsApp a la tienda cuando se acredita un pago de MP (25/11/2026)
+const { notifyNewOrderWhatsapp } = require("../services/whatsapp.service");
 const { removeOrderedItemsFromCart } = require("../utils/cartCleanup");
 const { customerFromToken } = require("../middleware/auth.middleware");
 const { reportError } = require("../services/errorAlerts.service");
@@ -398,6 +400,8 @@ async function applyMpApproval(orderId, paymentId) {
   try {
     await sendOrderConfirmationToCustomer({ ...order, mpPaymentId: String(paymentId) });
   } catch (err) { console.error("[MP] Error enviando email al cliente:", err.message); }
+  // WhatsApp a la tienda: "pedido nuevo" (nunca tira error)
+  notifyNewOrderWhatsapp(order);
 }
 
 // POST /api/payments/webhook

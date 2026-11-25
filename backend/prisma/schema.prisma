@@ -936,6 +936,9 @@ model StoreEvent {
 model EmailBroadcast {
   id          Int              @id @default(autoincrement())
   kind        String           // CUSTOM = escrito por el admin | OFFER = aviso de una campaña
+  // Por dónde sale (25/11/2026): EMAIL (la cola de siempre) | WHATSAPP (Evolution, cola lenta con tope por
+  // día; kind WA_OFFER | WA_PROMO). Ver broadcast.service.js → processWhatsappQueue.
+  channel     String           @default("EMAIL")
   subject     String
   title       String?
   body        String?          // texto del admin (CUSTOM)
@@ -966,6 +969,7 @@ model EmailRecipient {
   broadcast   EmailBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
   customerId  Int?           // sin FK: borrar un cliente no tiene que romper el historial
   email       String
+  phone       String?        // Celular en formato WhatsApp (549...), solo en los envíos por WhatsApp
   name        String
   type        String         // MINORISTA | MAYORISTA (mayorista APROBADO) — define precios y descuento
   status      String         @default("PENDING") // PENDING | SENT | FAILED | CANCELLED

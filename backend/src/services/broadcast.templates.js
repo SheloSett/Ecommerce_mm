@@ -585,7 +585,53 @@ ${ctx.unsubscribeUrl ? `<p style="margin:18px 0 0;font-size:12px;color:#888888">
   };
 }
 
+// ── Avisos de campañas por WhatsApp (Evolution, 25/11/2026) ───────────────────
+// Texto plano con el formato de WhatsApp (*negrita*). Corto y personal: es lo que menos llama la atención
+// de WhatsApp (el número de avisos no es el oficial, ver whatsapp.service.js). Siempre con el link de baja
+// y la aclaración de que el número no se lee. ctx: { storeName, frontendUrl, unsubscribeUrl, storePhone }
+// (storePhone ya para mostrar, ej. "11 5039-5166").
+function whatsappFooter(ctx) {
+  return [
+    ctx.unsubscribeUrl ? `Si no querés recibir más promos: ${ctx.unsubscribeUrl}` : null,
+    `Este número solo envía avisos. Si necesitás algo, escribinos al ${ctx.storePhone}.`,
+  ].filter(Boolean).join("\n");
+}
+
+// promo: ya en la versión de quien lo recibe (promoForCustomer), con scopeLabel si es para algunos productos.
+function whatsappPromoText(promo, recipient, ctx) {
+  const tiers = promoTiersOf(promo);
+  const name = firstName(recipient?.name);
+  const ends = endsText(promo.endsAt);
+  const exclusive = isExclusiveWholesale(promo, recipient);
+  return [
+    exclusive ? "*EXCLUSIVO PARA MAYORISTAS*" : null,
+    `Hola${name ? ` ${name}` : ""}! 👋`,
+    `Arrancó *${promo.name}* en ${ctx.storeName}: ${promoDiscountText(tiers).toLowerCase()} ${promoScopeText(promo)}${ends ? `, hasta el ${ends}` : ""}.`,
+    tiers.length ? tiers.map((t) => `• ${promoTierLine(t)}`).join("\n") : null,
+    promo.description || null,
+    `Mirá los productos: ${ctx.frontendUrl}/catalogo`,
+    whatsappFooter(ctx),
+  ].filter(Boolean).join("\n\n");
+}
+
+// offer: con items (para el "hasta X%"); side: "retail" | "wholesale".
+function whatsappOfferText(offer, side, recipient, ctx) {
+  const parts = offerHighlightParts(offer, offer.items || [], side);
+  const name = firstName(recipient?.name);
+  const ends = endsText(offer.endsAt);
+  const discount = parts ? `${parts.prefix ? "hasta " : ""}${parts.amount} de descuento` : "descuentos";
+  return [
+    `Hola${name ? ` ${name}` : ""}! 👋`,
+    `Arrancó *${offer.name}* en ${ctx.storeName}: ${discount} en productos seleccionados${ends ? `, hasta el ${ends}` : ""}.`,
+    offer.description || null,
+    `Mirá las ofertas: ${ctx.frontendUrl}/catalogo?offerId=${offer.id}`,
+    whatsappFooter(ctx),
+  ].filter(Boolean).join("\n\n");
+}
+
 module.exports = {
+  whatsappPromoText,
+  whatsappOfferText,
   buildLightPromoEmail,
   buildPlainPromoEmail,
   escapeHtml,

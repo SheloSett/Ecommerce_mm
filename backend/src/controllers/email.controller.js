@@ -12,6 +12,9 @@ const {
   announcePromo,
   sendPromoTo,
   PROMO_KIND_BY_FORMAT,
+  whatsappPreview,
+  announceWhatsapp,
+  processWhatsappQueue,
   renderFor,
   getDailyLimit,
   setDailyLimit,
@@ -25,6 +28,10 @@ const {
   PER_TICK,
 } = require("../services/broadcast.service");
 const { createBulkTransporter } = require("../services/email.service");
+// WhatsApp de avisos (25/11/2026)
+const {
+  whatsappConfigured, whatsappState, restartWhatsapp, sendWhatsapp, getWhatsappSettings, saveWhatsappSettings,
+} = require("../services/whatsapp.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 
@@ -258,6 +265,83 @@ async function sendPromoToSelected(req, res) {
   }
 }
 
+// ── WhatsApp de avisos (Evolution, 25/11/2026) ────────────────────────────────
+// Ver services/whatsapp.service.js (envío, configuración) y broadcast.service.js (cola de campañas).
+
+// GET /api/emails/whatsapp — estado de la eSIM y configuración
+async function getWhatsappPanel(req, res) {
+  try {
+    const [settings, state] = await Promise.all([getWhatsappSettings(), whatsappState()]);
+    const sentToday = await sentLast24h(new Date(), "WHATSAPP");
+    res.json({ configured: whatsappConfigured(), state, sentToday, ...settings });
+  } catch (err) {
+    handleError(res, err, "Error al leer la configuración de WhatsApp");
+  }
+}
+
+// PUT /api/emails/whatsapp — { adminNumbers, newOrder, customerStatus, dailyLimit }
+async function updateWhatsappPanel(req, res) {
+  try {
+    const { adminNumbers, newOrder, customerStatus, dailyLimit } = req.body || {};
+    const out = await saveWhatsappSettings({ adminNumbers, newOrder, customerStatus, dailyLimit });
+    if (out.error) return res.status(400).json({ error: out.error });
+    res.json(out.data);
+  } catch (err) {
+    handleError(res, err, "Error al guardar la configuración de WhatsApp");
+  }
+}
+
+// POST /api/emails/whatsapp/test — { to }: un mensaje de prueba
+async function sendWhatsappTest(req, res) {
+  try {
+    const r = await sendWhatsapp({
+      to: req.body?.to,
+      text: "✅ Prueba del WhatsApp de avisos de IGWT Store. Si te llegó, está andando.",
+    });
+    if (!r.ok) return res.status(400).json({ error: r.motivo });
+    res.json({ ok: true });
+  } catch (err) {
+    handleError(res, err, "Error al mandar la prueba");
+  }
+}
+
+// POST /api/emails/whatsapp/restart — reconectar la sesión (si el teléfono se cortó)
+async function restartWhatsappNow(req, res) {
+  try {
+    const r = await restartWhatsapp();
+    if (!r.ok) return res.status(400).json({ error: r.motivo });
+    res.json({ ok: true, state: await whatsappState() });
+  } catch (err) {
+    handleError(res, err, "Error al reconectar WhatsApp");
+  }
+}
+
+// GET /api/emails/(offers|promos)/:id/whatsapp — a cuántos les llega y cómo se ve
+const waTargetOf = (req) => (req.baseUrl + req.path).includes("/promos/") ? "promo" : "offer";
+async function previewWhatsappAnnounce(req, res) {
+  try {
+    res.json(await whatsappPreview(waTargetOf(req), parseInt(req.params.id)));
+  } catch (err) {
+    if (err.code === "OFFER_GONE") return res.status(404).json({ error: "No encontrada" });
+    handleError(res, err, "Error al armar el aviso por WhatsApp");
+  }
+}
+
+// POST /api/emails/(offers|promos)/:id/whatsapp — { force }: encola el aviso (sale de a poco)
+async function announceWhatsappNow(req, res) {
+  try {
+    const broadcast = await announceWhatsapp(waTargetOf(req), parseInt(req.params.id), {
+      createdBy: senderLabel(req),
+      force: req.body?.force === true,
+    });
+    // El primero sale enseguida (si es horario); el resto, de a uno, con el cron.
+    setImmediate(() => processWhatsappQueue().catch((e) => console.error("[WHATSAPP] cola:", e.message)));
+    res.status(201).json(broadcast);
+  } catch (err) {
+    handleError(res, err, "Error al avisar por WhatsApp");
+  }
+}
+
 // ── GET /api/emails/broadcasts — historial ────────────────────────────────────
 async function listBroadcasts(req, res) {
   try {
@@ -318,7 +402,8 @@ async function listRecipients(req, res) {
       prisma.emailRecipient.count({ where }),
       prisma.emailRecipient.findMany({
         where,
-        select: { id: true, email: true, name: true, type: true, status: true, error: true, sentAt: true },
+        // phone: los avisos por WhatsApp (25/11/2026)
+        select: { id: true, email: true, phone: true, name: true, type: true, status: true, error: true, sentAt: true },
         orderBy: [{ sentAt: "asc" }, { id: "asc" }],
         take: 300,
       }),
@@ -388,6 +473,12 @@ module.exports = {
   setPromoAutoAnnounce,
   announcePromoNow,
   sendPromoToSelected,
+  getWhatsappPanel,
+  updateWhatsappPanel,
+  sendWhatsappTest,
+  restartWhatsappNow,
+  previewWhatsappAnnounce,
+  announceWhatsappNow,
   listBroadcasts,
   getBroadcast,
   listRecipients,

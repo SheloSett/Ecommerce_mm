@@ -95,6 +95,14 @@ services:
       # contenedor del backend; al frontend se llega por su nombre en la red del compose.
       # FRONTEND_INTERNAL_URL: http://127.0.0.1:8090
       FRONTEND_INTERNAL_URL: http://igwtstore_frontend:80
+      # WhatsApp de avisos por Evolution (25/11/2026; ver los servicios `evolution*` más abajo y
+      # backend/src/services/whatsapp.service.js). Vacías = no se manda nada por WhatsApp y todo
+      # sigue por email. `evolution` y no `localhost`: adentro de la red del compose el host es el
+      # nombre del servicio.
+      EVOLUTION_URL: ${EVOLUTION_URL:-}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      EVOLUTION_INSTANCIA: ${EVOLUTION_INSTANCIA:-}
+      EVOLUTION_DELAY_MS: ${EVOLUTION_DELAY_MS:-}
 
     # Las imágenes subidas viven FUERA del contenedor para sobrevivir a los redeploys.
     # Es la misma carpeta que ya usás; no se pierde nada.
@@ -132,11 +140,113 @@ services:
       - default   # para que el backend lea el index.html (Open Graph)
       - edge      # para que el Caddy compartido llegue a igwtstore_frontend:80
 
+  # ── WhatsApp de avisos por Evolution API (25/11/2026) ──────────────────────────
+  # Copiado de Shiraf (mismo VPS), que ya lo tiene andando. Los tres servicios están detrás del
+  # perfil `whatsapp`: un `up -d --build` normal NO los levanta. Para encenderlos:
+  #
+  #   docker compose -f deploy/docker-compose.vps.yml --profile whatsapp up -d
+  #
+  # 🔴 Evolution habla WhatsApp como un dispositivo vinculado (WhatsApp Web), NO por la API oficial
+  # de Meta: va contra los términos de WhatsApp y el castigo es que banean el número. Por eso acá se
+  # vincula SOLO la eSIM de avisos, comprada para esto, y NUNCA el número de la tienda (el de la web,
+  # los flyers y Mercado Libre). Si la banean, se pierde ese chip y los emails siguen saliendo.
+  #
+  # Propios de IGWT (no los de Shiraf) para que si uno se cae o se actualiza el otro siga andando.
+  # Variables en deploy/.env: EVOLUTION_API_KEY (larga y al azar), EVOLUTION_DB_PASSWORD,
+  # EVOLUTION_URL=http://evolution:8080 y EVOLUTION_INSTANCIA (ej. igwt-avisos).
+  #
+  # Vincular la eSIM: el panel de Evolution no sale a internet. Desde tu PC:
+  #   ssh -L 8081:127.0.0.1:8081 shelo@82.25.74.242
+  # y en el navegador http://localhost:8081/manager → crear la instancia con el nombre de
+  # EVOLUTION_INSTANCIA → escanear el QR con el teléfono de la eSIM.
+  evolution-db:
+    image: postgres:17
+    container_name: igwtstore_evolution_db
+    profiles: ["whatsapp"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      # Con `:-` y no `:?`: Compose interpola todo el archivo aunque el perfil esté apagado, y un
+      # deploy sin WhatsApp no tiene que frenarse por esta variable.
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD:-}
+      POSTGRES_DB: evolution
+    volumes:
+      - igwtstore_evolution_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  evolution-redis:
+    image: redis:7-alpine
+    container_name: igwtstore_evolution_redis
+    profiles: ["whatsapp"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  evolution:
+    # v2.3.7 + CONFIG_SESSION_PHONE_VERSION: la combinación que Shiraf comprobó que conecta (la v2.2.3
+    # quedaba en bucle sin mostrar nunca el QR).
+    image: ${EVOLUTION_IMAGE:-evoapicloud/evolution-api:v2.3.7}
+    container_name: igwtstore_evolution
+    profiles: ["whatsapp"]
+    restart: unless-stopped
+    depends_on:
+      evolution-db:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_healthy
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
+      SERVER_URL: http://localhost:8081
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:-}@evolution-db:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: igwtstore
+      # Solo lo necesario para mantener la sesión: no se guardan mensajes, contactos ni chats.
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: igwtstore
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+      CONFIG_SESSION_PHONE_VERSION: ${EVOLUTION_PHONE_VERSION:-2.3000.1020885143}
+      LOG_LEVEL: ${EVOLUTION_LOG_LEVEL:-ERROR}
+      DEL_INSTANCE: "false"
+    # Solo en localhost del VPS (para el túnel del panel). 8081 y no 8080: el 8080 es el de Shiraf.
+    ports:
+      - "127.0.0.1:8081:8080"
+    # La sesión vinculada vive acá: sobrevive a reinicios y redeploys sin volver a escanear el QR.
+    volumes:
+      - igwtstore_evolution_instances:/evolution/instances
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   # Nombre fijo para que se vea claro en `docker volume ls`. Acá viven TODOS los datos de la
   # tienda: no borrarlo nunca (ni con `docker compose down -v` ni con `docker volume prune`).
   igwtstore_data:
     name: igwtstore_data
+  # WhatsApp (perfil `whatsapp`): la base propia de Evolution y la sesión vinculada de la eSIM.
+  igwtstore_evolution_pgdata:
+    name: igwtstore_evolution_pgdata
+  igwtstore_evolution_instances:
+    name: igwtstore_evolution_instances
 
 networks:
   # Red compartida del VPS nuevo donde vive el Caddy (`proxy`). La crea el compose de /srv/proxy.

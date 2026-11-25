@@ -23,6 +23,7 @@ const TITLES = {
   historial: "Historial de envíos",
   cambios: "Cambios de email",
   automaticos: "Emails automáticos",
+  whatsapp: "WhatsApp de avisos",
 };
 
 const AUDIENCE_OPTIONS = [
@@ -413,6 +414,171 @@ const OFFER_FORMATS = [
   },
 ];
 
+// ── WhatsApp de avisos (Evolution, 25/11/2026) ────────────────────────────────
+// Texto de WhatsApp con *negrita* → JSX (para las vistas previas)
+function WhatsappText({ text }) {
+  return (
+    <div className="bg-[#dcf8c6] text-slate-800 rounded-xl rounded-tr-sm px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words shadow-sm max-w-md">
+      {String(text || "").split(/(\*[^*\n]+\*)/g).map((part, i) =>
+        part.startsWith("*") && part.endsWith("*") && part.length > 2 ? <b key={i}>{part.slice(1, -1)}</b> : <span key={i}>{part}</span>
+      )}
+    </div>
+  );
+}
+
+// Pestaña "WhatsApp": si la eSIM está conectada, qué avisa y la prueba. Ver backend/src/services/whatsapp.service.js.
+function WhatsappTab() {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState({ adminNumbers: "", newOrder: true, customerStatus: true, dailyLimit: 100 });
+  const [saving, setSaving] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = () => emailsApi.whatsapp()
+    .then((r) => {
+      setData(r.data);
+      setForm({ adminNumbers: (r.data.adminNumbers || []).join(", "), newOrder: r.data.newOrder, customerStatus: r.data.customerStatus, dailyLimit: r.data.dailyLimit });
+    })
+    .catch((e) => toast.error(e.response?.data?.error || "No se pudo leer la configuración de WhatsApp"));
+  useEffect(() => { load(); }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await emailsApi.saveWhatsapp({ ...form, dailyLimit: parseInt(form.dailyLimit, 10) });
+      toast.success("Guardado");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.error || "No se pudo guardar");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function test() {
+    setBusy("test");
+    try {
+      await emailsApi.whatsappTest(testTo);
+      toast.success("Prueba enviada: fijate en ese WhatsApp");
+    } catch (e) {
+      toast.error(e.response?.data?.error || "No se pudo mandar la prueba");
+    } finally {
+      setBusy("");
+    }
+  }
+  async function reconnect() {
+    setBusy("restart");
+    try {
+      const r = await emailsApi.whatsappRestart();
+      toast.success(r.data.state === "open" ? "Conectado de nuevo" : "Se reinició; puede tardar un minuto en conectar");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.error || "No se pudo reconectar");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (!data) return <div className="text-center py-16 text-slate-400">Cargando…</div>;
+  const connected = data.state === "open";
+
+  return (
+    <div className="space-y-4 max-w-3xl">
+      {/* Estado de la eSIM */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-700">📱 WhatsApp de avisos (eSIM)</p>
+            <p className={`text-lg font-bold mt-0.5 ${!data.configured ? "text-slate-400" : connected ? "text-emerald-700" : "text-red-600"}`}>
+              {!data.configured ? "Sin configurar" : connected ? "🟢 Conectado" : data.state ? "🔴 Desconectado" : "🔴 No responde"}
+            </p>
+          </div>
+          {data.configured && !connected && (
+            <button onClick={reconnect} disabled={busy === "restart"} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+              {busy === "restart" ? "Reconectando…" : "🔄 Reconectar"}
+            </button>
+          )}
+        </div>
+        {!data.configured ? (
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Todavía no está encendido en el servidor. Mientras tanto todos los avisos siguen saliendo por email.
+            Para encenderlo hay que levantar Evolution en el VPS y vincular la eSIM con un QR (los pasos están en
+            <code className="mx-1 text-xs bg-slate-100 px-1 rounded">deploy/docker-compose.vps.yml</code>).
+          </p>
+        ) : !connected ? (
+          <p className="text-sm text-slate-600 leading-relaxed">
+            Fijate que el teléfono de la eSIM esté <strong>prendido y con internet</strong> y tocá “Reconectar”. Si no vuelve, hay que
+            volver a escanear el QR. Mientras tanto los avisos siguen por email. (El servidor intenta reconectarlo solo cada 10 minutos.)
+          </p>
+        ) : (
+          <p className="text-sm text-slate-500">
+            Avisos de campañas en las últimas 24 horas: <strong>{data.sentToday}</strong> de {data.dailyLimit}.
+          </p>
+        )}
+        <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2 leading-relaxed">
+          ⚠️ Este WhatsApp no es el oficial de Meta: si WhatsApp lo detecta, puede bloquear el número. Por eso va en la eSIM de avisos y
+          <strong> nunca en el número de la tienda</strong>. Los mensajes salen despacio a propósito.
+        </p>
+      </div>
+
+      {/* Qué avisa */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+        <p className="text-sm font-semibold text-slate-700">Qué avisa</p>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={form.newOrder} onChange={(e) => setForm({ ...form, newOrder: e.target.checked })} className="w-4 h-4 mt-0.5" />
+          <span>
+            <span className="block text-sm text-slate-800 font-medium">🛒 Cada pedido nuevo, a nosotros</span>
+            <span className="block text-xs text-slate-500">Con el cliente, el total y el link al pedido. A estos números (separados por coma):</span>
+          </span>
+        </label>
+        <input
+          type="text"
+          value={form.adminNumbers}
+          onChange={(e) => setForm({ ...form, adminNumbers: e.target.value })}
+          placeholder="ej: 11 5039-5166, 11 4444-5555"
+          className="input text-sm ml-7"
+          style={{ width: "calc(100% - 1.75rem)" }}
+        />
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" checked={form.customerStatus} onChange={(e) => setForm({ ...form, customerStatus: e.target.checked })} className="w-4 h-4 mt-0.5" />
+          <span>
+            <span className="block text-sm text-slate-800 font-medium">📦 Al cliente, el estado de su pedido</span>
+            <span className="block text-xs text-slate-500">Cuando se aprueba el pago y cuando está listo para retirar o despachado. Al celular que cargó en el pedido.</span>
+          </span>
+        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm text-slate-800 font-medium">📣 Campañas: hasta</span>
+          <input
+            type="number" min="10" max="400"
+            value={form.dailyLimit}
+            onChange={(e) => setForm({ ...form, dailyLimit: e.target.value })}
+            className="input text-sm w-24"
+          />
+          <span className="text-sm text-slate-600">mensajes por día</span>
+          <p className="text-xs text-slate-500 w-full">
+            Se mandan desde “Avisos de campañas” → 📱 WhatsApp. Salen de a uno (cada 1,5 a 3 minutos) y solo entre las 9 y las 21. Más por día = más riesgo de bloqueo.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={save} disabled={saving} className="px-5 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Prueba */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-2">
+        <p className="text-sm font-semibold text-slate-700">Mandar una prueba</p>
+        <div className="flex flex-wrap gap-2">
+          <input type="text" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="Tu celular, ej: 11 5039-5166" className="input text-sm flex-1 min-w-[200px]" />
+          <button onClick={test} disabled={!testTo.trim() || busy === "test" || !data.configured} className="px-4 py-2 rounded-xl border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40">
+            {busy === "test" ? "Mandando…" : "📱 Mandar prueba"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Pestaña "Avisos de campañas" ──────────────────────────────────────────────
 const STATE_STYLES = {
   ACTIVA:     "bg-green-100 text-green-700",
@@ -426,6 +592,36 @@ const STATE_STYLES = {
 function CampaignsTab() {
   const [offers, setOffers] = useState([]);
   const [promos, setPromos] = useState([]);
+  // Aviso por WhatsApp (25/11/2026): la campaña/promo elegida y su vista previa ({ count, retail, wholesale, ... })
+  const [waOf, setWaOf] = useState(null);
+  const [waData, setWaData] = useState(null);
+  const [waSide, setWaSide] = useState("retail");
+  const [waSending, setWaSending] = useState(false);
+  useEffect(() => {
+    if (!waOf) return;
+    setWaData(null);
+    setWaSide(waOf.appliesTo === "MAYORISTA" ? "wholesale" : "retail");
+    emailsApi.whatsappPreview(waOf._type, waOf.id)
+      .then((r) => setWaData(r.data))
+      .catch((e) => setWaData({ error: e.response?.data?.error || "No se pudo armar el aviso" }));
+  }, [waOf]);
+  async function sendWhatsapp(force = false) {
+    setWaSending(true);
+    try {
+      const r = await emailsApi.whatsappAnnounce(waOf._type, waOf.id, force);
+      toast.success(`Aviso por WhatsApp en camino para ${r.data.total} cliente(s): sale de a uno`);
+      setWaOf(null);
+      navigate("/admin/emails?tab=historial");
+    } catch (e) {
+      if (e.response?.status === 409 && !force) {
+        if (confirm(`"${waOf.name}" ya se mandó por WhatsApp. ¿Mandarlo OTRA VEZ a todos?`)) return sendWhatsapp(true);
+      } else {
+        toast.error(e.response?.data?.error || "No se pudo mandar por WhatsApp");
+      }
+    } finally {
+      setWaSending(false);
+    }
+  }
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);           // id de la campaña en proceso
   const [previewOf, setPreviewOf] = useState(null); // { offer, side }
@@ -604,7 +800,8 @@ function CampaignsTab() {
                 </label>
               )}
 
-              <div className="flex gap-2">
+              {/* Antes: "flex gap-2". Con el botón de WhatsApp son cuatro: en el celular bajan de renglón. */}
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setPreviewOf({ offer: o, side: o.appliesTo === "MAYORISTA" ? "wholesale" : "retail" })}
                   className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-700 hover:bg-slate-50"
@@ -618,6 +815,13 @@ function CampaignsTab() {
                   className="px-3 py-2 rounded-lg border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
                 >
                   👤 Mandar a…
+                </button>
+                {/* Por WhatsApp (eSIM de avisos, 25/11/2026): abre la vista previa; manda solo si está activa */}
+                <button
+                  onClick={() => setWaOf(o)}
+                  className="px-3 py-2 rounded-lg border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+                >
+                  📱 WhatsApp
                 </button>
                 <button
                   onClick={() => announce(o)}
@@ -669,6 +873,59 @@ function CampaignsTab() {
                 {sendingTo ? "Enviando…" : `Mandar a ${chosen.length} cliente${chosen.length !== 1 ? "s" : ""}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso por WhatsApp: a cuántos les llega, cómo se ve y cuánto tarda */}
+      {waOf && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setWaOf(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-bold text-slate-800">📱 Avisar "{waOf.name}" por WhatsApp</h3>
+              <button onClick={() => setWaOf(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
+            </div>
+            {!waData ? (
+              <p className="text-sm text-slate-400 py-6 text-center">Armando el aviso…</p>
+            ) : waData.error ? (
+              <p className="text-sm bg-red-50 text-red-700 rounded-lg px-3 py-2">{waData.error}</p>
+            ) : (
+              <>
+                {!waData.configured && (
+                  <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">
+                    El WhatsApp de avisos todavía no está encendido (ver Emails → 📱 WhatsApp). Podés ver cómo queda, pero no mandarlo.
+                  </p>
+                )}
+                <p className="text-sm text-slate-600">
+                  Le llega a <strong>{waData.count}</strong> cliente{waData.count === 1 ? "" : "s"} con celular cargado (sin los que se dieron de baja).
+                  Sale de a uno, entre las 9 y las 21: con el tope de {waData.dailyLimit} por día tarda
+                  {" "}<strong>unos {Math.max(1, Math.ceil(waData.count / waData.dailyLimit))} día{Math.ceil(waData.count / waData.dailyLimit) > 1 ? "s" : ""}</strong>.
+                </p>
+                {waData.retail && waData.wholesale && (
+                  <div className="flex gap-1.5">
+                    {[["retail", "Minorista"], ["wholesale", "Mayorista"]].map(([k, l]) => (
+                      <button key={k} onClick={() => setWaSide(k)} className={`px-3 py-1 rounded-lg text-sm ${waSide === k ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{l}</button>
+                    ))}
+                  </div>
+                )}
+                <div className="bg-[#efeae2] rounded-xl p-4 flex justify-end">
+                  <WhatsappText text={waSide === "wholesale" ? waData.wholesale || waData.retail : waData.retail || waData.wholesale} />
+                </div>
+                {waOf.state !== "ACTIVA" && (
+                  <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">Se puede mandar cuando está activa (en fecha y sin pausar).</p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setWaOf(null)} className="px-4 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50">Cancelar</button>
+                  <button
+                    onClick={() => sendWhatsapp(false)}
+                    disabled={waSending || !waData.configured || waData.count === 0 || waOf.state !== "ACTIVA"}
+                    className="px-5 py-2 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 disabled:opacity-40"
+                  >
+                    {waSending ? "Encolando…" : `📱 Mandar a ${waData.count} cliente${waData.count === 1 ? "" : "s"}`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -740,7 +997,9 @@ function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
             <h3 className="font-bold text-slate-800">Destinatarios</h3>
             <p className="text-xs text-slate-500">
               {/* PROMO_*: aviso de un descuento por monto (25/11/2026) */}
-              {broadcast.kind?.startsWith("OFFER") ? `Aviso: ${broadcast.offer?.name || broadcast.subject}`
+              {/* WA_*: aviso por WhatsApp (25/11/2026) */}
+              {broadcast.kind?.startsWith("WA_") ? `📱 WhatsApp: ${broadcast.cartPromo?.name || broadcast.offer?.name || broadcast.subject}`
+                : broadcast.kind?.startsWith("OFFER") ? `Aviso: ${broadcast.offer?.name || broadcast.subject}`
                 : broadcast.kind?.startsWith("PROMO") ? `Aviso: ${broadcast.cartPromo?.name || broadcast.subject}`
                 : broadcast.subject} · {fmtDateTime(broadcast.createdAt)}
             </p>
@@ -782,7 +1041,8 @@ function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
                   <li key={r.id} className="px-2 py-2 flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-800 truncate">{r.name || "—"}</p>
-                      <p className="text-xs text-slate-500 truncate">{r.email}</p>
+                      {/* Por WhatsApp: el celular (25/11/2026) */}
+                      <p className="text-xs text-slate-500 truncate">{r.phone ? `📱 ${r.phone}` : r.email}</p>
                       {r.error && <p className="text-xs text-red-600 break-words mt-0.5">{r.error}</p>}
                     </div>
                     <div className="text-right flex-shrink-0">
@@ -909,7 +1169,9 @@ function HistoryTab() {
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">
                         {/* PROMO_*: aviso de un descuento por monto (25/11/2026) */}
-                        {b.kind?.startsWith("OFFER") ? `🏷 Aviso: ${b.offer?.name || b.subject}`
+                        {/* WA_*: aviso por WhatsApp (25/11/2026) */}
+                        {b.kind?.startsWith("WA_") ? `📱 WhatsApp: ${b.cartPromo?.name || b.offer?.name || b.subject}`
+                          : b.kind?.startsWith("OFFER") ? `🏷 Aviso: ${b.offer?.name || b.subject}`
                           : b.kind?.startsWith("PROMO") ? `🎉 Aviso: ${b.cartPromo?.name || b.subject}`
                           : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
                       </p>
@@ -966,6 +1228,7 @@ export default function AdminEmails() {
       {tab === "historial" && <HistoryTab />}
       {tab === "cambios" && <EmailChangeRequests />}
       {tab === "automaticos" && <EmailAutomationsSection />}
+      {tab === "whatsapp" && <WhatsappTab />}
     </AdminLayout>
   );
 }

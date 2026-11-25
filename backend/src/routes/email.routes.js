@@ -11,6 +11,12 @@ const {
   setPromoAutoAnnounce,
   announcePromoNow,
   sendPromoToSelected,
+  getWhatsappPanel,
+  updateWhatsappPanel,
+  sendWhatsappTest,
+  restartWhatsappNow,
+  previewWhatsappAnnounce,
+  announceWhatsappNow,
   listBroadcasts,
   getBroadcast,
   listRecipients,
@@ -43,5 +49,15 @@ router.get("/promos", listPromosForEmails);
 router.put("/promos/:id/auto", setPromoAutoAnnounce);
 router.post("/promos/:id/announce", announcePromoNow);
 router.post("/promos/:id/send", sendPromoToSelected); // a clientes elegidos
+
+// WhatsApp de avisos por Evolution (25/11/2026): estado, configuración, prueba y avisos de campañas
+router.get("/whatsapp", getWhatsappPanel);
+router.put("/whatsapp", updateWhatsappPanel);
+router.post("/whatsapp/test", sendWhatsappTest);
+router.post("/whatsapp/restart", restartWhatsappNow);
+router.get("/offers/:id/whatsapp", previewWhatsappAnnounce);
+router.post("/offers/:id/whatsapp", announceWhatsappNow);
+router.get("/promos/:id/whatsapp", previewWhatsappAnnounce);
+router.post("/promos/:id/whatsapp", announceWhatsappNow);
 
 module.exports = router;

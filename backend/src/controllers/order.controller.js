@@ -36,6 +36,8 @@ const {
   sendOrderFulfillmentEmail,
   sendPasswordResetEmail,
 } = require("../services/email.service");
+// WhatsApp de avisos por Evolution (25/11/2026): pedido nuevo a la tienda y estado al cliente
+const { notifyNewOrderWhatsapp, notifyOrderStatusWhatsapp } = require("../services/whatsapp.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
 // Cálculo de precio unitario efectivo (variante > producto por grupo + tiers), compartido con el carrito.
@@ -799,6 +801,9 @@ async function createOrder(req, res) {
       sendACConvenirToCustomer(order).catch(() => {}); // fire-and-forget
       sendACConvenirToAdmin(order).catch(() => {});
     }
+    // WhatsApp a la tienda (25/11/2026): "pedido nuevo". Mercado Pago avisa cuando se acredita el pago
+    // (payment.controller.js), igual que el email. Nunca tira error ni frena el pedido.
+    if (method !== "MERCADOPAGO") notifyNewOrderWhatsapp(order);
 
     // Sin `cost` en las líneas. Va sobre una copia porque los emails de arriba siguen leyendo `order`
     // en segundo plano. No se consulta quién pide: el producto de estas líneas solo trae id, nombre
@@ -1064,6 +1069,8 @@ async function updateOrderStatus(req, res) {
     sendOrderPaymentStatusEmail({ ...existing, ...order }, status).catch((e) =>
       console.error("[EMAIL] sendOrderPaymentStatusEmail falló:", e.message)
     );
+    // WhatsApp al cliente (25/11/2026): solo "pago aprobado" (ver customerStatusText). Solo si cambió.
+    if (existing?.status !== status) notifyOrderStatusWhatsapp({ ...existing, ...order }, { kind: "payment", status });
 
     res.json(order);
   } catch (err) {
@@ -2602,6 +2609,8 @@ async function confirmCotizacionPayment(req, res) {
     sendOrderConfirmationToCustomer(orderForEmail).catch(() => {});
     // Notificar al admin
     sendOrderNotificationToAdmin(orderForEmail).catch(() => {});
+    // WhatsApp a la tienda (25/11/2026): el cliente confirmó el pago de su cotización
+    notifyNewOrderWhatsapp(orderForEmail);
 
     res.json({ ok: true });
   } catch (err) {
@@ -3294,6 +3303,10 @@ async function updateOrderFields(req, res) {
       sendOrderFulfillmentEmail({ ...existing, ...order }, fulfillmentStatus).catch((e) =>
         console.error("[EMAIL] sendOrderFulfillmentEmail falló:", e.message)
       );
+      // WhatsApp al cliente (25/11/2026): listo para retirar / despachado. Solo si cambió.
+      if (existing.fulfillmentStatus !== fulfillmentStatus) {
+        notifyOrderStatusWhatsapp({ ...existing, ...order }, { kind: "fulfillment", status: fulfillmentStatus });
+      }
     }
 
     res.json(order);
