@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
 const { authMiddleware, adminMiddleware, customerMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 const { sendAbandonedCartEmail } = require("../services/email.service");
+// El recordatorio manual también por WhatsApp (25/11/2026)
+const { whatsappConfigured, getWhatsappSettings, sendWhatsapp, abandonedCartText } = require("../services/whatsapp.service");
 // Precio efectivo (variante > producto por grupo + tiers), compartido con el checkout.
 const { effectiveUnitPrice, effectiveCurrency } = require("../utils/pricing");
 
@@ -626,8 +628,8 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, requireAnyPe
     const cart = await prisma.cart.findUnique({
       where: { customerId },
       include: {
-        // type: hace falta para resolver el precio mayorista al recalcular (ver enrichCarts)
-        customer: { select: { id: true, name: true, email: true, type: true } },
+        // type: hace falta para resolver el precio mayorista al recalcular (ver enrichCarts). phone: WhatsApp
+        customer: { select: { id: true, name: true, email: true, type: true, phone: true } },
         items: { orderBy: { id: "asc" } },
       },
     });
@@ -644,7 +646,24 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, requireAnyPe
     const storeUrl = process.env.FRONTEND_URL || "http://localhost:3000";
     await sendAbandonedCartEmail(cart.customer, enriched.items, { couponCode, couponDescription, storeUrl });
 
-    res.json({ ok: true });
+    // También por WhatsApp, en el momento (25/11/2026: "me llegó por mail y no por WhatsApp"). Lo manda el admin
+    // a un cliente puntual, así que no pasa por la cola lenta. Con el mismo cupón. whatsapp: { ok, motivo }
+    // para que el panel diga si salió (null = WhatsApp apagado, sin configurar o el cliente sin celular).
+    let whatsapp = null;
+    if (whatsappConfigured() && cart.customer.phone) {
+      const wa = await getWhatsappSettings();
+      const items = enriched.items.filter((i) => !i.outOfStock);
+      if (wa.abandonedCart && items.length) {
+        whatsapp = await sendWhatsapp({
+          to: cart.customer.phone,
+          text: abandonedCartText(cart.customer, items, { frontendUrl: storeUrl, storePhone: wa.storePhone, couponCode, couponDescription }),
+        });
+        if (!whatsapp.ok) console.error(`[WHATSAPP] Recordatorio de carrito a ${customerId}: ${whatsapp.motivo}`);
+      }
+    }
+
+    // Antes: res.json({ ok: true })
+    res.json({ ok: true, whatsapp });
   } catch (err) {
     console.error("Error al enviar recordatorio de carrito:", err);
     res.status(500).json({ error: "Error al enviar recordatorio" });

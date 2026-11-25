@@ -15,6 +15,7 @@ const {
   whatsappPreview,
   announceWhatsapp,
   processWhatsappQueue,
+  renderWhatsapp,
   renderFor,
   getDailyLimit,
   setDailyLimit,
@@ -30,7 +31,7 @@ const {
 const { createBulkTransporter } = require("../services/email.service");
 // WhatsApp de avisos (25/11/2026)
 const {
-  whatsappConfigured, whatsappState, restartWhatsapp, sendWhatsapp, getWhatsappSettings, saveWhatsappSettings,
+  whatsappConfigured, whatsappState, restartWhatsapp, sendWhatsapp, getWhatsappSettings, saveWhatsappSettings, whatsappQr,
 } = require("../services/whatsapp.service");
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
@@ -317,6 +318,36 @@ async function restartWhatsappNow(req, res) {
   }
 }
 
+// GET /api/emails/whatsapp/qr — el QR para vincular la eSIM desde el panel (25/11/2026: "un botón de
+// reconectar en la web misma"). → { state: "open" } | { base64, pairingCode }
+async function getWhatsappQr(req, res) {
+  try {
+    const out = await whatsappQr();
+    if (out.error) return res.status(400).json({ error: out.error });
+    res.json(out);
+  } catch (err) {
+    handleError(res, err, "Error al pedir el QR");
+  }
+}
+
+// POST /api/emails/(offers|promos)/:id/whatsapp/test — { to, side }: el aviso de esa campaña SOLO a ese
+// número, para probarlo antes de mandarlo a todos (25/11/2026: "quiero probarlo"). No cuenta como enviado.
+async function testWhatsappAnnounce(req, res) {
+  try {
+    const target = waTargetOf(req);
+    const id = parseInt(req.params.id);
+    const type = req.body?.side === "wholesale" ? "MAYORISTA" : "MINORISTA";
+    const b = target === "promo" ? { kind: "WA_PROMO", cartPromoId: id } : { kind: "WA_OFFER", offerId: id };
+    const text = await renderWhatsapp(b, { customerId: null, name: req.user?.name || "", type }, new Map(), { preview: true });
+    const r = await sendWhatsapp({ to: req.body?.to, text });
+    if (!r.ok) return res.status(400).json({ error: r.motivo });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === "OFFER_GONE") return res.status(404).json({ error: "No encontrada" });
+    handleError(res, err, "Error al mandar la prueba");
+  }
+}
+
 // GET /api/emails/(offers|promos)/:id/whatsapp — a cuántos les llega y cómo se ve
 const waTargetOf = (req) => (req.baseUrl + req.path).includes("/promos/") ? "promo" : "offer";
 async function previewWhatsappAnnounce(req, res) {
@@ -480,6 +511,8 @@ module.exports = {
   restartWhatsappNow,
   previewWhatsappAnnounce,
   announceWhatsappNow,
+  getWhatsappQr,
+  testWhatsappAnnounce,
   listBroadcasts,
   getBroadcast,
   listRecipients,

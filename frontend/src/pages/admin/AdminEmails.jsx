@@ -426,8 +426,63 @@ function WhatsappText({ text }) {
   );
 }
 
+// Vincular la eSIM desde el panel (pedido de la clienta, 25/11/2026: "un botón de reconectar en la web misma",
+// sin túnel al panel de Evolution). Muestra el QR, lo renueva cada 25 s (vence) y cada 3 s mira si ya
+// conectó: ahí avisa y se cierra sola.
+function WhatsappQrModal({ onClose, onConnected }) {
+  const [qr, setQr] = useState({ loading: true });
+  useEffect(() => {
+    let vivo = true;
+    const pedirQr = () => emailsApi.whatsappQr()
+      .then((r) => {
+        if (!vivo) return;
+        if (r.data.state === "open") { onConnected(); return; }
+        setQr({ base64: r.data.base64, pairingCode: r.data.pairingCode });
+      })
+      .catch((e) => vivo && setQr({ error: e.response?.data?.error || "No se pudo pedir el QR" }));
+    pedirQr();
+    const renovar = setInterval(pedirQr, 25_000);
+    const mirar = setInterval(() => {
+      emailsApi.whatsapp().then((r) => { if (vivo && r.data.state === "open") onConnected(); }).catch(() => {});
+    }, 3_000);
+    return () => { vivo = false; clearInterval(renovar); clearInterval(mirar); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="font-bold text-slate-800">📷 Vincular la eSIM</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl font-bold">×</button>
+        </div>
+        <ol className="text-sm text-slate-600 list-decimal pl-5 space-y-1">
+          <li>En el teléfono de la eSIM, abrí <strong>WhatsApp Business</strong>.</li>
+          <li><strong>⋮ → Dispositivos vinculados → Vincular un dispositivo</strong> (en iPhone: Configuración → Dispositivos vinculados).</li>
+          <li>Escaneá este código. Se cierra solo cuando conecta.</li>
+        </ol>
+        <div className="flex justify-center items-center bg-slate-50 rounded-xl min-h-[280px] p-3">
+          {qr.loading ? (
+            <p className="text-sm text-slate-400">Pidiendo el código…</p>
+          ) : qr.error ? (
+            <p className="text-sm text-red-600 text-center">{qr.error}</p>
+          ) : (
+            <img src={qr.base64} alt="Código QR para vincular WhatsApp" className="w-64 h-64" />
+          )}
+        </div>
+        {qr.pairingCode && (
+          <p className="text-xs text-slate-500 text-center">
+            ¿No podés escanear? En “Vincular con el número de teléfono” poné este código: <strong className="tracking-widest">{qr.pairingCode}</strong>
+          </p>
+        )}
+        <p className="text-xs text-slate-400 text-center">⚠️ Escanealo solo con la eSIM de avisos, nunca con el WhatsApp de la tienda.</p>
+      </div>
+    </div>
+  );
+}
+
 // Pestaña "WhatsApp": si la eSIM está conectada, qué avisa y la prueba. Ver backend/src/services/whatsapp.service.js.
 function WhatsappTab() {
+  const [showQr, setShowQr] = useState(false);
   const [data, setData] = useState(null);
   const [form, setForm] = useState({ adminNumbers: "", newOrder: true, customerStatus: true, dailyLimit: 100, abandonedCart: true, restock: true });
   const [saving, setSaving] = useState(false);
@@ -495,12 +550,28 @@ function WhatsappTab() {
               {!data.configured ? "Sin configurar" : connected ? "🟢 Conectado" : data.state ? "🔴 Desconectado" : "🔴 No responde"}
             </p>
           </div>
-          {data.configured && !connected && (
-            <button onClick={reconnect} disabled={busy === "restart"} className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
-              {busy === "restart" ? "Reconectando…" : "🔄 Reconectar"}
-            </button>
+          {/* Antes: solo "Reconectar", y solo desconectado. Pedido de la clienta (25/11/2026): reconectar desde la
+              web. Reconectar (reinicia la sesión, alcanza si el teléfono se cortó un rato) queda siempre a mano, y
+              si la sesión se perdió, "Vincular con QR" muestra el código acá mismo. */}
+          {data.configured && (
+            <div className="flex flex-wrap gap-2">
+              <button onClick={reconnect} disabled={busy === "restart"} className={`px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 ${connected ? "border border-slate-200 text-slate-700 hover:bg-slate-50" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
+                {busy === "restart" ? "Reconectando…" : "🔄 Reconectar"}
+              </button>
+              {!connected && (
+                <button onClick={() => setShowQr(true)} className="px-4 py-2 rounded-xl border border-blue-200 text-sm font-semibold text-blue-700 hover:bg-blue-50">
+                  📷 Vincular con QR
+                </button>
+              )}
+            </div>
           )}
         </div>
+        {showQr && (
+          <WhatsappQrModal
+            onClose={() => setShowQr(false)}
+            onConnected={() => { setShowQr(false); toast.success("¡WhatsApp conectado!"); load(); }}
+          />
+        )}
         {!data.configured ? (
           <p className="text-sm text-slate-600 leading-relaxed">
             Todavía no está encendido en el servidor. Mientras tanto todos los avisos siguen saliendo por email.
@@ -509,8 +580,8 @@ function WhatsappTab() {
           </p>
         ) : !connected ? (
           <p className="text-sm text-slate-600 leading-relaxed">
-            Fijate que el teléfono de la eSIM esté <strong>prendido y con internet</strong> y tocá “Reconectar”. Si no vuelve, hay que
-            volver a escanear el QR. Mientras tanto los avisos siguen por email. (El servidor intenta reconectarlo solo cada 10 minutos.)
+            Fijate que el teléfono de la eSIM esté <strong>prendido y con internet</strong> y tocá “Reconectar”. Si no vuelve, tocá
+            “📷 Vincular con QR” y escanealo con la eSIM. Mientras tanto los avisos siguen por email. (El servidor intenta reconectarlo solo cada 10 minutos.)
           </p>
         ) : (
           <p className="text-sm text-slate-500">
@@ -621,6 +692,20 @@ function CampaignsTab() {
   const [waData, setWaData] = useState(null);
   const [waSide, setWaSide] = useState("retail");
   const [waSending, setWaSending] = useState(false);
+  // Probar el aviso solo con un número antes de mandarlo a todos (25/11/2026: "quiero probarlo")
+  const [waTestTo, setWaTestTo] = useState("");
+  const [waTesting, setWaTesting] = useState(false);
+  async function testWhatsapp() {
+    setWaTesting(true);
+    try {
+      await emailsApi.whatsappCampaignTest(waOf._type, waOf.id, waTestTo, waSide);
+      toast.success("Prueba enviada: fijate en ese WhatsApp");
+    } catch (e) {
+      toast.error(e.response?.data?.error || "No se pudo mandar la prueba");
+    } finally {
+      setWaTesting(false);
+    }
+  }
   useEffect(() => {
     if (!waOf) return;
     setWaData(null);
@@ -934,6 +1019,26 @@ function CampaignsTab() {
                 )}
                 <div className="bg-[#efeae2] rounded-xl p-4 flex justify-end">
                   <WhatsappText text={waSide === "wholesale" ? waData.wholesale || waData.retail : waData.retail || waData.wholesale} />
+                </div>
+                {/* Prueba: este mismo mensaje (la versión que se está viendo) solo a un número */}
+                <div className="space-y-1">
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      type="text"
+                      value={waTestTo}
+                      onChange={(e) => setWaTestTo(e.target.value)}
+                      placeholder="Tu celular, ej: 11 5039-5166"
+                      className="input text-sm flex-1 min-w-[180px]"
+                    />
+                    <button
+                      onClick={testWhatsapp}
+                      disabled={!waTestTo.trim() || waTesting || !waData.configured}
+                      className="px-4 py-2 rounded-xl border border-emerald-200 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                    >
+                      {waTesting ? "Mandando…" : "🧪 Mandarme una prueba"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400">Te llega este mismo mensaje solo a vos. No cuenta como enviado.</p>
                 </div>
                 {waOf.state !== "ACTIVA" && (
                   <p className="text-xs bg-amber-50 text-amber-800 rounded-lg px-3 py-2">Se puede mandar cuando está activa (en fecha y sin pausar).</p>

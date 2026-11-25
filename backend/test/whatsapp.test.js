@@ -142,3 +142,14 @@ describe("recordatorios por WhatsApp", () => {
     assert.equal(await renderWhatsapp({ kind: "WA_TEXT" }, { message: "hola tal cual" }), "hola tal cual");
   });
 });
+
+describe("recordatorio de carrito manual (Clientes → Carritos)", () => {
+  const { abandonedCartText } = require("../src/services/whatsapp.service");
+  test("con cupón lo nombra; sin cupón no deja renglones vacíos", () => {
+    const ctx = { frontendUrl: "https://t.test", storePhone: "1150395166" };
+    const con = abandonedCartText({ name: "Ana" }, [{ name: "X", quantity: 1 }], { ...ctx, couponCode: "CART-1-AB", couponDescription: "10% de descuento" });
+    assert.match(con, /🎁 Usá el cupón \*CART-1-AB\* \(10% de descuento\) al pagar\./);
+    const sin = abandonedCartText({ name: "Ana" }, [{ name: "X", quantity: 1 }], ctx);
+    assert.doesNotMatch(sin, /cupón|\n\n\n/);
+  });
+});

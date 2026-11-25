@@ -17,6 +17,8 @@ const {
   restartWhatsappNow,
   previewWhatsappAnnounce,
   announceWhatsappNow,
+  getWhatsappQr,
+  testWhatsappAnnounce,
   listBroadcasts,
   getBroadcast,
   listRecipients,
@@ -55,9 +57,13 @@ router.get("/whatsapp", getWhatsappPanel);
 router.put("/whatsapp", updateWhatsappPanel);
 router.post("/whatsapp/test", sendWhatsappTest);
 router.post("/whatsapp/restart", restartWhatsappNow);
+router.get("/whatsapp/qr", getWhatsappQr); // vincular la eSIM desde el panel
 router.get("/offers/:id/whatsapp", previewWhatsappAnnounce);
 router.post("/offers/:id/whatsapp", announceWhatsappNow);
 router.get("/promos/:id/whatsapp", previewWhatsappAnnounce);
 router.post("/promos/:id/whatsapp", announceWhatsappNow);
+// Probar el aviso de una campaña o promo solo con un número (no cuenta como enviado)
+router.post("/offers/:id/whatsapp/test", testWhatsappAnnounce);
+router.post("/promos/:id/whatsapp/test", testWhatsappAnnounce);
 
 module.exports = router;

@@ -129,6 +129,38 @@ async function restartWhatsapp() {
   }
 }
 
+// QR para vincular la eSIM desde el panel (pedido de la clienta, 25/11/2026: "un botón de reconectar en la
+// web misma", sin túnel SSH al panel de Evolution). Si la instancia no existe, la crea. →
+//   { state: "open" }                     ya está conectada
+//   { base64, pairingCode }               el QR (data:image/png;base64,...) para escanear con el teléfono
+//   { error }
+async function whatsappQr() {
+  if (!whatsappConfigured()) return { error: "WhatsApp (Evolution) todavía no está configurado en el servidor" };
+  const headers = { apikey: variable("EVOLUTION_API_KEY") };
+  const connect = () => fetch(`${baseUrl()}/instance/connect/${instancia()}`, { headers, signal: AbortSignal.timeout(20_000) });
+  try {
+    let res = await connect();
+    if (res.status === 404) {
+      const created = await fetch(`${baseUrl()}/instance/create`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(20_000),
+        body: JSON.stringify({ instanceName: variable("EVOLUTION_INSTANCIA"), integration: "WHATSAPP-BAILEYS", qrcode: true }),
+      });
+      if (!created.ok) return { error: `Evolution no pudo crear la instancia (${created.status})` };
+      res = await connect();
+    }
+    if (!res.ok) return { error: `Evolution respondió ${res.status}` };
+    const body = await res.json();
+    if (body?.instance?.state === "open") return { state: "open" };
+    const base64 = body?.base64 || body?.qrcode?.base64 || null;
+    if (!base64) return { error: "Evolution todavía no generó el QR: probá de nuevo en unos segundos" };
+    return { base64, pairingCode: body?.pairingCode || null };
+  } catch (err) {
+    return { error: `No se pudo llamar a Evolution: ${err.message}` };
+  }
+}
+
 // ── Configuración (Admin → Emails → WhatsApp), en SiteConfig ─────────────────
 //   whatsappAdminNumbers   números de la tienda para "pedido nuevo" (separados por coma)
 //   whatsappNewOrder       "false" = no avisar pedidos nuevos (por defecto sí, si hay números)
@@ -228,17 +260,19 @@ function customerStatusText(order, { kind, status }, { storePhone }) {
   return [hola, body, "", firma(storePhone)].join("\n");
 }
 
-// Recordatorio de carrito abandonado (el mismo que sale por email, cartReminder.service.js). items: los del
-// carrito con stock ({ name, variantLabel, quantity }). ctx: { frontendUrl, unsubscribeUrl, storePhone }
+// Recordatorio de carrito abandonado (el mismo que sale por email, cartReminder.service.js y el botón de
+// Clientes → Carritos). items: los del carrito con stock ({ name, variantLabel, quantity }).
+// ctx: { frontendUrl, unsubscribeUrl, storePhone, couponCode?, couponDescription? } (el cupón: solo el manual)
 function abandonedCartText(customer, items, ctx) {
   const lista = items.slice(0, 4).map((i) => `• ${i.name}${i.variantLabel ? ` (${i.variantLabel})` : ""}${i.quantity > 1 ? ` x${i.quantity}` : ""}`);
   if (items.length > 4) lista.push(`• y ${items.length - 4} más`);
   return [
     `Hola${firstName(customer.name) ? ` ${firstName(customer.name)}` : ""}! 👋`,
     `Te quedó esto en el carrito de IGWT Store:\n${lista.join("\n")}`,
+    ctx.couponCode ? `🎁 Usá el cupón *${ctx.couponCode}*${ctx.couponDescription ? ` (${ctx.couponDescription})` : ""} al pagar.` : null,
     `Lo terminás acá: ${ctx.frontendUrl}/carrito`,
     [ctx.unsubscribeUrl ? `Si no querés recibir más recordatorios: ${ctx.unsubscribeUrl}` : null, firma(ctx.storePhone)].filter(Boolean).join("\n"),
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 // Recordatorio de restock a un mayorista (el mismo que sale por email, runMayoristaRestock en cron.service.js)
@@ -317,6 +351,7 @@ module.exports = {
   sendWhatsapp,
   whatsappState,
   restartWhatsapp,
+  whatsappQr,
   getWhatsappSettings,
   saveWhatsappSettings,
   newOrderText,

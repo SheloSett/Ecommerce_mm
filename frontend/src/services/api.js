@@ -550,6 +550,10 @@ export const emailsApi = {
   whatsappRestart:   ()                => api.post("/emails/whatsapp/restart"),
   whatsappPreview:   (type, id)        => api.get(`/emails/${type === "promo" ? "promos" : "offers"}/${id}/whatsapp`),
   whatsappAnnounce:  (type, id, force = false) => api.post(`/emails/${type === "promo" ? "promos" : "offers"}/${id}/whatsapp`, { force }),
+  // QR para vincular la eSIM desde el panel: { state: "open" } | { base64, pairingCode }
+  whatsappQr:        ()                => api.get("/emails/whatsapp/qr"),
+  // El aviso de una campaña o promo solo a un número (side: "retail" | "wholesale"), para probarlo
+  whatsappCampaignTest: (type, id, to, side) => api.post(`/emails/${type === "promo" ? "promos" : "offers"}/${id}/whatsapp/test`, { to, side }),
   getSettings:    ()     => api.get("/emails/settings"),
   updateSettings: (data) => api.put("/emails/settings", data),
 };

@@ -220,8 +220,13 @@ export default function AdminCustomers() {
           : `$${discountVal.toLocaleString("es-AR")} de descuento en tu próxima compra${couponDays ? ` (válido por ${couponDays} días)` : ""}`;
       }
 
-      await cartsApi.sendReminder(cart.customer.id, couponCode, couponDescription);
-      toast.success(`Recordatorio enviado a ${cart.customer.email}`);
+      // Antes: toast.success(`Recordatorio enviado a ${email}`). Ahora dice si también salió por WhatsApp
+      // (25/11/2026); whatsapp null = WhatsApp apagado o el cliente sin celular.
+      const r = await cartsApi.sendReminder(cart.customer.id, couponCode, couponDescription);
+      const wa = r?.data?.whatsapp;
+      if (wa?.ok) toast.success(`Recordatorio enviado a ${cart.customer.email} y por WhatsApp`);
+      else if (wa && !wa.ok) toast(`Recordatorio enviado a ${cart.customer.email}. Por WhatsApp no salió: ${wa.motivo}`, { icon: "⚠️", duration: 7000 });
+      else toast.success(`Recordatorio enviado a ${cart.customer.email}`);
       setReminderModal(null);
       setCouponEnabled(false);
       setCouponValue("");
