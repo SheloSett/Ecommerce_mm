@@ -946,7 +946,9 @@ function RecorridoTab({ data, dateFrom, dateTo }) {
           </div>
 
           {/* Recorrido de la persona elegida */}
-          <div ref={detailRef} className="max-h-[640px] overflow-y-auto rounded-xl border border-slate-200 p-4 lg:sticky lg:top-4">
+          {/* Alto limitado solo en la compu (al lado de la lista); en el celular va abajo y se ve entero: antes era
+              una cajita con su propio scroll adentro de la página y el recorrido quedaba cortado */}
+          <div ref={detailRef} className="rounded-xl border border-slate-200 p-4 lg:sticky lg:top-4 lg:max-h-[640px] lg:overflow-y-auto">
             {!detail || detail.loading ? (
               <p className="py-10 text-center text-sm text-slate-400">Cargando el recorrido…</p>
             ) : detail.error ? (
