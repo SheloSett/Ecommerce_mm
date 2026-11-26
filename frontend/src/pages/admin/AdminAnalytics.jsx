@@ -720,8 +720,10 @@ function EnVivoTab({ data, refreshedAt }) {
 // sin cuenta; todas sus visitas juntas, también lo de antes de iniciar sesión); a la derecha, su recorrido
 // paso a paso, por día. A diferencia de "Quiénes entraron y qué vieron" (Búsquedas y vistas), que va por
 // navegador y mezcla las visitas anónimas. Ver backend/src/utils/recorrido.js.
+// QUOTE_APPROVED faltaba y salía "quote_approved" (26/11/2026)
 const ORDER_STATUS_LABEL = {
-  PENDING: "pendiente", PAYMENT_REVIEW: "revisando el pago", APPROVED: "aprobado", REJECTED: "rechazado", CANCELLED: "cancelado",
+  PENDING: "pendiente", QUOTE_APPROVED: "aprobada, sin pagar", PAYMENT_REVIEW: "revisando el pago", APPROVED: "pagado",
+  REJECTED: "rechazado", CANCELLED: "cancelado",
 };
 function relTime(d) {
   const s = (Date.now() - new Date(d).getTime()) / 1000;

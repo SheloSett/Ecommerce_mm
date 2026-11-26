@@ -104,6 +104,7 @@ export default function AdminLayout({ children, title }) {
         { label: "Stock",           tab: "stock" },
         { label: "Ofertas",         tab: "ofertas" },
         { label: "Búsquedas y vistas", tab: "interes" },
+        { label: "Recorrido",       tab: "recorrido" }, // 26/11/2026: faltaba en el menú (la pestaña sí estaba)
         { label: "🟢 En vivo",       tab: "envivo" },
       ],
     },
