@@ -356,18 +356,44 @@ export default function CarouselSectionContent() {
     const targetIdx = direction === "up" ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= next.length) return;
     [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
+    await saveOrder(next);
+  }
+
+  // Guarda un orden nuevo: renumera 0, 1, 2… y guarda solo los slides cuyo número cambió. Antes estaba
+  // adentro de handleMove; ahora la usan también el arrastre. Se muestra el orden nuevo enseguida y, si
+  // algo falla, se vuelve a lo guardado.
+  async function saveOrder(next) {
     const changed = next.map((s, i) => ({ s, i })).filter(({ s, i }) => s.order !== i);
+    if (changed.length === 0) return;
+    setSlides(next.map((s, i) => ({ ...s, order: i })));
     try {
       await Promise.all(changed.map(({ s, i }) => {
         const fd = new FormData();
         fd.append("order", i);
         return slidesApi.update(s.id, fd);
       }));
-      setSlides(next.map((s, i) => ({ ...s, order: i })));
     } catch {
       toast.error("Error al reordenar");
       loadSlides(); // volver a lo que quedó guardado
     }
+  }
+
+  // Arrastrar para ordenar (pedido de la clienta, 26/11/2026: "más fácil cambiar el orden, algo como
+  // arrastrarlas"). Arrastre nativo del navegador, como las fotos de los productos (AdminProducts.jsx):
+  // anda con el mouse; en el celular quedan las flechitas. drag = el que se arrastra; over = sobre cuál y
+  // si va antes o después (según la mitad de la tarjeta donde está el puntero), para la línea azul.
+  const [drag, setDrag] = useState(null);
+  const [over, setOver] = useState(null); // { id, after }
+  function handleDrop(target) {
+    if (drag == null || !over || drag === target.id) { setDrag(null); setOver(null); return; }
+    const list = [...slides].sort(bySlideOrder);
+    const moving = list.find((s) => s.id === drag);
+    const rest = list.filter((s) => s.id !== drag);
+    const at = rest.findIndex((s) => s.id === target.id) + (over.after ? 1 : 0);
+    rest.splice(at, 0, moving);
+    setDrag(null);
+    setOver(null);
+    saveOrder(rest);
   }
 
   // ── Banners: funciones ───────────────────────────────────────────────────────
@@ -454,10 +480,39 @@ export default function CarouselSectionContent() {
             </div>
           ) : (
             <div className="space-y-3">
+              {sorted.length > 1 && (
+                <p className="text-xs text-slate-400">Arrastrá un slide (de cualquier parte) para cambiarlo de lugar. Se guarda solo.</p>
+              )}
               {sorted.map((slide, idx) => (
-                <div key={slide.id} className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-4 ${!slide.active ? "opacity-60" : ""}`}>
+                // Antes: un <div> sin arrastre (solo las flechitas). La línea azul de arriba o de abajo marca
+                // dónde va a quedar el que se arrastra.
+                <div
+                  key={slide.id}
+                  draggable
+                  onDragStart={(e) => {
+                    setDrag(slide.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(slide.id)); // Firefox no arrastra sin esto
+                  }}
+                  onDragOver={(e) => {
+                    if (drag == null) return;
+                    e.preventDefault();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const after = e.clientY > r.top + r.height / 2;
+                    if (over?.id !== slide.id || over?.after !== after) setOver({ id: slide.id, after });
+                  }}
+                  onDrop={(e) => { e.preventDefault(); handleDrop(slide); }}
+                  onDragEnd={() => { setDrag(null); setOver(null); }}
+                  className={`relative bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-4 cursor-grab active:cursor-grabbing transition-opacity ${!slide.active ? "opacity-60" : ""} ${drag === slide.id ? "!opacity-30" : ""}`}
+                >
+                  {over?.id === slide.id && drag !== slide.id && (
+                    <div className={`absolute left-2 right-2 h-1 rounded-full bg-blue-500 pointer-events-none ${over.after ? "-bottom-2" : "-top-2"}`} />
+                  )}
+                  {/* Manija: muestra que se puede agarrar */}
+                  <span className="text-slate-300 select-none text-lg leading-none flex-shrink-0" aria-hidden="true">⠿</span>
                   <div className="w-32 h-20 rounded-xl overflow-hidden bg-slate-100 flex-shrink-0">
-                    <img src={getImageUrl(slide.image)} alt="" className="w-full h-full object-cover" />
+                    {/* draggable={false}: si no, el navegador arrastra la foto sola en vez de la tarjeta */}
+                    <img src={getImageUrl(slide.image)} alt="" draggable={false} className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 truncate">

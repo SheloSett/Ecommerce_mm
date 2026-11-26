@@ -466,6 +466,8 @@ funciona -> preguntar si esta bien que deje sumar mas del stock disponible... el
 
 224- el link del recordatorio de carrito sin sesión iniciada (25/11/2026): la clienta abrió su recordatorio y el carrito estaba vacío porque no había iniciado sesión en ese navegador (el carrito guardado está en la cuenta). Los links del recordatorio (email y WhatsApp) ahora van a /carrito?recordatorio=1: sin sesión, arriba del carrito aparece "Tu carrito está guardado en tu cuenta" con "Iniciar sesión", que vuelve al carrito (?volver=/carrito, utils/returnTo.js) y ahí la tienda trae el carrito guardado y le suma lo del invitado (mergeGuestCart). Y cualquier carrito vacío sin sesión ofrece "¿Ya tenés cuenta? Iniciá sesión para ver los productos que guardaste". Con sesión no cambia nada. Probado con el servidor simulado (los dos casos). Sin migración. ✅
 
+225- ordenar los slides del carrusel arrastrándolos (26/11/2026): pedido de la clienta ("hacé más fácil cambiar el orden de las fotos, algo como arrastrarlas"). En Configuración → Carrusel → Slides cada slide se agarra de cualquier parte (con una manija ⠿) y se suelta donde va; una línea azul marca dónde queda y se guarda solo (solo los que cambiaron de lugar). Arrastre nativo del navegador, como las fotos de los productos: anda con el mouse; en el celular quedan las flechitas ▲▼. Si guardar falla, vuelve a lo guardado. Probado con el servidor simulado (arrastrar el 3.º arriba del 1.º: queda 3, 1, 2, 4 y se guardan solo esos tres). Sin migración. ✅
+
 ##
 
 
