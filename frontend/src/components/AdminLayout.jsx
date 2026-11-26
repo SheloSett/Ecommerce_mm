@@ -127,7 +127,7 @@ export default function AdminLayout({ children, title }) {
     { path: "/admin/devoluciones", label: "Arrepentimiento", icon: "↩️", badge: badges.devoluciones, permission: "devoluciones" },
     {
       path: "/admin/emails",
-      label: "Emails",
+      label: "Emails y WhatsApp", // antes "Emails" (26/11/2026: también manda los avisos por WhatsApp)
       icon: "📧",
       permission: "emails",
       subItems: [

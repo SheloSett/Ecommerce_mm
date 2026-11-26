@@ -649,7 +649,8 @@ function WhatsappTab() {
           <span className="text-sm text-slate-600">mensajes por día</span>
           <p className="text-xs text-slate-500 w-full">
             {/* Antes: "Se mandan desde “Avisos de campañas” → 📱 WhatsApp. ..." (ahora también los recordatorios) */}
-            Las campañas (desde “Avisos de campañas” → 📱 WhatsApp) y los recordatorios de carrito y restock salen por la misma cola:
+            {/* Antes: "Las campañas (desde “Avisos de campañas” → 📱 WhatsApp) y los ..." (26/11/2026: ahora salen solas) */}
+            Las campañas (solas al empezar, si tienen tildado el aviso, o a mano desde “Avisos de campañas” → 📱 WhatsApp) y los recordatorios de carrito y restock salen por la misma cola:
             de a uno (cada 1,5 a 3 minutos) y solo entre las 9 y las 21. Más por día = más riesgo de bloqueo.
           </p>
         </div>
@@ -789,7 +790,7 @@ function CampaignsTab() {
     try {
       if (offer._type === "promo") await emailsApi.setPromoAuto(offer.id, !offer.emailAnnounce);
       else await offersApi.update(offer.id, { emailAnnounce: !offer.emailAnnounce });
-      toast.success(!offer.emailAnnounce ? "Se avisa por email cuando empiece" : "Aviso automático desactivado");
+      toast.success(!offer.emailAnnounce ? "Se avisa por email y WhatsApp cuando empiece" : "Aviso automático desactivado");
       load();
     } catch (e) {
       toast.error(e.response?.data?.error || "No se pudo guardar");
@@ -905,7 +906,7 @@ function CampaignsTab() {
                     onChange={() => toggleAuto(o)}
                     className="w-4 h-4 rounded border-slate-300"
                   />
-                  <span className="text-slate-700">Avisar sola al empezar</span>
+                  <span className="text-slate-700">Avisar sola al empezar (email y WhatsApp)</span>
                 </label>
               )}
 
@@ -1516,7 +1517,7 @@ export default function AdminEmails() {
   const title = useMemo(() => TITLES[tab] || TITLES[""], [tab]);
 
   return (
-    <AdminLayout title={`Emails — ${title}`}>
+    <AdminLayout title={`Emails y WhatsApp — ${title}`}>
       {tab === "" && <ComposeTab />}
       {tab === "campanas" && <CampaignsTab />}
       {tab === "historial" && <HistoryTab />}

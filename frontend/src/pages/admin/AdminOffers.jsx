@@ -515,7 +515,7 @@ export default function AdminOffers() {
                           </span>
                         ) : offer.emailAnnounce && (
                           <span className="text-[10px] text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded mt-1 ml-1 inline-block">
-                            📧 Se avisa al empezar
+                            📧📱 Se avisa al empezar
                           </span>
                         )}
                       </td>
@@ -792,11 +792,12 @@ export default function AdminOffers() {
                     className="w-5 h-5 mt-0.5 rounded border-slate-300 flex-shrink-0"
                   />
                   <span>
-                    <span className="block text-sm font-semibold text-slate-800">📧 Avisar por email a los clientes cuando empiece</span>
+                    {/* Antes: "📧 Avisar por email a los clientes cuando empiece" (26/11/2026: también por WhatsApp) */}
+                    <span className="block text-sm font-semibold text-slate-800">📧📱 Avisar por email y WhatsApp a los clientes cuando empiece</span>
                     <span className="block text-xs text-slate-500 mt-0.5">
                       {form.announcedAt
-                        ? `Ya se avisó el ${formatDateTime(form.announcedAt)}. Para mandarlo de nuevo: Emails → Avisos de campañas.`
-                        : "Cuando arranca la campaña, les llega un email con el descuento y los productos (a minoristas, mayoristas o los dos, según a quién aplica). Se manda una sola vez y de a poco; lo seguís en Emails → Historial."}
+                        ? `Ya se avisó el ${formatDateTime(form.announcedAt)}. Para mandarlo de nuevo: Emails y WhatsApp → Avisos de campañas.`
+                        : "Cuando arranca la campaña, les llega un email con el descuento y los productos, y un WhatsApp a los que tienen celular (a minoristas, mayoristas o los dos, según a quién aplica). Se manda una sola vez y de a poco (el WhatsApp, de a uno entre las 9 y las 21); lo seguís en Emails y WhatsApp → Historial."}
                     </span>
                     {/* Antes: sin mirar `active` — con la campaña pausada el aviso no sale al guardar */}
                     {!form.announcedAt && form.emailAnnounce && !form.active ? (

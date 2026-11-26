@@ -402,7 +402,7 @@ export default function AdminCartPromos() {
                           <CampaignChip offer={promo} />
                           <p className="text-xs text-slate-400 mt-1">
                             {APPLIES_LABEL[promo.appliesTo]}{promo.showCard !== false ? " · tarjeta en el inicio" : ""}
-                            {promo.announcedAt ? " · avisada por email" : promo.emailAnnounce ? " · se avisa por email al empezar" : ""}
+                            {promo.announcedAt ? " · avisada por email" : promo.emailAnnounce ? " · se avisa por email y WhatsApp al empezar" : ""}
                           </p>
                           <p className="text-xs text-slate-500">{scopeText(promo)}</p>
                         </td>
@@ -798,10 +798,11 @@ export default function AdminCartPromos() {
                 const announcedAt = editing ? promos.find((p) => p.id === editing)?.announcedAt : null;
                 return (
                   <div className="rounded-xl border border-slate-200 p-4 space-y-1.5">
-                    <p className="text-sm font-semibold text-slate-800">📧 Aviso por email</p>
+                    {/* Antes: "📧 Aviso por email" (26/11/2026: la casilla también manda el WhatsApp) */}
+                    <p className="text-sm font-semibold text-slate-800">📧📱 Aviso por email y WhatsApp</p>
                     {announcedAt ? (
                       <p className="text-xs text-emerald-700">
-                        ✅ Ya se avisó el {formatDate(announcedAt)}. Para mandarlo otra vez: <Link to="/admin/emails?tab=campanas" className="underline font-semibold">Emails → Avisos de campañas</Link>.
+                        ✅ Ya se avisó el {formatDate(announcedAt)}. Para mandarlo otra vez: <Link to="/admin/emails?tab=campanas" className="underline font-semibold">Emails y WhatsApp → Avisos de campañas</Link>.
                       </p>
                     ) : startsLater ? (
                       <label className="flex items-start gap-2.5 cursor-pointer">
@@ -812,16 +813,16 @@ export default function AdminCartPromos() {
                           className="w-4 h-4 mt-0.5 rounded border-slate-300 flex-shrink-0"
                         />
                         <span>
-                          <span className="block text-sm text-slate-700">Avisarles por email a los clientes cuando empiece</span>
+                          <span className="block text-sm text-slate-700">Avisarles por email y WhatsApp a los clientes cuando empiece</span>
                           <span className="block text-xs text-slate-500 mt-0.5">
-                            Una sola vez, a quienes les aplica (a los mayoristas, con sus escalones). No les llega a los que se dieron de baja de las promociones.
+                            Una sola vez, a quienes les aplica (a los mayoristas, con sus escalones). No les llega a los que se dieron de baja de las promociones. El WhatsApp sale de a uno, entre las 9 y las 21.
                           </span>
                         </span>
                       </label>
                     ) : (
                       <p className="text-xs text-slate-600">
-                        {editing ? "Esta promo ya empezó." : "Esta promo empieza apenas la guardes."} Para avisarla por email, después de guardar andá a{" "}
-                        <Link to="/admin/emails?tab=campanas" className="text-blue-600 underline font-semibold">Emails → Avisos de campañas</Link> y tocá “📧 Avisar ahora”.
+                        {editing ? "Esta promo ya empezó." : "Esta promo empieza apenas la guardes."} Para avisarla, después de guardar andá a{" "}
+                        <Link to="/admin/emails?tab=campanas" className="text-blue-600 underline font-semibold">Emails y WhatsApp → Avisos de campañas</Link> y tocá “📧 Avisar ahora” y “📱 WhatsApp”.
                       </p>
                     )}
                   </div>
