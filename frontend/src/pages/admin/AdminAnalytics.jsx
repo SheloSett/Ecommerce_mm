@@ -3,6 +3,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import AdminLayout from "../../components/AdminLayout";
 import { analyticsApi, getImageUrl } from "../../services/api";
 import { LineChart, ColumnChart, BarList, ShareBar, StatTile, DeltaBadge, pctDelta } from "../../components/admin/charts";
+// Recorrido por cliente: resumen, visitas y camino (26/11/2026)
+import { resumenOf, visitsOf } from "../../utils/recorridoVista";
 
 // ─── Formato ──────────────────────────────────────────────────────────────────
 const fmtArs = (v) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(v ?? 0);
@@ -774,48 +776,116 @@ function RecorridoTab({ data, dateFrom, dateTo }) {
     if (window.innerWidth < 1024) setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
 
-  // El recorrido, agrupado por día; una línea gris cuando empieza otra visita (otro navegador o vuelve más tarde)
-  const timeline = () => {
+  // Segunda versión (26/11/2026, "se ve medio feo el historial"): antes una fila por paso, agrupadas por día, y
+  // los "Entró a Carrito / Entró a Checkout" repetidos tapaban lo importante. Ahora: arriba el resumen (qué buscó,
+  // qué miró, sus pedidos) y abajo una tarjeta por visita con las páginas como camino en una línea y los ida y
+  // vuelta juntos. La lógica está en utils/recorridoVista.js (con tests).
+  const hora = (d) => new Date(d).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const productLink = (product) => (product?.slug
+    ? <a href={`/producto/${product.slug}`} target="_blank" rel="noreferrer" className="font-medium text-blue-600 hover:underline">{product.name}</a>
+    : <span className="font-medium text-slate-800">{product?.name || "un producto"}</span>);
+  const orderLine = (it) => (
+    <><Link to={`/admin/ordenes/${it.orderId}`} className="font-semibold text-blue-600 hover:underline">#{it.orderId}</Link> · {fmtArs(it.total)}{it.totalUsd > 0 ? ` + ${fmtUsd(it.totalUsd)}` : ""} · <span className="text-slate-500">{ORDER_STATUS_LABEL[it.status] || String(it.status || "").toLowerCase()}</span></>
+  );
+
+  const detalle = () => {
     const items = detail?.items || [];
     if (items.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No hay actividad en este período</p>;
-    const out = [];
-    let day = null;
-    items.forEach((it, i) => {
-      const d = dayLabel(it.at);
-      if (d !== day) { day = d; out.push(<p key={`d${i}`} className="sticky top-0 z-[1] -mx-1 bg-white px-1 pt-3 pb-1 text-xs font-bold uppercase tracking-wide text-slate-500 first:pt-0">{d}</p>); }
-      else if (it.sessionId && items[i - 1]?.sessionId && it.sessionId !== items[i - 1].sessionId) {
-        out.push(<p key={`v${i}`} className="py-1 text-center text-[11px] text-slate-400">· · · otra visita · · ·</p>);
-      }
-      // hour12: false → "10:38" (con "a. m." se partía en dos renglones)
-      const hora = new Date(it.at).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
-      let icon = "📄";
-      let body = <>Entró a <span className="font-medium text-slate-800">{it.label || it.path}</span></>;
-      if (it.kind === "search") {
-        icon = "🔍";
-        body = <>Buscó <span className="font-semibold text-slate-800">"{it.term}"</span> <span className={it.results === 0 ? "text-red-500" : "text-slate-400"}>· {it.results === 0 ? "sin resultados" : it.results == null ? "" : `${it.results} resultados`}</span></>;
-      } else if (it.kind === "product") {
-        icon = "👁";
-        body = (
-          <span className="flex min-w-0 items-center gap-2">
-            {it.product?.image && <img src={getImageUrl(it.product.image)} alt="" className="h-8 w-8 flex-shrink-0 rounded border border-slate-100 object-cover" />}
-            <span className="min-w-0">Miró {it.product?.slug
-              ? <a href={`/producto/${it.product.slug}`} target="_blank" rel="noreferrer" className="font-medium text-blue-600 hover:underline">{it.product.name}</a>
-              : <span className="font-medium text-slate-800">{it.product?.name || "un producto"}</span>}</span>
-          </span>
-        );
-      } else if (it.kind === "order") {
-        icon = "🧾";
-        body = <><span className="font-semibold text-emerald-700">Hizo el pedido</span> <Link to={`/admin/ordenes/${it.orderId}`} className="font-medium text-blue-600 hover:underline">#{it.orderId}</Link> · {fmtArs(it.total)}{it.totalUsd > 0 ? ` + ${fmtUsd(it.totalUsd)}` : ""} · <span className="text-slate-500">{ORDER_STATUS_LABEL[it.status] || String(it.status || "").toLowerCase()}</span></>;
-      }
-      out.push(
-        <div key={i} className="flex items-start gap-3 py-1.5 text-sm text-slate-600">
-          <span className="w-11 flex-shrink-0 pt-0.5 text-xs tabular-nums text-slate-400">{hora}</span>
-          <span className="w-5 flex-shrink-0 text-center" aria-hidden="true">{icon}</span>
-          <div className="min-w-0 flex-1 break-words">{body}</div>
+    const { terms, prods, orders } = resumenOf(items);
+    const visits = visitsOf(items);
+    return (
+      <>
+        {/* Resumen: lo que importa primero */}
+        <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">🔍 Buscó</p>
+            {terms.length === 0 ? <p className="text-sm text-slate-400">Nada</p> : (
+              <div className="flex flex-wrap gap-1.5">
+                {terms.map((t) => (
+                  <span key={t.term} title={t.sinResultados ? "Alguna vez no encontró nada" : undefined}
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${t.sinResultados ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"}`}>
+                    {t.term}{t.veces > 1 ? ` ×${t.veces}` : ""}{t.sinResultados ? " · sin resultados" : ""}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">👁 Miró</p>
+            {prods.length === 0 ? <p className="text-sm text-slate-400">Ningún producto</p> : (
+              <ul className="space-y-1">
+                {prods.slice(0, 8).map((p) => (
+                  <li key={p.productId} className="flex items-center gap-2 text-sm">
+                    {p.product?.image
+                      ? <img src={getImageUrl(p.product.image)} alt="" className="h-7 w-7 flex-shrink-0 rounded border border-slate-100 object-cover" />
+                      : <span className="h-7 w-7 flex-shrink-0 rounded bg-slate-100" />}
+                    <span className="min-w-0 flex-1 truncate">{productLink(p.product)}</span>
+                    {p.veces > 1 && <span className="flex-shrink-0 text-xs font-semibold text-slate-500">×{p.veces}</span>}
+                  </li>
+                ))}
+                {prods.length > 8 && <li className="text-xs text-slate-400">y {prods.length - 8} más (abajo, en el recorrido)</li>}
+              </ul>
+            )}
+          </div>
         </div>
-      );
-    });
-    return out;
+        {orders.length > 0 && (
+          <div className="mb-5 rounded-lg bg-green-50 px-3 py-2 text-sm text-slate-700">
+            <span className="mr-1 font-semibold text-green-800">🧾 Pedidos:</span>
+            {orders.map((o, i) => <span key={o.orderId}>{i > 0 && <span className="text-slate-300"> | </span>}{orderLine(o)}</span>)}
+          </div>
+        )}
+
+        {/* Recorrido por visita */}
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Recorrido</p>
+        <div className="space-y-3">
+          {visits.map((v) => {
+            const mins = Math.round((v.end - v.start) / 60000);
+            return (
+              <div key={`${v.sessionId}-${v.start}`} className="overflow-hidden rounded-xl border border-slate-200">
+                <p className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-xs text-slate-500">
+                  <span className="font-semibold text-slate-700">{dayLabel(v.start)}</span> · {hora(v.start)}{mins > 0 ? `–${hora(v.end)}` : ""}
+                  {" · "}{DEVICE_ICON_SM[v.device] || "🖥️"} {v.device || ""}{mins > 0 ? ` · ${mins} min` : ""}
+                </p>
+                <div className="space-y-1.5 px-3 py-2">
+                  {v.steps.map((s, i) => {
+                    if (s.kind === "camino") {
+                      return (
+                        <div key={i} className="flex flex-wrap items-center gap-1 text-xs text-slate-500">
+                          <span className="mr-1 w-10 flex-shrink-0 tabular-nums text-slate-400">{hora(s.at)}</span>
+                          {s.camino.map((c, j) => (
+                            <span key={j} className="flex items-center gap-1">
+                              {j > 0 && <span className="text-slate-300">→</span>}
+                              {c.label
+                                ? <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-slate-600">{c.label}</span>
+                                : <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-amber-800" title="Fue y vino entre estas dos páginas">{c.a} ⇄ {c.b}{c.veces > 1 ? ` ×${c.veces}` : ""}</span>}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-sm text-slate-600">
+                        <span className="mr-1 w-10 flex-shrink-0 text-xs tabular-nums text-slate-400">{hora(s.at)}</span>
+                        {s.kind === "search" && (
+                          <span>🔍 Buscó <span className="font-semibold text-slate-800">"{s.term}"</span> <span className={s.results === 0 ? "text-red-500" : "text-slate-400"}>· {s.results === 0 ? "sin resultados" : s.results == null ? "" : `${s.results} resultados`}</span></span>
+                        )}
+                        {s.kind === "product" && (
+                          <span className="flex min-w-0 items-center gap-2">
+                            {s.product?.image && <img src={getImageUrl(s.product.image)} alt="" className="h-6 w-6 flex-shrink-0 rounded border border-slate-100 object-cover" />}
+                            <span className="min-w-0 truncate">Miró {productLink(s.product)}</span>
+                          </span>
+                        )}
+                        {s.kind === "order" && <span>🧾 <span className="font-semibold text-green-700">Hizo el pedido</span> {orderLine(s)}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
   };
 
   return (
@@ -890,7 +960,7 @@ function RecorridoTab({ data, dateFrom, dateTo }) {
                   </p>
                   <p className="text-xs text-slate-500">{[detail.persona.email, detail.persona.phone].filter(Boolean).join(" · ")}</p>
                 </div>
-                {timeline()}
+                {detalle()}
               </>
             )}
           </div>

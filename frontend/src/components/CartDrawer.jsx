@@ -127,6 +127,12 @@ export default function CartDrawer({ open, onClose }) {
                         {item.variantLabel}
                       </span>
                     )}
+                    {/* Cuál no tiene stock (26/11/2026), para saber qué sacar: si no, el aviso de abajo no decía cuál */}
+                    {item.outOfStock && (
+                      <span className="inline-block mt-0.5 ml-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                        Sin stock
+                      </span>
+                    )}
                     <p className="text-[#006b2c] font-bold text-sm mt-1">
                       {formatPrice(item.price, item.currency)}
                       {/* Precio actualizado desde que lo agregó (ver CartContext): se tacha el
@@ -262,10 +268,22 @@ export default function CartDrawer({ open, onClose }) {
               Ver carrito completo
             </Link>
 
+            {/* Con productos sin stock no se puede pagar (26/11/2026). Antes el carrito grande desactivaba el
+                botón pero este no: el cliente iba al checkout, el checkout lo devolvía al carrito ("tenés
+                productos sin stock") y volvía a intentar desde acá: en Analíticas → Recorrido se vio un
+                Carrito ⇄ Checkout repetido. Ahora avisa acá y el botón queda desactivado, igual que en el carrito. */}
+            {items.some((i) => i.outOfStock) && (
+              <p className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <span className="material-symbols-outlined text-[16px]">warning</span>
+                Tenés productos sin stock. Sacalos del carrito para poder finalizar la compra.
+              </p>
+            )}
+
             {/* Botón checkout */}
             <button
               onClick={handleCheckout}
-              disabled={minimoActivo && !llegaAlMinimo}
+              // Antes: disabled={minimoActivo && !llegaAlMinimo}
+              disabled={(minimoActivo && !llegaAlMinimo) || items.some((i) => i.outOfStock)}
               className="w-full py-3.5 bg-[#00873a] text-white font-bold rounded-[10px] hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <span className="material-symbols-outlined text-[20px]">shopping_bag</span>
