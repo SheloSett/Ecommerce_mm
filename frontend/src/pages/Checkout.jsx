@@ -76,6 +76,11 @@ export default function Checkout() {
   // Si el cliente vuelve a tocar "Pagar" con la misma compra, se reusa en vez de crear otro pedido.
   // { key: la compra (ítems, datos, envío, cupón), order }
   const pendingMpOrder = useRef(null);
+  // Candado contra el doble envío (26/11/2026): salieron dos cotizaciones idénticas (#280 y #281) por un doble
+  // clic en "Confirmar". El botón se desactiva con `loading`, pero eso recién se ve en el próximo render: un
+  // segundo clic en el mismo instante pasaba igual. El ref cambia en el acto. (El servidor también descarta
+  // el repetido: ver createOrder en order.controller.js.)
+  const submittingRef = useRef(false);
   // Estado de éxito: null = en progreso, objeto = orden creada exitosamente (para no-MP)
   const [successOrder, setSuccessOrder] = useState(null);
   // SEGURIDAD: se eliminó la posibilidad de que el cliente edite precios.
@@ -286,6 +291,7 @@ export default function Checkout() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return; // doble clic: el primero ya está en camino
 
     if (items.length === 0) {
       toast.error("Tu carrito está vacío");
@@ -318,6 +324,7 @@ export default function Checkout() {
       return;
     }
 
+    submittingRef.current = true;
     setLoading(true);
     try {
       const purchase = {
@@ -392,6 +399,7 @@ export default function Checkout() {
       if (err.response?.status === 409) setMotoQuoteRetry((n) => n + 1);
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 

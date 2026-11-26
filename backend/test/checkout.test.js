@@ -536,3 +536,26 @@ describe("checkout: descuento por monto de compra", () => {
     assert.equal(db.orders[res.body.id].total, 2000000);
   });
 });
+
+// ── Pedidos repetidos por doble envío (26/11/2026) ────────────────────────────
+// Dos cotizaciones idénticas seguidas (#280 y #281): el mismo envío llegó dos veces (doble clic).
+describe("checkout: un doble clic no crea dos pedidos", () => {
+  beforeEach(resetDb);
+
+  test("dos envíos iguales al mismo tiempo dan UN pedido y los dos reciben el mismo", async () => {
+    const body = { paymentMethod: "TRANSFERENCIA", items: [{ productId: 1, quantity: 1 }] };
+    const [a, b] = await Promise.all([placeOrder(body), placeOrder(body)]);
+    assert.equal(a.code, 201);
+    assert.equal(b.code, 201);
+    assert.equal(orderCount(), 1);
+    assert.equal(a.body.id, b.body.id);
+  });
+
+  test("dos pedidos distintos del mismo cliente se crean igual", async () => {
+    await Promise.all([
+      placeOrder({ paymentMethod: "TRANSFERENCIA", items: [{ productId: 1, quantity: 1 }] }),
+      placeOrder({ paymentMethod: "TRANSFERENCIA", items: [{ productId: 1, quantity: 2 }] }),
+    ]);
+    assert.equal(orderCount(), 2);
+  });
+});

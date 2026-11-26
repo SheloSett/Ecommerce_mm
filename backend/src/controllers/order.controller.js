@@ -309,7 +309,71 @@ async function getOrder(req, res) {
 }
 
 // POST /api/orders - Crear orden (desde el checkout público)
+// ── Pedidos repetidos por doble envío (26/11/2026) ──────────────────────────────
+// La clienta vio dos cotizaciones idénticas seguidas (#280 y #281): el mismo envío llegó dos veces (doble
+// clic en "Confirmar" antes de que el botón se desactivara). Ver utils/orderDedup.js. Ahora:
+//   1) si el mismo pedido llega mientras el primero se está creando, espera y responde ese mismo pedido;
+//   2) si llega hasta 2 minutos después (dos pestañas, el celular reintentó), responde el que ya existe.
+// En los dos casos el cliente ve un solo pedido y no salen emails repetidos. Lo de antes de este control
+// (createOrderInner) no cambió.
+const { fingerprint: orderFingerprint, DEDUP_WINDOW_MS } = require("../utils/orderDedup");
+const inFlightOrders = new Map(); // huella → Promise<lo que se le respondió al primero (el pedido) | null>
+
 async function createOrder(req, res) {
+  const { customerEmail, paymentMethod, items } = req.body || {};
+  const fp = orderFingerprint({ email: customerEmail, paymentMethod, items });
+  if (!fp) return createOrderInner(req, res);
+
+  if (inFlightOrders.has(fp)) {
+    const first = await inFlightOrders.get(fp);
+    if (first) {
+      console.warn(`[PEDIDO] Llegó dos veces el pedido #${first.id} (doble envío): se responde el mismo`);
+      return res.status(201).json(first);
+    }
+  }
+  // Se anota ANTES de cualquier await: si no, dos envíos simultáneos pasarían los dos este control.
+  let release;
+  inFlightOrders.set(fp, new Promise((r) => { release = r; }));
+  let created = null;
+  try {
+    // Si esta consulta falla por lo que sea, se sigue sin el control: nunca frena un pedido.
+    let recent = [];
+    try {
+      recent = await prisma.order.findMany({
+        where: {
+          customerEmail: { equals: String(customerEmail).trim(), mode: "insensitive" },
+          createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
+          status: { notIn: ["CANCELLED", "REJECTED"] },
+        },
+        include: { items: { include: { product: { select: { id: true, name: true, images: true } } } }, coupon: { select: { code: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      });
+    } catch (err) {
+      console.error("[PEDIDO] No se pudo revisar si el pedido estaba repetido:", err.message);
+    }
+    const dup = recent.find((o) => orderFingerprint({ email: o.customerEmail, paymentMethod: o.paymentMethod, items: o.items }) === fp);
+    if (dup) {
+      console.warn(`[PEDIDO] El pedido #${dup.id} llegó de nuevo a los ${Math.round((Date.now() - dup.createdAt) / 1000)} s: se responde el mismo`);
+      created = sanitizeOrdersForCustomer({ ...dup });
+      return res.status(201).json(created);
+    }
+    // Se guarda lo que createOrderInner le responde al cliente, para dárselo igual al envío repetido
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      // Un pedido creado trae id; los errores son { error }. (No se mira res.statusCode: no depende de Express.)
+      if (body?.id && !body.error) created = body;
+      return json(body);
+    };
+    return await createOrderInner(req, res);
+  } finally {
+    release(created);
+    inFlightOrders.delete(fp);
+  }
+}
+
+// Antes se llamaba createOrder (ver el control de arriba)
+async function createOrderInner(req, res) {
   try {
     const { customerName, customerEmail, customerPhone, items, paymentMethod, customerId, couponCode, wantsInvoice, customerNote, shippingMethod, shippingAddress, shippingCost, sessionId, metaBrowser } = req.body;
     // Meta: cookies del Pixel (_fbp/_fbc) + IP + navegador del cliente al momento de comprar. Se
