@@ -9,6 +9,7 @@ import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice"
 // promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
 // Antes: import { getOrderTotals } from "../../utils/orderTotals";
 import { getOrderTotals, promoLabel } from "../../utils/orderTotals";
+import { costoSobrePrecio } from "../../utils/costCheck";
 import { formatDeliveryDate } from "../../utils/shipping";
 import { priceParts, activeOfferName } from "../../utils/productPrice";
 import { photoSizeCss, photoSizeControlsHtml, PHOTO_SIZE_KEYS } from "../../utils/printPhotoSize";
@@ -1738,6 +1739,30 @@ ${pagesHtml}
                             ) : null}
                           </div>
 
+                          {/* Costo mayor que el precio de venta (26/11/2026, ver utils/costCheck.js). Pasó con
+                              un cargador: costo 45.000 en vez de 4.500, y la ganancia del pedido daba casi 0.
+                              El costo es el de la línea si se cargó en el pedido; si no, el del producto. */}
+                          {(() => {
+                            const cur = item.currency || "ARS";
+                            const costoLinea = item.cost != null;
+                            const costo = costoLinea ? item.cost
+                              : (item.product?.currency || "ARS") === cur ? (item.variant?.cost ?? item.product?.cost ?? null) : null;
+                            const lista = editingPrice[item.id] !== undefined ? editingPrice[item.id] : listaDeItem(item);
+                            const desc  = editingDesc[item.id] !== undefined ? editingDesc[item.id] : descDeItem(item);
+                            const hit = costoSobrePrecio(costo, precioFinalLinea(lista, desc));
+                            if (!hit) return null;
+                            return (
+                              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                                <span className="font-bold">⚠ El costo ({formatPriceWithCurrency(hit.cost, cur)}) es mayor que el precio de venta ({formatPriceWithCurrency(hit.price, cur)}).</span>
+                                {hit.ceroDeMas && <span className="font-bold"> ¿Tiene un cero de más?</span>}{" "}
+                                {costoLinea
+                                  ? "Corregilo en el detalle del pedido, con Modificar pedido."
+                                  : "Corregilo en la ficha del producto (Productos)."}
+                                <span className="text-red-600"> Solo lo ves vos, no el cliente.</span>
+                              </p>
+                            );
+                          })()}
+
                           {/* Panel de asignación de variantes para cotizaciones mayoristas */}
                           {needsVariantAssign && (
                             <div className="border-t border-slate-200 pt-2">
@@ -3060,19 +3085,31 @@ ${pagesHtml}
                         <div className="grid grid-cols-2 gap-2 sm:flex">
                           {/* Costo: autocompletado con el costo real del producto/variante, editable.
                               Si difiere del de la base, al registrar se pregunta si actualizarlo. */}
-                          <div className="sm:w-28">
-                            <label className="block text-xs text-slate-500 mb-1">Costo</label>
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              min="0"
-                              step="0.01"
-                              value={item.cost}
-                              onChange={(e) => setManualItem(idx, "cost", e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              placeholder="—"
-                            />
-                          </div>
+                          {/* En rojo si el costo supera el precio con el descuento de la línea (26/11/2026, ver utils/costCheck.js) */}
+                          {(() => {
+                            const d = Math.min(100, Math.max(0, parseFloat(item.desc) || 0));
+                            const hit = costoSobrePrecio(item.cost, (parseFloat(item.price) || 0) * (1 - d / 100));
+                            return (
+                              <div className="sm:w-28">
+                                <label className="block text-xs text-slate-500 mb-1">Costo</label>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="0.01"
+                                  value={item.cost}
+                                  onChange={(e) => setManualItem(idx, "cost", e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${hit ? "border-red-400 bg-red-50 text-red-700 font-semibold" : "border-slate-300"}`}
+                                  placeholder="—"
+                                />
+                                {hit && (
+                                  <p className="mt-1 text-[11px] font-semibold leading-tight text-red-600">
+                                    ⚠ Mayor que el precio{hit.ceroDeMas ? " ¿un cero de más?" : ""}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
                           <div className="sm:flex-1">
                             <label className="block text-xs text-slate-500 mb-1">Precio unitario *</label>
                             <input

@@ -10,6 +10,7 @@ import { formatPrice as formatPriceWithCurrency } from "../../utils/formatPrice"
 // promoLabel: nombre del descuento por monto del pedido ("Black Friday (10%)")
 // Antes: import { getOrderTotals, profitFromTotals } from "../../utils/orderTotals";
 import { getOrderTotals, profitFromTotals, promoLabel } from "../../utils/orderTotals";
+import { costoSobrePrecio } from "../../utils/costCheck";
 import { deliveryAddressOf, formatDeliveryDate, shippingAddressLines } from "../../utils/shipping";
 import { priceParts } from "../../utils/productPrice";
 // Descuento por monto (Black Friday): casilla "Aplicar promo" de "Modificar pedido"
@@ -883,6 +884,11 @@ export default function AdminOrderDetail() {
   // mentir con "Costo $0 / Ganancia = Total". Si solo faltan ALGUNOS, se muestra con la advertencia.
   const hasCostData = itemsSinCosto.length < (order.items || []).length;
   const costoParcial = hasCostData && itemsSinCosto.length > 0;
+  // Líneas con el costo MAYOR que el precio al que se venden (26/11/2026): casi siempre un costo mal
+  // cargado (pasó con un cargador: 45.000 en vez de 4.500) que se come la ganancia del pedido entero.
+  const itemsBajoCosto = (order.items || [])
+    .map((i) => ({ item: i, hit: costoSobrePrecio(itemUnitCost(i), i.price) }))
+    .filter((x) => x.hit);
   // hayIva: para aclarar en pantalla por qué la ganancia no es simplemente Total − Costo.
   const hayIva = (T.ars.iva || 0) > 0 || (T.usd.iva || 0) > 0;
 
@@ -1118,19 +1124,32 @@ export default function AdminOrderDetail() {
                             className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
                           />
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Costo $</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={item.cost}
-                            onChange={(e) => updateEditCost(idx, e.target.value)}
-                            placeholder="—"
-                            title="Costo del proveedor para este pedido (se usa en la orden de compra)"
-                            className="flex-1 sm:flex-none sm:w-24 text-right border border-slate-300 rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm"
-                          />
-                        </div>
+                        {/* En rojo si el costo supera el precio de venta de la línea (26/11/2026, ver utils/costCheck.js) */}
+                        {(() => {
+                          const hit = costoSobrePrecio(item.cost, precioLineaConDesc(item));
+                          return (
+                            <>
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs sm:text-[10px] text-slate-500 sm:text-slate-400 w-16 sm:w-12 sm:text-right">Costo $</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={item.cost}
+                                  onChange={(e) => updateEditCost(idx, e.target.value)}
+                                  placeholder="—"
+                                  title="Costo del proveedor para este pedido (se usa en la orden de compra)"
+                                  className={`flex-1 sm:flex-none sm:w-24 text-right border rounded-lg px-2 py-2 sm:py-1 text-base sm:text-sm ${hit ? "border-red-400 bg-red-50 text-red-700 font-semibold" : "border-slate-300"}`}
+                                />
+                              </div>
+                              {hit && (
+                                <p className="text-[11px] font-semibold leading-tight text-red-600 sm:text-right sm:max-w-[10rem]">
+                                  ⚠ Mayor que la venta{hit.ceroDeMas ? " ¿un cero de más?" : ""}
+                                </p>
+                              )}
+                            </>
+                          );
+                        })()}
                         {/* Proveedor de este producto para ESTE pedido (como el costo). La primera
                             opción es el de siempre (variante o producto). Los ítems libres no tienen. */}
                         {!item.isFree && (
@@ -1621,6 +1640,31 @@ export default function AdminOrderDetail() {
                             <p className="mt-1.5">
                               Cuentan como costo $0, así que la ganancia real es <strong>menor</strong> que la de
                               abajo. Cargalos con <strong>Modificar pedido</strong> para que el número cierre.
+                            </p>
+                          </div>
+                        )}
+                        {/* Costo mayor que el precio de venta (26/11/2026, ver utils/costCheck.js) */}
+                        {itemsBajoCosto.length > 0 && (
+                          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-900">
+                            <p className="font-bold">
+                              ⚠ {itemsBajoCosto.length === 1 ? "1 producto tiene" : `${itemsBajoCosto.length} productos tienen`} el costo mayor que el precio de venta
+                            </p>
+                            <ul className="mt-1 ml-4 list-disc space-y-0.5 text-red-800">
+                              {itemsBajoCosto.map(({ item: i, hit }) => {
+                                const cur = isUsdItem(i) ? "USD" : "ARS";
+                                return (
+                                  <li key={i.id}>
+                                    {i.product?.name || i.productName || "Producto"}
+                                    {i.variantLabel && <span className="text-red-700"> ({i.variantLabel})</span>}
+                                    {": "}costo {formatPriceWithCurrency(hit.cost, cur)}, se vende a {formatPriceWithCurrency(hit.price, cur)}
+                                    {hit.ceroDeMas && <strong> ¿un cero de más?</strong>}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                            <p className="mt-1.5">
+                              Si es un error de carga, la ganancia de abajo da <strong>menos</strong> de lo real. Corregilo con{" "}
+                              <strong>Modificar pedido</strong> (y en la ficha del producto, para las próximas ventas).
                             </p>
                           </div>
                         )}

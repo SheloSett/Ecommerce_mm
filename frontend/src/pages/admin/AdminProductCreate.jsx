@@ -10,6 +10,7 @@ import TierEditor from "../../components/admin/TierEditor";
 import WarehouseSupplierFields from "../../components/admin/WarehouseSupplierFields";
 // Aplanado recursivo del árbol de categorías (ya no está topeado en dos niveles).
 import { flattenTree, indentedLabel } from "../../utils/categoryTree";
+import CostoSobrePrecioAviso from "../../components/admin/CostoSobrePrecioAviso";
 
 const EMPTY_FORM = {
   name: "",
@@ -668,6 +669,16 @@ export default function AdminProductCreate() {
               </div>
             ))}
           </div>
+
+          {/* Aviso si el costo supera algún precio de venta (26/11/2026, ver utils/costCheck.js) */}
+          <CostoSobrePrecioAviso
+            cost={form.cost}
+            currency={form.currency}
+            prices={[
+              ...(form.visibility !== "MAYORISTA" ? [{ label: "Precio minorista", value: form.price }, { label: "Oferta minorista", value: form.salePrice }] : []),
+              ...(form.visibility !== "MINORISTA" ? [{ label: "Precio mayorista", value: form.wholesalePrice }, { label: "Oferta mayorista", value: form.wholesaleSalePrice }] : []),
+            ]}
+          />
 
           {/* Stock — 1 columna en mobile chico, 3 desde sm para que no queden cramped */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

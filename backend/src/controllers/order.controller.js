@@ -132,9 +132,11 @@ function sanitizeOrdersForCustomer(orders, viewer) {
 // reemplaza la orden en memoria con esta respuesta: si faltan slug/supplier, al cliente se le "borra"
 // el proveedor de todos los ítems y la lista (que se ordena por proveedor) se reacomoda sola.
 // Antes cada endpoint hacía: product: { select: { id: true, name: true, images: true } }
+// cost/currency (26/11/2026): para avisar en la cotización cuando el costo supera el precio de venta (las
+// ventas de la web no guardan el costo en la línea: sale del producto). Rutas solo para el admin.
 const ORDER_ITEM_PRODUCT_SELECT = {
   id: true, name: true, images: true, module: true, shelf: true,
-  slug: true, supplierId: true,
+  slug: true, supplierId: true, cost: true, currency: true,
   supplier: { select: SUPPLIER_SELECT },
 };
 
@@ -222,10 +224,12 @@ async function getOrders(req, res) {
               // slug: para linkear al detalle PÚBLICO del producto desde la cotización
               // supplier: proveedor del producto — se muestra y se puede cambiar desde la cotización
               // Antes: product: { select: { id: true, name: true, images: true, module: true, shelf: true } },
+              // cost/currency: aviso de costo mayor que el precio en la cotización (26/11/2026). Igual que
+              // ORDER_ITEM_PRODUCT_SELECT (los dos tienen que traer los mismos campos).
               product: {
                 select: {
                   id: true, name: true, images: true, module: true, shelf: true,
-                  slug: true, supplierId: true,
+                  slug: true, supplierId: true, cost: true, currency: true,
                   supplier: { select: SUPPLIER_SELECT },
                 },
               },

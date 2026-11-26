@@ -14,6 +14,8 @@ import { flattenTree, indentedLabel, breadcrumbForId, idsInBranch } from "../../
 // formatPriceCurrency: versión que respeta la moneda del producto (el formatPrice local de este
 // archivo formatea SIEMPRE en ARS y se sigue usando para los totales de capital, que son en pesos).
 import { formatPrice as formatPriceCurrency } from "../../utils/formatPrice";
+import { preciosBajoCosto } from "../../utils/costCheck";
+import CostoSobrePrecioAviso from "../../components/admin/CostoSobrePrecioAviso";
 import MultiSelectDropdown from "../../components/admin/MultiSelectDropdown";
 import * as XLSX from "xlsx";
 import { localDay } from "../../utils/localDate";
@@ -1919,7 +1921,21 @@ export default function AdminProducts() {
                                 )}
                               </td>
                               {/* Costo base del producto */}
-                              <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—" className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300" /></div></td>
+                              {/* Rojo si el costo supera algún precio de venta de la fila (26/11/2026, ver utils/costCheck.js) */}
+                              {(() => {
+                                const { bajos, ceroDeMas } = preciosBajoCosto(qv.cost, [
+                                  ...(vendeAMinoristas(p) ? [{ label: "Precio minorista", value: qv.price }, { label: "Oferta minorista", value: qv.salePrice }] : []),
+                                  ...(vendeAMayoristas(p) ? [{ label: "Precio mayorista", value: qv.wholesalePrice }, { label: "Oferta mayorista", value: qv.wholesaleSalePrice }] : []),
+                                ]);
+                                const alerta = bajos.length > 0;
+                                return (
+                                  <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.cost ?? ""} onChange={(e) => setQuickField(p.id, "cost", e.target.value)} placeholder="—"
+                                    title={alerta ? `⚠ El costo es mayor que el ${bajos.map((b) => b.label.toLowerCase()).join(", ")}${ceroDeMas ? ". ¿Tiene un cero de más?" : ""}` : undefined}
+                                    className={`w-full xl:w-28 px-2 xl:px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm placeholder-slate-300 ${alerta ? "border-red-400 bg-red-50 text-red-700 font-semibold" : "border-slate-300 bg-white"}`} /></div>
+                                    {alerta && <p className="mt-1 text-[11px] font-semibold leading-tight text-red-600">⚠ mayor que el precio{ceroDeMas ? " (¿un cero de más?)" : ""}</p>}
+                                  </td>
+                                );
+                              })()}
                               {vendeAMinoristas(p) && <>
                               {/* Precio minorista base del producto */}
                               <td className="px-2 xl:px-4 py-4"><div className="flex items-center gap-1"><span className="text-slate-500 text-sm">{pCurrencyLabel}</span><input type="number" step="0.01" min="0" value={qv.price ?? ""} onChange={(e) => setQuickField(p.id, "price", e.target.value)} className="w-full xl:w-28 px-2 xl:px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" /></div></td>
@@ -2454,6 +2470,16 @@ export default function AdminProducts() {
                   </div>
                 ))}
               </div>
+
+              {/* Aviso si el costo supera algún precio de venta (26/11/2026, ver utils/costCheck.js) */}
+              <CostoSobrePrecioAviso
+                cost={form.cost}
+                currency={form.currency}
+                prices={[
+                  ...(form.visibility !== "MAYORISTA" ? [{ label: "Precio minorista", value: form.price }, { label: "Oferta minorista", value: form.salePrice }] : []),
+                  ...(form.visibility !== "MINORISTA" ? [{ label: "Precio mayorista", value: form.wholesalePrice }, { label: "Oferta mayorista", value: form.wholesaleSalePrice }] : []),
+                ]}
+              />
 
               {/* Stock:
                   - Sin variantes → stock único editable para todos los clientes
