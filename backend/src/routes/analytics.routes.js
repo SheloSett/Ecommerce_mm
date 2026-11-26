@@ -1,5 +1,5 @@
 const express = require("express");
-const { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo } = require("../controllers/analytics.controller");
+const { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo, getRecorrido, getRecorridoPersona } = require("../controllers/analytics.controller");
 const { authMiddleware, adminMiddleware, requireAnyPermission } = require("../middleware/auth.middleware");
 
 const router = express.Router();
@@ -13,5 +13,8 @@ router.get("/stock",    authMiddleware, adminMiddleware, requireAnyPermission("a
 router.get("/ofertas",  authMiddleware, adminMiddleware, requireAnyPermission("analiticas"), getOfertas);
 router.get("/interes",  authMiddleware, adminMiddleware, requireAnyPermission("analiticas"), getInteres);
 router.get("/en-vivo",  authMiddleware, adminMiddleware, requireAnyPermission("analiticas"), getEnVivo);
+// Recorrido por cliente (26/11/2026): quién anduvo por la tienda y qué buscó / miró
+router.get("/recorrido",      authMiddleware, adminMiddleware, requireAnyPermission("analiticas"), getRecorrido);
+router.get("/recorrido/:key", authMiddleware, adminMiddleware, requireAnyPermission("analiticas"), getRecorridoPersona);
 
 module.exports = router;

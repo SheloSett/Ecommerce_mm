@@ -394,6 +394,9 @@ export const analyticsApi = {
   ofertas:  ()       => api.get("/analytics/ofertas"),
   interes:  (params) => api.get("/analytics/interes",  { params: params || {} }),
   enVivo:   ()       => api.get("/analytics/en-vivo"),
+  // Recorrido por cliente (26/11/2026): la lista de personas y el paso a paso de una (key "c:<id>" | "g:<email>")
+  recorrido:        (params)      => api.get("/analytics/recorrido", { params: params || {} }),
+  recorridoPersona: (key, params) => api.get(`/analytics/recorrido/${encodeURIComponent(key)}`, { params: params || {} }),
 };
 
 export const gastosApi = {

@@ -58,6 +58,8 @@ const TABS = [
   { key: "stock", label: "Stock", icon: "📦" },
   { key: "ofertas", label: "Ofertas", icon: "🏷️" },
   { key: "interes", label: "Búsquedas y vistas", icon: "🔍" },
+  // Recorrido por cliente (pedido de la clienta, 26/11/2026: "quién buscó qué o miró qué en los últimos días")
+  { key: "recorrido", label: "Recorrido", icon: "👣" },
   { key: "envivo", label: "En vivo", icon: "🟢" },
 ];
 
@@ -710,6 +712,194 @@ function EnVivoTab({ data, refreshedAt }) {
   );
 }
 
+// ─── 👣 Recorrido por cliente ─────────────────────────────────────────────────
+// Pedido de la clienta (26/11/2026): "ver más específico QUIÉN buscó qué o miró qué en los últimos días,
+// ordenado por cliente, el último que estuvo". A la izquierda, una fila por persona (con cuenta o que compró
+// sin cuenta; todas sus visitas juntas, también lo de antes de iniciar sesión); a la derecha, su recorrido
+// paso a paso, por día. A diferencia de "Quiénes entraron y qué vieron" (Búsquedas y vistas), que va por
+// navegador y mezcla las visitas anónimas. Ver backend/src/utils/recorrido.js.
+const ORDER_STATUS_LABEL = {
+  PENDING: "pendiente", PAYMENT_REVIEW: "revisando el pago", APPROVED: "aprobado", REJECTED: "rechazado", CANCELLED: "cancelado",
+};
+function relTime(d) {
+  const s = (Date.now() - new Date(d).getTime()) / 1000;
+  if (s < 3600) return `hace ${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  const days = Math.round(s / 86400);
+  return days === 1 ? "ayer" : `hace ${days} días`;
+}
+function dayLabel(d) {
+  const x = new Date(d);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(x, new Date())) return "Hoy";
+  if (same(x, new Date(Date.now() - 86400000))) return "Ayer";
+  return x.toLocaleDateString("es-AR", { weekday: "long", day: "2-digit", month: "2-digit" });
+}
+const personName = (p) => p.customer?.name || p.guestName || p.guestEmail || "Cliente";
+
+function RecorridoTab({ data, dateFrom, dateTo }) {
+  const personas = data.personas || [];
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("todos");
+  const [sel, setSel] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const detailRef = useRef(null);
+
+  const FILTERS = [
+    ["todos", "Todos", () => true],
+    ["mayoristas", "Mayoristas", (p) => p.customer?.type === "MAYORISTA"],
+    ["carrito", "Con carrito", (p) => p.carrito > 0],
+    ["compraron", "Hicieron pedido", (p) => p.pedidos > 0],
+    ["nocompraron", "No hicieron pedido", (p) => p.pedidos === 0],
+  ];
+  const words = q.trim().toLowerCase();
+  const fn = FILTERS.find((f) => f[0] === filter)?.[2] || (() => true);
+  const list = personas.filter((p) => fn(p) && (!words || `${personName(p)} ${p.customer?.email || p.guestEmail || ""}`.toLowerCase().includes(words)));
+
+  // Al cargar, se abre el primero (el último que anduvo)
+  useEffect(() => { if (!sel && personas[0]) setSel(personas[0].key); }, [personas]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!sel) return;
+    let vivo = true;
+    setDetail({ loading: true });
+    analyticsApi.recorridoPersona(sel, { dateFrom, dateTo })
+      .then((r) => vivo && setDetail(r.data))
+      .catch((e) => vivo && setDetail({ error: e.response?.data?.error || "No se pudo cargar el recorrido" }));
+    return () => { vivo = false; };
+  }, [sel, dateFrom, dateTo]);
+
+  const pick = (key) => {
+    setSel(key);
+    // En el celular el recorrido queda abajo de la lista: se baja hasta ahí
+    if (window.innerWidth < 1024) setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
+  // El recorrido, agrupado por día; una línea gris cuando empieza otra visita (otro navegador o vuelve más tarde)
+  const timeline = () => {
+    const items = detail?.items || [];
+    if (items.length === 0) return <p className="py-8 text-center text-sm text-slate-400">No hay actividad en este período</p>;
+    const out = [];
+    let day = null;
+    items.forEach((it, i) => {
+      const d = dayLabel(it.at);
+      if (d !== day) { day = d; out.push(<p key={`d${i}`} className="sticky top-0 z-[1] -mx-1 bg-white px-1 pt-3 pb-1 text-xs font-bold uppercase tracking-wide text-slate-500 first:pt-0">{d}</p>); }
+      else if (it.sessionId && items[i - 1]?.sessionId && it.sessionId !== items[i - 1].sessionId) {
+        out.push(<p key={`v${i}`} className="py-1 text-center text-[11px] text-slate-400">· · · otra visita · · ·</p>);
+      }
+      // hour12: false → "10:38" (con "a. m." se partía en dos renglones)
+      const hora = new Date(it.at).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+      let icon = "📄";
+      let body = <>Entró a <span className="font-medium text-slate-800">{it.label || it.path}</span></>;
+      if (it.kind === "search") {
+        icon = "🔍";
+        body = <>Buscó <span className="font-semibold text-slate-800">"{it.term}"</span> <span className={it.results === 0 ? "text-red-500" : "text-slate-400"}>· {it.results === 0 ? "sin resultados" : it.results == null ? "" : `${it.results} resultados`}</span></>;
+      } else if (it.kind === "product") {
+        icon = "👁";
+        body = (
+          <span className="flex min-w-0 items-center gap-2">
+            {it.product?.image && <img src={getImageUrl(it.product.image)} alt="" className="h-8 w-8 flex-shrink-0 rounded border border-slate-100 object-cover" />}
+            <span className="min-w-0">Miró {it.product?.slug
+              ? <a href={`/producto/${it.product.slug}`} target="_blank" rel="noreferrer" className="font-medium text-blue-600 hover:underline">{it.product.name}</a>
+              : <span className="font-medium text-slate-800">{it.product?.name || "un producto"}</span>}</span>
+          </span>
+        );
+      } else if (it.kind === "order") {
+        icon = "🧾";
+        body = <><span className="font-semibold text-emerald-700">Hizo el pedido</span> <Link to={`/admin/ordenes/${it.orderId}`} className="font-medium text-blue-600 hover:underline">#{it.orderId}</Link> · {fmtArs(it.total)}{it.totalUsd > 0 ? ` + ${fmtUsd(it.totalUsd)}` : ""} · <span className="text-slate-500">{ORDER_STATUS_LABEL[it.status] || String(it.status || "").toLowerCase()}</span></>;
+      }
+      out.push(
+        <div key={i} className="flex items-start gap-3 py-1.5 text-sm text-slate-600">
+          <span className="w-11 flex-shrink-0 pt-0.5 text-xs tabular-nums text-slate-400">{hora}</span>
+          <span className="w-5 flex-shrink-0 text-center" aria-hidden="true">{icon}</span>
+          <div className="min-w-0 flex-1 break-words">{body}</div>
+        </div>
+      );
+    });
+    return out;
+  };
+
+  return (
+    <Section
+      title="Recorrido por cliente"
+      subtitle="Quién anduvo por la tienda, del último al primero. Tocá uno para ver qué buscó, qué miró y por dónde pasó. Son los clientes con cuenta y los que compraron sin cuenta; lo que hicieron antes de iniciar sesión en esa visita también cuenta."
+    >
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar cliente por nombre o email"
+          className="min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+        />
+        {FILTERS.map(([k, l, f]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${filter === k ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+            {l} ({personas.filter(f).length})
+          </button>
+        ))}
+      </div>
+      {data.anonimas > 0 && (
+        <p className="mb-3 text-xs text-slate-400">Además hubo {fmtNum(data.anonimas)} visitas sin cuenta (no se sabe quién era; muchas son robots). Esas están en Búsquedas y vistas.</p>
+      )}
+
+      {personas.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-400">Ningún cliente identificado anduvo por la tienda en este período</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+          {/* Personas */}
+          <div className="max-h-[640px] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+            {list.length === 0 && <p className="p-6 text-center text-sm text-slate-400">Nadie coincide</p>}
+            {list.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => pick(p.key)}
+                className={`block w-full px-3 py-2.5 text-left transition-colors ${sel === p.key ? "bg-blue-50" : "hover:bg-slate-50"}`}
+              >
+                <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  {personName(p)}
+                  {p.customer?.type === "MAYORISTA" && <span className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700">Mayorista</span>}
+                  {!p.customerId && <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">sin cuenta</span>}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {relTime(p.lastAt)} · {DEVICE_ICON_SM[p.device] || "🖥️"} · {p.visitas} visita{p.visitas !== 1 ? "s" : ""}
+                </p>
+                <p className="mt-1 flex flex-wrap gap-1 text-[11px]">
+                  {p.busquedas > 0 && <span className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">🔍 {p.busquedas}</span>}
+                  {p.productos > 0 && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">👁 {p.productos} producto{p.productos !== 1 ? "s" : ""}</span>}
+                  {p.pedidos > 0 && <span className="rounded-full bg-green-100 px-2 py-0.5 font-medium text-green-700">🧾 {p.pedidos} pedido{p.pedidos !== 1 ? "s" : ""}</span>}
+                  {p.carrito > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">🛒 {p.carrito} en el carrito</span>}
+                </p>
+                {p.terminos.length > 0 && (
+                  <p className="mt-1 truncate text-[11px] text-slate-400">buscó: {p.terminos.map((t) => `"${t}"`).join(", ")}</p>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Recorrido de la persona elegida */}
+          <div ref={detailRef} className="max-h-[640px] overflow-y-auto rounded-xl border border-slate-200 p-4 lg:sticky lg:top-4">
+            {!detail || detail.loading ? (
+              <p className="py-10 text-center text-sm text-slate-400">Cargando el recorrido…</p>
+            ) : detail.error ? (
+              <p className="py-10 text-center text-sm text-red-600">{detail.error}</p>
+            ) : (
+              <>
+                <div className="mb-3 border-b border-slate-100 pb-3">
+                  <p className="font-bold text-slate-800">
+                    {detail.persona.name}
+                    {detail.persona.type === "MAYORISTA" && <span className="ml-2 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-700">Mayorista</span>}
+                  </p>
+                  <p className="text-xs text-slate-500">{[detail.persona.email, detail.persona.phone].filter(Boolean).join(" · ")}</p>
+                </div>
+                {timeline()}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function AdminAnalytics() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -732,7 +922,7 @@ export default function AdminAnalytics() {
     setError(null);
     try {
       const params = { dateFrom, dateTo, ...(tab === "" && granularity ? { granularity } : {}) };
-      const call = { "": () => analyticsApi.ventas(params), origen: () => analyticsApi.origen(params), embudo: () => analyticsApi.embudo(params), clientes: () => analyticsApi.clientes(params), stock: () => analyticsApi.stock(), ofertas: () => analyticsApi.ofertas(), interes: () => analyticsApi.interes(params), envivo: () => analyticsApi.enVivo() }[tab];
+      const call = { "": () => analyticsApi.ventas(params), origen: () => analyticsApi.origen(params), embudo: () => analyticsApi.embudo(params), clientes: () => analyticsApi.clientes(params), stock: () => analyticsApi.stock(), ofertas: () => analyticsApi.ofertas(), interes: () => analyticsApi.interes(params), recorrido: () => analyticsApi.recorrido(params), envivo: () => analyticsApi.enVivo() }[tab];
       if (!call) return;
       const res = await call();
       if (id !== reqId.current) return;
@@ -774,10 +964,12 @@ export default function AdminAnalytics() {
       case "stock": return <StockTab data={current} />;
       case "ofertas": return <OfertasTab data={current} />;
       case "interes": return <InteresTab data={current} />;
+      case "recorrido": return <RecorridoTab data={current} dateFrom={dateFrom} dateTo={dateTo} />;
       case "envivo": return <EnVivoTab data={current} refreshedAt={refreshedAt} />;
       default: return null;
     }
-  }, [current, tab, granularity, refreshedAt]);
+  // Antes: [current, tab, granularity, refreshedAt] (el recorrido necesita el período para pedir el detalle)
+  }, [current, tab, granularity, refreshedAt, dateFrom, dateTo]);
 
   return (
     <AdminLayout title="Analíticas">

@@ -945,4 +945,85 @@ function getEnVivo(req, res) {
   });
 }
 
-module.exports = { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo };
+// ─── 9. Recorrido por cliente ─────────────────────────────────────────────────
+// Pedido de la clienta (26/11/2026): "ver más específico QUIÉN buscó qué o miró qué en los últimos días,
+// ordenado por cliente, el último que estuvo". Una fila por persona (cliente con cuenta o que compró sin
+// cuenta), con todas sus visitas juntas; tocándola, su recorrido paso a paso. La lógica está en
+// utils/recorrido.js (testeada); acá solo se lee la base.
+const { buildPeople, buildTimeline, anonymousSessions } = require("../utils/recorrido");
+
+async function recorridoData(from, to) {
+  const [events, orders] = await Promise.all([
+    prisma.storeEvent.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: { type: true, sessionId: true, customerId: true, productId: true, term: true, results: true, path: true, device: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    // Todos los pedidos del período (no solo los aprobados): "hizo el pedido" aunque esté pendiente
+    prisma.order.findMany({
+      where: { createdAt: { gte: from, lte: to } },
+      select: { id: true, sessionId: true, customerId: true, customerName: true, customerEmail: true, total: true, totalUsd: true, status: true, createdAt: true },
+    }),
+  ]);
+  return { events, orders };
+}
+
+// GET /api/analytics/recorrido — las personas que anduvieron por la tienda, la última primero
+async function getRecorrido(req, res) {
+  try {
+    const { from, to } = parseRange(req.query);
+    const { events, orders } = await recorridoData(from, to);
+    const people = buildPeople(events, orders).slice(0, 300);
+    const ids = people.map((p) => p.customerId).filter(Boolean);
+    const [customers, carts] = ids.length
+      ? await Promise.all([
+          prisma.customer.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true, phone: true, type: true, status: true } }),
+          prisma.cart.findMany({ where: { customerId: { in: ids } }, select: { customerId: true, updatedAt: true, _count: { select: { items: true } } } }),
+        ])
+      : [[], []];
+    const cInfo = Object.fromEntries(customers.map((c) => [c.id, c]));
+    const cart = Object.fromEntries(carts.map((c) => [c.customerId, c._count.items]));
+    res.json({
+      range: { from, to },
+      personas: people.map((p) => ({ ...p, customer: p.customerId ? cInfo[p.customerId] || null : null, carrito: p.customerId ? cart[p.customerId] || 0 : 0 })),
+      anonimas: anonymousSessions(events, orders),
+    });
+  } catch (err) {
+    console.error("analytics.getRecorrido error:", err);
+    res.status(500).json({ error: "Error al obtener el recorrido de los clientes" });
+  }
+}
+
+// GET /api/analytics/recorrido/:key — el recorrido de una persona ("c:<id>" o "g:<email>")
+async function getRecorridoPersona(req, res) {
+  try {
+    const key = String(req.params.key || "");
+    if (!/^(c:\d+|g:.{3,200})$/.test(key)) return res.status(400).json({ error: "Cliente inválido" });
+    const { from, to } = parseRange(req.query);
+    const { events, orders } = await recorridoData(from, to);
+    const items = buildTimeline(events, orders, key);
+    const productIds = [...new Set(items.map((i) => i.productId).filter(Boolean))];
+    const [products, customer] = await Promise.all([
+      productIds.length ? prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true, slug: true, images: true } }) : [],
+      key.startsWith("c:") ? prisma.customer.findUnique({ where: { id: Number(key.slice(2)) }, select: { id: true, name: true, email: true, phone: true, type: true } }) : null,
+    ]);
+    const pInfo = Object.fromEntries(products.map((p) => [p.id, p]));
+    const guestOrder = key.startsWith("g:") ? orders.find((o) => o.customerEmail && `g:${o.customerEmail.trim().toLowerCase()}` === key) : null;
+    res.json({
+      persona: customer
+        ? { key, name: customer.name, email: customer.email, phone: customer.phone, type: customer.type, customerId: customer.id }
+        : { key, name: guestOrder?.customerName || "Compró sin cuenta", email: key.slice(2), phone: null, type: null, customerId: null },
+      items: items.map((i) => ({
+        ...i,
+        ...(i.productId ? { product: pInfo[i.productId] ? { name: pInfo[i.productId].name, slug: pInfo[i.productId].slug, image: pInfo[i.productId].images?.[0] || null } : { name: "Producto eliminado" } } : {}),
+        ...(i.kind === "page" ? { label: pageLabel(i.path) } : {}),
+      })),
+    });
+  } catch (err) {
+    console.error("analytics.getRecorridoPersona error:", err);
+    res.status(500).json({ error: "Error al obtener el recorrido" });
+  }
+}
+
+// Antes: { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo }
+module.exports = { getVentas, getOrigen, getEmbudo, getClientes, getStock, getOfertas, getInteres, getEnVivo, getRecorrido, getRecorridoPersona };
