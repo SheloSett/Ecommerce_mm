@@ -1243,6 +1243,40 @@ function SentMessages({ broadcasts, onRecipients }) {
     ...bcs.map((b) => ({ kind: "bc", at: b.createdAt, b })),
   ].sort((x, y) => new Date(y.at) - new Date(x.at));
 
+  // Lo mismo para la tabla (compu) y las tarjetas (celular)
+  const rowKey = (r) => (r.kind === "msg" ? `m${r.m.id}` : `b${r.b.id}`);
+  const whatOf = (r) => r.kind === "msg" ? (
+    <>
+      <span className="mr-1.5" title={r.m.channel === "WHATSAPP" ? "WhatsApp" : "Email"}>{r.m.channel === "WHATSAPP" ? "📱" : "📧"}</span>
+      {r.m.subject}
+    </>
+  ) : (
+    <>
+      <span className="mr-1.5" title="Envío masivo">📣</span>
+      {r.b.cartPromo?.name || r.b.offer?.name || r.b.subject}
+      <span className="ml-2 text-xs font-normal text-slate-400">{r.b.channel === "WHATSAPP" ? "WhatsApp" : "email"} masivo</span>
+    </>
+  );
+  const toOf = (r) => r.kind === "msg" ? r.m.to : (
+    <>
+      {r.b.total} {r.b.total === 1 ? "cliente" : "clientes"}
+      {AUDIENCE_LABEL[r.b.audience] && ` (${AUDIENCE_LABEL[r.b.audience].toLowerCase()})`}
+      <button onClick={() => onRecipients(r.b)} className="ml-2 text-xs text-blue-600 hover:underline">ver</button>
+    </>
+  );
+  const statusOf = (r) => r.kind === "msg" ? (
+    r.m.status === "SENT"
+      ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Enviado</span>
+      : <><span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Falló</span>
+        {r.m.error && <p className="text-xs text-red-600 mt-1 max-w-xs">{r.m.error}</p>}</>
+  ) : (
+    <span className="text-xs text-slate-600">
+      {r.b.sentCount} de {r.b.total} enviados
+      {r.b.failedCount > 0 && <span className="text-red-600"> · {r.b.failedCount} fallaron</span>}
+      {r.b.status === "SENDING" && <span className="text-blue-600"> · enviando…</span>}
+    </span>
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -1253,7 +1287,7 @@ function SentMessages({ broadcasts, onRecipients }) {
           type="text"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar por destinatario o asunto (ej. un email, un celular, #284)"
+          placeholder="Buscar por email, celular o asunto (#284)"
           className="input text-sm flex-1 min-w-[220px]"
         />
       </div>
@@ -1264,55 +1298,44 @@ function SentMessages({ broadcasts, onRecipients }) {
       ) : rows.length === 0 ? (
         <div className="text-center py-12 text-slate-400 bg-white rounded-2xl border border-slate-200">Nada por acá</div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
-              <tr>
-                <th className="text-left px-4 py-3">Fecha</th>
-                <th className="text-left px-4 py-3">Qué</th>
-                <th className="text-left px-4 py-3">Para</th>
-                <th className="text-left px-4 py-3">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => r.kind === "msg" ? (
-                <tr key={`m${r.m.id}`} className="border-t border-slate-100 align-top">
-                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.m.createdAt)}</td>
-                  <td className="px-4 py-2.5 text-slate-800">
-                    <span className="mr-1.5" title={r.m.channel === "WHATSAPP" ? "WhatsApp" : "Email"}>{r.m.channel === "WHATSAPP" ? "📱" : "📧"}</span>
-                    {r.m.subject}
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-600 break-all">{r.m.to}</td>
-                  <td className="px-4 py-2.5">
-                    {r.m.status === "SENT"
-                      ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Enviado</span>
-                      : <><span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Falló</span>
-                        {r.m.error && <p className="text-xs text-red-600 mt-1 max-w-xs">{r.m.error}</p>}</>}
-                  </td>
+        <>
+          {/* Compu: tabla */}
+          <div className="hidden sm:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                <tr>
+                  <th className="text-left px-4 py-3">Fecha</th>
+                  <th className="text-left px-4 py-3">Qué</th>
+                  <th className="text-left px-4 py-3">Para</th>
+                  <th className="text-left px-4 py-3">Estado</th>
                 </tr>
-              ) : (
-                <tr key={`b${r.b.id}`} className="border-t border-slate-100 align-top bg-slate-50/60">
-                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.b.createdAt)}</td>
-                  <td className="px-4 py-2.5 text-slate-800">
-                    <span className="mr-1.5" title="Envío masivo">📣</span>
-                    {r.b.cartPromo?.name || r.b.offer?.name || r.b.subject}
-                    <span className="ml-2 text-xs text-slate-400">{r.b.channel === "WHATSAPP" ? "WhatsApp" : "email"} masivo</span>
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-600">
-                    {r.b.total} {r.b.total === 1 ? "cliente" : "clientes"}
-                    {AUDIENCE_LABEL[r.b.audience] && ` (${AUDIENCE_LABEL[r.b.audience].toLowerCase()})`}
-                    <button onClick={() => onRecipients(r.b)} className="ml-2 text-xs text-blue-600 hover:underline">ver</button>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-600 whitespace-nowrap">
-                    {r.b.sentCount} de {r.b.total} enviados
-                    {r.b.failedCount > 0 && <span className="text-red-600"> · {r.b.failedCount} fallaron</span>}
-                    {r.b.status === "SENDING" && <span className="text-blue-600"> · enviando…</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={rowKey(r)} className={`border-t border-slate-100 align-top ${r.kind === "bc" ? "bg-slate-50/60" : ""}`}>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.at)}</td>
+                    <td className="px-4 py-2.5 text-slate-800">{whatOf(r)}</td>
+                    <td className="px-4 py-2.5 text-slate-600 break-all">{toOf(r)}</td>
+                    <td className="px-4 py-2.5">{statusOf(r)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Celular: una tarjeta por mensaje (en tabla no entraba el estado) */}
+          <div className="sm:hidden bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100">
+            {rows.map((r) => (
+              <div key={rowKey(r)} className={`px-4 py-3 space-y-1 text-sm ${r.kind === "bc" ? "bg-slate-50/60" : ""}`}>
+                <p className="text-slate-800 font-medium">{whatOf(r)}</p>
+                <p className="text-slate-500 break-all">{toOf(r)}</p>
+                <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                  <div>{statusOf(r)}</div>
+                  <span className="text-xs text-slate-400 whitespace-nowrap">{fmtDateTime(r.at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
       {hasMore && !loading && (
         <div className="text-center">
