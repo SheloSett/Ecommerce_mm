@@ -9,15 +9,21 @@ const sharp = require("sharp");
 const { escapeHtml: esc } = require("../utils/escapeHtml");
 const { SHIPPING_NAMES, formatDeliveryDate, shippingAddressLines } = require("../utils/motoShipping");
 
+// Historial de todo lo que sale (26/11/2026, ver services/messageLog.service.js)
+const { logMessage } = require("./messageLog.service");
+
 // Crea el transporte solo si las variables de entorno de SMTP están configuradas.
 // extra: opciones adicionales de nodemailer (ver createBulkTransporter).
-function createTransporter(extra = {}) {
+// log: anotar cada email en Emails → Historial (26/11/2026). La cola masiva no (ya queda en EmailRecipient).
+function createTransporter(extra = {}, { log = true } = {}) {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_USER || !SMTP_PASS) return null;
 
   const port = parseInt(SMTP_PORT) || 587;
 
-  return nodemailer.createTransport({
+  // Antes: return nodemailer.createTransport({...}) directo. Ahora se envuelve sendMail para anotar en el
+  // historial cada email que sale (o que falla, con el motivo), sin tocar cada aviso.
+  const transporter = nodemailer.createTransport({
     host: SMTP_HOST || "smtp.gmail.com",
     port,
     // 465 = SSL/TLS implícito (secure: true); 587 = STARTTLS (secure: false)
@@ -29,14 +35,30 @@ function createTransporter(extra = {}) {
     socketTimeout:     10000,
     ...extra,
   });
+  if (!log) return transporter;
+  const send = transporter.sendMail.bind(transporter);
+  transporter.sendMail = async (opts, cb) => {
+    try {
+      const info = await send(opts);
+      logMessage({ channel: "EMAIL", to: opts?.to, subject: opts?.subject, ok: true });
+      if (typeof cb === "function") cb(null, info);
+      return info;
+    } catch (err) {
+      logMessage({ channel: "EMAIL", to: opts?.to, subject: opts?.subject, ok: false, error: err.message });
+      if (typeof cb === "function") { cb(err); return undefined; }
+      throw err;
+    }
+  };
+  return transporter;
 }
 
 // Transporte para los emails masivos (services/broadcast.service.js): UNA conexión reutilizada para
 // toda la tanda. Con el transporte común cada email abre y autentica una conexión nueva, y Gmail
 // corta con "too many login attempts" si eso pasa decenas de veces por minuto.
 // null si el SMTP no está configurado. Quien lo usa tiene que llamar a .close() al terminar.
+// log: false — cada email de la cola ya queda en EmailRecipient (no se repite en el historial).
 function createBulkTransporter() {
-  return createTransporter({ pool: true, maxConnections: 1, maxMessages: 100 });
+  return createTransporter({ pool: true, maxConnections: 1, maxMessages: 100 }, { log: false });
 }
 
 // ─── Destinatarios de las notificaciones al admin ────────────────────────────

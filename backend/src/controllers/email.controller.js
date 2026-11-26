@@ -29,6 +29,8 @@ const {
   PER_TICK,
 } = require("../services/broadcast.service");
 const { createBulkTransporter } = require("../services/email.service");
+// Historial de todo lo que sale de a uno (26/11/2026)
+const { logMessage, listMessages } = require("../services/messageLog.service");
 // WhatsApp de avisos (25/11/2026)
 const {
   whatsappConfigured, whatsappState, restartWhatsapp, sendWhatsapp, getWhatsappSettings, saveWhatsappSettings, whatsappQr,
@@ -141,14 +143,21 @@ async function sendTestEmail(req, res) {
 
     const recipient = { customerId: null, name: req.user?.name || "", type: draft.type };
     const { subject, html, text } = await renderFor(draft.broadcast, recipient, new Map(), { preview: true });
-    await transporter.sendMail({
-      from: `"${process.env.STORE_NAME || "IGWT Store"}" <${process.env.SMTP_USER}>`,
-      to,
-      subject: `[PRUEBA] ${subject}`,
-      html,
-      text,
-      headers: { "Content-Language": "es" },
-    });
+    try {
+      await transporter.sendMail({
+        from: `"${process.env.STORE_NAME || "IGWT Store"}" <${process.env.SMTP_USER}>`,
+        to,
+        subject: `[PRUEBA] ${subject}`,
+        html,
+        text,
+        headers: { "Content-Language": "es" },
+      });
+      // Al historial (26/11/2026): este transporte es el de la cola, que no anota solo
+      logMessage({ channel: "EMAIL", to, subject: `[PRUEBA] ${subject}`, ok: true });
+    } catch (err) {
+      logMessage({ channel: "EMAIL", to, subject: `[PRUEBA] ${subject}`, ok: false, error: err.message });
+      throw err;
+    }
     res.json({ sentTo: to });
   } catch (err) {
     handleError(res, err, "No se pudo mandar el email de prueba");
@@ -299,6 +308,7 @@ async function sendWhatsappTest(req, res) {
     const r = await sendWhatsapp({
       to: req.body?.to,
       text: "✅ Prueba del WhatsApp de avisos de IGWT Store. Si te llegó, está andando.",
+      kind: "[PRUEBA] WhatsApp de avisos",
     });
     if (!r.ok) return res.status(400).json({ error: r.motivo });
     res.json({ ok: true });
@@ -339,7 +349,7 @@ async function testWhatsappAnnounce(req, res) {
     const type = req.body?.side === "wholesale" ? "MAYORISTA" : "MINORISTA";
     const b = target === "promo" ? { kind: "WA_PROMO", cartPromoId: id } : { kind: "WA_OFFER", offerId: id };
     const text = await renderWhatsapp(b, { customerId: null, name: req.user?.name || "", type }, new Map(), { preview: true });
-    const r = await sendWhatsapp({ to: req.body?.to, text });
+    const r = await sendWhatsapp({ to: req.body?.to, text, kind: "[PRUEBA] Aviso de campaña" });
     if (!r.ok) return res.status(400).json({ error: r.motivo });
     res.json({ ok: true });
   } catch (err) {
@@ -371,6 +381,20 @@ async function announceWhatsappNow(req, res) {
     res.status(201).json(broadcast);
   } catch (err) {
     handleError(res, err, "Error al avisar por WhatsApp");
+  }
+}
+
+// ── GET /api/emails/messages — todo lo que salió de a uno (26/11/2026) ─────────
+// ?channel=EMAIL|WHATSAPP &status=FAILED &q=texto &before=id (para "ver más"). Ver services/messageLog.service.js.
+async function listSentMessages(req, res) {
+  try {
+    const before = parseInt(req.query.before, 10);
+    res.json(await listMessages({
+      channel: req.query.channel, status: req.query.status, q: req.query.q,
+      before: Number.isInteger(before) ? before : undefined,
+    }));
+  } catch (err) {
+    handleError(res, err, "Error al cargar los mensajes enviados");
   }
 }
 
@@ -513,6 +537,7 @@ module.exports = {
   announceWhatsappNow,
   getWhatsappQr,
   testWhatsappAnnounce,
+  listSentMessages,
   listBroadcasts,
   getBroadcast,
   listRecipients,

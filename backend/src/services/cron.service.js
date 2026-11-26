@@ -3,6 +3,7 @@ const crypto = require("crypto");
 // Antes: { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail } (sendErrorAlert: el vigilante de WhatsApp)
 const { sendMayoristaRestockEmail, sendMinoristaRecommendationEmail, sendErrorAlert } = require("./email.service");
 const { whatsappWatchdog, whatsappConfigured, getWhatsappSettings, restockText } = require("./whatsapp.service");
+const { pruneMessages } = require("./messageLog.service");
 const { syncOffers } = require("./offers.service");
 // queueWhatsappMessages: el restock también por WhatsApp (25/11/2026)
 const { runEmailJobs, unsubscribeUrls, queueWhatsappMessages } = require("./broadcast.service");
@@ -278,6 +279,11 @@ function startCronJobs() {
   cron.schedule("30 * * * *", () => {
     runAbandonedCartReminders().catch((err) => console.error("[CRON] Error en recordatorios de carrito:", err.message));
   });
+  // Historial de mensajes (26/11/2026): una vez por día se borra lo de más de 180 días
+  cron.schedule("15 7 * * *", () => {
+    pruneMessages().catch((err) => console.error("[CRON] Error limpiando el historial de mensajes:", err.message));
+  });
+
   // WhatsApp de avisos (25/11/2026): cada 10 minutos mira si la eSIM sigue conectada; si no, reinicia la
   // sesión y, si no vuelve, manda un email. Sin Evolution configurado no hace nada. Ver whatsapp.service.js.
   cron.schedule("*/10 * * * *", () => {

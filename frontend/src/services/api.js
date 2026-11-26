@@ -534,6 +534,8 @@ export const emailsApi = {
   sendTest:   (data)     => api.post("/emails/test", data),          // al email del admin logueado
   send:       (data)     => api.post("/emails/broadcasts", data),
   history:    ()         => api.get("/emails/broadcasts"),
+  // Todo lo que salió de a uno, emails y WhatsApp (26/11/2026): { channel, status, q, before }
+  messages:   (params)   => api.get("/emails/messages", { params }),
   detail:     (id)       => api.get(`/emails/broadcasts/${id}`),
   // A quién le salió y a qué hora: { total, items } (máx. 300), con buscador y filtro por estado
   recipients: (id, params) => api.get(`/emails/broadcasts/${id}/recipients`, { params }),

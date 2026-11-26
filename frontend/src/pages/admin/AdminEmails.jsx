@@ -1193,7 +1193,139 @@ function RecipientsModal({ broadcast, initialStatus = "", onClose }) {
   );
 }
 
+// "Todo lo que salió" (pedido de la clienta, 26/11/2026: "acá hay cosas que no se guardan; debería aparecer al
+// 100% todo lo que se manda"). Antes el historial mostraba solo los envíos masivos. Ahora también cada email y
+// cada WhatsApp que sale de a uno (pedidos, cotizaciones, estados, recordatorios, alertas, avisos de WhatsApp),
+// mezclados por fecha con los envíos masivos. Ver backend/src/services/messageLog.service.js.
+const MSG_FILTERS = [
+  { key: "", label: "Todo" },
+  { key: "EMAIL", label: "📧 Emails" },
+  { key: "WHATSAPP", label: "📱 WhatsApp" },
+  { key: "FAILED", label: "⚠️ Fallidos" },
+];
+function SentMessages({ broadcasts, onRecipients }) {
+  const [filter, setFilter] = useState("");
+  const [q, setQ] = useState("");
+  const [query, setQuery] = useState(""); // la búsqueda aplicada (con una pausa al escribir)
+  const [msgs, setMsgs] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const PAGE = 100;
+
+  useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 350); return () => clearTimeout(t); }, [q]);
+  const params = (before) => ({
+    ...(filter === "EMAIL" || filter === "WHATSAPP" ? { channel: filter } : {}),
+    ...(filter === "FAILED" ? { status: "FAILED" } : {}),
+    ...(query ? { q: query } : {}),
+    ...(before ? { before } : {}),
+  });
+  useEffect(() => {
+    setLoading(true);
+    emailsApi.messages(params())
+      .then((r) => { setMsgs(r.data); setHasMore(r.data.length === PAGE); })
+      .catch(() => toast.error("Error al cargar los mensajes"))
+      .finally(() => setLoading(false));
+  }, [filter, query]); // eslint-disable-line react-hooks/exhaustive-deps
+  const more = () => emailsApi.messages(params(msgs[msgs.length - 1]?.id))
+    .then((r) => { setMsgs((m) => [...m, ...r.data]); setHasMore(r.data.length === PAGE); })
+    .catch(() => toast.error("Error al cargar más"));
+
+  // Los envíos masivos entran en la misma lista (filtrados igual), hasta la fecha del último mensaje cargado
+  const oldest = hasMore && msgs.length ? new Date(msgs[msgs.length - 1].createdAt) : null;
+  const bcs = broadcasts.filter((b) =>
+    (filter !== "EMAIL" || b.channel !== "WHATSAPP") &&
+    (filter !== "WHATSAPP" || b.channel === "WHATSAPP") &&
+    (filter !== "FAILED" || b.failedCount > 0) &&
+    (!query || String(b.subject || "").toLowerCase().includes(query.toLowerCase())) &&
+    (!oldest || new Date(b.createdAt) >= oldest));
+  const rows = [
+    ...msgs.map((m) => ({ kind: "msg", at: m.createdAt, m })),
+    ...bcs.map((b) => ({ kind: "bc", at: b.createdAt, b })),
+  ].sort((x, y) => new Date(y.at) - new Date(x.at));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {MSG_FILTERS.map((f) => (
+          <button key={f.key} onClick={() => setFilter(f.key)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${filter === f.key ? "bg-blue-600 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{f.label}</button>
+        ))}
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar por destinatario o asunto (ej. un email, un celular, #284)"
+          className="input text-sm flex-1 min-w-[220px]"
+        />
+      </div>
+      <p className="text-xs text-slate-400">Se guarda desde el 26/11/2026 (lo de antes no quedó registrado) y se borra solo después de 180 días.</p>
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-400">Cargando…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-center py-12 text-slate-400 bg-white rounded-2xl border border-slate-200">Nada por acá</div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+              <tr>
+                <th className="text-left px-4 py-3">Fecha</th>
+                <th className="text-left px-4 py-3">Qué</th>
+                <th className="text-left px-4 py-3">Para</th>
+                <th className="text-left px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => r.kind === "msg" ? (
+                <tr key={`m${r.m.id}`} className="border-t border-slate-100 align-top">
+                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.m.createdAt)}</td>
+                  <td className="px-4 py-2.5 text-slate-800">
+                    <span className="mr-1.5" title={r.m.channel === "WHATSAPP" ? "WhatsApp" : "Email"}>{r.m.channel === "WHATSAPP" ? "📱" : "📧"}</span>
+                    {r.m.subject}
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-600 break-all">{r.m.to}</td>
+                  <td className="px-4 py-2.5">
+                    {r.m.status === "SENT"
+                      ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Enviado</span>
+                      : <><span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-100 text-red-700">Falló</span>
+                        {r.m.error && <p className="text-xs text-red-600 mt-1 max-w-xs">{r.m.error}</p>}</>}
+                  </td>
+                </tr>
+              ) : (
+                <tr key={`b${r.b.id}`} className="border-t border-slate-100 align-top bg-slate-50/60">
+                  <td className="px-4 py-2.5 whitespace-nowrap text-slate-600">{fmtDateTime(r.b.createdAt)}</td>
+                  <td className="px-4 py-2.5 text-slate-800">
+                    <span className="mr-1.5" title="Envío masivo">📣</span>
+                    {r.b.cartPromo?.name || r.b.offer?.name || r.b.subject}
+                    <span className="ml-2 text-xs text-slate-400">{r.b.channel === "WHATSAPP" ? "WhatsApp" : "email"} masivo</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-600">
+                    {r.b.total} {r.b.total === 1 ? "cliente" : "clientes"}
+                    {AUDIENCE_LABEL[r.b.audience] && ` (${AUDIENCE_LABEL[r.b.audience].toLowerCase()})`}
+                    <button onClick={() => onRecipients(r.b)} className="ml-2 text-xs text-blue-600 hover:underline">ver</button>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-600 whitespace-nowrap">
+                    {r.b.sentCount} de {r.b.total} enviados
+                    {r.b.failedCount > 0 && <span className="text-red-600"> · {r.b.failedCount} fallaron</span>}
+                    {r.b.status === "SENDING" && <span className="text-blue-600"> · enviando…</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {hasMore && !loading && (
+        <div className="text-center">
+          <button onClick={more} className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50">Ver más</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HistoryTab() {
+  // "todo" = todo lo que salió (mensajes sueltos + masivos); "masivos" = la tabla de siempre (26/11/2026)
+  const [view, setView] = useState("todo");
   const [items, setItems] = useState([]);
   const [settings, setSettings] = useState(null);
   const [limitInput, setLimitInput] = useState("");
@@ -1269,7 +1401,16 @@ function HistoryTab() {
         </div>
       )}
 
-      {items.length === 0 ? (
+      {/* Todo lo que salió | Envíos masivos (26/11/2026) */}
+      <div className="flex rounded-xl bg-slate-200 p-1 w-fit text-sm">
+        {[["todo", "📬 Todo lo que salió"], ["masivos", "📣 Envíos masivos"]].map(([k, l]) => (
+          <button key={k} onClick={() => setView(k)} className={`px-4 py-1.5 rounded-lg font-semibold transition-colors ${view === k ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>{l}</button>
+        ))}
+      </div>
+
+      {view === "todo" ? (
+        <SentMessages broadcasts={items} onRecipients={(b) => setRecipientsOf({ broadcast: b, status: "" })} />
+      ) : items.length === 0 ? (
         <div className="text-center py-16 text-slate-400 bg-white rounded-2xl border border-slate-200">
           <p className="text-4xl mb-3">📭</p>
           <p>Todavía no se mandó ningún email</p>
@@ -1304,7 +1445,8 @@ function HistoryTab() {
                           : b.kind?.startsWith("PROMO") ? `🎉 Aviso: ${b.cartPromo?.name || b.subject}`
                           : b.kind === "PLAIN" ? `✉️ ${b.subject}` : b.subject}
                       </p>
-                      <p className="text-xs text-slate-400">{b.createdBy ? `Mandado por ${b.createdBy}` : "Automático (al empezar la campaña)"}</p>
+                      {/* Antes: siempre "Automático (al empezar la campaña)"; los recordatorios de WhatsApp (WA_TEXT) no son campañas */}
+                      <p className="text-xs text-slate-400">{b.createdBy ? `Mandado por ${b.createdBy}` : b.kind === "WA_TEXT" ? "Automático" : "Automático (al empezar la campaña)"}</p>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{AUDIENCE_LABEL[b.audience] || b.audience}</td>
                     <td className="px-4 py-3">

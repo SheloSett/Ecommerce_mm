@@ -779,7 +779,8 @@ async function processWhatsappQueue({ now = new Date(), send = sendWhatsapp, ran
       return { cancelled: err.message };
     }
 
-    const res = await send({ to: r.phone, text });
+    // log: false — ya queda en EmailRecipient (no se repite en el historial de mensajes sueltos)
+    const res = await send({ to: r.phone, text, log: false });
     waLastSentAt = now.getTime();
     waNextGapMs = Math.round((90 + random() * 90) * 1000);
     if (res.ok) {

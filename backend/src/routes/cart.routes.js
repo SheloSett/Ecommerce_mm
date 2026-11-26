@@ -657,6 +657,7 @@ router.post("/:customerId/remind", authMiddleware, adminMiddleware, requireAnyPe
         whatsapp = await sendWhatsapp({
           to: cart.customer.phone,
           text: abandonedCartText(cart.customer, items, { frontendUrl: storeUrl, storePhone: wa.storePhone, couponCode, couponDescription }),
+          kind: "Recordatorio de carrito", // para Emails → Historial
         });
         if (!whatsapp.ok) console.error(`[WHATSAPP] Recordatorio de carrito a ${customerId}: ${whatsapp.motivo}`);
       }

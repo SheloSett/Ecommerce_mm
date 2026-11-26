@@ -963,6 +963,23 @@ model EmailBroadcast {
   @@map("email_broadcasts")
 }
 
+// Todo lo que sale de a uno, para Emails → Historial (pedido de la clienta, 26/11/2026: "debería aparecer al 100%
+// todo lo que se manda"). Emails de pedidos, cotizaciones, estados, recordatorios, alertas, y los WhatsApp de
+// avisos. Los envíos masivos no van acá: ya quedan uno por uno en EmailRecipient. Se guarda desde
+// services/messageLog.service.js y se borra solo lo de más de 180 días.
+model MessageLog {
+  id        Int      @id @default(autoincrement())
+  channel   String   // EMAIL | WHATSAPP
+  to        String   // email(s) o celular
+  subject   String   // asunto del email, o de qué es el WhatsApp
+  status    String   // SENT | FAILED
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("message_logs")
+}
+
 model EmailRecipient {
   id          Int            @id @default(autoincrement())
   broadcastId Int

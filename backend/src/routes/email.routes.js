@@ -19,6 +19,7 @@ const {
   announceWhatsappNow,
   getWhatsappQr,
   testWhatsappAnnounce,
+  listSentMessages,
   listBroadcasts,
   getBroadcast,
   listRecipients,
@@ -40,6 +41,7 @@ router.post("/test", sendTestEmail);
 router.get("/settings", getEmailSettings);
 router.put("/settings", updateEmailSettings);
 router.get("/broadcasts", listBroadcasts);
+router.get("/messages", listSentMessages); // todo lo que salió de a uno (26/11/2026)
 router.post("/broadcasts", createCustomBroadcast);
 router.get("/broadcasts/:id", getBroadcast);
 router.get("/broadcasts/:id/recipients", listRecipients);

@@ -27,6 +27,8 @@
 //                        pausa, varios avisos salen juntos y con la misma forma, que es lo que mira WhatsApp.
 
 const prisma = require("../lib/prisma"); // cliente único (ver lib/prisma.js)
+// Historial de todo lo que sale de a uno (26/11/2026)
+const { logMessage } = require("./messageLog.service");
 
 const DELAY_POR_DEFECTO = 1200;
 const variable = (nombre) => {
@@ -73,8 +75,19 @@ function phoneDisplay(raw) {
 // ── Envío ─────────────────────────────────────────────────────────────────────
 
 // Manda un texto. to: cualquier formato (se pasa por toWhatsappNumber). → { ok } | { ok:false, motivo }
-async function sendWhatsapp({ to, text }) {
+// kind: de qué es, para Emails → Historial (ej. "Pedido nuevo #284"); log: false = no anotarlo (la cola de
+// campañas, que ya queda en EmailRecipient). Antes: sendWhatsapp({ to, text }) sin historial (26/11/2026).
+async function sendWhatsapp({ to, text, kind = null, log = true }) {
   if (!whatsappConfigured()) return { ok: false, motivo: "WhatsApp (Evolution) todavía no está configurado" };
+  const r = await sendWhatsappRaw({ to, text });
+  if (log) {
+    const firstLine = String(text || "").split("\n").find((l) => l.trim()) || "";
+    logMessage({ channel: "WHATSAPP", to: toWhatsappNumber(to) || to, subject: kind || firstLine, ok: r.ok, error: r.ok ? null : r.motivo });
+  }
+  return r;
+}
+
+async function sendWhatsappRaw({ to, text }) {
   const number = toWhatsappNumber(to);
   if (!number) return { ok: false, motivo: `El teléfono "${to}" no es un celular válido` };
   if (!String(text || "").trim()) return { ok: false, motivo: "El mensaje vino vacío" };
@@ -297,7 +310,7 @@ async function notifyNewOrderWhatsapp(order) {
     if (!s.newOrder || s.adminNumbers.length === 0) return;
     const text = newOrderText(order, { frontendUrl: frontendUrl() });
     for (const to of s.adminNumbers) { // de a uno: el delay de Evolution los espacia
-      const r = await sendWhatsapp({ to, text });
+      const r = await sendWhatsapp({ to, text, kind: `Pedido nuevo #${order.id} (aviso a la tienda)` });
       if (!r.ok) console.error(`[WHATSAPP] Pedido #${order.id} → ${to}: ${r.motivo}`);
     }
   } catch (err) {
@@ -312,7 +325,7 @@ async function notifyOrderStatusWhatsapp(order, change) {
     if (!s.customerStatus) return;
     const text = customerStatusText(order, change, { storePhone: s.storePhone });
     if (!text) return;
-    const r = await sendWhatsapp({ to: order.customerPhone, text });
+    const r = await sendWhatsapp({ to: order.customerPhone, text, kind: `Pedido #${order.id}: ${change.kind === "payment" ? "pago aprobado" : "listo / despachado"}` });
     if (!r.ok) console.error(`[WHATSAPP] Estado del pedido #${order.id} (${change.status}): ${r.motivo}`);
   } catch (err) {
     console.error("[WHATSAPP] notifyOrderStatusWhatsapp:", err.message);
